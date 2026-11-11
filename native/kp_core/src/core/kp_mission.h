@@ -59,6 +59,8 @@ typedef struct {
 extern const char *const KP_TILESET_NAMES[KP_TILESETS];
 #define KP_TILESET_PATH "generated/data/tilesets/%s.kpd"
 
+#define KP_MISSION_PACKS 32
+
 typedef struct {
 	uint8_t *blob; /* owned copy of the file */
 	size_t size;
@@ -79,7 +81,7 @@ typedef struct {
 	KpMissionRegions regions;
 	KpMissionContours contours;
 	int pack_count;
-	KpBytes packs[32]; /* names of the resource packs (ADR 0004), sorted */
+	KpBytes packs[KP_MISSION_PACKS]; /* names of the resource packs (ADR 0004), sorted */
 } KpMission;
 
 /* expect may be NULL; it adds profile and source-hash checks. Returns -1 with err set. */
@@ -94,6 +96,14 @@ int kp_mission_take(KpMission *m, uint8_t *data, size_t size, const char *name, 
  * and CONT from the tileset of ERA & 7 (kp_derive), the packs of the profile's MPAK. The blob holds the scenario and
  * those parts. Returns -1 with err set. */
 int kp_mission_from_files(KpMission *m, const KpFiles *f, const char *directory, KpError *err);
+/* The same from a scenario's bytes (malloc'd, taken, also on failure) under name (its errors'): directory the folder
+ * its WAV strings name files in (NULL: a test scenario, converter/scenarios.py, with no WAVs), packs PACK's payload
+ * (kp_mission_packs_payload). Returns -1 with err set. */
+int kp_mission_from_chk(KpMission *m, const KpFiles *f, uint8_t *chk, size_t chk_size, const char *name,
+	const char *directory, const uint8_t *packs, size_t pack_size, KpError *err);
+/* PACK's payload (kpm.packs_payload: u8 count, then u8 length + name a pack, sorted) of a list "a,b,c" ("": none) into
+ * out: its size, or -1 for an empty or too long name, too many packs or too small an out. */
+int kp_mission_packs_payload(const char *list, uint8_t *out, size_t cap);
 /* The file a trigger's WAV string names (the PlayWav and transmission actions, the briefing's): <directory>\<the
  * mission's string string_id> (ADR 0018, stage D5: the app reads it as it reads the other original files). 1 with the
  * path in out, 0 for no string or an empty one, -1 for a malformed STR or a path longer than size. */

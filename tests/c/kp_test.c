@@ -176,9 +176,22 @@ uint8_t *kp_t_read(KpT *T, const char *path, size_t *size)
 
 int kp_t_has(const KpT *T, const char *path)
 {
-	FILE *f = fopen(path, "rb");
+	KpError err;
+	const KpData *d;
+	const KpDataMission *m;
+	char chk[256];
+	FILE *f;
+	int key = strncmp(path, "missions/", 9) == 0 || strncmp(path, "scenarios/", 10) == 0;
 	(void)T;
-	if (!f) return 0;
+	if (strcmp(path, KP_T_DATA) == 0 || key) { /* the original data, a mission of its catalog */
+		if (!(d = kp_oracle_data(".", &err))) return 0;
+		if (!key) return 1;
+		if (!(m = kp_data_find(d, path))) return 0;
+		if (m->catalog) return 1;
+		snprintf(chk, sizeof chk, KP_DATA_SCENARIOS "%s.chk", path + 10);
+		path = chk;
+	}
+	if (!(f = fopen(path, "rb"))) return 0;
 	fclose(f);
 	return 1;
 }
@@ -254,12 +267,21 @@ void kp_t_guard(KpT *T, KpGame *g)
 	kp_t_defer(T, end_guard, guard); /* before the game's release (the cleanups run in reverse) */
 }
 
-KpOracleGame *kp_t_game(KpT *T, const char *path, uint32_t seed, int expansion, const KpOracleOpts *opts)
+const KpData *kp_t_data(KpT *T)
 {
-	KpOracleGame *og = (KpOracleGame *)calloc(1, sizeof *og);
 	KpError err;
-	if (!og) kp_t_fail(T, "out of memory");
-	if (kp_oracle_game_start(og, ".", path, seed, expansion, opts, &err) != 0) {
+	const KpData *d = kp_oracle_data(".", &err);
+	if (!d) kp_t_skip(T, "%s", err.msg);
+	return d;
+}
+
+KpOracleGame *kp_t_game(KpT *T, const char *key, uint32_t seed, int expansion, const KpOracleOpts *opts)
+{
+	KpOracleGame *og;
+	KpError err;
+	kp_t_data(T); /* skips without it */
+	if (!(og = (KpOracleGame *)calloc(1, sizeof *og))) kp_t_fail(T, "out of memory");
+	if (kp_oracle_game_start(og, ".", key, seed, expansion, opts, &err) != 0) {
 		free(og);
 		kp_t_fail(T, "%s", err.msg);
 	}
@@ -296,9 +318,10 @@ static void free_golden_run(void *p) { kp_t_golden_run_release((KpGoldenRun *)p)
 
 KpGoldenRun *kp_t_golden_run(KpT *T, const KpJson *g, const KpOracleOpts *opts, int trace)
 {
-	KpGoldenRun *gr = (KpGoldenRun *)malloc(sizeof *gr);
+	KpGoldenRun *gr;
 	KpError err;
-	if (!gr) kp_t_fail(T, "out of memory");
+	kp_t_data(T); /* skips without it */
+	if (!(gr = (KpGoldenRun *)malloc(sizeof *gr))) kp_t_fail(T, "out of memory");
 	if (kp_golden_run_start(gr, ".", g, opts, trace, &err) != 0) {
 		free(gr);
 		kp_t_fail(T, "%s", err.msg);

@@ -32,8 +32,8 @@ int kp_golden_load(KpGolden *g, const char *path, KpError *err);
 void kp_golden_free(KpGolden *g);
 
 /* The replay of a golden run (tools/state_check.py write_scenario_golden: mission, seed, expansion, commands, ui
- * with its runs of draws expanded, the steps' CRCs): its mission path
- * "generated/<mission>.kpm" under the repository root, the mission index looked up under root. */
+ * with its runs of draws expanded, the steps' CRCs): its mission the golden's key ("scenarios/<name>",
+ * "missions/<campaign>/<name>"), the mission index looked up in the root's catalog (kp_oracle_data). */
 int kp_replay_from_golden(KpReplay *r, const char *root, const KpJson *golden, KpError *err);
 /* The CRCs of step `step` in r (sorted by kp_replay_sort_crcs): *count of them from the returned index, -1 none. */
 void kp_replay_sort_crcs(KpReplay *r);

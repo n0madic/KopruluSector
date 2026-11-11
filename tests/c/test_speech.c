@@ -31,7 +31,7 @@
 #define SAVE_EVERY 200
 #define SAVE_DATA "test data"
 
-static const char *const FILES[] = { KP_ORACLE_DATA "dat.kpd", PLAYS "index.json", PLAYS_SPEECH "index.json",
+static const char *const FILES[] = { KP_T_DATA, PLAYS "index.json", PLAYS_SPEECH "index.json",
 	SPEECH "terran/tutorial.kpm", NULL };
 
 /* Every play the original made with the speech: Koprulu with the speech equals it at every 20th step by the state's

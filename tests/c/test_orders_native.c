@@ -16,7 +16,7 @@
 
 #define GOLDEN "tests/golden/oracle/orders_primary.json"
 #define SPECIAL "tests/golden/oracle/orders_special.json"
-#define MAP "generated/scenarios/idle_marines.kpm"
+#define MAP "scenarios/idle_marines"
 #define SEED 946684819
 #define NONE (-1)
 #define OTHER 0x800200 /* the probe's second unit record, as targets and auto targets show it */
@@ -25,7 +25,7 @@
 #define AI_GUARD_0 0x10001 /* a unit's AI record: guard record 0 (KP_AI_REF(KP_AI_GUARD, 0)), the probes' nonnull pointer */
 #define MAX_POOL 2000
 
-static const char *const FILES[] = { KP_ORACLE_DATA "dat.kpd", MAP, NULL };
+static const char *const FILES[] = { KP_T_DATA, MAP, NULL };
 
 typedef struct {
 	KpOracleGame *og;
@@ -1067,7 +1067,7 @@ static void special_order_consumers_equal_the_original(KpT *T)
 /* --- the orders on remembered units of the fog --- */
 
 /* fog_right_click's map: a Marine of player 0 at 1000, 1100 and a Supply Depot of player 1 at 900, 1104. */
-#define FOG_MAP "generated/scenarios/fog_right_click.kpm"
+#define FOG_MAP "scenarios/fog_right_click"
 #define TYPE_MARINE 0
 #define TYPE_SIEGE_TANK 5
 #define TYPE_SUPPLY_DEPOT 109
@@ -1104,7 +1104,7 @@ static void sprite_point(KpGame *g, int64_t n, int64_t *x, int64_t *y)
 /* The map's game run past its first steps (the vision of the start). */
 static int fog_game(KpT *T, const char *label, FogGame *f)
 {
-	static const char *const FOG_FILES[] = { KP_ORACLE_DATA "dat.kpd", FOG_MAP, NULL };
+	static const char *const FOG_FILES[] = { KP_T_DATA, FOG_MAP, NULL };
 	if (!kp_t_ready(T, label, FOG_FILES)) return 0;
 	f->og = kp_t_game(T, FOG_MAP, SEED, 0, NULL);
 	f->g = f->og->g;
@@ -1250,11 +1250,11 @@ static void attack_obscured_by_a_unit_that_cannot_move(KpT *T)
 /* comsat_right_click's map: a Comsat Station of player 0 at 1000, 1100 and a Supply Depot of player 1 at 900, 1104.
  * units.dat gives the station right_click_action 6, whose handler is the table's 0x47ef40 (0x508e18), the same as
  * action 0's. The interface sends the click for it (RightClickInGame 0x47f300), and the executor stopped the game. */
-#define COMSAT_MAP "generated/scenarios/comsat_right_click.kpm"
+#define COMSAT_MAP "scenarios/comsat_right_click"
 
 static void right_click_with_a_comsat_station_does_nothing(KpT *T)
 {
-	static const char *const COMSAT_FILES[] = { KP_ORACLE_DATA "dat.kpd", COMSAT_MAP, NULL };
+	static const char *const COMSAT_FILES[] = { KP_T_DATA, COMSAT_MAP, NULL };
 	KpOracleGame *og;
 	KpGame *g;
 	KpReplay empty;
@@ -1293,7 +1293,7 @@ static void right_click_with_a_comsat_station_does_nothing(KpT *T)
 /* bunker_load's map: a Bunker of player 0 at 1200, 1104 and Marines of player 0 at 1000, 1080 and 1030, 1100. The
  * Bunker's Load button starts the targeting of PickupBunker 95 (BtnLoad 0x47c460), so a player can give the Bunker the
  * order, and the dispatcher had no handler for it (Order_PickupBunker 0x437850). */
-#define BUNKER_MAP "generated/scenarios/bunker_load.kpm"
+#define BUNKER_MAP "scenarios/bunker_load"
 #define TARGETED_ORDER 0x15
 #define PICKUP_BUNKER 95
 #define STATUS_IN_TRANSPORT 0x40
@@ -1301,7 +1301,7 @@ static void right_click_with_a_comsat_station_does_nothing(KpT *T)
 
 static void pickup_bunker_has_the_unit_board(KpT *T)
 {
-	static const char *const BUNKER_FILES[] = { KP_ORACLE_DATA "dat.kpd", BUNKER_MAP, NULL };
+	static const char *const BUNKER_FILES[] = { KP_T_DATA, BUNKER_MAP, NULL };
 	KpOracleGame *og;
 	KpGame *g;
 	KpReplay empty;
@@ -1341,7 +1341,7 @@ static void pickup_bunker_has_the_unit_board(KpT *T)
 	kp_t_ok(T, (g->u.status[marine] & STATUS_IN_TRANSPORT) != 0, "and boards it");
 }
 
-#define LURKER_MAP "generated/scenarios/burrowed_lurker_morph.kpm"
+#define LURKER_MAP "scenarios/burrowed_lurker_morph"
 #define BURROW 0x2c
 #define UNIT_MORPH 0x23
 #define BURROW_STEPS 200
@@ -1363,7 +1363,7 @@ static int steps_until(KpRunner *run, int64_t *step, KpGame *g, int64_t n, int64
  * burrowed_lurker_mixed (with a standing one) cover it against the original. */
 static void burrowed_hydralisk_unburrows_to_morph(KpT *T)
 {
-	static const char *const LURKER_FILES[] = { KP_ORACLE_DATA "dat.kpd", LURKER_MAP, NULL };
+	static const char *const LURKER_FILES[] = { KP_T_DATA, LURKER_MAP, NULL };
 	KpGame *g;
 	KpReplay empty;
 	KpRunner run;

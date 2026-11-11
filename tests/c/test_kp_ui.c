@@ -8,11 +8,11 @@
 
 #include "../../native/kp_core/src/core/kp_ui_text.h"
 
-#define DATA "generated/data/"
-#define TERRAN01 "generated/missions/terran/terran01.kpm"
+#define DATA "generated/data/" /* the fonts' and the strings' containers of the text probes (until D8d) */
+#define TERRAN01 "missions/terran/terran01"
 
-static const char *const UI_FILES[] = { DATA "ui.kpd", NULL };
-static const char *const GAME_FILES[] = { DATA "ui.kpd", TERRAN01, NULL };
+static const char *const UI_FILES[] = { KP_T_DATA, NULL };
+static const char *const GAME_FILES[] = { KP_T_DATA, TERRAN01, NULL };
 
 /* --- the timer queue --- */
 

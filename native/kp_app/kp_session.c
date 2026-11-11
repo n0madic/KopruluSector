@@ -13,6 +13,7 @@
 #define _POSIX_C_SOURCE 200112L /* fileno and fsync (kp_write_file_atomic) under -std=c99 */
 #endif
 #include "kp_session.h"
+#include "kp_sha256.h"
 #include "kp_text.h"
 
 #include <setjmp.h>
@@ -366,15 +367,11 @@ static int err_msg(KpError *err, const char *msg)
 	return -1;
 }
 
-int kp_save_identity(KpSaveIdentity *id, const uint8_t *dat, size_t size, KpError *err)
+void kp_save_identity(KpSaveIdentity *id, const KpFiles *files, const KpDat *dat)
 {
-	KpKpf c;
-	if (kp_kpf_parse(&c, dat, size, "dat.kpd", 0, err) != 0) return -1;
 	memset(id, 0, sizeof *id);
-	snprintf(id->profile_id, sizeof id->profile_id, "%s", c.profile_id);
-	memcpy(id->source_hash, c.source_hash, 32);
-	kp_kpf_free(&c);
-	return 0;
+	snprintf(id->profile_id, sizeof id->profile_id, "%s", files->profile->id);
+	kp_sha256(dat->blob, dat->size, id->source_hash);
 }
 
 typedef struct {

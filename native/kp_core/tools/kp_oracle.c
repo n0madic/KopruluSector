@@ -62,7 +62,7 @@ int kp_replay_from_golden(KpReplay *r, const char *root, const KpJson *golden, K
 	const KpJson *steps = kp_json_get(golden, "steps");
 	int k, i;
 	kp_replay_init(r);
-	snprintf(r->mission, sizeof r->mission, "generated/%s.kpm", kp_json_field_str(golden, "mission", ""));
+	snprintf(r->mission, sizeof r->mission, "%s", kp_json_field_str(golden, "mission", ""));
 	r->seed = (uint32_t)kp_json_field_int(golden, "seed", 0);
 	r->expansion = (int)kp_json_field_int(golden, "expansion", 0);
 	r->mission_index = kp_oracle_mission_index(root, r->mission);
@@ -335,28 +335,15 @@ int kp_golden_run_check(KpGoldenRun *gr, const KpJson *g, const char *name, KpBu
 int kp_campaign_chain(const char *root, const KpChainGame *games, int count, KpChainPlay play, KpChainAfter after,
 	KpChainRelease release, void *ud, KpBuf *failed, KpError *err)
 {
-	KpCampaign data;
+	const KpData *d = kp_oracle_data(root, err);
 	KpCampaignProfile *profile;
 	KpCampaignRun run;
 	KpOracleGame *before = NULL;
 	KpCarry carry;
 	int have_run = 0, k, result = 0;
 	int64_t expected = KP_NIL;
-	char path[1024];
-	size_t size;
-	uint8_t *bytes;
-	snprintf(path, sizeof path, "%s/" KP_ORACLE_DATA "campaign.kpd", root);
-	if (!(bytes = kp_read_file(path, &size))) return kp_error_set(err, "oracle: cannot read %s", path);
-	if (kp_campaign_load(&data, bytes, size, "campaign.kpd", err) != 0) {
-		free(bytes);
-		return -1;
-	}
-	profile = (KpCampaignProfile *)malloc(sizeof *profile);
-	if (!profile) {
-		kp_campaign_free(&data);
-		free(bytes);
-		return kp_error_set(err, "oracle: out of memory");
-	}
+	if (!d) return -1;
+	if (!(profile = (KpCampaignProfile *)malloc(sizeof *profile))) return kp_error_set(err, "oracle: out of memory");
 	kp_campaign_new_profile(profile);
 	for (k = 0; k < count; k++) {
 		const KpJson *g = games[k].golden;
@@ -366,8 +353,7 @@ int kp_campaign_chain(const char *root, const KpChainGame *games, int count, KpC
 		int64_t cinematics[16], mission;
 		int n;
 		KpBuf why;
-		snprintf(path, sizeof path, "generated/%s.kpm", kp_json_field_str(g, "mission", ""));
-		mission = kp_oracle_mission_index(root, path);
+		mission = kp_oracle_mission_index(root, kp_json_field_str(g, "mission", ""));
 		if (expected != KP_NIL && mission != expected) {
 			kp_buf_printf(failed, "%s: mission %lld, but the campaign chose %lld", games[k].name, (long long)mission,
 				(long long)expected);
@@ -395,16 +381,14 @@ int kp_campaign_chain(const char *root, const KpChainGame *games, int count, KpC
 			kp_campaign_new_run(&run, (int)kp_json_field_int(g, "expansion", 0), mission);
 			have_run = 1;
 		}
-		kp_campaign_after_game(&data, &run, profile, game->g->results[game->g->local_player],
+		kp_campaign_after_game(&d->campaign, &run, profile, game->g->results[game->g->local_player],
 			(const char *)game->g->trig.next_scenario, &step, cinematics, &n, 16);
 		expected = step.kind == KP_CAMPAIGN_STEP_MISSION || step.kind == KP_CAMPAIGN_STEP_CINEMATIC ? step.mission
 			: step.kind == KP_CAMPAIGN_STEP_RESTART ? run.mission : KP_NIL;
-		if (after) after(ud, games[k].name, &step, expected, &data);
+		if (after) after(ud, games[k].name, &step, expected, &d->campaign);
 		before = game;
 	}
 	if (before && release) release(ud, before);
 	free(profile);
-	kp_campaign_free(&data);
-	free(bytes);
 	return result;
 }

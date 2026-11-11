@@ -28,8 +28,11 @@ value as their decimal text, the others by name; the top level one member per li
 list or object of containers one element per line, everything else compact; strings ASCII, other characters (a
 string's bytes) `\u00XX` escapes.
 
-The oracle library (`native/kp_core/tools/`): `kp_runner.h` (the games of the oracle, `KpOracleGame`: a generated
-mission started through `kp_host` with the original's seed and the mission index of `generated/missions/index.txt`;
+The oracle library (`native/kp_core/tools/`): `kp_runner.h` (the games of the oracle, `KpOracleGame`: a mission
+built from the original data (`kp_oracle_data`: the root when it is an install or a repack, else its
+`generated/repack-single` or `generated/repack`, ADR 0018) by its key (`missions/<campaign>/<name>`, a test
+scenario's `scenarios/<name>` from its CHK under `generated/scenarios/`) and started through `kp_host` with the
+original's seed and the mission index of the data's catalog;
 the replays of a golden, a replay text or the emulator's `commands.jsonl`/`ui.jsonl`; the runner object step by
 object step with its event observer and its `after_objects` hook), `kp_oracle.h` (the goldens, the state CRCs and
 fingerprints, the step differences, the trigger and AI trace lines, the golden runs with their checks, the chain
@@ -223,7 +226,7 @@ Phases 2 and 4 check runtime code against the original 1.17 functions running in
 | `health_bar/cases.json` | `tools/research/probe_native_health_bar_117.py` | `tests/c/test_present.c` (`health_bars_equal_original`) | Per unit type with a health bar (207): the maximum energy from `0x434940` and one hash over its cases (hit point, shield, energy and timer levels, owners, hallucination, crops: 13,846) of the bitmap `DrawHealthBar 0x464d20` leaves |
 | `damage_table.json` | `tools/research/probe_damage_table_117.py` (on the DAT of an expansion game's state dump, `--state`) | `tests/c/test_damage_table.c` | Per upgrade level of the target's owner (0 and 3) and unit type (228): the CRC-32 of the hit points and shields `WeaponDamage 0x41dfc0` takes from a target of that type, for each of the 130 weapons at its base damage |
 
-Both tests need `generated/data` and skip without it.
+Both tests need the original data (a repack or an install, `kp_t_data`) and skip without it.
 
 **Regenerating** (private venv, retail directory):
 

@@ -376,7 +376,7 @@ def main(argv: list[str] | None = None) -> int:
     _source_arguments(p)
     p.add_argument("--out", default="generated")
     p.set_defaults(func=_data)
-    p = sub.add_parser("scenarios", help="convert the test scenarios to .kpm")
+    p = sub.add_parser("scenarios", help="write the test scenarios as CHK (and their .kpm)")
     _source_arguments(p)
     p.add_argument("--out", default="generated")
     p.set_defaults(func=_scenarios)

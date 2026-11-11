@@ -33,7 +33,6 @@ static void free_world(void *p)
 
 /* The deferred cleanups take a void pointer; a call through another function type is undefined. */
 static void free_draw_list(void *p) { kp_draw_list_free((KpDrawList *)p); }
-static void free_dat(void *p) { kp_dat_free((KpDat *)p); }
 static void free_image_data(void *p) { kp_image_data_free((KpImageData *)p); }
 static void free_presenter(void *p) { kp_presenter_free((KpImagesPresenter *)p); }
 
@@ -878,24 +877,16 @@ static int64_t dat_at(KpT *T, const KpDat *d, const char *table, const char *col
 
 static void health_bars_equal_original(KpT *T)
 {
-	static const char *const FILES[] = { "generated/data/dat.kpd", "generated/data/palettes.kpd", NULL };
+	static const char *const FILES[] = { KP_T_DATA, NULL };
 	const KpJson *g, *types;
-	static KpDat d;
-	KpPalettes pal;
-	KpError err;
+	const KpDat *d;
 	BarBitmap bm;
 	KpBarCanvas c;
-	size_t size, psize;
-	uint8_t *dat, *pdat;
 	int32_t x, y, local, r, bad = 0;
 	char bad_list[512] = "";
 	if (!kp_t_ready(T, "health bars", FILES)) return;
 	g = kp_t_golden(T, "tests/golden/oracle/health_bar/cases.json");
-	dat = kp_t_read(T, "generated/data/dat.kpd", &size);
-	pdat = kp_t_read(T, "generated/data/palettes.kpd", &psize);
-	if (kp_dat_load(&d, dat, size, "dat.kpd", NULL, &err) != 0) kp_t_fail(T, "%s", err.msg);
-	kp_t_defer(T, free_dat, &d);
-	if (kp_palettes_load(&pal, pdat, psize, &err) != 0) kp_t_fail(T, "%s", err.msg);
+	d = &kp_t_data(T)->dat;
 	bm.w = (int32_t)kp_json_field_int(g, "width", 0);
 	bm.h = (int32_t)kp_json_field_int(g, "height", 0);
 	bm.mul = (int32_t)kp_json_field_int(g, "baseline_mul", 0);
@@ -908,17 +899,17 @@ static void health_bars_equal_original(KpT *T)
 	c.hline = bitmap_hline;
 	c.vline = bitmap_vline;
 	c.ud = &bm;
-	c.thpbar = pal.thpbar;
+	c.thpbar = kp_t_data(T)->palettes.thpbar;
 	types = kp_json_get(g, "types");
 	for (r = 0; r < kp_json_len(types); r++) {
 		const KpJson *row = kp_json_at(types, r);
 		int64_t t = kp_json_int(kp_json_at(row, 0), 0), max_energy = kp_json_int(kp_json_at(row, 1), 0);
 		int64_t count = kp_json_int(kp_json_at(row, 2), -1), expected = kp_json_int(kp_json_at(row, 3), -1);
-		int64_t sprite_id = dat_at(T, &d, "flingy", "sprite", dat_at(T, &d, "units", "graphics", t));
-		int64_t width = dat_at(T, &d, "sprites", "health_bar", sprite_id);
-		int64_t hp = dat_at(T, &d, "units", "hit_points", t), sh = dat_at(T, &d, "units", "shield_amount", t);
-		int64_t shields = dat_at(T, &d, "units", "shield_enabled", t);
-		int64_t abilities = dat_at(T, &d, "units", "special_ability_flags", t);
+		int64_t sprite_id = dat_at(T, d, "flingy", "sprite", dat_at(T, d, "units", "graphics", t));
+		int64_t width = dat_at(T, d, "sprites", "health_bar", sprite_id);
+		int64_t hp = dat_at(T, d, "units", "hit_points", t), sh = dat_at(T, d, "units", "shield_amount", t);
+		int64_t shields = dat_at(T, d, "units", "shield_enabled", t);
+		int64_t abilities = dat_at(T, d, "units", "special_ability_flags", t);
 		int32_t height = shields != 0 ? 13 : 11, n = 0, s, k, i;
 		uint32_t h = 0;
 		/* the probe's states: hp, shields, energy, timer, status, owner */

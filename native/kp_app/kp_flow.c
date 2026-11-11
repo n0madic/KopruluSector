@@ -41,16 +41,16 @@ static double now(KpFlow *f) { return f->host.now(f->host.ctx); }
 /* A language's overlay over the campaign mission just loaded (ADR 0016): its text (generated/locale/<loc>/missions/)
  * or its speech's triggers (generated/speech/<loc>/missions/, stage L5: the TIME a transmission waits), laid by `lay`
  * (which takes it); none for the base's, or a refused one, leaves the mission's, with one line naming `what` and `id`. */
-static void mission_overlay(KpFlow *f, const KpAppMission *entry, const char *root, const char *what, const char *id,
+static void mission_overlay(KpFlow *f, const KpDataMission *entry, const char *root, const char *what, const char *id,
 	const char *own, int (*lay)(KpHostGame *, uint8_t *, size_t, KpError *))
 {
-	static const char PREFIX[] = "/generated/missions/";
+	static const char PREFIX[] = "missions/";
 	char path[256];
 	uint8_t *overlay;
 	size_t size = 0;
 	KpError e;
-	if (id[0] == 0 || strcmp(id, KP_LOCALE_BASE) == 0 || strncmp(entry->kpm, PREFIX, sizeof PREFIX - 1) != 0) return;
-	snprintf(path, sizeof path, "generated/%s/%s/missions/%s", root, id, entry->kpm + sizeof PREFIX - 1);
+	if (id[0] == 0 || strcmp(id, KP_LOCALE_BASE) == 0 || strncmp(entry->key, PREFIX, sizeof PREFIX - 1) != 0) return;
+	snprintf(path, sizeof path, "generated/%s/%s/missions/%s.kpm", root, id, entry->key + sizeof PREFIX - 1);
 	if (!(overlay = f->host.read(f->host.ctx, path, &size))) {
 		say(f, "%s %s: no %s, the mission's own %s", what, id, path, own);
 	} else if (lay(&f->session->host, overlay, size, &e) != 0) {
@@ -62,7 +62,7 @@ static uint32_t now_ms(KpFlow *f) { return (uint32_t)(uint64_t)(now(f) * 1000); 
 
 static void stop(KpFlow *f, const char *what)
 {
-	say(f, "play %s: stopped: %s", f->current >= 0 ? f->missions[f->current].name : "?", what);
+	say(f, "play %s: stopped: %s", f->current >= 0 ? f->data->missions[f->current].name : "?", what);
 }
 
 static void pref_path(const KpFlow *f, const char *file, char *out, size_t size) { snprintf(out, size, "%s%s", f->pref, file); }
@@ -285,11 +285,10 @@ static void options_to_ui(const KpFlow *f, KpUi *ui)
 	kp_ui_apply_volumes(ui); /* a profile's silence closes the music before its first track */
 }
 
-/* A new interface over the data the flow was given: the original files' (ADR 0018, stage D5), else the containers. */
+/* A new interface over the data's (ADR 0018). */
 static KpUi *new_interface(KpFlow *f, char *why, size_t why_size)
 {
-	if (f->ui_data) return kp_interface_new_data(f->ui_data, &f->locale, why, why_size);
-	return kp_interface_new(f->ui_files, f->ui_sizes, &f->locale, why, why_size);
+	return kp_interface_new_data(&f->data->ui, &f->locale, why, why_size);
 }
 
 static int start_hud(KpFlow *f, int from_save, char *err, size_t err_size)
@@ -331,36 +330,32 @@ static int start_hud(KpFlow *f, int from_save, char *err, size_t err_size)
 	return 0;
 }
 
-/* The session of a mission of the original data (ADR 0018, stage D5): its scenario's mission built from the files
- * (kp_mission_from_files), a test scenario's .kpm, over a copy of the data set's DAT, with its CV5 and VF4. */
-static int load_original(KpFlow *f, const KpAppMission *entry, char *err, size_t err_size)
+/* The session of a mission (ADR 0018): its mission built from its files (kp_data_mission: a campaign mission's
+ * scenario, a test scenario's CHK under KP_DATA_SCENARIOS), over a copy of the data set's DAT, with its CV5 and VF4. */
+static int load_mission(KpFlow *f, const KpDataMission *entry, char *err, size_t err_size)
 {
 	KpMission m;
 	KpError e;
-	memset(&m, 0, sizeof m);
-	if (entry->directory[0]) {
-		if (kp_mission_from_files(&m, f->files, entry->directory, &e) != 0) {
-			snprintf(err, err_size, "mission %s: %s", entry->name, e.msg);
+	uint8_t *chk = NULL;
+	size_t chk_size = 0;
+	if (!entry->directory[0]) {
+		char path[160];
+		snprintf(path, sizeof path, KP_DATA_SCENARIOS "%s.chk", entry->key + sizeof "scenarios/" - 1);
+		if (!(chk = f->host.read(f->host.ctx, path, &chk_size))) {
+			snprintf(err, err_size, "mission %s: cannot read %s", entry->name, path);
 			return -1;
 		}
-	} else {
-		size_t size;
-		uint8_t *bytes = f->host.read(f->host.ctx, entry->kpm + 1, &size);
-		if (!bytes) {
-			snprintf(err, err_size, "mission %s: cannot read it", entry->name);
-			return -1;
-		}
-		if (kp_mission_take(&m, bytes, size, entry->kpm, NULL, &e) != 0) { /* the bytes taken, also on failure */
-			snprintf(err, err_size, "mission %s: %s", entry->name, e.msg);
-			return -1;
-		}
+	}
+	if (kp_data_mission(f->data, entry, chk, chk_size, &m, &e) != 0) { /* the CHK taken, also on failure */
+		snprintf(err, err_size, "mission %s: %s", entry->name, e.msg);
+		return -1;
 	}
 	if (!(f->session = (KpSession *)calloc(1, sizeof *f->session))) {
 		kp_mission_free(&m);
 		snprintf(err, err_size, "out of memory");
 		return -1;
 	}
-	if (kp_session_load_from(f->session, f->shared, f->dat_proto, &m, entry->kpm, f->files) != 0) {
+	if (kp_session_load_from(f->session, &f->data->shared, &f->data->dat, &m, entry->key, &f->data->files) != 0) {
 		snprintf(err, err_size, "play %s: %s", entry->name, f->session->error);
 		return -1;
 	}
@@ -371,11 +366,8 @@ static int load_original(KpFlow *f, const KpAppMission *entry, char *err, size_t
  * before it left, a catalog mission played directly starts a run of its campaign. */
 static int build_scene(KpFlow *f, char *err, size_t err_size)
 {
-	const KpAppMission *entry = &f->missions[f->current];
+	const KpDataMission *entry = &f->data->missions[f->current];
 	KpSessionStart st;
-	char tileset[128];
-	uint8_t *mission, *tileset_bytes;
-	size_t mission_size, tileset_size;
 	int continued = f->has_continue, started = f->has_start_run;
 	destroy_scene(f);
 	f->has_next = 0;
@@ -388,33 +380,12 @@ static int build_scene(KpFlow *f, char *err, size_t err_size)
 		f->has_run = 1;
 		f->run = f->start_run;
 	} else {
-		f->has_run = entry->catalog && kp_campaign_run_of_mission(f->campaign, entry->index, &f->run);
+		f->has_run = entry->catalog && kp_campaign_run_of_mission(&f->data->campaign, entry->index, &f->run);
 	}
-	if (f->files) {
-		if (load_original(f, entry, err, err_size) != 0) return -1;
-	} else {
-		if (!(mission = f->host.read(f->host.ctx, entry->kpm + 1, &mission_size))) {
-			snprintf(err, err_size, "mission %s: cannot read it", entry->name);
-			return -1;
-		}
-		if (!(f->session = (KpSession *)calloc(1, sizeof *f->session))) {
-			free(mission);
-			snprintf(err, err_size, "out of memory");
-			return -1;
-		}
-		/* the game reads dat.kpd in place and takes the mission's file; its data serves the world too (the mission
-		 * parsed once, its tileset read once) */
-		if (kp_session_load(f->session, f->shared, f->dat, f->dat_size, mission, mission_size, entry->kpm) != 0) {
-			snprintf(err, err_size, "play %s: %s", entry->name, f->session->error);
-			return -1;
-		}
-	}
+	if (load_mission(f, entry, err, err_size) != 0) return -1;
 	mission_overlay(f, entry, "locale", "language", f->flags->locale, "text", kp_host_game_text);
 	/* a speech's triggers time its own lines, which the host plays in place of the scenario's WAVs */
 	mission_overlay(f, entry, "speech", "speech", f->flags->speech, "triggers", kp_host_game_speech);
-	kp_host_tileset_path(&f->session->host, tileset, sizeof tileset);
-	tileset_size = 0; /* the original data's game has its CV5 and VF4 already (kp_session_load_from) */
-	tileset_bytes = f->files ? NULL : f->host.read(f->host.ctx, tileset, &tileset_size);
 	kp_session_start_defaults(&st);
 	st.seed = KP_APP_SEED;
 	st.mission_index = entry->index;
@@ -426,9 +397,8 @@ static int build_scene(KpFlow *f, char *err, size_t err_size)
 		st.carry = f->continue_carry;
 		st.cheats = f->continue_cheats;
 	}
-	if (kp_session_start(f->session, tileset_bytes, tileset_size, &st) != 0) {
-		if (!tileset_bytes && !f->files) snprintf(err, err_size, "play %s: cannot read %s", entry->name, tileset);
-		else snprintf(err, err_size, "play %s: %s", entry->name, f->session->error);
+	if (kp_session_start(f->session, NULL, 0, &st) != 0) { /* the game has its CV5 and VF4 (kp_session_load_from) */
+		snprintf(err, err_size, "play %s: %s", entry->name, f->session->error);
 		return -1;
 	}
 	layout(f); /* the scale the world's art is chosen by (a game started before the first frame has none yet) */
@@ -471,8 +441,8 @@ int kp_flow_start_mission(KpFlow *f, int index, char *err, size_t err_size)
 	int ready = 1;
 	f->current = index;
 	f->waiting = 0;
-	if (f->host.mission_files && (ready = f->host.mission_files(f->host.ctx, &f->missions[index], err, err_size)) == 0) {
-		say(f, "play %s: waiting for its files", f->missions[index].name);
+	if (f->host.mission_files && (ready = f->host.mission_files(f->host.ctx, &f->data->missions[index], err, err_size)) == 0) {
+		say(f, "play %s: waiting for its files", f->data->missions[index].name);
 		f->waiting = 1;
 		return 0;
 	}
@@ -484,9 +454,9 @@ int kp_flow_start_mission(KpFlow *f, int index, char *err, size_t err_size)
 static void mission_wait(KpFlow *f)
 {
 	char err[512];
-	int ready = f->host.mission_files(f->host.ctx, &f->missions[f->current], err, sizeof err);
+	int ready = f->host.mission_files(f->host.ctx, &f->data->missions[f->current], err, sizeof err);
 	if (ready == 0 || start_current(f, ready, err, sizeof err) == 0) return;
-	say(f, "play %s: %s", f->missions[f->current].name, err);
+	say(f, "play %s: %s", f->data->missions[f->current].name, err);
 	if (f->glue_on) kp_glue_menus(&f->glue, KP_GLUE_MAIN);
 	else f->host.quit(f->host.ctx);
 }
@@ -599,12 +569,12 @@ static int start_saved_game(KpFlow *f, const char *name, int other_only, char *w
 		snprintf(why, why_size, "%s", err.msg);
 		return -1;
 	}
-	if (other_only && f->current >= 0 && strcmp(f->missions[f->current].kpm, mission) == 0) {
+	if (other_only && f->current >= 0 && strcmp(f->data->missions[f->current].key, mission) == 0) {
 		snprintf(why, why_size, "the save is this mission's");
 		return -1;
 	}
-	for (k = 0; k < f->mission_count; k++) {
-		if (strcmp(f->missions[k].kpm, mission) == 0) {
+	for (k = 0; k < f->data->mission_count; k++) {
+		if (strcmp(f->data->missions[k].key, mission) == 0) {
 			snprintf(f->load_on_start, sizeof f->load_on_start, "%s", name);
 			f->glue_room = 0;
 			return kp_flow_start_mission(f, k, why, why_size);
@@ -684,7 +654,7 @@ static void campaign_after_game(KpFlow *f, int result)
 	f->step_glue = KP_GLUE_MAIN; /* a game without a run has no step: not the step of the game before */
 	f->step_epilog = 0;
 	if (!f->has_run) return;
-	kp_campaign_after_game(f->campaign, &f->run, kp_profile_progress(f->profile), result,
+	kp_campaign_after_game(&f->data->campaign, &f->run, kp_profile_progress(f->profile), result,
 		(const char *)f->session->g->trig.next_scenario, &step, cinematics, &count, KP_APP_STEP_CINEMATICS);
 	for (k = 0; k < count; k++) f->step_cinematics[k] = (int)cinematics[k];
 	f->step_cinematic_count = count;
@@ -700,15 +670,15 @@ static void campaign_after_game(KpFlow *f, int result)
 		kp_carry_take(f->session->g, &f->next_carry);
 		f->next_cheats = kp_cheats(f->session->g);
 	}
-	say(f, "campaign %s: %s", f->missions[f->current].name, f->has_next ? "the next game" : "the campaign ends");
+	say(f, "campaign %s: %s", f->data->missions[f->current].name, f->has_next ? "the next game" : "the campaign ends");
 }
 
 static void start_glue_game(KpFlow *f, int64_t key, int state)
 {
 	char err[512];
 	int k;
-	for (k = 0; k < f->mission_count; k++) {
-		if (f->missions[k].catalog && f->missions[k].index == key) {
+	for (k = 0; k < f->data->mission_count; k++) {
+		if (f->data->missions[k].catalog && f->data->missions[k].index == key) {
 			f->glue_room = state;
 			if (kp_flow_start_mission(f, k, err, sizeof err) != 0) {
 				say(f, "glue: %s", err);
@@ -817,7 +787,7 @@ static void history_cinematic(KpFlow *f, const KpGlueEvent *ev)
 	int64_t more[KP_APP_STEP_CINEMATICS];
 	int ids[KP_APP_STEP_CINEMATICS + 1], n = 0, count = 0, k;
 	ids[n++] = ev->cinematic;
-	if (!kp_campaign_after_cinematic(f->campaign, ev->expansion, ev->mission, ev->cinematic, &run,
+	if (!kp_campaign_after_cinematic(&f->data->campaign, ev->expansion, ev->mission, ev->cinematic, &run,
 			kp_profile_progress(f->profile), &step, more, &count, KP_APP_STEP_CINEMATICS)) {
 		say(f, "glue: no campaign row of cinematic %d and mission %lld", ev->cinematic, (long long)ev->mission);
 	}
@@ -1129,7 +1099,7 @@ static void hud_frame(KpFlow *f, int ticks)
 		/* the in-game menus' Exit Program, Quit Mission, Restart (no result) */
 		kp_ui_end_game(ui);
 		sounds(f);
-		say(f, "play %s: exit %d", f->missions[f->current].name, exit);
+		say(f, "play %s: exit %d", f->data->missions[f->current].name, exit);
 		kp_session_pause(f->session);
 		end_hud(f);
 		if (exit_ends_program(f, exit)) {
@@ -1507,8 +1477,8 @@ int kp_flow_init(KpFlow *f, char *err, size_t err_size)
 	kp_glue_saves(f->ui, f->profile);
 	if (f->flags->mission[0]) {
 		int k;
-		for (k = 0; k < f->mission_count; k++) {
-			if (strcmp(f->missions[k].name, f->flags->mission) == 0) {
+		for (k = 0; k < f->data->mission_count; k++) {
+			if (strcmp(f->data->missions[k].name, f->flags->mission) == 0) {
 				if (!f->flags->play) f->flags->play = 1;
 				return kp_flow_start_mission(f, k, err, err_size);
 			}
@@ -1526,75 +1496,6 @@ int kp_flow_init(KpFlow *f, char *err, size_t err_size)
 	kp_glue_menus(&f->glue, KP_GLUE_MAIN);
 	say(f, "glue: the main menu");
 	return 0;
-}
-
-/* --- the missions --- */
-
-static void add_mission(KpAppMission *out, int *count, int cap, const char *name, const char *base, int catalog)
-{
-	KpAppMission *m;
-	int k;
-	if (*count >= cap) return;
-	m = &out[(*count)++];
-	memset(m, 0, sizeof *m);
-	m->catalog = catalog;
-	if (catalog) {
-		snprintf(m->name, sizeof m->name, "%s", name);
-		/* the saves' mission name, whichever data the mission is read from */
-		snprintf(m->kpm, sizeof m->kpm, "/generated/missions/%s.kpm", name);
-		m->index = *count; /* its number among the catalog's missions (the line of generated/missions/index.txt) */
-	} else {
-		snprintf(m->name, sizeof m->name, "scenarios/%s", name);
-		snprintf(m->kpm, sizeof m->kpm, "/generated/scenarios/%s.kpm", name);
-		for (k = 0; k < *count - 1; k++) {
-			if (out[k].catalog && strcmp(out[k].name, base) == 0) m->index = out[k].index;
-		}
-	}
-}
-
-/* An index's lines: the catalog's "name tileset width height", the scenarios' "name base tileset width height". */
-static void add_missions(KpAppMission *out, int *count, int cap, const char *text, size_t size, int catalog)
-{
-	size_t at = 0;
-	while (text && at < size) {
-		char line[256], name[64], base[64];
-		size_t end = at, n;
-		int tileset, w, h;
-		while (end < size && text[end] != '\n') end++;
-		n = end - at < sizeof line - 1 ? end - at : sizeof line - 1;
-		memcpy(line, text + at, n);
-		line[n] = '\0';
-		at = end + 1;
-		if (catalog) {
-			if (sscanf(line, "%63s %d %d %d", name, &tileset, &w, &h) == 4) add_mission(out, count, cap, name, NULL, 1);
-		} else if (sscanf(line, "%63s %63s %d %d %d", name, base, &tileset, &w, &h) == 5) {
-			add_mission(out, count, cap, name, base, 0);
-		}
-	}
-}
-
-int kp_flow_missions(KpAppMission *out, int cap, const char *catalog, size_t catalog_size, const char *scenarios,
-	size_t scenarios_size)
-{
-	int count = 0;
-	add_missions(out, &count, cap, catalog, catalog_size, 1);
-	add_missions(out, &count, cap, scenarios, scenarios_size, 0);
-	return count;
-}
-
-int kp_flow_missions_campaign(KpAppMission *out, int cap, const KpCampaign *campaign, const char *scenarios,
-	size_t scenarios_size)
-{
-	int count = 0, index;
-	char name[64];
-	/* the mapdata indices from 1 are the catalog's lines (index 0 is no mission) */
-	for (index = 1; index < campaign->directory_count && count < cap; index++) {
-		if (!kp_campaign_mission_name(campaign, index, name, sizeof name)) break;
-		add_mission(out, &count, cap, name, NULL, 1);
-		snprintf(out[count - 1].directory, sizeof out[count - 1].directory, "%s", campaign->directories[index]);
-	}
-	add_missions(out, &count, cap, scenarios, scenarios_size, 0);
-	return count;
 }
 
 void kp_flow_free(KpFlow *f)

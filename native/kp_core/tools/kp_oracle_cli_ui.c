@@ -607,12 +607,18 @@ static int bitmap_pixel(void *ud, int64_t x, int64_t y)
 }
 
 /* A game for a room or a result dialog (oracle.start_mission with no options). */
-static KpOracleGame *start_game(const char *path, int expansion)
+/* The game of the catalog's mission of a mapdata index (a replay's "mission"). */
+static KpOracleGame *start_game(int64_t mission, int expansion)
 {
 	KpOracleGame *og = (KpOracleGame *)calloc(1, sizeof *og);
+	const KpData *d;
 	KpError err;
-	if (!og || kp_oracle_game_start(og, ".", path, 0, expansion, NULL, &err) != 0) {
-		exit(kp_cli_fail("%s", og ? err.msg : "out of memory"));
+	if (!og || !(d = kp_oracle_data(".", &err))) exit(kp_cli_fail("%s", og ? err.msg : "out of memory"));
+	if (mission < 1 || mission > d->mission_count || !d->missions[mission - 1].catalog) {
+		exit(kp_cli_fail("no catalog mission %lld", (long long)mission));
+	}
+	if (kp_oracle_game_start(og, ".", d->missions[mission - 1].key, 0, expansion, NULL, &err) != 0) {
+		exit(kp_cli_fail("%s", err.msg));
 	}
 	return og;
 }
@@ -657,8 +663,6 @@ typedef struct {
 	Glue g;
 	int64_t states[256];
 	int state_count, expansion, at;
-	char **missions;
-	int mission_count;
 	KpOracleGame *games[64];
 	int game_count;
 	int room, room_state, room_opened;
@@ -700,16 +704,13 @@ static void menus_follow(Menus *m)
 		m->expansion = mm->expansion;
 		if (action == KP_UI_MENU_EXIT) return;
 		if (action == KP_UI_MENU_MISSION && room_race(state) >= 0) {
-			char path[600];
 			KpOracleGame *og;
 			if (m->saved.set) {
 				Progress back = m->saved;
 				set_progress(ui, &back, &m->saved);
 				m->saved.set = 0;
 			}
-			if (mm->mission < 1 || mm->mission > m->mission_count) exit(kp_cli_fail("menus_replay: no mission %d", (int)mm->mission));
-			snprintf(path, sizeof path, "generated/missions/%s.kpm", m->missions[mm->mission - 1]);
-			og = start_game(path, mm->expansion);
+			og = start_game(mm->mission, mm->expansion);
 			if (m->game_count < 64) m->games[m->game_count++] = og;
 			/* the establishing text's first page is shown when the credits screen has loaded: its record's tick */
 			for (k = m->at + 1; k < g->file.count; k++) {
@@ -754,8 +755,6 @@ int kp_cli_menus_replay(int argc, char **argv)
 	int k, seed_count = 0, run = 0, last_ev = -1, status;
 	int64_t page_tick = -1, differences;
 	int dumped = 0;
-	char *index;
-	size_t size;
 	if (argc < 1) return kp_cli_fail("usage: menus_replay MENUS.txt");
 	m = (Menus *)calloc(1, sizeof *m);
 	if (!m) return kp_cli_fail("out of memory");
@@ -804,18 +803,6 @@ int kp_cli_menus_replay(int argc, char **argv)
 				progress_at[last_ev].value = (uint32_t)value;
 				progress_at[last_ev].set = 1;
 			}
-		}
-	}
-	index = (char *)kp_cli_read("generated/missions/index.txt", &size);
-	{
-		char *line = index, *next;
-		m->missions = (char **)calloc(size / 2 + 2, sizeof *m->missions);
-		for (; line && *line; line = next) {
-			next = strchr(line, '\n');
-			if (next) *next++ = '\0';
-			if (!*line) continue;
-			line[strcspn(line, " \t\r")] = '\0';
-			m->missions[m->mission_count++] = line;
 		}
 	}
 	ui->now = (uint32_t)kp_trace_header(&g->file, "start", 0);
@@ -872,8 +859,6 @@ int kp_cli_menus_replay(int argc, char **argv)
 	for (k = 0; k < m->game_count; k++) free_game(m->games[k]);
 	ui->game = NULL;
 	free(progress_at);
-	free(m->missions);
-	free(index);
 	glue_free(g);
 	free(m);
 	return status;
@@ -937,7 +922,7 @@ int kp_cli_room_replay(int argc, char **argv)
 	if (argc < 1) return kp_cli_fail("usage: room_replay ROOM.txt");
 	if (glue_start(&g, argv[0], WORDS, KP_ORACLE_UI_STRINGS | KP_ORACLE_UI_PORTRAITS | KP_ORACLE_UI_SOUNDS, NULL) != 0) return 1;
 	ui = g.u.ui;
-	og = start_game(g.file.kpm, (int)kp_trace_header(&g.file, "expansion", 0));
+	og = start_game(kp_trace_header(&g.file, "mission", 0), (int)kp_trace_header(&g.file, "expansion", 0));
 	/* the run: the room opens at its first record's tick, the menus' CRT state from the first draw's */
 	ui->now = (uint32_t)kp_trace_header(&g.file, "start", 0);
 	glue_crt(&g);
@@ -1132,7 +1117,7 @@ int kp_cli_result_replay(int argc, char **argv)
 	if (argc < 1) return kp_cli_fail("usage: result_replay RESULT.txt");
 	if (glue_start(&g, argv[0], WORDS, KP_ORACLE_UI_STRINGS | KP_ORACLE_UI_SOUNDS, result_owner) != 0) return 1;
 	ui = g.u.ui;
-	og = start_game(g.file.kpm, (int)kp_trace_header(&g.file, "expansion", 0));
+	og = start_game(kp_trace_header(&g.file, "mission", 0), (int)kp_trace_header(&g.file, "expansion", 0));
 	if (kp_oracle_ui_colours(&g.u, ".", og, 0, &err) != 0) return kp_cli_fail("%s", err.msg);
 	kp_ui_font_set(ui, 1);
 	if (kp_ui_apply_theme(ui, kp_oracle_race_theme(og->g->players.race[og->g->local_player])) != 0) {

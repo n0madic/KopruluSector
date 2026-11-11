@@ -9,12 +9,15 @@
 
 #include "kp_oracle.h"
 #include "../src/core/kp_ui.h"
+#include "kp_present.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/* The files an interface may read (generated/data/<name>), as flags of kp_oracle_ui_new. */
+/* The parts of the data's interface (kp_data.h) an oracle's interface has besides its dialogs, files, fonts and the
+ * executable's tables, as flags of kp_oracle_ui_new: the string tables, the portraits, the sound records, the
+ * cheats (the profile's CHEA) and the campaign's table (TABL). */
 enum {
 	KP_ORACLE_UI_STRINGS = 1, KP_ORACLE_UI_PORTRAITS = 2, KP_ORACLE_UI_SOUNDS = 4, KP_ORACLE_UI_CHEATS = 8,
 	KP_ORACLE_UI_CAMPAIGN = 16
@@ -22,20 +25,16 @@ enum {
 
 typedef struct {
 	KpUi *ui;
-	uint8_t *files[6]; /* ui.kpd, fonts.kpd, strings.kpd, portraits.kpd, sounds.kpd, campaign.kpd */
-	size_t sizes[6];
-	/* the minimap's palettes.kpd (kp_oracle_ui_colours) */
-	uint8_t *palettes;
-	size_t palettes_size;
+	KpUiData data; /* the data's interface less the parts the flags leave out (the bytes are the data's) */
+	KpTileset tileset; /* the game's (kp_oracle_ui_colours), which the console's colours point into */
+	int has_tileset;
 	uint32_t *ticks[3]; /* the clocks kp_ui reads (set ticks, video ticks, page deadlines; kp_oracle_trace_clocks) */
 	uint32_t *time_seeds;
 } KpOracleUi;
 
-/* The interface over generated/data/ui.kpd and fonts.kpd under root, with the files of flags; -1 with the error. */
+/* The interface over the original data under root (kp_oracle_data) with the parts of flags; -1 with the error. */
 int kp_oracle_ui_new(KpOracleUi *u, const char *root, int flags, KpError *err);
 void kp_oracle_ui_free(KpOracleUi *u);
-/* A section of campaign.kpd (KP_ORACLE_UI_CAMPAIGN or _CHEATS loaded it), or NULL. */
-const uint8_t *kp_oracle_ui_campaign_section(const KpOracleUi *u, const char *fourcc, size_t *size);
 
 /* The console's colours over the game's tileset (the UI colours and the in-game dialogs' blend tables), and with
  * minimap the minimap's data too (the tileset's MMNI, the palettes' dark rows of the tileset and the mission's colour
@@ -162,10 +161,9 @@ typedef struct {
 	const char *line, *rest;
 } KpTraceRecord;
 
-/* A replay file: its header (the words given, with a number; kpm with its path), its records and its "data" lines. */
+/* A replay file: its header (the words given, with a number), its records and its "data" lines. */
 typedef struct {
 	char *text;
-	char kpm[512];
 	const char *header_words[8];
 	int64_t header[8];
 	int header_count;

@@ -1,6 +1,6 @@
 /*
- * The oracle runs of the native game (ADR 0008; plan phase S, stage S1): a generated mission's game started with the
- * original's seed (KpOracleGame), and its run object step by object step through the original's command and interface
+ * The oracle runs of the native game (ADR 0008; plan phase S, stage S1): a mission's game built from the original data
+ * (kp_data.h: a repack or an install under the root, ADR 0018) and started with the original's seed (KpOracleGame), and its run object step by object step through the original's command and interface
  * logs (KpRunner over a KpReplay). The command-line tools (kp_replay, kp_bench, kp_oracle) and the C suites (tests/c)
  * share them; kp_oracle.h adds the goldens and the checks.
  *
@@ -8,7 +8,7 @@
  * a golden (kp_oracle.h kp_replay_from_golden) or from the emulator's logs (kp_replay_add_commands_jsonl,
  * kp_replay_add_ui_jsonl). Replay text, one record per line:
  *   KPRP 1
- *   mission <path of the .kpm from the repository root>
+ *   mission <the mission's key: missions/<campaign>/<name>, scenarios/<name>>
  *   seed <initial seed>
  *   expansion <0 or 1>
  *   index <the campaign mission index 0x526524>    (optional; 0, a custom map, without it)
@@ -34,6 +34,7 @@
 #include "../src/core/kp_game_data.h"
 #include "../src/core/kp_game.h"
 #include "../src/core/kp_host.h"
+#include "kp_data.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -121,12 +122,12 @@ void *kp_grow(void *data, int count, int *cap, size_t size);
 
 /* --- the games of the oracle --- */
 
-/* The options of a game start: the host's (host.mission_index KP_NIL: from generated/missions/index.txt). */
+/* The options of a game start: the host's (host.mission_index KP_NIL: the catalog's, kp_data.h). */
 typedef struct {
 	KpHostOpts host;
-	const char *name; /* the mission's name, the default mission of save and load (NULL: the path) */
-	/* a speech's missions under the root ("generated/speech/<loc>/missions/"): the mission's overlay there (the same
-	 * path under it as under generated/missions/) is laid over it before the start (kp_host_game_speech); NULL none */
+	const char *name; /* the mission's name, the default mission of save and load (NULL: its key) */
+	/* a speech's missions under the root ("generated/speech/<loc>/missions/"): a campaign mission's overlay there
+	 * (<campaign>/<name>.kpm) is laid over it before the start (kp_host_game_speech); NULL none */
 	const char *speech;
 } KpOracleOpts;
 
@@ -136,14 +137,22 @@ void kp_oracle_opts(KpOracleOpts *o);
 /* A native game with its data, generators and files: the host's game. */
 typedef KpHostGame KpOracleGame;
 
-/* Starts the mission at path (the .kpm, relative to root, as are generated/data/...) with the seed and expansion;
- * -1 with the error in err (og released). */
-int kp_oracle_game_start(KpOracleGame *og, const char *root, const char *path, uint32_t seed, int expansion,
+/* The original data under root (kp_data_dir: root itself when it is a source, else its repack) with the root's test
+ * scenarios (generated/scenarios/) and the source tree's vector fonts (third_party/fonts/), built once per root and
+ * kept for the process; NULL with the error. */
+const KpData *kp_oracle_data(const char *root, KpError *err);
+/* The mission of a key ("missions/<campaign>/<name>", "scenarios/<name>": kp_data_find in the root's data) built
+ * from its files (kp_data_mission, a scenario's CHK under root): its catalog entry, or NULL with the error (m
+ * released). */
+const KpDataMission *kp_oracle_mission(const char *root, const char *key, KpMission *m, KpError *err);
+/* Starts the mission of a key (kp_oracle_mission) with the seed and expansion; -1 with the error in err (og
+ * released). */
+int kp_oracle_game_start(KpOracleGame *og, const char *root, const char *key, uint32_t seed, int expansion,
 	const KpOracleOpts *opts, KpError *err);
 void kp_oracle_game_free(KpOracleGame *og);
-/* The campaign mission index 0x526524 of a generated mission or of a scenario's base mission (generated/missions/
- * index.txt, generated/scenarios/index.txt under root), 0 when it has none. */
-int64_t kp_oracle_mission_index(const char *root, const char *path);
+/* The campaign mission index 0x526524 of a catalog mission or of a scenario's base mission (the root's catalog), 0
+ * when it has none. */
+int64_t kp_oracle_mission_index(const char *root, const char *key);
 
 /* The replay's game (kp_replay, kp_bench): no events, the replay's mission index. */
 typedef KpOracleGame KpReplayGame;

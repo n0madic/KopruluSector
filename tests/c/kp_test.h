@@ -98,14 +98,21 @@ void kp_t_defer(KpT *T, void (*fn)(void *), void *p);
 /* A file's bytes (relative to the repository root; NUL terminated past size), released at the end; fails without it
  * (a file of tests/golden/ skips the test instead when KP_TEST_PUBLIC is set: that folder is not published). */
 uint8_t *kp_t_read(KpT *T, const char *path, size_t *size);
-/* Whether a file is readable (optional inputs such as generated/ data). */
+/* Whether a file is readable (optional inputs such as generated/ data); KP_T_DATA stands for the original data
+ * (kp_t_data), a mission's key ("missions/...", "scenarios/...") for its mission in the data's catalog (a scenario's
+ * with its CHK). */
 int kp_t_has(const KpT *T, const char *path);
+#define KP_T_DATA "the original data"
 /* A golden's JSON (kp_golden_load), released at the end; fails without it (skips the test instead when KP_TEST_PUBLIC
  * is set: tests/golden/ is not published). */
 const KpJson *kp_t_golden(KpT *T, const char *path);
-/* A native game of the mission at path (relative to the root), released at the end; fails when it does not start.
- * Its failure handler is the test's, so a C failure fails the test (KpTry locals inside the test catch theirs). */
-KpOracleGame *kp_t_game(KpT *T, const char *path, uint32_t seed, int expansion, const KpOracleOpts *opts);
+/* The original data the suites play from (kp_oracle_data over the repository root: its repack, ADR 0018), built once
+ * in the suite's process; skips the test without it. */
+const KpData *kp_t_data(KpT *T);
+/* A native game of the mission of a key ("missions/<campaign>/<name>", "scenarios/<name>"), released at the end;
+ * skips the test without the original data, fails when it does not start. Its failure handler is the test's, so a C
+ * failure fails the test (KpTry locals inside the test catch theirs). */
+KpOracleGame *kp_t_game(KpT *T, const char *key, uint32_t seed, int expansion, const KpOracleOpts *opts);
 /* A game released now (before the test ends). */
 void kp_t_game_free(KpT *T, KpOracleGame *og);
 /* A probe's game of map (events on, no campaign row, the mission named "mission"), as kp_t_game. */
@@ -117,8 +124,7 @@ KpGoldenRun *kp_t_golden_run(KpT *T, const KpJson *g, const KpOracleOpts *opts, 
 void kp_t_golden_run_release(KpGoldenRun *gr);
 /* An empty replay, released at the end. */
 KpReplay *kp_t_replay(KpT *T);
-/* Whether the files exist; logs "SKIP label: no <file>" for the first missing one. files ends with
- * NULL. */
+/* Whether the files exist (kp_t_has); logs "SKIP label: no <file>" for the first missing one. files ends with NULL. */
 int kp_t_ready(KpT *T, const char *label, const char *const *files);
 /* The failure handler of a game the test starts itself (kp_t_game does it). */
 void kp_t_guard(KpT *T, KpGame *g);

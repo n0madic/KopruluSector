@@ -91,7 +91,7 @@ KINDS = {
 # and Koprulu lays the speech's overlays (KP_SPEECH, kp_oracle_chain_opts).
 SPEECH_KINDS = ("plays",)
 SPEECH_MISSIONS = "generated/speech/{locale}/missions/"
-RUN_KINDS = ("runs", "chains", "plays")  # campaign missions: their goldens name the mission's .kpm under missions/
+RUN_KINDS = ("runs", "chains", "plays")  # campaign missions: their goldens name the mission's key, missions/<name>
 MISSION_INDEX = ROOT / "generated" / "missions" / "index.txt"
 SHOW = 6
 
@@ -134,11 +134,10 @@ DRAWN_STEP = 3
 DRAWN_FIELDS = {"image": ("x", "y"), "unit": ("last_event_timer", "last_event_color", "attack_notify_timer")}
 
 
-def kpm_path(mission: str) -> Path:
-    """A catalog mission's generated .kpm (generated/missions/<name>.kpm) or a scenario's (scenarios/<name>)."""
-    if mission.startswith("scenarios/"):
-        return ROOT / "generated" / (mission + ".kpm")
-    return ROOT / "generated" / "missions" / (mission + ".kpm")
+def mission_key(mission: str) -> str:
+    """The key kp_oracle starts a mission by (kp_data.h): a catalog name's "missions/<name>", a scenario's
+    "scenarios/<name>" (a key stays)."""
+    return mission if mission.startswith(("scenarios/", "missions/")) else f"missions/{mission}"
 
 
 def plays_golden(golden: Path) -> bool:
@@ -154,9 +153,9 @@ def chain_env(turn: int, carry: Path | None) -> dict[str, str]:
 
 def koprulu_model(mission: str, seed: int, expansion: int, step: int = 1,
                   commands: Path | None = None, env: dict[str, str] | None = None) -> tuple[str, dict]:
-    """`mission` is a catalog name (generated/missions/<name>.kpm) or scenarios/<name>;
+    """`mission` is a catalog name (terran/terran01) or scenarios/<name>;
     `commands` the emulator's command log of the run, replayed by Koprulu; `env` the chain context (chain_env)."""
-    argv = tool("start_state") + [str(kpm_path(mission)), str(seed), str(expansion), str(step)]
+    argv = tool("start_state") + [mission_key(mission), str(seed), str(expansion), str(step)]
     if commands is not None and commands.exists():
         argv.append(str(commands))
         ui = commands.with_name("ui.jsonl")
@@ -180,7 +179,7 @@ MAX_RUN_DRAWS = 9  # a compact golden's draws of one frame in a run: one digit
 def koprulu_traces(mission: str, seed: int, expansion: int, step: int, commands: Path,
                    env: dict[str, str] | None = None) -> tuple[str, list[str], list[str]]:
     """Koprulu's trigger and AI traces up to the entry of object step `step` (kp_oracle traces)."""
-    argv = tool("traces") + [str(kpm_path(mission)), str(seed), str(expansion), str(step), str(commands)]
+    argv = tool("traces") + [mission_key(mission), str(seed), str(expansion), str(step), str(commands)]
     ui = commands.with_name("ui.jsonl")
     if ui.exists():
         argv.append(str(ui))
@@ -369,7 +368,7 @@ def chain_carry(d: Path, index: dict, out: Path, env: dict[str, str]) -> str:
     next game); returns an error or "" (kp_oracle play --mission)."""
     dumps = sorted(int(f.stem[1:]) for f in (d / "states").glob("s*.state"))
     first = State(d / "states" / "s00001.state")
-    argv = tool("play") + ["--mission", str(kpm_path(index[first.header["mission"]])),
+    argv = tool("play") + ["--mission", mission_key(index[first.header["mission"]]),
                            str(first.header["initial_seed"]), str(first.read(native_state.EXPANSION, 1)[0]),
                            str(dumps[-1] + 1),
                            str(d / "commands.jsonl"), str(d / "ui.jsonl"), "--carry-out", str(out)]

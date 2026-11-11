@@ -11,7 +11,7 @@
 
 static void missions_equal_the_original(KpT *T)
 {
-	static const char *const FILES[] = { KP_ORACLE_DATA "dat.kpd", NULL };
+	static const char *const FILES[] = { KP_T_DATA, NULL };
 	const KpJson *index;
 	KpBuf bad;
 	int k;
@@ -28,7 +28,7 @@ static void missions_equal_the_original(KpT *T)
 		int i, n;
 		snprintf(path, sizeof path, DIR "%s.json", name);
 		g = kp_t_golden(T, path);
-		snprintf(path, sizeof path, "generated/missions/%s.kpm", kp_json_field_str(g, "mission", ""));
+		snprintf(path, sizeof path, "missions/%s", kp_json_field_str(g, "mission", ""));
 		game = kp_t_game(T, path, (uint32_t)kp_json_field_int(g, "seed", 0), (int)kp_json_field_int(g, "expansion", 0),
 			NULL);
 		objectives = kp_json_get(g, "objectives");

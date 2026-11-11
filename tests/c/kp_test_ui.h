@@ -10,7 +10,7 @@
 extern "C" {
 #endif
 
-/* An interface over generated/data/ui.kpd and fonts.kpd with the files of flags (KP_ORACLE_UI_*), released when the
+/* An interface over the original data (kp_oracle_ui_new) with the parts of flags (KP_ORACLE_UI_*), released when the
  * test ends; fails without them. */
 KpOracleUi *kp_t_ui(KpT *T, int flags);
 /* An event of type: a key, character or command event (a the key, b the modifiers) at the mouse, a wheel event (a

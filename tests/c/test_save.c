@@ -10,7 +10,7 @@
 #define WASTELAND_SAVE_STEP 3700 /* the Barracks of terran01's scripted victory under construction */
 #define INTO_LAST (-1)
 
-static const char *const FILES[] = { KP_ORACLE_DATA "dat.kpd", NULL };
+static const char *const FILES[] = { KP_T_DATA, NULL };
 
 static const KpJson *load_golden(KpT *T, const char *path)
 {
@@ -306,7 +306,7 @@ static void initial_states_survive_a_save(KpT *T)
 		g = load_golden(T, path);
 		seed = (uint32_t)kp_json_field_int(g, "seed", 0);
 		expansion = (int)kp_json_field_int(g, "expansion", 0);
-		snprintf(path, sizeof path, "generated/missions/%s.kpm", kp_json_field_str(g, "mission", ""));
+		snprintf(path, sizeof path, "missions/%s", kp_json_field_str(g, "mission", ""));
 		game = kp_t_game(T, path, seed, expansion, NULL);
 		bytes = save(T, game->g, kp_json_field_str(g, "mission", ""), DATA, &size);
 		loaded = kp_t_game(T, path, seed, expansion, NULL);
@@ -328,7 +328,7 @@ static int refused(KpGame *g, const uint8_t *bytes, size_t size, const char *mis
 
 static void loads_reject_other_saves(KpT *T)
 {
-	const char *path = "generated/scenarios/marine_group.kpm";
+	const char *path = "scenarios/marine_group";
 	KpOracleGame *game, *other;
 	uint8_t *bytes, *damaged, *mine;
 	size_t size, mine_size;
@@ -357,7 +357,7 @@ static void loads_reject_other_saves(KpT *T)
 	 * before anything is written: the game keeps its state. */
 	first = load_golden(T, "initial_state/index");
 	snprintf(other_path, sizeof other_path, "initial_state/%s", kp_json_str(kp_json_at(first, 0), ""));
-	snprintf(other_path, sizeof other_path, "generated/missions/%s.kpm", kp_json_field_str(load_golden(T, other_path), "mission", ""));
+	snprintf(other_path, sizeof other_path, "missions/%s", kp_json_field_str(load_golden(T, other_path), "mission", ""));
 	other = kp_t_game(T, other_path, 1, 0, NULL);
 	before = kp_t_buf(T);
 	after = kp_t_buf(T);
@@ -386,7 +386,7 @@ static void loads_reject_other_saves(KpT *T)
  * in-game load writes into the game shown). */
 static void loads_show_the_loaded_countdown(KpT *T)
 {
-	const char *path = "generated/scenarios/marine_group.kpm";
+	const char *path = "scenarios/marine_group";
 	KpOracleGame *game, *into;
 	uint8_t *none, *running;
 	size_t none_size, running_size;

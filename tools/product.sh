@@ -145,8 +145,8 @@ stage_data() {
       if [ "$PLATFORM" != web ]; then # the web's head alone (web_hd_heads.py), the rest beside the page
         for v in $CINE_VARIANTS; do echo "video/cinematics-$v.kpd"; done
       fi
-      if [ "$VARIANT" = debug ]; then # the test scenarios (converted .kpm, the scenarios' catalog)
-        find scenarios -name '*.kpm' -o -name index.txt
+      if [ "$VARIANT" = debug ]; then # the test scenarios (their CHK, the scenarios' catalog)
+        find scenarios -name '*.chk' -o -name index.txt
         find viewer -name '*.mcrc'
       fi
       # StarCraft: Remastered's HD art when imported (python3 -m converter hd; ADR 0013): HD2 and HD on a computer,

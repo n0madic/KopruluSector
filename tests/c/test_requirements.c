@@ -14,7 +14,7 @@
 
 #define GENERAL "tests/golden/oracle/requirements_general.json"
 #define UNITS "tests/golden/oracle/requirements_units.json"
-#define MAP "generated/scenarios/idle_marines.kpm"
+#define MAP "scenarios/idle_marines"
 #define SEED 946684819
 #define PLAYERS 12
 #define UNIT_TYPES 228
@@ -56,7 +56,7 @@ static const char *const UNIT_FIELDS[] = { "owner", "order", "status", "type", "
 	"queue4", "queue_slot", "secondary_order", "union_0xc0", "union_0xc8", "union_0xd0", "build_unit", "order_unit",
 	"ai", "subunit", "lockdown_timer", "stasis_timer", "maelstrom_timer" };
 
-static const char *const FILES[] = { KP_ORACLE_DATA "dat.kpd", MAP, NULL };
+static const char *const FILES[] = { KP_T_DATA, MAP, NULL };
 
 /* A game of the probes' map (events on, no campaign row). */
 static KpOracleGame *new_game(KpT *T, int expansion) { return kp_t_probe_game(T, MAP, SEED, expansion, 0); }

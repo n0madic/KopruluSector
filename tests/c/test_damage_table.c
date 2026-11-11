@@ -8,7 +8,7 @@
 #include <stdio.h>
 
 #define GOLDEN "tests/golden/oracle/damage_table.json"
-#define MISSION "generated/scenarios/medic_heal.kpm" /* an expansion game: the Brood War DAT */
+#define MISSION "scenarios/medic_heal" /* an expansion game: the Brood War DAT */
 #define ZEALOT 65                                    /* a sprite with a shield LO for the shield hit image */
 #define UNIT_TYPES 228
 #define WEAPONS 130
@@ -19,7 +19,7 @@
 
 static void damage_table_equals_the_original(KpT *T)
 {
-	static const char *const FILES[] = { KP_ORACLE_DATA "dat.kpd", MISSION, NULL };
+	static const char *const FILES[] = { KP_T_DATA, MISSION, NULL };
 	const KpJson *golden, *levels, *rows;
 	KpOracleGame *og;
 	KpGame *g;

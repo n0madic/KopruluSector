@@ -136,11 +136,11 @@ static MIX_Audio *sfx(KpApp *a, uint32_t id)
 	KpAudio *au = &a->audio;
 	const KpPack *speech;
 	const KpPackSound *s;
-	if (id >= KP_APP_SFX || id >= a->ui_data.sound_path_count) return NULL;
+	if (id >= KP_APP_SFX || id >= a->data.ui.sound_path_count) return NULL;
 	speech = speech_pack(a); /* a change of the speech drops the decoded sfx first */
 	if (au->sfx[id]) return au->sfx[id];
 	if (speech && (s = kp_pack_sound(speech, id)) != NULL) au->sfx[id] = load(au, s->ogg, s->size, 1);
-	else if (a->ui_data.sound_paths[id]) au->sfx[id] = load_file(a, a->ui_data.sound_paths[id]);
+	else if (a->data.ui.sound_paths[id]) au->sfx[id] = load_file(a, a->data.ui.sound_paths[id]);
 	return au->sfx[id];
 }
 
@@ -297,7 +297,7 @@ static MIX_Audio *wav(KpApp *a, uint32_t string_id)
 	for (k = 0; k < m->sound_count; k++) {
 		const KpMissionSound *s = &m->sounds[k];
 		if (s->string_id == string_id && s->index < KP_APP_WAVS) {
-			const KpAppMission *entry = a->flow.current >= 0 ? &a->missions[a->flow.current] : NULL;
+			const KpDataMission *entry = a->flow.current >= 0 ? &a->data.missions[a->flow.current] : NULL;
 			const KpPackSound *ps;
 			char path[KP_APP_FILE_NAME];
 			if (au->wavs[s->index]) return au->wavs[s->index];

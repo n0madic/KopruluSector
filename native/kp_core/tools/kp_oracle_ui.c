@@ -6,58 +6,44 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "../src/core/kp_kpf.h"
 #include "kp_present.h"
 
 /* --- the interface --- */
 
-static const char *const UI_FILES[6] = { "generated/data/ui.kpd", "generated/data/fonts.kpd", "generated/data/strings.kpd",
-	"generated/data/portraits.kpd", "generated/data/sounds.kpd", "generated/data/campaign.kpd" };
-
-const uint8_t *kp_oracle_ui_campaign_section(const KpOracleUi *u, const char *fourcc, size_t *size)
-{
-	return kp_kpf_table_in(u->files[5], u->sizes[5], fourcc, size);
-}
-
 int kp_oracle_ui_new(KpOracleUi *u, const char *root, int flags, KpError *err)
 {
+	const KpData *d;
+	const KpDefsTable *chea, *tabl;
 	char why[256];
-	int k;
 	memset(u, 0, sizeof *u);
-	for (k = 0; k < 6; k++) {
-		int wanted = k < 2 || (k == 2 && (flags & KP_ORACLE_UI_STRINGS)) || (k == 3 && (flags & KP_ORACLE_UI_PORTRAITS))
-			|| (k == 4 && (flags & KP_ORACLE_UI_SOUNDS)) || (k == 5 && (flags & (KP_ORACLE_UI_CHEATS | KP_ORACLE_UI_CAMPAIGN)));
-		if (wanted && !(u->files[k] = kp_read_under(root, UI_FILES[k], &u->sizes[k], err))) goto failed;
+	if (!(d = kp_oracle_data(root, err))) return -1;
+	/* the data's interface without the parts the flags leave out (kp_ui_new_data sets those d has) */
+	u->data = d->ui;
+	if (!(flags & KP_ORACLE_UI_STRINGS)) memset(u->data.tbl, 0, sizeof u->data.tbl);
+	if (!(flags & KP_ORACLE_UI_PORTRAITS)) {
+		memset(&u->data.portrait_rows, 0, sizeof u->data.portrait_rows);
+		memset(&u->data.portraits, 0, sizeof u->data.portraits);
 	}
-	u->ui = kp_ui_new(u->files[0], u->sizes[0], u->files[1], u->sizes[1], why, sizeof why);
-	if (!u->ui) {
-		kp_error_set(err, "%s", why);
+	if (!(flags & KP_ORACLE_UI_SOUNDS)) {
+		memset(&u->data.sounds, 0, sizeof u->data.sounds);
+		memset(&u->data.music_lengths, 0, sizeof u->data.music_lengths);
+	}
+	if (!(u->ui = kp_ui_new_data(&u->data, why, sizeof why))) return kp_error_set(err, "%s", why);
+	chea = kp_defs_table(d->files.profile, "CHEA");
+	tabl = kp_defs_table(d->files.profile, "TABL");
+	if ((flags & KP_ORACLE_UI_CHEATS) && (!chea || kp_ui_set_cheats(u->ui, chea->data, chea->size) != 0)) {
+		kp_error_set(err, "ui: no CHEA table or a malformed one");
 		goto failed;
 	}
-	if ((flags & KP_ORACLE_UI_STRINGS) && kp_ui_set_strings(u->ui, u->files[2], u->sizes[2]) != 0) goto ui_failed;
-	if ((flags & KP_ORACLE_UI_PORTRAITS) && kp_ui_set_portraits(u->ui, u->files[3], u->sizes[3]) != 0) goto ui_failed;
-	if ((flags & KP_ORACLE_UI_SOUNDS) && kp_ui_set_sounds(u->ui, u->files[4], u->sizes[4]) != 0) goto ui_failed;
-	if (flags & KP_ORACLE_UI_CHEATS) {
-		size_t n;
-		const uint8_t *chea = kp_oracle_ui_campaign_section(u, "CHEA", &n);
-		if (!chea || kp_ui_set_cheats(u->ui, chea, n) != 0) {
-			kp_error_set(err, "ui: a malformed CHEA section");
-			goto failed;
-		}
-	}
 	if (flags & KP_ORACLE_UI_CAMPAIGN) {
-		size_t n;
-		const uint8_t *tabl = kp_oracle_ui_campaign_section(u, "TABL", &n);
 		if (!tabl) {
 			kp_error_set(err, "ui: no campaign TABL");
 			goto failed;
 		}
-		u->ui->menus.campaign = tabl;
-		u->ui->menus.campaign_size = n;
+		u->ui->menus.campaign = tabl->data;
+		u->ui->menus.campaign_size = tabl->size;
 	}
 	return 0;
-ui_failed:
-	kp_error_set(err, "ui: %s", u->ui->error);
 failed:
 	kp_oracle_ui_free(u);
 	return -1;
@@ -71,8 +57,7 @@ void kp_oracle_ui_free(KpOracleUi *u)
 		u->ui->timers.trace = NULL;
 		kp_ui_free(u->ui);
 	}
-	for (k = 0; k < 6; k++) free(u->files[k]);
-	free(u->palettes);
+	if (u->has_tileset) kp_tileset_free(&u->tileset);
 	for (k = 0; k < 3; k++) free(u->ticks[k]);
 	free(u->time_seeds);
 	memset(u, 0, sizeof *u);
@@ -81,23 +66,17 @@ void kp_oracle_ui_free(KpOracleUi *u)
 int kp_oracle_ui_colours(KpOracleUi *u, const char *root, const KpOracleGame *og, int minimap, KpError *err)
 {
 	const KpMission *m = &og->data.mission;
-	KpTileset t;
-	KpPalettes pal;
-	char path[128];
-	kp_host_tileset_path(og, path, sizeof path);
-	if (kp_tileset_load(&t, og->tileset, og->tileset_size, path, err) != 0) {
-		return -1;
-	}
-	kp_ui_resolve_colours(u->ui, t.rgb, t.cycled);
-	if (kp_ui_game_effects(u->ui, t.rgb, t.cycled) != 0) return kp_error_set(err, "ui: out of memory");
-	if (minimap) {
-		free(u->palettes);
-		if (!(u->palettes = kp_read_under(root, "generated/data/palettes.kpd", &u->palettes_size, err))) return -1;
-		if (kp_palettes_load(&pal, u->palettes, u->palettes_size, err) != 0) return -1;
-		if (!t.mmni || kp_ui_set_minimap(u->ui, t.mmni, t.mmni_size, t.rgb, t.cycled, pal.tilesets[m->tileset & 7].dark,
-			m->has_colors ? m->colors : NULL) != 0) {
-			return kp_error_set(err, "ui: no tminimap.pcx or tblink.pcx");
-		}
+	const KpData *d;
+	if (!(d = kp_oracle_data(root, err))) return -1;
+	if (u->has_tileset) kp_tileset_free(&u->tileset);
+	u->has_tileset = 0;
+	if (kp_tileset_from_files(&u->tileset, &d->files, (int)(m->tileset & 7), err) != 0) return -1;
+	u->has_tileset = 1;
+	kp_ui_resolve_colours(u->ui, u->tileset.rgb, u->tileset.cycled);
+	if (kp_ui_game_effects(u->ui, u->tileset.rgb, u->tileset.cycled) != 0) return kp_error_set(err, "ui: out of memory");
+	if (minimap && (!u->tileset.mmni || kp_ui_set_minimap(u->ui, u->tileset.mmni, u->tileset.mmni_size, u->tileset.rgb,
+		u->tileset.cycled, d->palettes.tilesets[m->tileset & 7].dark, m->has_colors ? m->colors : NULL) != 0)) {
+		return kp_error_set(err, "ui: no tminimap.pcx or tblink.pcx");
 	}
 	return 0;
 }
@@ -761,10 +740,6 @@ int kp_trace_file_parse(KpTraceFile *f, char *text, const char *const *header_wo
 		if (n == 0) continue;
 		rest = line + n;
 		while (*rest == ' ' || *rest == '\t') rest++;
-		if (n == 3 && strncmp(line, "kpm", 3) == 0) {
-			snprintf(f->kpm, sizeof f->kpm, "%s", rest);
-			continue;
-		}
 		for (k = 0; k < f->header_count; k++) {
 			if (strlen(f->header_words[k]) == n && strncmp(f->header_words[k], line, n) == 0) break;
 		}

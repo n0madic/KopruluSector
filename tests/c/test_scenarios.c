@@ -16,7 +16,7 @@
 #define RESULT_VICTORY 3
 #define RESULT_STEPS 100 /* a play's dumps (every 20th step) end when the result dialog pauses the game */
 
-static const char *const DATA_FILES[] = { KP_ORACLE_DATA "dat.kpd", NULL };
+static const char *const DATA_FILES[] = { KP_T_DATA, NULL };
 
 static const KpJson *golden(KpT *T, const char *kind, const char *name)
 {
@@ -167,7 +167,7 @@ static void free_chain(void *p)
  * (kp_campaign.h, with the game's own result and next scenario) is the chain's next game. */
 static void campaign_chains_equal_the_original(KpT *T)
 {
-	static const char *const FILES[] = { KP_ORACLE_DATA "dat.kpd", KP_ORACLE_DATA "campaign.kpd", NULL };
+	static const char *const FILES[] = { KP_T_DATA, NULL };
 	const KpJson *index;
 	KpBuf *bad;
 	int k, chains = 0;

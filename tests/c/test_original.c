@@ -602,33 +602,38 @@ static void remastered_interface(KpT *T)
 		"the executable's tables");
 }
 
-#define CATALOG_CAP 256 /* more than the campaign's missions */
-
 /* The catalog of the original data (the campaign's mission directories by mapdata index) is the converted index's:
- * each mission's name, saves' name and campaign row, and its directory the campaign's. */
+ * each mission's name and campaign row (its line), and its directory the campaign's. */
 static void catalog_equals(KpT *T, const char *env)
 {
-	static KpAppMission a[CATALOG_CAP], b[CATALOG_CAP];
-	KpCampaign *c = (KpCampaign *)zalloc(T, sizeof *c);
+	KpData *d = (KpData *)zalloc(T, sizeof *d);
 	KpFiles f;
 	KpError err;
-	size_t size;
+	size_t size, at = 0;
 	char *index;
-	int n, m, k;
+	int line = 0, n = 0, k;
 	files_of(T, env, "generated/missions/index.txt", &f);
 	index = (char *)kp_t_read(T, "generated/missions/index.txt", &size);
-	n = kp_flow_missions(a, CATALOG_CAP, index, size, NULL, 0);
-	kp_t_ok(T, kp_campaign_from_files(c, &f, &err) == 0, "%s", err.msg);
-	kp_t_defer(T, campaign_free, c);
-	m = kp_flow_missions_campaign(b, CATALOG_CAP, c, NULL, 0);
-	kp_t_eq(T, m, n, "the missions");
-	kp_t_eq(T, n, 64, "the campaign's missions");
-	for (k = 0; k < n && k < m; k++) {
-		kp_t_ok(T, strcmp(a[k].name, b[k].name) == 0 && strcmp(a[k].kpm, b[k].kpm) == 0 && a[k].index == b[k].index
-			&& b[k].catalog && strcmp(b[k].directory, c->directories[b[k].index]) == 0, "mission %d (%s, %s)", k,
-			a[k].name, b[k].name);
-		kp_t_ok(T, a[k].directory[0] == 0, "the index's mission %d has no directory", k);
+	kp_t_ok(T, kp_campaign_from_files(&d->campaign, &f, &err) == 0, "%s", err.msg);
+	kp_t_defer(T, campaign_free, &d->campaign);
+	kp_data_catalog(d, NULL, 0);
+	while (at < size) {
+		char name[64];
+		size_t end = at;
+		while (end < size && index[end] != '\n') end++;
+		line++;
+		if (sscanf(index + at, "%63s", name) == 1 && index[at] != '\n') {
+			const KpDataMission *m = n < d->mission_count ? &d->missions[n] : NULL;
+			kp_t_ok(T, m && strcmp(m->name, name) == 0 && m->index == line && m->catalog
+				&& strcmp(m->directory, d->campaign.directories[m->index]) == 0, "mission %d (%s, %s)", n, name,
+				m ? m->name : "none");
+			n++;
+		}
+		at = end + 1;
 	}
+	kp_t_eq(T, d->mission_count, n, "the missions");
+	kp_t_eq(T, n, 64, "the campaign's missions");
+	for (k = 0; k < d->mission_count; k++) kp_t_ok(T, d->missions[k].catalog, "no scenario");
 }
 
 static void session_free(void *p)
@@ -650,7 +655,7 @@ static void shared_free(void *p)
  * GAME_STEPS steps. */
 static void game_equals(KpT *T, const char *env, const char *name, const char *directory)
 {
-	char kpm[160], tileset[128];
+	char kpm[160], key[160], tileset[128];
 	KpFiles f;
 	KpError err;
 	KpDat *dat = (KpDat *)zalloc(T, sizeof *dat);
@@ -685,7 +690,8 @@ static void game_equals(KpT *T, const char *env, const char *name, const char *d
 		"the converted game: %s", s[1]->error);
 	kp_session_start_defaults(&start);
 	start.seed = 1;
-	start.mission_index = kp_oracle_mission_index(".", kpm);
+	snprintf(key, sizeof key, "missions/%s", name);
+	start.mission_index = kp_oracle_mission_index(".", key);
 	kp_t_eq(T, kp_session_start(s[0], NULL, 0, &start), 0, "the files' game starts: %s", s[0]->error);
 	kp_host_tileset_path(&s[1]->host, tileset, sizeof tileset);
 	if (!(tileset_bytes = kp_read_file(tileset, &tileset_size))) kp_t_fail(T, "no %s", tileset);

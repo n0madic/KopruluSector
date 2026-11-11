@@ -6,8 +6,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "kp_data.h"
 #include "kp_json.h"
-#include "../src/core/kp_kpf.h"
 
 #define BYTE_BLOCK 65536
 
@@ -362,200 +362,133 @@ void kp_oracle_opts(KpOracleOpts *o)
 	o->host.mission_index = KP_NIL;
 }
 
-/* A generated index (generated/missions/index.txt, generated/scenarios/index.txt): its names, their first field after
- * them and line numbers; read once per root and path. */
-typedef struct {
-	char root[256], path[64];
-	char *text;
-	int count;
-	char **names, **bases;
-	int *lines;
-} Index;
-
-static Index *index_of(const char *root, const char *path)
-{
-	static Index cache[4];
-	static int used;
-	Index *ix;
-	char full[1024];
-	size_t size;
-	int k;
-	for (k = 0; k < used; k++) {
-		if (strcmp(cache[k].root, root) == 0 && strcmp(cache[k].path, path) == 0) return &cache[k];
-	}
-	ix = &cache[used < 4 ? used++ : 3];
-	free(ix->text);
-	free(ix->names);
-	free(ix->bases);
-	free(ix->lines);
-	memset(ix, 0, sizeof *ix);
-	snprintf(ix->root, sizeof ix->root, "%s", root);
-	snprintf(ix->path, sizeof ix->path, "%s", path);
-	join(full, sizeof full, root, path);
-	ix->text = (char *)kp_read_file(full, &size);
-	if (!ix->text) return ix;
-	{
-		int lines = 1, n = 0;
-		char *p;
-		for (p = ix->text; *p; p++) {
-			if (*p == '\n') lines++;
-		}
-		ix->names = (char **)calloc((size_t)lines, sizeof *ix->names);
-		ix->bases = (char **)calloc((size_t)lines, sizeof *ix->bases);
-		ix->lines = (int *)calloc((size_t)lines, sizeof *ix->lines);
-		if (!ix->names || !ix->bases || !ix->lines) kp_out_of_memory();
-		p = ix->text;
-		while (*p) {
-			char *end = strchr(p, '\n'), *name, *base;
-			if (end) *end = '\0';
-			if (*p) { /* an empty line is skipped and not counted */
-				n++;
-				name = strtok(p, " \t\r");
-				base = name ? strtok(NULL, " \t\r") : NULL;
-				if (name && base) {
-					ix->names[ix->count] = name;
-					ix->bases[ix->count] = base;
-					ix->lines[ix->count] = n;
-					ix->count++;
-				}
-			}
-			if (!end) break;
-			p = end + 1;
-		}
-	}
-	return ix;
-}
-
-/* The row of name in an index, or -1 (the last row of a repeated name). */
-static int index_row(const Index *ix, const char *name)
-{
-	int k, found = -1;
-	for (k = 0; k < ix->count; k++) {
-		if (strcmp(ix->names[k], name) == 0) found = k;
-	}
-	return found;
-}
-
-/* name = the part of path between prefix and ".kpm", or 0. */
-static int path_name(const char *path, const char *prefix, char *name, size_t size)
-{
-	const char *at = strstr(path, prefix);
-	size_t n, len;
-	if (!at) return 0;
-	at += strlen(prefix);
-	len = strlen(at);
-	if (len < 5 || strcmp(at + len - 4, ".kpm") != 0) return 0;
-	n = len - 4;
-	if (n >= size) return 0;
-	memcpy(name, at, n);
-	name[n] = '\0';
-	return 1;
-}
-
-int64_t kp_oracle_mission_index(const char *root, const char *path)
-{
-	char name[512];
-	const Index *missions;
-	int row;
-	if (path_name(path, "generated/scenarios/", name, sizeof name)) {
-		const Index *scenarios = index_of(root, "generated/scenarios/index.txt");
-		row = index_row(scenarios, name);
-		if (row < 0) return 0;
-		snprintf(name, sizeof name, "%s", scenarios->bases[row]);
-	} else if (!path_name(path, "generated/missions/", name, sizeof name)) {
-		return 0;
-	}
-	missions = index_of(root, "generated/missions/index.txt");
-	row = index_row(missions, name);
-	return row < 0 ? 0 : missions->lines[row];
-}
-
-/* The data every game under a root shares (grpmeta.kpd, iscript.kpd, aiscript.kpd parsed) and its dat.kpd, read once
- * per root and kept for the process: its games point into it. */
+/* The original data under a root (kp_data_dir: the root itself when it is a source, else its repack), opened and
+ * built once per root and kept for the process: its games point into it. */
 typedef struct DataRoot {
 	struct DataRoot *next;
 	char root[256];
-	KpHostShared shared;
-	uint8_t *dat;
-	size_t dat_size;
+	KpRes *res;
+	KpData data;
+	uint8_t *fonts[KP_DATA_VECTOR_FONTS];
 } DataRoot;
 
-static const DataRoot *data_root(const char *root, KpError *err)
+static int data_root_open(DataRoot *r, const char *root, KpError *err)
+{
+	KpResConfig config;
+	KpUiFile fonts[KP_DATA_VECTOR_FONTS];
+	char dir[600], why[600];
+	const char *dirs[1];
+	uint8_t *scenarios;
+	size_t size, scenarios_size = 0;
+	int k, count = 0, rc;
+	if (!kp_data_dir(root, dir, sizeof dir)) {
+		return kp_error_set(err, "oracle: no original data under %s (a repack: make repack; an install)", root);
+	}
+	dirs[0] = dir;
+	memset(&config, 0, sizeof config);
+	if (!(r->res = kp_res_open(dirs, 1, &config, why, sizeof why))) return kp_error_set(err, "oracle: %s", why);
+	for (k = 0; k < KP_DATA_VECTOR_FONTS; k++) { /* the source tree's (an absent one: the text drawn without it) */
+		char path[128];
+		snprintf(path, sizeof path, "third_party/fonts/%s", KP_DATA_VECTOR_FONT_FILES[k][1]);
+		if (!(r->fonts[k] = kp_read_under(root, path, &size, err))) continue;
+		fonts[count].path = KP_DATA_VECTOR_FONT_FILES[k][0];
+		fonts[count].path_len = strlen(KP_DATA_VECTOR_FONT_FILES[k][0]);
+		fonts[count].data = r->fonts[k];
+		fonts[count++].size = size;
+	}
+	scenarios = kp_read_under(root, KP_DATA_SCENARIOS "index.txt", &scenarios_size, err);
+	rc = kp_data_build(&r->data, r->res, fonts, count, (const char *)scenarios, scenarios ? scenarios_size : 0, err);
+	free(scenarios);
+	return rc;
+}
+
+const KpData *kp_oracle_data(const char *root, KpError *err)
 {
 	static DataRoot *roots;
 	DataRoot *r;
-	uint8_t *grp = NULL, *iscript = NULL, *aiscript = NULL;
-	size_t grp_size, iscript_size, aiscript_size;
-	int rc = -1;
+	int k;
 	for (r = roots; r; r = r->next) {
-		if (strcmp(r->root, root) == 0) return r;
+		if (strcmp(r->root, root) == 0) return &r->data;
 	}
 	if (!(r = (DataRoot *)calloc(1, sizeof *r))) kp_out_of_memory();
 	snprintf(r->root, sizeof r->root, "%s", root);
-	if ((grp = kp_read_under(root, "generated/data/grpmeta.kpd", &grp_size, err))
-		&& (iscript = kp_read_under(root, "generated/data/iscript.kpd", &iscript_size, err))
-		&& (aiscript = kp_read_under(root, "generated/data/aiscript.kpd", &aiscript_size, err))
-		&& (r->dat = kp_read_under(root, "generated/data/dat.kpd", &r->dat_size, err))) {
-		rc = kp_host_shared_load(&r->shared, grp, grp_size, iscript, iscript_size, aiscript, aiscript_size, err);
-	}
-	free(grp);
-	free(iscript);
-	free(aiscript);
-	if (rc != 0) {
-		free(r->dat);
+	if (data_root_open(r, root, err) != 0) {
+		if (r->res) kp_res_close(r->res);
+		for (k = 0; k < KP_DATA_VECTOR_FONTS; k++) free(r->fonts[k]);
 		free(r);
 		return NULL;
 	}
 	r->next = roots;
 	roots = r;
-	return r;
+	return &r->data;
 }
 
-/* The speech's overlay of the mission at path (generated/missions/<name>.kpm) over the loaded game (ADR 0016, stage L5). */
-static int lay_speech(KpOracleGame *og, const char *root, const char *path, const char *speech, KpError *err)
+int64_t kp_oracle_mission_index(const char *root, const char *key)
 {
-	static const char MISSIONS[] = "generated/missions/";
-	const char *name = strstr(path, MISSIONS); /* the path may be absolute (tools/state_check.py) */
+	KpError err;
+	const KpData *d = kp_oracle_data(root, &err);
+	const KpDataMission *m = d ? kp_data_find(d, key) : NULL;
+	return m ? m->index : 0;
+}
+
+/* The speech's overlay of a campaign mission (generated/speech/<loc>/missions/<campaign>/<name>.kpm) over the loaded
+ * game (ADR 0016, stage L5). */
+static int lay_speech(KpOracleGame *og, const char *root, const char *key, const char *speech, KpError *err)
+{
+	static const char MISSIONS[] = "missions/";
 	char overlay_path[512];
 	uint8_t *overlay;
 	size_t size;
-	if (!name) return kp_error_set(err, "speech: %s is not a campaign mission", path);
-	snprintf(overlay_path, sizeof overlay_path, "%s%s", speech, name + sizeof MISSIONS - 1);
+	if (strncmp(key, MISSIONS, sizeof MISSIONS - 1) != 0) return kp_error_set(err, "speech: %s is not a campaign mission", key);
+	snprintf(overlay_path, sizeof overlay_path, "%s%s.kpm", speech, key + sizeof MISSIONS - 1);
 	if (!(overlay = kp_read_under(root, overlay_path, &size, err))) return -1;
 	return kp_host_game_speech(og, overlay, size, err); /* takes the overlay */
 }
 
-int kp_oracle_game_start(KpOracleGame *og, const char *root, const char *path, uint32_t seed, int expansion,
+const KpDataMission *kp_oracle_mission(const char *root, const char *key, KpMission *m, KpError *err)
+{
+	const KpData *d;
+	const KpDataMission *entry;
+	uint8_t *chk = NULL;
+	size_t chk_size = 0;
+	memset(m, 0, sizeof *m);
+	if (!(d = kp_oracle_data(root, err))) return NULL;
+	if (!(entry = kp_data_find(d, key))) {
+		kp_error_set(err, "oracle: no mission %s in the catalog", key);
+		return NULL;
+	}
+	if (!entry->directory[0]) {
+		char path[256];
+		snprintf(path, sizeof path, KP_DATA_SCENARIOS "%s.chk", key + sizeof "scenarios/" - 1);
+		if (!(chk = kp_read_under(root, path, &chk_size, err))) return NULL;
+	}
+	return kp_data_mission(d, entry, chk, chk_size, m, err) == 0 ? entry : NULL; /* the CHK taken */
+}
+
+int kp_oracle_game_start(KpOracleGame *og, const char *root, const char *key, uint32_t seed, int expansion,
 	const KpOracleOpts *opts, KpError *err)
 {
 	KpOracleOpts defaults;
 	KpHostOpts ho;
-	const DataRoot *data;
-	uint8_t *mission, *tileset_bytes;
-	size_t mission_size, tileset_size;
-	char tileset[128];
+	const KpData *d;
+	const KpDataMission *entry;
+	KpMission m;
 	if (!opts) {
 		kp_oracle_opts(&defaults);
 		opts = &defaults;
 	}
 	memset(og, 0, sizeof *og);
-	if (!(data = data_root(root, err)) || !(mission = kp_read_under(root, path, &mission_size, err))) return -1;
-	if (kp_host_game_load(og, &data->shared, data->dat, data->dat_size, mission, mission_size,
-		opts->name ? opts->name : path, err) != 0) {
-		return -1;
-	}
-	if (opts->speech && lay_speech(og, root, path, opts->speech, err) != 0) {
-		kp_host_game_free(og);
-		return -1;
-	}
-	kp_host_tileset_path(og, tileset, sizeof tileset);
-	if (!(tileset_bytes = kp_read_under(root, tileset, &tileset_size, err))) {
+	if (!(entry = kp_oracle_mission(root, key, &m, err))) return -1;
+	d = kp_oracle_data(root, err);
+	if (kp_host_game_load_from(og, &d->shared, &d->dat, &m, opts->name ? opts->name : key, err) != 0) return -1;
+	if (kp_host_game_tileset_files(og, &d->files, err) != 0
+		|| (opts->speech && lay_speech(og, root, key, opts->speech, err) != 0)) {
 		kp_host_game_free(og);
 		return -1;
 	}
 	ho = opts->host;
-	if (ho.mission_index == KP_NIL) ho.mission_index = kp_oracle_mission_index(root, path);
-	return kp_host_game_start(og, tileset_bytes, tileset_size, seed, expansion, &ho, err);
+	if (ho.mission_index == KP_NIL) ho.mission_index = entry->index;
+	return kp_host_game_start(og, NULL, 0, seed, expansion, &ho, err);
 }
 
 void kp_oracle_game_free(KpOracleGame *og) { kp_host_game_free(og); }

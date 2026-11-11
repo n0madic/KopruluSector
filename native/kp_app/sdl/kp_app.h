@@ -22,13 +22,11 @@
 
 #define KP_APP_NAME "KopruluSector" /* the identifier: the profile's directory (SDL_GetPrefPath), never shown */
 #define KP_APP_TITLE "Koprulu Sector" /* the name shown: the window's title, the application's metadata, a message box */
-#define KP_APP_MISSIONS 256
 #define KP_APP_PACKS 8
 #define KP_APP_CHANNELS 8 /* the original's eight sound channels (kp_ui_sound.c) */
 #define KP_APP_STREAMS 8
 #define KP_APP_SFX 1200
 #define KP_APP_WAVS 256 /* a mission's trigger WAVs by WAVS index */
-#define KP_APP_VECTOR_FONTS 2  /* the interface's vector fonts (ADR 0011): the text's, font16x's wide one */
 #define KP_APP_FILE_NAME 260   /* an original file's name (MAX_PATH): the music's, a trigger's WAV */
 #define KP_APP_MUSIC_LOOPS 1   /* the MUSI kind of a track that loops (converter/kpf/resources.py TRACK_LOOPS) */
 #define KP_APP_PAN_FULL 10000
@@ -266,21 +264,14 @@ struct KpApp {
 	char pref[1024];
 	int quit;
 	int recheck_context;   /* back from the background: the GL context is checked on the next frame */
-	/* the data every game and the interface read, built from the original files (ADR 0018) */
-	KpHostShared shared; /* grpmeta, iscript, the AI scripts: built once for every game */
-	KpPalettes palettes;
-	KpCampaign campaign;
+	/* the data every game and the interface read, built from the original files (ADR 0018, kp_data.h), the vector
+	 * fonts its interface points into (not original data: kp_app_load_data), the saves' identity, the console's art,
+	 * the executable's music table (MUSI: the tracks' files) */
+	KpData data;
+	void *vector_fonts[KP_DATA_VECTOR_FONTS];
 	KpSaveIdentity identity;
 	uint8_t *console_art;  /* generated/data/console.kpd (optional), or NULL */
 	size_t console_art_size;
-	KpAppMission missions[KP_APP_MISSIONS];
-	int mission_count;
-	/* what the builders read through, the data set's DAT each game copies, the interface's data, the vector fonts it
-	 * points into (not original data: kp_app_load_data), the executable's music table (MUSI: the tracks' files) */
-	KpFiles files;
-	KpDat dat_proto;
-	KpUiData ui_data;
-	void *vector_fonts[KP_APP_VECTOR_FONTS];
 	const uint8_t *musi;
 	uint32_t musi_size;
 	KpProfile profile;

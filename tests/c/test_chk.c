@@ -2,7 +2,8 @@
  * fixture scenario (mission.chk, the CHK of mission.kpm) read through the profile's loader tables gives the fixture's
  * mission; variants of it are refused as converter/tests/test_chk.py and the trigger validation refuse them; every
  * campaign mission of the installs of KP_TEST_ORIGINAL (1.17) and KP_TEST_SCR (StarCraft: Remastered) equals the
- * converted .kpm, skipped without them or the converted missions. */
+ * converted .kpm, skipped without them or the converted missions; every test scenario built from its CHK and its index
+ * line's packs (stage D8c, kp_data_mission) equals its .kpm. */
 #include "kp_test_app.h"
 
 #include <stdio.h>
@@ -420,6 +421,36 @@ static void missions_equal(KpT *T, const char *env, int sounds)
 	kp_t_eq(T, compared, CAMPAIGN_MISSIONS, "the campaign's missions compared");
 }
 
+/* Every test scenario of the data's catalog from its CHK (converter/scenarios.py writes both) equals its .kpm. */
+static void scenarios_equal_the_converted(KpT *T)
+{
+	const KpData *d = kp_t_data(T);
+	KpError err;
+	int k, compared = 0;
+	for (k = 0; k < d->mission_count; k++) {
+		const KpDataMission *e = &d->missions[k];
+		char path[160];
+		KpMission *a, *b;
+		size_t size;
+		const uint8_t *kpm;
+		int mark = kp_t_mark(T);
+		if (e->catalog) continue;
+		snprintf(path, sizeof path, "generated/%s.kpm", e->key);
+		if (!kp_t_has(T, path)) continue;
+		a = (KpMission *)owned(T, sizeof *a);
+		b = (KpMission *)owned(T, sizeof *b);
+		kpm = kp_t_read(T, path, &size);
+		kp_t_ok(T, kp_mission_load(a, kpm, size, e->name, NULL, &err) == 0, "%s", err.msg);
+		kp_t_defer(T, mission_free, a);
+		kp_t_ok(T, kp_oracle_mission(".", e->key, b, &err) != NULL, "%s", err.msg);
+		kp_t_defer(T, mission_free, b);
+		mission_eq(T, a, b, e->name, 1);
+		kp_t_release(T, mark);
+		compared++;
+	}
+	kp_t_ok(T, compared > 100, "the test scenarios compared: %d", compared);
+}
+
 static void original_missions(KpT *T) { missions_equal(T, "KP_TEST_ORIGINAL", 1); }
 /* Remastered's speech differs from 1.17's (its own recordings): the WAV records are its own */
 static void remastered_missions(KpT *T) { missions_equal(T, "KP_TEST_SCR", 0); }
@@ -430,5 +461,6 @@ static const KpTest TESTS[] = {
 	{ "unreachable_or_unsupported_triggers_are_validated", trigger_validation, 0 },
 	{ "the_1_17_missions_equal_the_converted", original_missions, 0 },
 	{ "the_remastered_missions_equal_the_converted", remastered_missions, 0 },
+	{ "the_scenarios_from_their_chk_equal_the_converted", scenarios_equal_the_converted, 0 },
 };
 KP_SUITE(kp_suite_chk, "test_chk", TESTS);

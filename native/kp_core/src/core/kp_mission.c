@@ -487,7 +487,8 @@ static void meta_put(uint8_t *p, const KpChkSection *s, size_t n)
 	memcpy(p, s->data, s->size < n ? s->size : n);
 }
 
-int kp_mission_from_files(KpMission *m, const KpFiles *f, const char *directory, KpError *err)
+int kp_mission_from_chk(KpMission *m, const KpFiles *f, uint8_t *chk_bytes, size_t chk_size, const char *name,
+	const char *directory, const uint8_t *packs, size_t pack_size, KpError *err)
 {
 	/* the sections the mission reads; the loader's tables require them all */
 	static const char *const NEEDED[] = { "VER ", "DIM ", "ERA ", "OWNR", "SIDE", "FORC", "SPRP", "MTXM", "MASK", "THG2",
@@ -498,23 +499,21 @@ int kp_mission_from_files(KpMission *m, const KpFiles *f, const char *directory,
 	const KpChkSection *s[NEEDED_COUNT], *colr;
 	KpDerived derived;
 	KpBytes part[PART_COUNT];
-	uint8_t meta[META_SIZE], *chk_bytes = NULL, *rules = NULL, *wavs = NULL, *cv5 = NULL, *vf4 = NULL, *blob;
-	const uint8_t *packs;
-	size_t chk_size, rules_size = 0, wavs_size = 0, cv5_size, vf4_size, pack_size = 0, total, at, offsets[NEEDED_COUNT];
+	uint8_t meta[META_SIZE], *rules = NULL, *wavs = NULL, *cv5 = NULL, *vf4 = NULL, *blob;
+	size_t rules_size = 0, wavs_size = 0, cv5_size, vf4_size, total, at, offsets[NEEDED_COUNT];
 	uint32_t w, h;
 	int i, k, rc = -1;
 	memset(m, 0, sizeof *m);
 	memset(&derived, 0, sizeof derived);
-	snprintf(path, sizeof path, "%s\\staredit\\scenario.chk", directory);
-	if (!(chk_bytes = kp_files_need(f, path, &chk_size, err))) return -1;
+	if (!chk_bytes) return fail(err, name, "out of memory");
 	if (kp_chk_read(&chk, chk_bytes, chk_size, f->profile, 1, why, sizeof why) != 0) {
-		fail(err, directory, why);
+		fail(err, name, why);
 		goto done;
 	}
 	for (i = 0; i < NEEDED_COUNT; i++) {
 		if (!(s[i] = kp_chk_section(&chk, NEEDED[i]))) {
 			snprintf(why, sizeof why, "the scenario has no '%s' section", NEEDED[i]);
-			fail(err, directory, why);
+			fail(err, name, why);
 			goto done;
 		}
 		offsets[i] = (size_t)(s[i]->data - chk_bytes);
@@ -526,11 +525,11 @@ int kp_mission_from_files(KpMission *m, const KpFiles *f, const char *directory,
 		/* the native loader accepts other lengths; no campaign map has one */
 		snprintf(why, sizeof why, "MTXM/MASK sizes %u/%u do not match %ux%u", (unsigned)s[MTXM]->size,
 			(unsigned)s[MASK]->size, (unsigned)w, (unsigned)h);
-		fail(err, directory, why);
+		fail(err, name, why);
 		goto done;
 	}
 	if (validate_triggers(s[TRIG]->data, s[TRIG]->size, why, sizeof why) != 0) {
-		fail(err, directory, why);
+		fail(err, name, why);
 		goto done;
 	}
 	/* META */
@@ -557,7 +556,11 @@ int kp_mission_from_files(KpMission *m, const KpFiles *f, const char *directory,
 			memcpy(rules + at + 8, chk.sections[k].data, chk.sections[k].size);
 			at += 8 + chk.sections[k].size;
 		}
-	if (!(wavs = mission_wavs(f, directory, s[STR], s[TRIG], s[MBRF], &wavs_size, err))) goto done;
+	if (!directory) { /* a test scenario: no WAVs (converter/scenarios.py builds it with none) */
+		if (!(wavs = (uint8_t *)calloc(1, wavs_size = 2))) goto oom;
+	} else if (!(wavs = mission_wavs(f, directory, s[STR], s[TRIG], s[MBRF], &wavs_size, err))) {
+		goto done;
+	}
 	{ /* WALK, RGNS and CONT from the tileset of ERA & 7 (kpm.add_terrain_derived) */
 		const char *tileset = KP_TILESET_NAMES[kp_le_u16(s[ERA]->data) & 7];
 		snprintf(path, sizeof path, "tileset\\%s.cv5", tileset);
@@ -565,13 +568,9 @@ int kp_mission_from_files(KpMission *m, const KpFiles *f, const char *directory,
 		snprintf(path, sizeof path, "tileset\\%s.vf4", tileset);
 		if (!(vf4 = kp_files_need(f, path, &vf4_size, err))) goto done;
 		if (kp_derive_terrain(w, h, s[MTXM]->data, cv5, cv5_size, vf4, vf4_size, &derived, why, sizeof why) != 0) {
-			fail(err, directory, why);
+			fail(err, name, why);
 			goto done;
 		}
-	}
-	if (!(packs = mission_packs(f->profile, directory, &pack_size))) {
-		fail(err, directory, "the profile has no resource packs for this mission (MPAK)");
-		goto done;
 	}
 	/* one blob: the scenario (the raw payloads point into it), then the parts built here */
 	total = chk_size + META_SIZE + rules_size + wavs_size + derived.walk_size + derived.regions_size
@@ -603,7 +602,7 @@ int kp_mission_from_files(KpMission *m, const KpFiles *f, const char *directory,
 	rc = assemble(m, part, directory, err);
 	goto done;
 oom:
-	fail(err, directory, "out of memory");
+	fail(err, name, "out of memory");
 done:
 	if (rc != 0) kp_mission_free(m);
 	free(chk_bytes);
@@ -613,6 +612,54 @@ done:
 	free(vf4);
 	kp_derived_free(&derived);
 	return rc;
+}
+
+int kp_mission_from_files(KpMission *m, const KpFiles *f, const char *directory, KpError *err)
+{
+	char path[KP_ERROR_SIZE];
+	const uint8_t *packs;
+	uint8_t *chk;
+	size_t chk_size, pack_size = 0;
+	memset(m, 0, sizeof *m);
+	if (!(packs = mission_packs(f->profile, directory, &pack_size)))
+		return fail(err, directory, "the profile has no resource packs for this mission (MPAK)");
+	snprintf(path, sizeof path, "%s\\staredit\\scenario.chk", directory);
+	if (!(chk = kp_files_need(f, path, &chk_size, err))) return -1;
+	return kp_mission_from_chk(m, f, chk, chk_size, directory, directory, packs, pack_size, err);
+}
+
+int kp_mission_packs_payload(const char *list, uint8_t *out, size_t cap)
+{
+	const char *names[KP_MISSION_PACKS];
+	size_t lens[KP_MISSION_PACKS], at = 1;
+	int count = 0, k, j;
+	while (*list) {
+		size_t n = strcspn(list, ",");
+		if (n == 0 || n > 255 || count == KP_MISSION_PACKS) return -1;
+		names[count] = list;
+		lens[count++] = n;
+		list += n;
+		if (*list == ',') list++;
+	}
+	for (k = 1; k < count; k++) /* sorted by bytes (kpm.packs_payload) */
+		for (j = k; j > 0; j--) {
+			size_t a = lens[j - 1], b = lens[j];
+			int c = memcmp(names[j - 1], names[j], a < b ? a : b);
+			const char *tn;
+			size_t tl;
+			if (c < 0 || (c == 0 && a <= b)) break;
+			tn = names[j], names[j] = names[j - 1], names[j - 1] = tn;
+			tl = lens[j], lens[j] = lens[j - 1], lens[j - 1] = tl;
+		}
+	if (cap < 1) return -1;
+	out[0] = (uint8_t)count;
+	for (k = 0; k < count; k++) {
+		if (at + 1 + lens[k] > cap) return -1;
+		out[at] = (uint8_t)lens[k];
+		memcpy(out + at + 1, names[k], lens[k]);
+		at += 1 + lens[k];
+	}
+	return (int)at;
 }
 
 void kp_mission_free(KpMission *m)

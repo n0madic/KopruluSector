@@ -1,6 +1,6 @@
 /*
  * The product's flow (native/kp_app/kp_flow.c) over a host that records what it is asked and a clock the tests move,
- * on the generated data: the glue's games from their ready rooms to the console, the game's ends (the result, the
+ * on the original data (kp_t_data: a repack or an install): the glue's games from their ready rooms to the console, the game's ends (the result, the
  * in-game menus' exits) and the campaign's next game, the cinematics between them, the saves, the video options and
  * the view. The world, the sound and the drawing are the host's (sdl/kp_app_flow.c in the product).
  */
@@ -19,10 +19,6 @@
 #include "kp_flow.h"
 #include "kp_script_flow.h"
 
-#define DATA "generated/data/"
-#define CATALOG "generated/missions/index.txt"
-#define SCENARIOS "generated/scenarios/index.txt"
-#define MISSIONS 256
 #define FRAME_S 0.016            /* a frame of the host's clock */
 #define SCREEN_W 1280            /* the drawable (its safe area the whole of it) */
 #define SCREEN_H 960
@@ -61,15 +57,11 @@ typedef struct {
 	KpT *T;
 	KpFlow f;
 	KpAppFlags flags;
-	KpAppMission missions[MISSIONS];
+	const KpData *data;
 	KpProfile profile;
-	uint8_t *ui_files[KP_UI_FILES];
-	size_t ui_sizes[KP_UI_FILES];
-	KpCampaign campaign;
-	int has_campaign;
 	KpSaveIdentity identity;
-	KpPalettes palettes;
 	KpTileset tileset;
+	int has_tileset;
 	char dir[200];           /* the test's own directory of the saves ("" none yet) */
 	char pref[256];
 	double now;
@@ -135,7 +127,7 @@ static void host_sync_files(void *ctx) { ((Host *)ctx)->syncs++; }
 
 static void host_quit(void *ctx) { ((Host *)ctx)->quits++; }
 
-static int host_mission_files(void *ctx, const KpAppMission *m, char *err, size_t err_size)
+static int host_mission_files(void *ctx, const KpDataMission *m, char *err, size_t err_size)
 {
 	Host *H = (Host *)ctx;
 	(void)m;
@@ -156,8 +148,6 @@ static int host_world_build(void *ctx, char *err, size_t err_size)
 {
 	Host *H = (Host *)ctx;
 	const KpMission *m = kp_session_mission(H->f.session);
-	const uint8_t *bytes;
-	size_t size;
 	KpError e;
 	H->builds++;
 	if (H->fail_world) {
@@ -165,11 +155,11 @@ static int host_world_build(void *ctx, char *err, size_t err_size)
 		snprintf(err, err_size, "the test's world does not build");
 		return -1;
 	}
-	bytes = kp_session_tileset(H->f.session, &size);
-	if (kp_tileset_load(&H->tileset, bytes, size, KP_TILESET_NAMES[m->tileset & 7], &e) != 0) {
+	if (kp_tileset_from_files(&H->tileset, &H->data->files, (int)(m->tileset & 7), &e) != 0) {
 		snprintf(err, err_size, "%s", e.msg);
 		return -1;
 	}
+	H->has_tileset = 1;
 	H->world = 1;
 	return 0;
 }
@@ -179,6 +169,8 @@ static void host_world_free(void *ctx)
 	Host *H = (Host *)ctx;
 	H->frees++;
 	H->world = 0;
+	if (H->has_tileset) kp_tileset_free(&H->tileset);
+	H->has_tileset = 0;
 }
 
 static void host_world_frame(void *ctx, int ticks, double fraction, int restart)
@@ -199,7 +191,7 @@ static void host_hud_map(void *ctx, KpHudMap *m)
 	Host *H = (Host *)ctx;
 	const KpMission *mission = kp_session_mission(H->f.session);
 	m->tileset = &H->tileset;
-	m->palettes = &H->palettes;
+	m->palettes = &H->data->palettes;
 	m->tileset_index = (int)(mission->tileset & 7);
 	m->colors = mission->has_colors ? mission->colors : NULL;
 }
@@ -291,30 +283,23 @@ static void release_host(void *p)
 	kp_flow_free(&H->f);
 	for (k = 0; k < H->save_count; k++) remove(H->saves[k]);
 	if (H->dir[0]) rmdir(H->dir);
-	if (H->has_campaign) kp_campaign_free(&H->campaign);
+	if (H->has_tileset) kp_tileset_free(&H->tileset);
 }
 
 static int ready(KpT *T)
 {
-	static const char *const NEED[] = { DATA "dat.kpd", DATA "grpmeta.kpd", DATA "iscript.kpd", DATA "aiscript.kpd",
-		DATA "palettes.kpd", DATA "campaign.kpd", DATA "ui.kpd", DATA "fonts.kpd", DATA "strings.kpd",
-		DATA "portraits.kpd", DATA "sounds.kpd", CATALOG, "generated/missions/" EXPANSION_PROTOSS01 ".kpm",
-		"generated/missions/" EXPANSION_PROTOSS02 ".kpm", "generated/missions/" PROTOSS01 ".kpm", NULL };
+	static const char *const NEED[] = { KP_T_DATA, "missions/" EXPANSION_PROTOSS01, "missions/" EXPANSION_PROTOSS02,
+		"missions/" PROTOSS01, NULL };
 	return kp_t_ready(T, T->test, NEED);
 }
 
-/* A host and its flow over the generated data, not started (its flags and profile the test's to set); NULL when the
+/* A host and its flow over the original data, not started (its flags and profile the test's to set); NULL when the
  * data is not there (the SKIP line printed). Released when the test ends. */
 static Host *new_host(KpT *T)
 {
 	Host *H;
 	KpFlow *f;
 	KpFlowHost *h;
-	const uint8_t *campaign, *palettes;
-	size_t campaign_size, palettes_size, catalog_size, scenarios_size = 0;
-	char *catalog, *scenarios;
-	KpError e;
-	int k;
 	if (!ready(T)) return NULL;
 	H = (Host *)calloc(1, sizeof *H);
 	kp_t_ok(T, H != NULL, "out of memory");
@@ -322,23 +307,9 @@ static Host *new_host(KpT *T)
 	H->T = T;
 	H->now = 1;
 	f = &H->f;
-	/* the files first: the flow's release, deferred after them, runs before theirs */
-	for (k = 0; k < KP_UI_FILES; k++) {
-		char path[128];
-		snprintf(path, sizeof path, DATA "%s", KP_UI_FILE_NAMES[k]);
-		H->ui_files[k] = kp_t_read(T, path, &H->ui_sizes[k]);
-	}
-	f->dat = kp_t_read(T, DATA "dat.kpd", &f->dat_size);
-	campaign = kp_t_read(T, DATA "campaign.kpd", &campaign_size);
-	palettes = kp_t_read(T, DATA "palettes.kpd", &palettes_size);
-	catalog = (char *)kp_t_read(T, CATALOG, &catalog_size);
-	scenarios = kp_t_has(T, SCENARIOS) ? (char *)kp_t_read(T, SCENARIOS, &scenarios_size) : NULL;
+	H->data = kp_t_data(T);
 	kp_t_defer(T, release_host, H);
-	kp_t_ok(T, kp_campaign_load(&H->campaign, campaign, campaign_size, "campaign.kpd", &e) == 0, "%s", e.msg);
-	H->has_campaign = 1;
-	kp_t_ok(T, kp_palettes_load(&H->palettes, palettes, palettes_size, &e) == 0, "%s", e.msg);
-	kp_t_ok(T, kp_save_identity(&H->identity, f->dat, f->dat_size, &e) == 0, "%s", e.msg);
-	f->mission_count = kp_flow_missions(H->missions, MISSIONS, catalog, catalog_size, scenarios, scenarios_size);
+	kp_save_identity(&H->identity, &H->data->files, &H->data->dat);
 	kp_profile_init(&H->profile);
 	/* the saves in a directory of the test's own: two runs of the suite at once share no file */
 	snprintf(H->dir, sizeof H->dir, "build/flow_%s_XXXXXX", T->test);
@@ -377,12 +348,8 @@ static Host *new_host(KpT *T)
 	h->exists = host_exists;
 	h->language = host_language;
 	f->flags = &H->flags;
-	f->missions = H->missions;
-	f->shared = kp_t_shared(T);
-	f->campaign = &H->campaign;
+	f->data = H->data;
 	f->identity = &H->identity;
-	f->ui_files = H->ui_files;
-	f->ui_sizes = H->ui_sizes;
 	f->profile = &H->profile;
 	f->pref = H->pref;
 	f->safe_w = f->full_w = SCREEN_W;
@@ -444,13 +411,13 @@ static Host *glue_host(KpT *T, int pack)
 static int mission_row(const Host *H, const char *name)
 {
 	int k;
-	for (k = 0; k < H->f.mission_count; k++) {
-		if (strcmp(H->missions[k].name, name) == 0) return (int)H->missions[k].index;
+	for (k = 0; k < H->data->mission_count; k++) {
+		if (strcmp(H->data->missions[k].name, name) == 0) return (int)H->data->missions[k].index;
 	}
 	kp_t_fail(H->T, "no mission %s in the catalog", name);
 }
 
-static const char *current(const Host *H) { return H->f.current >= 0 ? H->missions[H->f.current].name : ""; }
+static const char *current(const Host *H) { return H->f.current >= 0 ? H->data->missions[H->f.current].name : ""; }
 
 /* What a menu screen leaves the host (the menus' end: KP_UI_MENU_*), taken by the next frame. */
 static void menus_end(Host *H, int action, int state, int mission, int cinematic, int expansion)
@@ -564,24 +531,40 @@ static void in_menus(const Host *H, int state, const char *what)
 
 /* --- the tests --- */
 
-/* The catalog's missions take their line as their campaign row; a scenario the row of its base map. */
+/* The catalog: the campaign's missions by mapdata index from 1 (kp_campaign_mission_name), then the scenarios of the
+ * index text, a scenario's row its base map's and its packs its line's. */
 static void missions_number_the_catalog_and_place_the_scenarios(KpT *T)
 {
-	static const char CAT[] = "terran/tutorial 1 64 64\nterran/terran01 0 64 64\n\nbad line\nzerg/zerg01 4 64 64";
-	static const char SCN[] = "marine_group terran/terran01 0 64 64\nnowhere zerg/zerg99 0 64 64\n";
-	KpAppMission m[8];
-	int n = kp_flow_missions(m, 8, CAT, sizeof CAT - 1, SCN, sizeof SCN - 1);
-	kp_t_eq(T, n, 5, "three missions, two scenarios");
-	kp_t_eq_str(T, m[1].name, "terran/terran01", NULL);
-	kp_t_eq_str(T, m[1].kpm, "/generated/missions/terran/terran01.kpm", NULL);
-	kp_t_eq(T, m[1].index, 2, "the second line");
-	kp_t_eq(T, m[2].index, 3, "the lines that are no mission count none");
-	kp_t_ok(T, m[1].catalog && !m[3].catalog, "the catalog's and a scenario");
-	kp_t_eq_str(T, m[3].name, "scenarios/marine_group", NULL);
-	kp_t_eq_str(T, m[3].kpm, "/generated/scenarios/marine_group.kpm", NULL);
-	kp_t_eq(T, m[3].index, 2, "its base's row");
-	kp_t_eq(T, m[4].index, 0, "a base outside the catalog: no row");
-	kp_t_eq(T, kp_flow_missions(m, 2, CAT, sizeof CAT - 1, SCN, sizeof SCN - 1), 2, "no more than the table holds");
+	static const char SCN[] = "marine_group terran/terran01 0 64 64 terran,neutral\nnowhere zerg/zerg99 0 64 64 -\n\n"
+		"bad line\n";
+	const KpData *d = kp_t_data(T);
+	const KpDataMission *terran01, *group, *nowhere;
+	KpData *c = (KpData *)malloc(sizeof *c);
+	int k, campaign = 0;
+	kp_t_ok(T, c != NULL, "out of memory");
+	kp_t_defer(T, free, c);
+	*c = *d; /* the same data, another catalog */
+	kp_data_catalog(c, SCN, sizeof SCN - 1);
+	for (k = 0; k < c->mission_count && c->missions[k].catalog; k++) {
+		const KpDataMission *m = &c->missions[k];
+		kp_t_eq(T, m->index, k + 1, "%s: its mapdata index", m->key);
+		kp_t_eq_str(T, m->directory, d->campaign.directories[k + 1], "%s: its directory", m->key);
+		kp_t_ok(T, strncmp(m->key, "missions/", 9) == 0 && strcmp(m->key + 9, m->name) == 0, "%s: its key", m->name);
+		campaign++;
+	}
+	kp_t_eq(T, campaign, 64, "the campaign's missions");
+	kp_t_eq(T, c->mission_count, campaign + 2, "two scenarios, the line that is none skipped");
+	terran01 = kp_data_find(c, "missions/terran/terran01");
+	group = kp_data_find(c, "scenarios/marine_group");
+	nowhere = kp_data_find(c, "scenarios/nowhere");
+	kp_t_ok(T, terran01 && group && nowhere, "found by key");
+	kp_t_eq_str(T, group->name, "scenarios/marine_group", NULL);
+	kp_t_ok(T, !group->catalog && !group->directory[0], "a scenario: its CHK");
+	kp_t_eq(T, group->index, terran01->index, "its base's row");
+	kp_t_eq_str(T, group->packs, "terran,neutral", NULL);
+	kp_t_eq(T, nowhere->index, 0, "a base outside the catalog: no row");
+	kp_t_eq_str(T, nowhere->packs, "", "\"-\": no packs");
+	kp_t_ok(T, kp_data_find(c, "terran/terran01") == NULL, "a name is no key");
 }
 
 /* A campaign mission of the glue waits in its ready room (its game paused, the glue's music stopped); Start brings
@@ -758,7 +741,7 @@ static void victory_goes_through_the_score_screen_to_the_next_game(KpT *T)
 	/* what the campaign gives for the game as it stands */
 	run = H->f.run;
 	progress = *kp_profile_progress(&H->profile);
-	kp_campaign_after_game(&H->campaign, &run, &progress, RESULT_VICTORY,
+	kp_campaign_after_game(&H->data->campaign, &run, &progress, RESULT_VICTORY,
 		(const char *)H->f.session->g->trig.next_scenario, &step, cinematics, &count, KP_APP_STEP_CINEMATICS);
 	kp_t_eq(T, step.kind, KP_CAMPAIGN_STEP_MISSION, "the campaign goes on");
 	saves = H->profile_saves;
@@ -777,7 +760,7 @@ static void victory_goes_through_the_score_screen_to_the_next_game(KpT *T)
 	for (k = 0; k < END_FRAMES && H->builds == builds; k++) frame(H);
 	kp_t_eq(T, H->f.run.mission, step.mission, "the run the campaign advanced to");
 	kp_t_ok(T, memcmp(&H->f.run, &run, sizeof run) == 0, "the run as the campaign's");
-	kp_t_eq(T, H->missions[H->f.current].index, step.mission, "the next mission");
+	kp_t_eq(T, H->data->missions[H->f.current].index, step.mission, "the next mission");
 	kp_t_eq(T, H->f.glue.screen, KP_GLUE_ROOM, "its ready room");
 	kp_t_eq(T, H->f.has_continue, 0, "the continuation taken");
 	kp_t_eq(T, H->cine_starts, 0, "no pack: no cinematics");
@@ -815,22 +798,18 @@ static void victory_without_a_step_opens_the_main_menu(KpT *T)
 	}
 }
 
-/* The first catalog mission (its file there) whose victory, with the game's next scenario cleared, passes cinematic
+/* The first catalog mission whose victory, with the game's next scenario cleared, passes cinematic
  * rows (*count of them) to a step of kind: its name and the run the step leaves (*after), NULL none. */
 static const char *mission_with_step(Host *H, int kind, int *count, KpCampaignRun *after)
 {
 	int k;
-	for (k = 0; k < H->f.mission_count; k++) {
+	for (k = 0; k < H->data->mission_count; k++) {
 		KpCampaignProfile progress = *kp_profile_progress(&H->profile);
 		KpCampaignStep step;
 		int64_t cinematics[KP_APP_STEP_CINEMATICS];
-		const KpAppMission *m = &H->missions[k];
-		char path[256];
-		snprintf(path, sizeof path, "%s", m->kpm + 1);
-		if (!m->catalog || !kp_campaign_run_of_mission(&H->campaign, m->index, after) || !kp_t_has(H->T, path)) {
-			continue;
-		}
-		kp_campaign_after_game(&H->campaign, after, &progress, RESULT_VICTORY, "", &step, cinematics, count,
+		const KpDataMission *m = &H->data->missions[k];
+		if (!m->catalog || !kp_campaign_run_of_mission(&H->data->campaign, m->index, after)) continue;
+		kp_campaign_after_game(&H->data->campaign, after, &progress, RESULT_VICTORY, "", &step, cinematics, count,
 			KP_APP_STEP_CINEMATICS);
 		if (*count > 0 && step.kind == kind) return m->name;
 	}
@@ -1123,7 +1102,7 @@ static void history_cinematic_goes_on_from_its_row(KpT *T)
 		int count = 0;
 		if (!H) return;
 		progress = *kp_profile_progress(&H->profile);
-		kp_t_ok(T, kp_campaign_after_cinematic(&H->campaign, 0, HISTORY_ROW, HISTORY_CINEMATIC, &run, &progress, &step,
+		kp_t_ok(T, kp_campaign_after_cinematic(&H->data->campaign, 0, HISTORY_ROW, HISTORY_CINEMATIC, &run, &progress, &step,
 			more, &count, KP_APP_STEP_CINEMATICS), "the row");
 		kp_t_eq(T, step.kind, KP_CAMPAIGN_STEP_MISSION, "a mission after it");
 		menus_end(H, KP_UI_MENU_CINEMATIC, ZERG_ROOM, HISTORY_ROW, HISTORY_CINEMATIC, 0);
@@ -1139,7 +1118,7 @@ static void history_cinematic_goes_on_from_its_row(KpT *T)
 			frame(H);
 		}
 		kp_t_eq(T, H->builds, 1, "the game");
-		kp_t_eq(T, H->missions[H->f.current].index, step.mission, "the row's mission");
+		kp_t_eq(T, H->data->missions[H->f.current].index, step.mission, "the row's mission");
 		kp_t_ok(T, memcmp(&H->f.run, &run, sizeof run) == 0, "the run from the row");
 		kp_t_eq(T, H->f.glue.screen, KP_GLUE_ROOM, "its ready room");
 		kp_t_eq(T, H->f.glue_room, (int)step.glue, "the row's room");
@@ -1203,15 +1182,15 @@ static void history_cinematic_at_the_campaigns_end_plays_the_epilog(KpT *T)
 		const KpCampaignRow *row = NULL;
 		int t, k, count = 0, expansion = 0;
 		if (!H) return;
-		for (t = 0; t < H->campaign.table_count && !row; t++) {
-			const KpCampaignTable *table = &H->campaign.tables[t];
+		for (t = 0; t < H->data->campaign.table_count && !row; t++) {
+			const KpCampaignTable *table = &H->data->campaign.tables[t];
 			for (k = 0; k < table->count && !row; k++) {
 				const KpCampaignRow *r = &table->rows[k];
 				KpCampaignProfile progress = *kp_profile_progress(&H->profile);
 				KpCampaignRun run;
 				KpCampaignStep step;
 				int64_t more[KP_APP_STEP_CINEMATICS];
-				if (r->cinematic != 0 && kp_campaign_after_cinematic(&H->campaign, table->expansion, r->mission,
+				if (r->cinematic != 0 && kp_campaign_after_cinematic(&H->data->campaign, table->expansion, r->mission,
 						r->cinematic, &run, &progress, &step, more, &count, KP_APP_STEP_CINEMATICS)
 					&& step.kind == KP_CAMPAIGN_STEP_EPILOG) {
 					row = r;
@@ -1724,7 +1703,7 @@ static void glue_mission_outside_the_catalog_leaves_nothing(KpT *T)
 	Host *H = glue_host(T, 0);
 	if (!H) return;
 	H->f.has_continue = 1; /* as score_next leaves it */
-	menus_end(H, KP_UI_MENU_MISSION, PROTOSS_ROOM, MISSIONS + 1, 0, 1);
+	menus_end(H, KP_UI_MENU_MISSION, PROTOSS_ROOM, KP_DATA_MISSIONS + 1, 0, 1);
 	in_menus(H, KP_GLUE_MAIN, "no such mission");
 	kp_t_eq(T, H->f.has_continue, 0, "no continuation");
 	kp_t_eq(T, H->builds, 0, NULL);

@@ -55,7 +55,7 @@ static void host_world_frame(void *ctx, int ticks, double fraction, int restart)
 	kp_world_frame(a, ticks, fraction);
 	if (a->flags.fog) {
 		kp_fog_layer_update(&a->world.fog, f->session->g, f->cam_x, f->cam_y, f->world_w, f->world_h);
-		kp_gfx_fog(a->gfx, &a->world.fog, a->palettes.tilesets[a->world.mission->tileset & 7].dark);
+		kp_gfx_fog(a->gfx, &a->world.fog, a->data.palettes.tilesets[a->world.mission->tileset & 7].dark);
 	} else {
 		kp_gfx_fog(a->gfx, NULL, NULL);
 	}
@@ -65,7 +65,7 @@ static void host_hud_map(void *ctx, KpHudMap *m)
 {
 	KpApp *a = (KpApp *)ctx;
 	m->tileset = &a->world.tileset;
-	m->palettes = &a->palettes;
+	m->palettes = &a->data.palettes;
 	m->tileset_index = (int)(a->world.mission->tileset & 7);
 	m->colors = a->world.mission->has_colors ? a->world.mission->colors : NULL;
 }
@@ -253,7 +253,7 @@ static void host_language(void *ctx)
 
 /* A mission's files: there unless its repack's group is not open yet (the web's, fetched beside the page: kp_app_group);
  * a test scenario is the converted data's. */
-static int host_mission_files(void *ctx, const KpAppMission *m, char *err, size_t err_size)
+static int host_mission_files(void *ctx, const KpDataMission *m, char *err, size_t err_size)
 {
 	KpApp *a = (KpApp *)ctx;
 	char prefix[sizeof m->directory + 1], file[KP_APP_GROUP_FILE];
@@ -297,14 +297,8 @@ int kp_app_flow_init(KpApp *a, char *err, size_t err_size)
 	h->language = host_language;
 	h->mission_files = host_mission_files;
 	f->flags = &a->flags;
-	f->missions = a->missions;
-	f->mission_count = a->mission_count;
-	f->shared = &a->shared;
-	f->campaign = &a->campaign;
+	f->data = &a->data;
 	f->identity = &a->identity;
-	f->files = &a->files; /* the original data (ADR 0018, stage D5) */
-	f->dat_proto = &a->dat_proto;
-	f->ui_data = &a->ui_data;
 	f->console_art = a->console_art;
 	f->console_art_size = a->console_art_size;
 	f->profile = &a->profile;

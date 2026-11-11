@@ -2,11 +2,11 @@
  * kp_oracle: the oracle tools of the native game (plan phase S, stage S1), the subcommands the Python checkers run.
  * Run from the repository root.
  *
- *   kp_oracle start_state MISSION.kpm SEED EXPANSION [STEP [COMMANDS.jsonl [UI.jsonl]]]
+ *   kp_oracle start_state MISSION SEED EXPANSION [STEP [COMMANDS.jsonl [UI.jsonl]]]
  *       the state lines of the game at the object step (tools/state_check.py; kp_dump)
- *   kp_oracle traces MISSION.kpm SEED EXPANSION STEP [COMMANDS.jsonl [UI.jsonl]]
+ *   kp_oracle traces MISSION SEED EXPANSION STEP [COMMANDS.jsonl [UI.jsonl]]
  *       the trigger trace ("frame player trigger action type result") and the AI trace ("ai frame player slot bin pc op")
- *   kp_oracle play GOLDEN [STEPS] | --mission M.kpm SEED EXPANSION STEPS [COMMANDS [UI]] [--carry-out FILE] |
+ *   kp_oracle play GOLDEN [STEPS] | --mission MISSION SEED EXPANSION STEPS [COMMANDS [UI]] [--carry-out FILE] |
  *                  --chain GOLDEN...
  *       headless runs to a step or the local player's result, and campaign chains
  *   kp_oracle fog_levels < REQUEST
@@ -126,7 +126,7 @@ static int cmd_start_state(int argc, char **argv)
 	RunTo t;
 	KpBuf lines;
 	int status;
-	if (argc < 3) return kp_cli_fail("usage: start_state MISSION.kpm SEED EXPANSION [STEP [COMMANDS.jsonl [UI.jsonl]]]");
+	if (argc < 3) return kp_cli_fail("usage: start_state MISSION SEED EXPANSION [STEP [COMMANDS.jsonl [UI.jsonl]]]");
 	if (start_run(&r, argv[0], (uint32_t)strtoull(argv[1], NULL, 10), atoi(argv[2]), 0, argc > 4 ? argv[4] : NULL,
 		argc > 5 ? argv[5] : NULL) != 0) {
 		return 1;
@@ -172,7 +172,7 @@ static int cmd_traces(int argc, char **argv)
 	RunTo t;
 	Traces traces;
 	int status;
-	if (argc < 4) return kp_cli_fail("usage: traces MISSION.kpm SEED EXPANSION STEP [COMMANDS.jsonl [UI.jsonl]]");
+	if (argc < 4) return kp_cli_fail("usage: traces MISSION SEED EXPANSION STEP [COMMANDS.jsonl [UI.jsonl]]");
 	if (start_run(&r, argv[0], (uint32_t)strtoull(argv[1], NULL, 10), atoi(argv[2]), 1, argc > 4 ? argv[4] : NULL,
 		argc > 5 ? argv[5] : NULL) != 0) {
 		return 1;
@@ -311,7 +311,7 @@ static int cmd_play(int argc, char **argv)
 			if (strcmp(argv[k], "--carry-out") == 0 && k + 1 < argc) carry_out = argv[++k];
 			else if (n < 8) args[n++] = argv[k];
 		}
-		if (n < 4) return kp_cli_fail("usage: play --mission M.kpm SEED EXPANSION STEPS [COMMANDS [UI]] [--carry-out FILE]");
+		if (n < 4) return kp_cli_fail("usage: play --mission MISSION SEED EXPANSION STEPS [COMMANDS [UI]] [--carry-out FILE]");
 		if (start_run(&r, args[0], (uint32_t)strtoull(args[1], NULL, 10), atoi(args[2]), 0, n > 4 ? args[4] : NULL,
 			n > 5 ? args[5] : NULL) != 0) {
 			return 1;
@@ -571,15 +571,12 @@ static int cmd_draw_list(int argc, char **argv)
 		"wait", "frameset", "frame", "x", "y", "param" };
 	KpJsonDoc doc;
 	KpJson *cap;
-	KpDat dat;
-	KpGrpMeta grp;
-	KpIScript script;
+	const KpData *d;
 	KpRngGame rng;
 	KpError err;
 	KpDrawList *list;
 	const KpJson *a;
-	uint8_t *bytes[3];
-	size_t sizes[3], size;
+	size_t size;
 	char *text, why[256];
 	CaptureDraw cd;
 	int k, j;
@@ -594,15 +591,10 @@ static int cmd_draw_list(int argc, char **argv)
 		fprintf(stderr, "draw_list: %s: %s\n", argv[0], text ? why : "cannot read");
 		return 1;
 	}
-	bytes[0] = kp_read_file(KP_ORACLE_DATA "dat.kpd", &sizes[0]);
-	bytes[1] = kp_read_file(KP_ORACLE_DATA "grpmeta.kpd", &sizes[1]);
-	bytes[2] = kp_read_file(KP_ORACLE_DATA "iscript.kpd", &sizes[2]);
 	memset(&rng, 0, sizeof rng);
-	if (!bytes[0] || !bytes[1] || !bytes[2] || kp_dat_load(&dat, bytes[0], sizes[0], "dat.kpd", NULL, &err) != 0
-		|| kp_grpmeta_load(&grp, bytes[1], sizes[1], "grpmeta.kpd", NULL, &err) != 0
-		|| kp_iscript_load(&script, bytes[2], sizes[2], "iscript.kpd", NULL, &err) != 0
-		|| !(cd.w = kp_images_new(&dat, &grp, &script, &rng, &err))) {
-		fprintf(stderr, "draw_list: the generated data: %s\n", err.msg);
+	if (!(d = kp_oracle_data(".", &err))
+		|| !(cd.w = kp_images_new(&d->dat, &d->shared.data.grp, &d->shared.data.script, &rng, &err))) {
+		fprintf(stderr, "draw_list: the original data: %s\n", err.msg);
 		return 1;
 	}
 	a = kp_json_get(cap, "map");

@@ -11,13 +11,13 @@
 #include <ctype.h>
 #include <math.h>
 
-#define DATA "generated/data/"
-#define TERRAN01 "generated/missions/terran/terran01.kpm"
-#define ADDON "generated/scenarios/terran_addon.kpm"
-#define BUILD_TERRAN "generated/scenarios/build_terran.kpm"
-#define OUTCOME "generated/scenarios/trigger_outcome.kpm"
-#define TERRAN03 "generated/missions/terran/terran03.kpm"
-#define PROTOSS01 "generated/missions/expprotoss/protoss01.kpm"
+#define CONSOLE_ART "generated/data/console.kpd" /* the console's pieces (converter's console.kpd) */
+#define TERRAN01 "missions/terran/terran01"
+#define ADDON "scenarios/terran_addon"
+#define BUILD_TERRAN "scenarios/build_terran"
+#define OUTCOME "scenarios/trigger_outcome"
+#define TERRAN03 "missions/terran/terran03"
+#define PROTOSS01 "missions/expprotoss/protoss01"
 
 /* The window procedure's event types (kp_ui.h) the cases use. */
 #define KEY_DOWN 0
@@ -43,30 +43,23 @@
 #define PLACEMENT_GHOST 581
 #define OVERLAY_A KP_UI_CANVAS_OVERLAY_A
 
-static const char *const UI_FILES[] = { DATA "ui.kpd", NULL };
-static const char *const CONSOLE_FILES[] = { DATA "ui.kpd", DATA "console.kpd", NULL };
-static const char *const MENU_FILES[] = { DATA "ui.kpd", DATA "strings.kpd", TERRAN01, NULL };
-static const char *const GLUE_FILES[] = { DATA "ui.kpd", DATA "fonts.kpd", DATA "strings.kpd", DATA "portraits.kpd",
-	DATA "sounds.kpd", DATA "campaign.kpd", NULL };
+static const char *const UI_FILES[] = { KP_T_DATA, NULL };
+static const char *const CONSOLE_FILES[] = { KP_T_DATA, CONSOLE_ART, NULL };
+static const char *const MENU_FILES[] = { KP_T_DATA, TERRAN01, NULL };
+static const char *const GLUE_FILES[] = { KP_T_DATA, NULL };
 
 static int32_t half(int32_t v) { return v >= 0 ? v / 2 : -((1 - v) / 2); } /* math.floor(v / 2) */
 static int64_t max64(int64_t a, int64_t b) { return a > b ? a : b; }
 static int64_t min64(int64_t a, int64_t b) { return a < b ? a : b; }
 
-/* Whether the console's files and the mission exist (the SKIP line for the first missing one). */
+/* Whether the original data, the console's pieces and the mission exist (the SKIP line for the first missing one). */
 static int ready(KpT *T, const char *label, const char *mission)
 {
-	const char *files[KP_UI_FILES + 4];
-	char name[KP_UI_FILES][64];
-	int k;
-	for (k = 0; k < KP_UI_FILES; k++) {
-		snprintf(name[k], sizeof name[k], DATA "%s", KP_UI_FILE_NAMES[k]);
-		files[k] = name[k];
-	}
-	files[KP_UI_FILES] = DATA "palettes.kpd";
-	files[KP_UI_FILES + 1] = DATA "console.kpd";
-	files[KP_UI_FILES + 2] = mission;
-	files[KP_UI_FILES + 3] = NULL;
+	const char *files[4];
+	files[0] = KP_T_DATA;
+	files[1] = CONSOLE_ART;
+	files[2] = mission;
+	files[3] = NULL;
 	return kp_t_ready(T, label, files);
 }
 
@@ -74,17 +67,11 @@ static int ready(KpT *T, const char *label, const char *mission)
 
 static void free_interface(void *p) { kp_ui_free((KpUi *)p); }
 
-/* An interface over the generated data, released when the test ends. */
-static KpUi *interface(KpT *T, uint8_t *files[KP_UI_FILES], size_t sizes[KP_UI_FILES])
+/* An interface over the original data, released when the test ends. */
+static KpUi *interface(KpT *T)
 {
-	char path[128], err[256];
-	KpUi *ui;
-	int k;
-	for (k = 0; k < KP_UI_FILES; k++) {
-		snprintf(path, sizeof path, DATA "%s", KP_UI_FILE_NAMES[k]);
-		files[k] = kp_t_read(T, path, &sizes[k]);
-	}
-	ui = kp_interface_new(files, sizes, NULL, err, sizeof err);
+	char err[256];
+	KpUi *ui = kp_interface_new_data(&kp_t_data(T)->ui, NULL, err, sizeof err);
 	if (!ui) kp_t_fail(T, "%s", err);
 	kp_t_defer(T, free_interface, ui);
 	return ui;
@@ -96,15 +83,13 @@ typedef struct {
 	KpUi *ui;
 	KpHud hud;
 	KpTileset tileset;
-	KpPalettes palettes;
 	KpHudMap map;
-	uint8_t *files[KP_UI_FILES];
-	size_t sizes[KP_UI_FILES];
 } Hud;
 
 static void free_hud(void *p)
 {
 	kp_hud_free(&((Hud *)p)->hud);
+	kp_tileset_free(&((Hud *)p)->tileset);
 	free(p);
 }
 
@@ -114,27 +99,22 @@ static Hud *with_hud(KpT *T, KpOracleGame *og, int32_t w, int32_t h)
 {
 	Hud *H = (Hud *)calloc(1, sizeof *H);
 	const KpMission *m = &og->data.mission;
-	uint8_t *palettes, *console_art;
+	const KpData *d = kp_t_data(T);
+	uint8_t *console_art;
 	size_t size;
 	KpError err;
 	kp_t_ok(T, H != NULL, "out of memory");
 	H->og = og;
 	H->g = og->g;
-	H->ui = interface(T, H->files, H->sizes);
-	console_art = kp_t_read(T, DATA "console.kpd", &size);
+	H->ui = interface(T);
+	console_art = kp_t_read(T, CONSOLE_ART, &size);
 	kp_t_eq(T, kp_ui_set_console_art(H->ui, console_art, size), 0, "console.kpd");
-	palettes = kp_t_read(T, DATA "palettes.kpd", &size);
-	if (kp_palettes_load(&H->palettes, palettes, size, &err) != 0) {
-		free(H);
-		kp_t_fail(T, "%s", err.msg);
-	}
-	if (kp_tileset_load(&H->tileset, og->tileset, og->tileset_size, KP_TILESET_NAMES[m->tileset],
-		&err) != 0) {
+	if (kp_tileset_from_files(&H->tileset, &d->files, (int)(m->tileset & 7), &err) != 0) {
 		free(H);
 		kp_t_fail(T, "%s", err.msg);
 	}
 	H->map.tileset = &H->tileset;
-	H->map.palettes = &H->palettes;
+	H->map.palettes = &d->palettes;
 	H->map.tileset_index = (int)(m->tileset % 8);
 	H->map.colors = m->has_colors ? m->colors : NULL;
 	if (kp_hud_init(&H->hud, H->ui, NULL, H->g, &H->map, 1000, w, h, 0) != 0) {
@@ -541,7 +521,7 @@ static void hd_coverage_sees_through_translucent_art(KpT *T)
 /* An interface with the console's pieces of a race (console.kpd). */
 static KpOracleUi *console_ui(KpT *T, int race)
 {
-	static const char PATH[] = DATA "console.kpd";
+	static const char PATH[] = CONSOLE_ART;
 	size_t size = 0;
 	const uint8_t *art = kp_t_read(T, PATH, &size);
 	KpOracleUi *u = kp_t_ui(T, 0);
@@ -1737,8 +1717,9 @@ static void mission_warp_goes_to_the_ready_room(KpT *T)
 	Hud *H;
 	KpUi *ui;
 	const uint8_t *tabl;
+	const KpDefsTable *table;
 	uint32_t now = 1016;
-	size_t at = 1, rows = 0, tabl_size;
+	size_t at = 1, rows = 0;
 	int k, left = 2, found = 0, mission;
 	if (!ready(T, "test_hud.mission_warp_goes_to_the_ready_room", TERRAN01)) return;
 	H = with_hud(T, terran01(T), 1280, 720);
@@ -1762,8 +1743,9 @@ static void mission_warp_goes_to_the_ready_room(KpT *T)
 	mission = ui->menus.mission;
 	ui->menus.action = KP_UI_MENU_NONE;
 	/* the original campaign's Terran rows from mission 0 (Boot Camp): the third row neither a cinematic nor hidden */
-	tabl = kp_kpf_section(H->files[KP_UI_FILE_CAMPAIGN], H->sizes[KP_UI_FILE_CAMPAIGN], "TABL", &tabl_size);
-	kp_t_ok(T, tabl != NULL, "campaign.kpd's TABL");
+	table = kp_defs_table(kp_t_data(T)->files.profile, "TABL");
+	kp_t_ok(T, table != NULL, "the profile's TABL");
+	tabl = table->data;
 	for (k = 0; k < tabl[0]; k++) {
 		size_t n = (size_t)tabl[at + 2] + (size_t)tabl[at + 3] * 256;
 		if (tabl[at] == 0 && tabl[at + 1] == 1) {
@@ -3461,8 +3443,6 @@ typedef struct {
 	uint32_t now;
 	KpGlueEvent last;
 	int has_last;
-	uint8_t *files[KP_UI_FILES];
-	size_t sizes[KP_UI_FILES];
 	uint8_t *ghost_before;   /* glue_ghosts' copy of the canvas (800 x 600, index and alpha) */
 } Glue;
 
@@ -3478,7 +3458,7 @@ static Glue *glue(KpT *T)
 	kp_t_ok(T, G != NULL, "out of memory");
 	kp_t_defer(T, free, G);
 	G->T = T;
-	G->ui = interface(T, G->files, G->sizes);
+	G->ui = interface(T);
 	G->profile = (KpProfile *)calloc(1, sizeof *G->profile);
 	kp_t_ok(T, G->profile != NULL, "out of memory");
 	kp_t_defer(T, free, G->profile);

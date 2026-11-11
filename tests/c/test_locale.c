@@ -37,7 +37,7 @@ static const char *const REAL_LANGUAGE[] = { "generated/data/ui.kpd", "generated
 	RU "strings.kpd", RU "ui.kpd", GLYPHS, NULL };
 /* What every language's test needs besides the language's own packs. */
 static const char *const REAL_BASE[] = { "generated/data/ui.kpd", "generated/data/fonts.kpd", "generated/data/strings.kpd", GLYPHS, NULL };
-static const char *const REAL_MISSION_BASE[] = { "generated/data/dat.kpd", MISSIONS "index.txt", NULL };
+static const char *const REAL_MISSION_BASE[] = { KP_T_DATA, MISSIONS "index.txt", NULL };
 
 /* The languages the converter writes (defs/l10n/locales.json, but the base): the real-data tests run each one whose packs
  * are in generated/locale (`converter locale --locale all` converts the install's), and skip the others. */
@@ -1356,17 +1356,15 @@ static void mission_cuts(KpT *T, KpUi *ui, Cuts *cuts, const char *language)
 		KpMission m;
 		KpError e;
 		MissionText texts[MISSION_TEXTS];
-		size_t size, strs_size;
-		uint8_t *data, *overlay = NULL;
+		size_t strs_size;
+		uint8_t *overlay = NULL;
 		const uint8_t *strs;
 		int n, k, r;
 		next = strchr(line, '\n');
 		if (next != NULL) *next++ = 0;
 		if (sscanf(line, "%127s", name) != 1) continue;
-		snprintf(path, sizeof path, MISSIONS "%s.kpm", name);
-		data = kp_t_read(T, path, &size);
-		memset(&m, 0, sizeof m);
-		kp_t_eq(T, kp_mission_load(&m, data, size, path, NULL, &e), 0, "%s", e.msg);
+		snprintf(path, sizeof path, "missions/%s", name);
+		kp_t_ok(T, kp_oracle_mission(".", path, &m, &e) != NULL, "%s", e.msg);
 		strs = m.strings.data;
 		strs_size = m.strings.size;
 		if (language != NULL) {
@@ -1418,7 +1416,7 @@ static void mission_cuts(KpT *T, KpUi *ui, Cuts *cuts, const char *language)
 		measured[PLACE_NAME], cuts->n);
 }
 
-static const char *const REAL_MISSION_TEXTS[] = { "generated/data/ui.kpd", "generated/data/fonts.kpd",
+static const char *const REAL_MISSION_TEXTS[] = { KP_T_DATA, "generated/data/ui.kpd", "generated/data/fonts.kpd",
 	"generated/data/strings.kpd", GLYPHS, MISSIONS "index.txt", NULL };
 
 static void language_missions_texts_fit(KpT *T, const char *locale, void *ctx)
@@ -1575,36 +1573,30 @@ static void the_atlas_holds_the_supplement_at_scale_4(KpT *T)
 
 /* --- a mission's text --- */
 
-/* A loaded, not started game of the mission's file. */
-static KpSession *loaded_game(KpT *T, const char *path)
+/* A loaded, not started game of the mission's key over the original data. */
+static KpSession *loaded_game(KpT *T, const char *key)
 {
+	const KpData *d = kp_t_data(T);
 	KpSession *s = (KpSession *)calloc(1, sizeof *s);
-	const uint8_t *dat;
-	uint8_t *mission;
-	size_t dat_size, mission_size;
+	KpMission m;
+	KpError err;
 	if (!s) kp_t_fail(T, "out of memory");
 	kp_t_defer(T, free_session, s);
-	dat = kp_t_read(T, "generated/data/dat.kpd", &dat_size);
-	if (!(mission = kp_read_file(path, &mission_size))) kp_t_fail(T, "no %s", path);
-	if (kp_session_load(s, kp_t_shared(T), dat, dat_size, mission, mission_size, path) != 0) {
-		kp_t_fail(T, "%s does not load: %s", path, s->error);
+	if (!kp_oracle_mission(".", key, &m, &err)) kp_t_fail(T, "%s", err.msg);
+	if (kp_session_load_from(s, &d->shared, &d->dat, &m, key, &d->files) != 0) {
+		kp_t_fail(T, "%s does not load: %s", key, s->error);
 	}
 	return s;
 }
 
-static void start_game(KpT *T, KpSession *s, const char *path, int expansion)
+static void start_game(KpT *T, KpSession *s, const char *key, int expansion)
 {
 	KpSessionStart start;
-	char tileset[128];
-	uint8_t *tileset_bytes;
-	size_t tileset_size;
-	kp_host_tileset_path(&s->host, tileset, sizeof tileset);
-	if (!(tileset_bytes = kp_read_file(tileset, &tileset_size))) kp_t_fail(T, "no %s", tileset);
 	kp_session_start_defaults(&start);
 	start.seed = SEED;
 	start.expansion = expansion;
-	start.mission_index = kp_oracle_mission_index(".", path);
-	if (kp_session_start(s, tileset_bytes, tileset_size, &start) != 0) kp_t_fail(T, "%s does not start: %s", path, s->error);
+	start.mission_index = kp_oracle_mission_index(".", key);
+	if (kp_session_start(s, NULL, 0, &start) != 0) kp_t_fail(T, "%s does not start: %s", key, s->error);
 	kp_t_guard(T, s->g);
 }
 
@@ -1647,9 +1639,9 @@ static uint8_t *text_overlay(KpT *T, const KpBytes *strs, const char *with, size
 	return file;
 }
 
-#define MAP "generated/scenarios/marine_group.kpm"
+#define MAP "scenarios/marine_group"
 
-static const char *const NEED_MAP[] = { "generated/data/dat.kpd", MAP, NULL };
+static const char *const NEED_MAP[] = { MAP, NULL };
 
 static void mission_text_refusals_leave_the_missions_own(KpT *T)
 {
@@ -1706,9 +1698,9 @@ static void mission_text_refusals_leave_the_missions_own(KpT *T)
 	kp_t_ok(T, s->g != NULL, "the game starts over a language's text");
 }
 
-#define SPEECH_MAP MISSIONS "terran/terran01.kpm"
+#define SPEECH_MAP "missions/terran/terran01"
 
-static const char *const NEED_SPEECH_MAP[] = { "generated/data/dat.kpd", SPEECH_MAP, NULL };
+static const char *const NEED_SPEECH_MAP[] = { SPEECH_MAP, NULL };
 
 /* A MISN file of the sections (fourcc, bytes) given, kind and schema as given, malloc'd. */
 static uint8_t *speech_overlay(KpT *T, const char *kind, uint32_t schema, const KpBytes *trig, const KpBytes *mbrf,
@@ -1838,7 +1830,7 @@ static void language_keeps_the_missions_state(KpT *T, const char *locale, void *
 		if (sscanf(line, "%127s", name) != 1) continue;
 		k++;
 		if (!kp_t_mine_sampled(T, k)) continue;
-		snprintf(path, sizeof path, MISSIONS "%s.kpm", name);
+		snprintf(path, sizeof path, "missions/%s", name);
 		snprintf(overlay_path, sizeof overlay_path, LOCALE_DIR "%s/missions/%s.kpm", locale, name);
 		if (!(overlay = kp_read_file(overlay_path, &size))) kp_t_fail(T, "no %s", overlay_path);
 		run_mission(T, path, NULL, 0, strncmp(name, "exp", 3) == 0, MISSION_STEPS, &own);
@@ -1882,8 +1874,8 @@ static int first_text(KpT *T, const char *path, uint8_t *overlay, size_t size, c
 /* A text stays as long whatever bytes its characters take: Cyrillic's two must not double it. */
 static void a_texts_time_counts_characters(KpT *T)
 {
-	static const char *const PATH = MISSIONS "terran/terran01.kpm";
-	static const char *const NEED[] = { "generated/data/dat.kpd", MISSIONS "terran/terran01.kpm", NULL };
+	static const char *const PATH = "missions/terran/terran01";
+	static const char *const NEED[] = { PATH, NULL };
 	KpEvent one, two;
 	uint8_t *narrow, *wide;
 	size_t narrow_size, wide_size;

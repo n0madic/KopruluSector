@@ -8,7 +8,8 @@
 #include "../../native/kp_core/src/core/kp_terrain.h"
 #include "../../native/kp_core/src/core/kp_utf8.h"
 
-#define DATA KP_ORACLE_DATA "dat.kpd"
+#define DATA KP_T_DATA
+#define DAT_KPD KP_ORACLE_DATA "dat.kpd" /* the converted containers' loaders */
 #define BASIC "tests/fixtures/generated/kpf/basic.kpd"
 
 /* A case's value as an unsigned 32-bit register (mod 2^32). */
@@ -122,12 +123,11 @@ static void int_fixed_point_8(KpT *T)
 
 /* --- containers and loaders --- */
 
-/* The data files of the oracle suites: dat.kpd and the missions of the initial-state and scenario goldens. */
-static int data_files(KpT *T, char paths[][512], int max)
+/* The missions of the initial-state and scenario goldens, by key ("missions/<campaign>/<name>", "scenarios/<name>"). */
+static int golden_missions(KpT *T, char keys[][512], int max)
 {
 	static const char *const DIRS[2] = { "initial_state", "scenarios" };
 	int count = 0, d, k, i;
-	snprintf(paths[count++], 512, "%s", DATA);
 	for (d = 0; d < 2; d++) {
 		char path[512];
 		const KpJson *index;
@@ -135,16 +135,30 @@ static int data_files(KpT *T, char paths[][512], int max)
 		index = kp_t_golden(T, path);
 		for (k = 0; k < kp_json_len(index) && count < max; k++) {
 			const char *m;
-			char file[512];
+			char key[512];
 			snprintf(path, sizeof path, "tests/golden/oracle/%s/%s.json", DIRS[d], kp_json_str(kp_json_at(index, k), ""));
 			m = kp_json_field_str(kp_t_golden(T, path), "mission", "");
-			snprintf(file, sizeof file, strncmp(m, "scenarios/", 10) == 0 ? "generated/%s.kpm" : "generated/missions/%s.kpm", m);
-			for (i = 0; i < count && strcmp(paths[i], file) != 0; i++) {
+			snprintf(key, sizeof key, strncmp(m, "scenarios/", 10) == 0 ? "%s" : "missions/%s", m);
+			for (i = 0; i < count && strcmp(keys[i], key) != 0; i++) {
 			}
-			if (i == count) snprintf(paths[count++], 512, "%s", file);
+			if (i == count) snprintf(keys[count++], 512, "%s", key);
 		}
 	}
 	return count;
+}
+
+/* The converted containers of the oracle suites: dat.kpd and the golden missions' .kpm. */
+static int data_files(KpT *T, char paths[][512], int max)
+{
+	int count, k;
+	count = golden_missions(T, paths + 1, max - 1);
+	snprintf(paths[0], 512, "%s", DAT_KPD);
+	for (k = 1; k <= count; k++) { /* a key is its container's path under generated/ */
+		char file[512];
+		snprintf(file, sizeof file, "generated/%s.kpm", paths[k]);
+		snprintf(paths[k], 512, "%s", file);
+	}
+	return count + 1;
 }
 
 #define MAX_FILES 512
@@ -154,7 +168,7 @@ static void containers_verify(KpT *T)
 {
 	char (*paths)[512];
 	int count, k;
-	if (!kp_t_has(T, DATA)) return;
+	if (!kp_t_has(T, DAT_KPD)) return;
 	paths = (char (*)[512])malloc(MAX_FILES * 512);
 	kp_t_ok(T, paths != NULL, "out of memory");
 	kp_t_defer(T, free, paths);
@@ -232,10 +246,10 @@ static void loaders_refuse_other_kinds(KpT *T)
 	KpDat dat;
 	KpGrpMeta grp;
 	KpIScript script;
-	if (!kp_t_has(T, DATA) || !kp_t_has(T, BASIC)) return;
+	if (!kp_t_has(T, DAT_KPD) || !kp_t_has(T, BASIC)) return;
 	basic = kp_t_read(T, BASIC, &basic_size);
-	data = kp_t_read(T, DATA, &size);
-	kp_t_ok(T, kp_dat_load(&dat, data, size, DATA, NULL, &err) == 0, "%s", err.msg);
+	data = kp_t_read(T, DAT_KPD, &size);
+	kp_t_ok(T, kp_dat_load(&dat, data, size, DAT_KPD, NULL, &err) == 0, "%s", err.msg);
 	kp_dat_free(&dat);
 	kp_t_ok(T, kp_dat_load(&dat, basic, basic_size, "basic", NULL, &err) != 0, "a DAT of another kind");
 	kp_t_eq_str(T, err.msg, "kpf: basic: file kind \"TEST\", expected \"DAT \"", NULL);
@@ -251,30 +265,23 @@ static void loaders_refuse_other_kinds(KpT *T)
 	kp_t_eq_str(T, err.msg, "kpf: basic: file kind \"TEST\", expected \"ISCR\"", NULL);
 }
 
-/* Every mission of the oracle suites loads. */
+/* Every mission of the oracle suites builds from the original data. */
 static void missions_load(KpT *T)
 {
-	char (*paths)[512];
-	int count, k, n = 0;
+	char (*keys)[512];
+	int count, k;
 	if (!kp_t_has(T, DATA)) return;
-	paths = (char (*)[512])malloc(MAX_FILES * 512);
-	kp_t_ok(T, paths != NULL, "out of memory");
-	kp_t_defer(T, free, paths);
-	count = data_files(T, paths, MAX_FILES);
+	keys = (char (*)[512])malloc(MAX_FILES * 512);
+	kp_t_ok(T, keys != NULL, "out of memory");
+	kp_t_defer(T, free, keys);
+	count = golden_missions(T, keys, MAX_FILES);
 	for (k = 0; k < count; k++) {
-		size_t size, len = strlen(paths[k]);
-		uint8_t *data;
 		KpMission m;
 		KpError err;
-		int mark = kp_t_mark(T);
-		if (len < 4 || strcmp(paths[k] + len - 4, ".kpm") != 0) continue;
-		data = kp_t_read(T, paths[k], &size);
-		kp_t_ok(T, kp_mission_load(&m, data, size, paths[k], NULL, &err) == 0, "%s", err.msg);
+		kp_t_ok(T, kp_oracle_mission(".", keys[k], &m, &err) != NULL, "%s", err.msg);
 		kp_mission_free(&m);
-		kp_t_release(T, mark);
-		n++;
 	}
-	kp_t_ok(T, n >= 64, "missions checked: %d", n);
+	kp_t_ok(T, count >= 64, "missions checked: %d", count);
 }
 
 /* Lengths and counts read from a file never wrap the bounds checks (32-bit sums in C). */
@@ -595,7 +602,7 @@ static int units_of(KpGame *g, int64_t t, int64_t *out, int max)
  * have creep and none of it recedes at the start; a creep tile marked receding counts as one. */
 static void creep_tiles_count_the_map(KpT *T)
 {
-	const char *path = "generated/scenarios/creep_recede.kpm";
+	const char *path = "scenarios/creep_recede";
 	KpGame *g;
 	int64_t i, n, receding, marked = -1;
 	if (!kp_t_has(T, DATA) || !kp_t_has(T, path)) return;
@@ -612,7 +619,7 @@ static void creep_tiles_count_the_map(KpT *T)
 
 static void placement_ghosts(KpT *T)
 {
-	const char *terran02 = "generated/missions/terran/terran02.kpm", *terran09 = "generated/missions/terran/terran09.kpm";
+	const char *terran02 = "missions/terran/terran02", *terran09 = "missions/terran/terran09";
 	int64_t found[8];
 	char got[256];
 	KpBuf *lines;

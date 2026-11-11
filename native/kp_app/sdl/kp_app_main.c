@@ -187,13 +187,8 @@ static void final_flags(KpAppFlags *f)
  * else generated/repack: a working tree's); Android's is its repack copied out of the APK (kp_app_res_open). */
 static void data_root(KpAppFlags *f)
 {
-	static const char *const REPACKS[] = { "generated/repack-single", "generated/repack" };
-	size_t k;
-#if defined(SDL_PLATFORM_ANDROID)
-	(void)f;
-	(void)REPACKS;
-	(void)k;
-#else
+#if !defined(SDL_PLATFORM_ANDROID)
+	char dir[sizeof f->data + 32];
 #if defined(__EMSCRIPTEN__)
 	if (!f->data[0]) snprintf(f->data, sizeof f->data, "/data");
 #else
@@ -204,21 +199,10 @@ static void data_root(KpAppFlags *f)
 		snprintf(f->data, sizeof f->data, "%sdata", base);
 	}
 #endif
-	if (f->res_dir_count || !f->data[0]) return;
-	if (kp_res_detect(f->data, NULL) != KP_RES_SOURCE_NONE) {
-		char root[sizeof f->data]; /* a copy: add_res_dir writes into the flags it is read from */
-		snprintf(root, sizeof root, "%s", f->data);
-		add_res_dir(f, root);
-		return;
-	}
-	for (k = 0; k < sizeof REPACKS / sizeof REPACKS[0]; k++) {
-		char dir[sizeof f->data + 32];
-		snprintf(dir, sizeof dir, "%s/%s", f->data, REPACKS[k]);
-		if (kp_res_detect(dir, NULL) == KP_RES_SOURCE_REPACK) {
-			add_res_dir(f, dir);
-			return;
-		}
-	}
+	/* the root itself when it is a source, else its repack (kp_data_dir) */
+	if (!f->res_dir_count && f->data[0] && kp_data_dir(f->data, dir, sizeof dir)) add_res_dir(f, dir);
+#else
+	(void)f;
 #endif
 }
 

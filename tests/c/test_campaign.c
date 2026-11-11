@@ -1,7 +1,7 @@
 /* The campaign progression (kp_campaign.h; plan phase S, stage S7) against the original: the emulator's campaign chains
  * (tests/golden/oracle/campaign_chains.json, tools/oracle/export_campaign_chains.py) played through the progression
- * alone, without games, and the resolver's contract (atlas P41 0x4bba20). Needs the converter's
- * generated/data/campaign.kpd; skipped without it. The games of the chains themselves are test_scenarios'
+ * alone, without games, and the resolver's contract (atlas P41 0x4bba20). Over the original data's campaign
+ * (kp_t_data: mapdata.dat and the campaign's tables); skipped without it. The games of the chains themselves are test_scenarios'
  * campaign_chains. A load needs no profile rule of its own: kp_ui's load keeps the profile's character record as the
  * original's LoadGame does. */
 #include "kp_test.h"
@@ -11,35 +11,16 @@
 
 #include "../../native/kp_core/src/core/kp_campaign.h"
 
-#define DATA KP_ORACLE_DATA "campaign.kpd"
 #define CHAINS "tests/golden/oracle/campaign_chains.json"
 #define MODE_MENU 4   /* the game mode the campaign's end leaves to when it names a glue state (no epilog) */
 #define MODE_EPILOG 9 /* the epilog's */
 
-static const char *const FILES[] = { DATA, CHAINS, NULL };
+static const char *const FILES[] = { KP_T_DATA, CHAINS, NULL };
 
-static void free_campaign(void *p)
+static const KpCampaign *load(KpT *T)
 {
-	kp_campaign_free((KpCampaign *)p);
-	free(p);
-}
-
-static KpCampaign *load(KpT *T)
-{
-	KpCampaign *c;
-	KpError err;
-	size_t size;
-	uint8_t *data;
 	if (!kp_t_ready(T, "test_campaign", FILES)) return NULL;
-	data = kp_t_read(T, DATA, &size);
-	c = (KpCampaign *)calloc(1, sizeof *c);
-	kp_t_ok(T, c != NULL, "out of memory");
-	if (kp_campaign_load(c, data, size, DATA, &err) != 0) {
-		free(c);
-		kp_t_fail(T, "%s", err.msg);
-	}
-	kp_t_defer(T, free_campaign, c);
-	return c;
+	return &kp_t_data(T)->campaign;
 }
 
 /* The profile's progress as the emulator saves it: the original's Zerg, Terran, Protoss, then the expansion's. */
@@ -51,7 +32,7 @@ static void progress(const KpCampaignProfile *p, char *out, size_t size)
 
 static void tables(KpT *T)
 {
-	KpCampaign *c = load(T);
+	const KpCampaign *c = load(T);
 	char name[64];
 	int selectable = 0, hidden = 0, k, i;
 	if (!c) return;
@@ -86,7 +67,7 @@ static int64_t mission_of(KpT *T, const KpCampaign *c, const KpCampaignRun *cur,
  * a name without a dot or without a match keeps the current row. */
 static void resolver(KpT *T)
 {
-	KpCampaign *c = load(T);
+	const KpCampaign *c = load(T);
 	KpCampaignRun cur;
 	int64_t here;
 	if (!c) return;
@@ -107,7 +88,7 @@ static void resolver(KpT *T)
  * directory of that basename (its own campaign's), not to the original campaign's map of the same name. */
 static void next_scenario_names(KpT *T)
 {
-	KpCampaign *c = load(T);
+	const KpCampaign *c = load(T);
 	const KpJson *names;
 	KpCampaignRun cur;
 	int k;
@@ -144,7 +125,7 @@ static void next_scenario_names(KpT *T)
  * the advance runs again. The next mission, the profile's progress and the chain's end are the original's. */
 static void chains(KpT *T)
 {
-	KpCampaign *c = load(T);
+	const KpCampaign *c = load(T);
 	const KpJson *cases;
 	int k, m;
 	if (!c) return;
@@ -222,7 +203,7 @@ static void cinematic_rows_go_on_from_their_row(KpT *T)
 		{ 0, 32, 23, KP_CAMPAIGN_STEP_EPILOG, 0, "Protoss4 ends in the epilog" },
 		{ 1, 65, 27, KP_CAMPAIGN_STEP_EPILOG, 0, "xZerg ends in the epilog" },
 	};
-	KpCampaign *c = load(T);
+	const KpCampaign *c = load(T);
 	KpCampaignRun run;
 	KpCampaignProfile p;
 	KpCampaignStep step;

@@ -1,7 +1,7 @@
 /* The images world of the native core (kp_images.h; plan phase S, stage S7), driven directly:
  *   - without retail data: the list helpers, the new-game pool order, the depth key, the cloak initialisers and
  *     callbacks, the sprite rows, and a turret move from a sprite without a main image;
- *   - on the converted data (skipped without generated/data): the selection records, health bars (0x40eb60, 0x40f6e0,
+ *   - on the original data (kp_t_data; skipped without it): the selection records, health bars (0x40eb60, 0x40f6e0,
  *     0x40f540) and selection circles (0x40ec90, 0x411460);
  *   - the IScript VM against the original's code: every animation of every image of the retail iscript.bin run on a
  *     lone sprite and compared with the hashes the original-code probe (tools/research/probe_native_iscript_117.py)
@@ -12,7 +12,6 @@
 
 #include <string.h>
 
-#define DATA KP_ORACLE_DATA
 
 /* --- worlds --- */
 
@@ -87,19 +86,16 @@ static KpImages *bare_world(KpT *T, Scene **out)
 	return open_world(T, sc, 64, 48);
 }
 
-/* The generated data's dat.kpd, grpmeta.kpd and iscript.kpd into the scene. */
+/* The original data's DAT (a copy the scene may change), grpmeta and iscript into the scene. */
 static void load_data(KpT *T, Scene *sc)
 {
+	const KpData *d = kp_t_data(T);
 	KpError err;
-	size_t size;
-	uint8_t *data = kp_t_read(T, DATA "dat.kpd", &size);
-	kp_t_ok(T, kp_dat_load(&sc->dat, data, size, "dat.kpd", NULL, &err) == 0, "%s", err.msg);
+	kp_t_ok(T, kp_dat_copy(&sc->dat, &d->dat, &err) == 0, "%s", err.msg);
 	sc->has_dat = 1;
-	data = kp_t_read(T, DATA "grpmeta.kpd", &size);
-	kp_t_ok(T, kp_grpmeta_load(&sc->grp, data, size, "grpmeta.kpd", NULL, &err) == 0, "%s", err.msg);
+	kp_t_ok(T, kp_grpmeta_from_files(&sc->grp, &d->files, &sc->dat, &err) == 0, "%s", err.msg);
 	sc->has_grp = 1;
-	data = kp_t_read(T, DATA "iscript.kpd", &size);
-	kp_t_ok(T, kp_iscript_load(&sc->script, data, size, "iscript.kpd", NULL, &err) == 0, "%s", err.msg);
+	kp_t_ok(T, kp_iscript_from_files(&sc->script, &d->files, &err) == 0, "%s", err.msg);
 	sc->has_script = 1;
 }
 
@@ -346,7 +342,7 @@ static void sprite_without_main_image_and_disabled_sound(KpT *T)
 #define BAR_MIN_WIDTH 19
 #define HALLUCINATION 0x40000000
 
-static const char *const SELECTION_FILES[] = { DATA "dat.kpd", DATA "grpmeta.kpd", DATA "iscript.kpd", NULL };
+static const char *const SELECTION_FILES[] = { KP_T_DATA, NULL };
 
 static int selection_hooks(Scene *sc, KpHook hook, const int64_t *args, int argc, int64_t *out)
 {
@@ -510,7 +506,7 @@ static void selection_circles(KpT *T)
 #define STEP_LIMIT 100000 /* opcodes one VM run may execute before the case counts as hung */
 #define GOLDEN "tests/golden/oracle/iscript/cases.json"
 
-static const char *const TRACE_FILES[] = { DATA "dat.kpd", DATA "grpmeta.kpd", DATA "iscript.kpd", GOLDEN, NULL };
+static const char *const TRACE_FILES[] = { KP_T_DATA, GOLDEN, NULL };
 
 static int trace_hooks(Scene *sc, KpHook hook, const int64_t *args, int argc, int64_t *out)
 {
@@ -671,7 +667,7 @@ static void trace_run(Scene *sc, const TraceColumns *cols, int32_t image, int32_
 static void scenario_matches_probe(KpT *T)
 {
 	const KpJson *g;
-	if (!kp_t_ready(T, "test_images", TRACE_FILES + 3)) return;
+	if (!kp_t_ready(T, "test_images", TRACE_FILES + 1)) return;
 	g = kp_t_golden(T, GOLDEN);
 	kp_t_eq(T, kp_json_field_int(g, "frames", -1), TRACE_FRAMES, "frames");
 	kp_t_eq(T, kp_json_field_int(g, "seed", -1), TRACE_SEED, "seed");
@@ -726,14 +722,13 @@ static void synthetic_programs_equal_original(KpT *T)
 	Scene *sc;
 	KpIScript retail;
 	KpError err;
-	size_t size, code_size, retail_size;
-	uint8_t *data, *code;
+	size_t code_size, retail_size;
+	uint8_t *code;
 	uint32_t index;
 	int k;
 	if (!kp_t_ready(T, "test_images", TRACE_FILES)) return;
 	g = kp_t_golden(T, GOLDEN);
-	data = kp_t_read(T, DATA "iscript.kpd", &size);
-	kp_t_ok(T, kp_iscript_load(&retail, data, size, "iscript.kpd", NULL, &err) == 0, "%s", err.msg);
+	kp_t_ok(T, kp_iscript_from_files(&retail, &kp_t_data(T)->files, &err) == 0, "%s", err.msg);
 	if (retail.code_size != (uint32_t)kp_json_field_int(g, "retail_size", -1) || retail.code_size < 4) {
 		kp_iscript_free(&retail);
 		kp_t_fail(T, "the retail iscript.bin's size");

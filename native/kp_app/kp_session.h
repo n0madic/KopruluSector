@@ -158,13 +158,17 @@ typedef struct {
 	int64_t values[KP_PRES_VALUES];
 } KpSavePresentation;
 
-/* The data set a save belongs to: dat.kpd's profile id and source hash. */
+/* The data set a save belongs to (ADR 0018 item 6): the profile's id and the SHA-256 of the data set's DAT; a load
+ * checks the CRC-32s of the rest the games are built from (kp_host.c: grpmeta, iscript, the AI scripts, the tileset's
+ * CV5 and VF4, the mission). Each is built from the original files, the same from a 1.17 install, Remastered's or a
+ * repack, so a save goes from one to the other; one made over the converted containers is refused. */
 typedef struct {
 	char profile_id[17];
 	uint8_t source_hash[32];
 } KpSaveIdentity;
 
-int kp_save_identity(KpSaveIdentity *id, const uint8_t *dat, size_t size, KpError *err);
+/* The identity of the data built from files (their profile) with the data set's DAT. */
+void kp_save_identity(KpSaveIdentity *id, const KpFiles *files, const KpDat *dat);
 /* The save of the session's game at its step boundary with its queued commands, the campaign (NULL none) and the
  * presentation's state (NULL none); *out malloc'd. A stopped game has no save. */
 int kp_save_encode(KpSession *s, const KpSaveIdentity *id, const KpSaveCampaign *camp, const KpSavePresentation *pres,

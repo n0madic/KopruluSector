@@ -10,7 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define MAP "generated/scenarios/idle_marines.kpm"
+#define MAP "scenarios/idle_marines"
 #define SEED 946684819
 #define STEPS 60
 #define ORDERS 189
@@ -49,7 +49,7 @@ typedef struct {
 	int used, cases, failed;
 } Report;
 
-static const char *const FILES[] = { KP_ORACLE_DATA "dat.kpd", MAP, NULL };
+static const char *const FILES[] = { KP_T_DATA, MAP, NULL };
 
 /* Whether a player can have a unit of the type under his command: a subunit (a turret) is made with its base, and the
  * Flag Beacons (idle order CTFCOP_INIT, 0x99, ported with the Capture the Flag game type) are no campaign's. */

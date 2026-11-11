@@ -89,7 +89,7 @@ static int dangling(KpGame *g, KpBuf *bad)
 
 static void live_units_reference_live_units(KpT *T)
 {
-	static const char *const FILES[] = { KP_ORACLE_DATA "dat.kpd", NULL };
+	static const char *const FILES[] = { KP_T_DATA, NULL };
 	const KpJson *index;
 	KpBuf *bad;
 	int k;
@@ -121,7 +121,7 @@ static void live_units_reference_live_units(KpT *T)
 
 static void packed_references_to_reused_records_resolve_to_no_unit(KpT *T)
 {
-	static const char *const FILES[] = { KP_ORACLE_DATA "dat.kpd", NULL };
+	static const char *const FILES[] = { KP_T_DATA, NULL };
 	KpOracleGame *og;
 	KpGame *g;
 	KpReplay empty;
@@ -130,7 +130,7 @@ static void packed_references_to_reused_records_resolve_to_no_unit(KpT *T)
 	int count = 0, k, reused = 0, records = 0, list;
 	KpBuf none;
 	if (!kp_t_ready(T, "test_references.packed", FILES)) return;
-	og = kp_t_game(T, "generated/scenarios/placement_fail.kpm", 946684819, 0, NULL);
+	og = kp_t_game(T, "scenarios/placement_fail", 946684819, 0, NULL);
 	g = og->g;
 	/* The units on unwalkable ground die at once; remember their packed references. */
 	for (n = g->lists[KP_LIST_HIDDEN].head; n != 0; n = g->u.next[n]) {

@@ -8,6 +8,7 @@
 #ifndef KP_FLOW_H
 #define KP_FLOW_H
 
+#include "kp_data.h"
 #include "kp_hud.h"
 #include "kp_session.h"
 
@@ -21,15 +22,6 @@ extern "C" {
 /* The original's cinematic numbers (0x508da8) the main menu's View Intro plays: Blizzard's logo, then the Brood War
  * intro (mode 0: 24 when the expansion's data is there, which the product's always is) */
 enum { KP_APP_CINE_LOGO = 0, KP_APP_CINE_EXPANSION_INTRO = 24 };
-
-/* A mission of the catalog (generated/missions/index.txt) or a test scenario on a catalog map. */
-typedef struct {
-	char name[64];      /* "terran/terran01", "scenarios/marine_group" */
-	char kpm[160];      /* "/generated/missions/terran/terran01.kpm": the saves' mission name */
-	char directory[64]; /* "campaign\terran\terran01": its scenario read from the original files; "": its .kpm */
-	int64_t index;      /* the campaign row of the map (0x526524) */
-	int catalog;
-} KpAppMission;
 
 #define KP_APP_RES_DIRS 4 /* the folders of original data --data names */
 
@@ -92,7 +84,7 @@ typedef struct {
 	double (*now)(void *ctx);
 	double (*clock_ms)(void);
 	void (*log)(void *ctx, const char *line);
-	/* a file of the converted data (malloc'd), NULL when it cannot be read */
+	/* a file under the data's root (malloc'd: the languages' packs, the test scenarios), NULL when it cannot be read */
 	uint8_t *(*read)(void *ctx, const char *path, size_t *size);
 	void (*save_profile)(void *ctx);
 	void (*sync_files)(void *ctx); /* the saves' files written (the web's IndexedDB) */
@@ -129,29 +121,19 @@ typedef struct {
 	void (*language)(void *ctx);
 	/* whether a mission's files are there (the web fetches its repack's group first: kp_res_group_wanted): 1 they are,
 	 * 0 on their way (the flow asks again each frame), -1 they cannot be had (the reason in err); NULL: always there */
-	int (*mission_files)(void *ctx, const KpAppMission *m, char *err, size_t err_size);
+	int (*mission_files)(void *ctx, const KpDataMission *m, char *err, size_t err_size);
 } KpFlowHost;
 
 #define KP_FLOW_LOCALE_FILES 4 /* a language's packs the flow reads: the glyphs, the strings, the ui, the speech's sounds */
 
 typedef struct KpFlow {
 	KpFlowHost host;
-	/* what the product loaded for every game (not owned; set before kp_flow_init) */
+	/* what the product loaded for every game (not owned; set before kp_flow_init): the original data (ADR 0018: the
+	 * missions' catalog, the data set's DAT each game copies, the shared game data, the campaign, the interface's
+	 * data) and the saves' identity */
 	KpAppFlags *flags;
-	const KpAppMission *missions;
-	int mission_count;
-	const uint8_t *dat;
-	size_t dat_size;
-	const KpHostShared *shared;
-	const KpCampaign *campaign;
+	const KpData *data;
 	const KpSaveIdentity *identity;
-	uint8_t *const *ui_files;
-	const size_t *ui_sizes;
-	/* or the original data (ADR 0018, stage D5): the files a mission's scenario and tileset are read from, the data
-	 * set's DAT each game copies, the interface's data (all NULL: the converted containers above) */
-	const KpFiles *files;
-	const KpDat *dat_proto;
-	const KpUiData *ui_data;
 	/* the language (ADR 0016): its overlays of the interface and their bytes (kp_flow_init reads them), the languages
 	 * installed (generated/locale/glyphs.kpd's LOCS), another choice of the main menu's to start over in */
 	KpUiLocale locale;
@@ -267,16 +249,6 @@ int kp_flow_scripted(const KpAppFlags *fl);
 int kp_flow_match_language(const KpUiLanguages *languages, const char *wanted);
 /* A new interface takes the video options (its dialog shows them; the gamma and the portraits are its own). */
 void kp_flow_video_to_ui(KpFlow *f, KpUi *ui);
-/* The missions of the catalog's index (generated/missions/index.txt: "name tileset width height" a line, the campaign
- * row its number among the missions from 1: the lines that are no mission count none) and the test scenarios'
- * (generated/scenarios/index.txt: "name base tileset width height", the row of their base; NULL none) into
- * out[0..cap): their count. */
-int kp_flow_missions(KpAppMission *out, int cap, const char *catalog, size_t catalog_size, const char *scenarios,
-	size_t scenarios_size);
-/* The same with the catalog of the original data (ADR 0018, stage D5): the campaign's mission directories by mapdata
- * index (the catalog's lines, kp_campaign_mission_name its names), each read from its scenario. */
-int kp_flow_missions_campaign(KpAppMission *out, int cap, const KpCampaign *campaign, const char *scenarios,
-	size_t scenarios_size);
 
 #ifdef __cplusplus
 }

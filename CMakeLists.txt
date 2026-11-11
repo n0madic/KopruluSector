@@ -129,7 +129,7 @@ set(KP_ORACLE_SOURCES
 add_library(kp_oracle_lib STATIC ${KP_ORACLE_SOURCES})
 kp_target(kp_oracle_lib CXX)
 target_include_directories(kp_oracle_lib PUBLIC ${KP_TOOLS_DIR})
-target_link_libraries(kp_oracle_lib PUBLIC kp_core kp_present)
+target_link_libraries(kp_oracle_lib PUBLIC kp_core kp_present kp_app_core) # kp_data: the original data the tools play from
 
 # --- the tools ---
 foreach(tool kp_replay kp_bench)

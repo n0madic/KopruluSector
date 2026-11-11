@@ -372,7 +372,7 @@ static void sheet_edges(KpAppWorld *w)
 static int build(KpApp *a, char *err, size_t err_size)
 {
 	KpAppWorld *w = &a->world;
-	const KpAppMission *entry = &a->missions[a->flow.current];
+	const KpDataMission *entry = &a->data.missions[a->flow.current];
 	KpGame *g = a->flow.session->g;
 	const KpGrpMeta *grp = kp_session_grp(a->flow.session);
 	const KpPack *packs[KP_APP_PACKS];
@@ -389,7 +389,7 @@ static int build(KpApp *a, char *err, size_t err_size)
 	w->mission = kp_session_mission(a->flow.session);
 	kp_host_tileset_path(&a->flow.session->host, path, sizeof path);
 	/* built from the tileset's files (ADR 0018, stage D5) */
-	if (kp_tileset_from_files(&w->tileset, &a->files, (int)(w->mission->tileset & 7), &e) != 0) {
+	if (kp_tileset_from_files(&w->tileset, &a->data.files, (int)(w->mission->tileset & 7), &e) != 0) {
 		return fail(err, err_size, "%s", e.msg);
 	}
 	w->ids = (uint16_t *)malloc(sizeof *w->ids * (size_t)w->mission->width * (size_t)w->mission->height);
@@ -410,7 +410,7 @@ static int build(KpApp *a, char *err, size_t err_size)
 		if (!(w->cells = (uint16_t *)calloc(2 * n, sizeof *w->cells))) return fail(err, err_size, "%s", "out of memory");
 		for (i = 0; i < n; i++) w->cells[2 * i] = w->ids[i];
 	}
-	if (kp_lookups_build(&w->lookups, &a->palettes, (int)(w->mission->tileset & 7), w->tileset.rgb, 0, &e) != 0) {
+	if (kp_lookups_build(&w->lookups, &a->data.palettes, (int)(w->mission->tileset & 7), w->tileset.rgb, 0, &e) != 0) {
 		return fail(err, err_size, "%s", e.msg);
 	}
 	/* the mission's resource packs (ADR 0004) with their pages: its GRPs decoded and packed as the converter packs them */
@@ -427,7 +427,7 @@ static int build(KpApp *a, char *err, size_t err_size)
 		}
 		snprintf(p->name, sizeof p->name, "%.*s", (int)w->mission->packs[k].size, (const char *)w->mission->packs[k].data);
 		w->pack_count++; /* the world frees it from here on */
-		if (kp_pack_build(&p->pack, &p->pages, grp, &a->files, p->name, &e) != 0) return fail(err, err_size, "%s", e.msg);
+		if (kp_pack_build(&p->pack, &p->pages, grp, &a->data.files, p->name, &e) != 0) return fail(err, err_size, "%s", e.msg);
 		packs[w->pack_count - 1] = &p->pack;
 		names[w->pack_count - 1] = p->name;
 	}
@@ -443,7 +443,7 @@ static int build(KpApp *a, char *err, size_t err_size)
 		return fail(err, err_size, "%s", e.msg);
 	}
 	load_art(a, grp, packs, names);
-	kp_bars_init(&w->bars, a->palettes.thpbar, a->palettes.thpbar_size);
+	kp_bars_init(&w->bars, a->data.palettes.thpbar, a->data.palettes.thpbar_size);
 	if (kp_presenter_init(&w->presenter, g->w, grp, &w->frames, &w->lookups, &w->bars, g, &e) != 0) {
 		return fail(err, err_size, "%s", e.msg);
 	}
@@ -590,7 +590,7 @@ void kp_world_upload(KpApp *a)
 	if (w->hd_scale) hd_slots_or_drop(a);
 	if (w->hd_scale) {
 		kp_gfx_hd_frame_table(a->gfx, &w->hd_frames, w->hd_scale);
-		kp_gfx_hd_colors(a->gfx, &w->lookups, w->tileset.rgb, a->palettes.tminimap, a->palettes.tminimap_size);
+		kp_gfx_hd_colors(a->gfx, &w->lookups, w->tileset.rgb, a->data.palettes.tminimap, a->data.palettes.tminimap_size);
 		kp_gfx_hd_terrain(a->gfx, &w->hd_terrain);
 		kp_gfx_hd_water(a->gfx, w->hd_water_bytes ? &w->hd_water : NULL);
 		{ /* the HD world's tone follows the screen palette's fades and brightness; the colour cycles do not count */
@@ -604,7 +604,7 @@ void kp_world_upload(KpApp *a)
 			kp_gfx_hd_tone_base(a->gfx, w->tileset.rgb, skip);
 		}
 	} else if (w->fx) { /* the original's art in RGBA: its shadows' row; the water masks when they came */
-		kp_gfx_hd_colors(a->gfx, &w->lookups, w->tileset.rgb, a->palettes.tminimap, a->palettes.tminimap_size);
+		kp_gfx_hd_colors(a->gfx, &w->lookups, w->tileset.rgb, a->data.palettes.tminimap, a->data.palettes.tminimap_size);
 		if (w->hd_tileset_bytes) {
 			kp_gfx_hd_terrain(a->gfx, &w->hd_terrain);
 			kp_gfx_hd_water(a->gfx, w->hd_water_bytes ? &w->hd_water : NULL);

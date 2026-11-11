@@ -61,9 +61,9 @@ int kp_dev_init(KpApp *a)
 		a->flags.fog = 0;
 		a->flags.world_only = 1;
 		d->first = 0;
-		d->last = a->mission_count - 1;
-		for (k = 0; k < a->mission_count; k++) {
-			if (a->missions[k].catalog && ++catalog == a->flags.autotest_count) d->last = k;
+		d->last = a->data.mission_count - 1;
+		for (k = 0; k < a->data.mission_count; k++) {
+			if (a->data.missions[k].catalog && ++catalog == a->flags.autotest_count) d->last = k;
 		}
 		d->mission = d->first;
 		d->step = AT_START;
@@ -204,7 +204,7 @@ int kp_dev_check_terrain(KpApp *a, const char *label, int64_t *checked_out, int6
 	int64_t checked = 0, bad = 0, edged = 0;
 	uint8_t *rows = index_rows(a), block[32 * 32];
 	if (!rows) {
-		kp_dev_line("check %s %s: readback failed", a->missions[a->flow.current].name, label);
+		kp_dev_line("check %s %s: readback failed", a->data.missions[a->flow.current].name, label);
 		return -1;
 	}
 	if (d->mcrc_tileset != (int)(w->mission->tileset & 7) || !d->mcrc) {
@@ -239,7 +239,7 @@ int kp_dev_check_terrain(KpApp *a, const char *label, int64_t *checked_out, int6
 	}
 	free(rows);
 	kp_dev_line("check %s %s: view %dx%d at %d,%d, %lld megatiles (%lld under creep's edges), %lld mismatches",
-		a->missions[a->flow.current].name, label, (int)vw, (int)vh, (int)a->flow.cam_x, (int)a->flow.cam_y, (long long)checked,
+		a->data.missions[a->flow.current].name, label, (int)vw, (int)vh, (int)a->flow.cam_x, (int)a->flow.cam_y, (long long)checked,
 		(long long)edged, (long long)bad);
 	if (checked_out) *checked_out = checked;
 	if (bad_out) *bad_out = bad;
@@ -270,7 +270,7 @@ static void check_compose(KpApp *a, Dev *d, const char *label)
 		kp_dev_line("compose: readback failed");
 		return;
 	}
-	snprintf(name, sizeof name, "%s%s", a->missions[a->flow.current].name, label);
+	snprintf(name, sizeof name, "%s%s", a->data.missions[a->flow.current].name, label);
 	for (k = 0; k < p->collected_count; k++) {
 		const KpDrawn *i = &p->collected[k];
 		int32_t x = i->left - (int32_t)a->flow.cam_x, y = i->top - (int32_t)a->flow.cam_y;
@@ -344,24 +344,24 @@ static void sync_now(KpApp *a)
 static void autotest_start(KpApp *a, Dev *d)
 {
 	char err[512];
-	while (d->mission <= d->last && !a->missions[d->mission].catalog) d->mission++;
+	while (d->mission <= d->last && !a->data.missions[d->mission].catalog) d->mission++;
 	if (d->mission > d->last) {
 		d->step = AT_DONE;
 		return;
 	}
 	/* its files first (the web fetches its repack's group): the game starts at once once they are there */
 	if (a->flow.host.mission_files) {
-		int ready = a->flow.host.mission_files(a->flow.host.ctx, &a->missions[d->mission], err, sizeof err);
+		int ready = a->flow.host.mission_files(a->flow.host.ctx, &a->data.missions[d->mission], err, sizeof err);
 		if (ready == 0) return; /* asked again on the next frame */
 		if (ready < 0) {
-			kp_dev_line("mission %s: %s", a->missions[d->mission].name, err);
+			kp_dev_line("mission %s: %s", a->data.missions[d->mission].name, err);
 			d->failures++;
 			d->mission++;
 			return;
 		}
 	}
 	if (kp_flow_start_mission(&a->flow, d->mission, err, sizeof err) != 0) {
-		kp_dev_line("mission %s: %s", a->missions[d->mission].name, err);
+		kp_dev_line("mission %s: %s", a->data.missions[d->mission].name, err);
 		d->failures++;
 		d->mission++;
 		return;
@@ -479,7 +479,7 @@ int kp_dev_check_fog(KpApp *a, int64_t *compared_out, int64_t *bad_out)
 		kp_dev_line("fog check: readback failed");
 	} else {
 		memcpy(want, d->fog_plain, (size_t)w * (size_t)h);
-		kp_fog_view_shade(&a->world.fog.view, a->flow.cam_x, a->flow.cam_y, a->palettes.tilesets[a->world.mission->tileset & 7].dark,
+		kp_fog_view_shade(&a->world.fog.view, a->flow.cam_x, a->flow.cam_y, a->data.palettes.tilesets[a->world.mission->tileset & 7].dark,
 			want, w, h, w);
 		for (y = 0; y < h; y++) {
 			for (x = 0; x < w; x++) {
@@ -550,7 +550,7 @@ void kp_dev_timing(KpApp *a, double flow_ms, double draw_ms)
 		stats(d->flow_ms, d->frames, g, sizeof g);
 		stats(d->draw_ms, d->frames, h, sizeof h);
 		kp_dev_line("frame bench %s: %d frames %dx%d (logical %dx%d), vsync %s; frame %s; game and presentation %s; "
-			"drawing (CPU) %s; images %d, windows %d, layers %d", a->missions[a->flow.current].name, d->frames,
+			"drawing (CPU) %s; images %d, windows %d, layers %d", a->data.missions[a->flow.current].name, d->frames,
 			(int)a->flow.win_w, (int)a->flow.win_h, (int)a->flow.world_w, (int)a->flow.world_h, a->flags.vsync ? "on" : "off", f, g, h,
 			(int)a->world.presenter.drawn, (int)a->world.data.plan.count, (int)a->world.data.plan.layers);
 		a->quit = 1;

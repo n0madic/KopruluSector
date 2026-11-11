@@ -11,7 +11,7 @@
 #include "kp_test.h"
 
 #define CASES "tests/golden/oracle/aiscript_cases.json"
-#define MAP "generated/scenarios/idle_marines.kpm"
+#define MAP "scenarios/idle_marines"
 #define SEED 946684819
 #define PLAYERS 12
 #define ROSTER 64        /* KP_AI_ROSTER */
@@ -23,7 +23,7 @@
 #define OP_DEFENSEBUILD_GG 0x13
 #define SHOWN 20
 
-static const char *const FILES[] = { KP_ORACLE_DATA "dat.kpd", MAP, NULL };
+static const char *const FILES[] = { KP_T_DATA, MAP, NULL };
 
 /* A game of the probes' map (events on, no campaign row). */
 static KpOracleGame *new_game(KpT *T) { return kp_t_probe_game(T, MAP, SEED, 0, 0); }

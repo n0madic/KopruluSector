@@ -213,13 +213,6 @@ def captures(screens: Path, start: int, end: int, out: Path, pattern: str = "glu
     return lines
 
 
-def mission_kpm(mission: int) -> str | None:
-    lines = (ROOT / "generated" / "missions" / "index.txt").read_text().splitlines()
-    if not 1 <= mission <= len(lines):
-        return None
-    return f"generated/missions/{lines[mission - 1].split()[0]}.kpm"
-
-
 def replay(name: str, tool: list[str], lines: list[str], screens: Path, records: list[dict], pattern: str) -> bool:
     """Runs a replay tool (oracle_cli.command) over the lines and the captures of the records' time; logs its
     output."""
@@ -255,12 +248,9 @@ def check_game(game: Path, expansion: int, kinds: tuple[str, ...]) -> bool:
     log_path = game / "input.jsonl"
     if m is None or not log_path.exists():
         return True
-    kpm = mission_kpm(int(m.group(1)))
-    if kpm is None:
-        log.warning("%s: no catalog mission %s", game, m.group(1))
-        return True
     name, ok = f"{game.parent.name}/{game.name}", True
-    head = [f"kpm {kpm}", f"expansion {expansion}", f"mission {int(m.group(1))}"]
+    # the tools start the catalog's mission of the mapdata index (kp_data.h)
+    head = [f"expansion {expansion}", f"mission {int(m.group(1))}"]
     seg = room_segment(log_path) if "room" in kinds else None
     if seg is not None:
         owners = {int(k): v for k, v in seg["owners"].items()}
