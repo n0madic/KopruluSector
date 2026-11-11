@@ -121,19 +121,38 @@ void kp_fetch_free(KpFetch *f)
 
 /* --- the repack's groups (ADR 0018, stage D8b) --- */
 
+/* A group that cannot be had (the reason in err): its files are the install's when there is one (1, logged), else -1 */
+static int group_failed(KpApp *a, const char *err)
+{
+	if (kp_res_install(a->res) == KP_RES_SOURCE_NONE) return -1;
+	SDL_Log("data: %s (its files fall back to the install)", err);
+	return 1;
+}
+
+/* A group's archive added: 1, else group_failed */
+static int group_add(KpApp *a, const char *path, char *err, size_t err_size)
+{
+	return kp_res_add_repack(a->res, path, err, err_size) == 0 ? 1 : group_failed(a, err);
+}
+
 int kp_app_group(KpApp *a, const char *file, char *err, size_t err_size)
 {
 	KpAppGroupFetch *g = NULL;
 	char path[1200];
+	const char *dir = kp_res_repack_dir(a->res);
 	uint8_t *bytes;
 	size_t size = 0;
 	int k;
 	SDL_IOStream *io;
-	snprintf(path, sizeof path, "%s/%s", kp_res_repack_dir(a->res), file);
+	if (!dir[0]) { /* the program's own repack (Android's APK): its groups were all opened with it */
+		snprintf(err, err_size, "the repack's %s is not in the program's data", file);
+		return group_failed(a, err);
+	}
+	snprintf(path, sizeof path, "%s/%s", dir, file);
 	for (k = 0; k < KP_APP_GROUP_FETCHES && !g; k++)
 		if (a->group_fetches[k].fetch && strcmp(a->group_fetches[k].file, file) == 0) g = &a->group_fetches[k];
-	/* already there (beside the core on a computer or a phone, in memory once fetched on the web): opened in place */
-	if (!g && SDL_GetPathInfo(path, NULL)) return kp_res_add_repack(a->res, path, err, err_size) == 0 ? 1 : -1;
+	/* already there (beside the core on a computer, in memory once fetched on the web): opened in place */
+	if (!g && SDL_GetPathInfo(path, NULL)) return group_add(a, path, err, err_size);
 	for (k = 0; k < KP_APP_GROUP_FETCHES && !g; k++) {
 		if (a->group_fetches[k].fetch) continue;
 		if (!(a->group_fetches[k].fetch = kp_fetch_start(path, 0, 0))) break;
@@ -147,21 +166,19 @@ int kp_app_group(KpApp *a, const char *file, char *err, size_t err_size)
 	g->fetch = NULL;
 	if (!bytes) {
 		snprintf(err, err_size, "%s cannot be read (the repack's group beside %s)", path, "koprulu-core.mpq");
-		return -1;
+		return group_failed(a, err);
 	}
-	/* on the web the file joins the preloaded core in memory */
-	if (!SDL_GetPathInfo(path, NULL)) {
-		io = SDL_IOFromFile(path, "wb");
-		if (!io || SDL_WriteIO(io, bytes, size) != size) {
-			snprintf(err, err_size, "%s cannot be written: %s", path, SDL_GetError());
-			if (io) SDL_CloseIO(io);
-			free(bytes);
-			return -1;
-		}
-		SDL_CloseIO(io);
+	/* fetched (the web's: it joins the preloaded core in memory) */
+	io = SDL_IOFromFile(path, "wb");
+	if (!io || SDL_WriteIO(io, bytes, size) != size) {
+		snprintf(err, err_size, "%s cannot be written: %s", path, SDL_GetError());
+		if (io) SDL_CloseIO(io);
+		free(bytes);
+		return group_failed(a, err);
 	}
+	SDL_CloseIO(io);
 	free(bytes);
-	return kp_res_add_repack(a->res, path, err, err_size) == 0 ? 1 : -1;
+	return group_add(a, path, err, err_size);
 }
 
 void kp_app_groups_frame(KpApp *a)

@@ -825,17 +825,18 @@ static void res_repack_slice_refused(KpT *T)
 	kp_t_ok(T, kp_mpq_open(name, 0, err, sizeof err) == NULL, "a slice short of its archive's header (the file goes on)");
 	kp_mpq_slice_name(b->fd, b->offset[0], b->length[0] + 64, name, sizeof name);
 	kp_t_ok(T, kp_mpq_open(name, 0, err, sizeof err) == NULL, "a slice past its file's end");
-	kp_mpq_slice_name(b->fd + 1000, b->offset[0], b->length[0], name, sizeof name);
+	kp_mpq_slice_name(-1, b->offset[0], b->length[0], name, sizeof name);
 	kp_t_ok(T, kp_mpq_open(name, 0, err, sizeof err) == NULL, "a descriptor not open");
 	/* the program's repack refused: the install is read, else nothing is */
 	b->refuse = FILES[0];
 	kp_t_ok(T, open_res_bundle(T, &p, NULL, 0, b, err, sizeof err) == NULL, "no source");
 	kp_t_ok(T, strstr(err, "the program's repack") != NULL, "%s", err);
-	kp_t_ok(T, strstr(p.log, "koprulu-core.mpq is compressed (ignored: the install is read)") != NULL, "logged: %s", p.log);
+	kp_t_ok(T, strstr(p.log, "koprulu-core.mpq is compressed (ignored)\n") != NULL, "logged with no install: %s", p.log);
 	install = test_install(T);
 	dirs[0] = install->dir;
 	r = open_res_bundle(T, &p, dirs, 1, b, err, sizeof err);
 	kp_t_ok(T, r != NULL, "%s", err);
+	kp_t_ok(T, strstr(p.log, "koprulu-core.mpq is compressed (ignored: the install is read)\n") != NULL, "logged: %s", p.log);
 	kp_t_eq(T, kp_res_repacks(r), 0, "no repack");
 	kp_t_eq_str(T, read_text(T, r, "a/one.dat", &st, err, sizeof err), ONE, "the install's");
 	kp_t_eq(T, st, KP_RES_EXACT, "one's status");

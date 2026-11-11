@@ -330,9 +330,10 @@ uint8_t *kp_app_read(KpApp *a, const char *path, size_t *size);
 int kp_app_exists(KpApp *a, const char *path);
 /* The path under the data root (--data) of a file of the converted data. */
 void kp_app_path(const KpApp *a, const char *path, char *out, size_t size);
-/* A group of the repack (its file, as the core's listing names it): 1 added, 0 on its way (fetched), -1 it cannot be had
- * (the reason in err); kp_app_groups_frame starts the music's and adds it when it came; kp_app_groups_free drops the
- * fetches out. */
+/* A group of the repack (its file, as the core's listing names it): 1 added (or, when it cannot be had and an install is
+ * open, its files the install's: logged), 0 on its way (fetched), -1 it cannot be had (the reason in err; a program's
+ * own repack, Android's, opened all its groups with it); kp_app_groups_frame starts the music's and adds it when it
+ * came; kp_app_groups_free drops the fetches out. */
 int kp_app_group(KpApp *a, const char *file, char *err, size_t err_size);
 void kp_app_groups_frame(KpApp *a);
 void kp_app_groups_free(KpApp *a);

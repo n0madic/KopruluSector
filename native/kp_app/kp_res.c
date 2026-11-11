@@ -78,8 +78,8 @@ typedef struct {
 typedef struct {
 	KpMpq *mpq;
 	char path[KP_RES_PATH];       /* what kp_mpq_open opens: a file's path, or a slice's name (KpResConfig.repack_file) */
-	char name[KP_RES_PATH];       /* in messages and the reads' sources: the path, or a slice's file name */
-	char file[KP_RES_GROUP_FILE]; /* the file's name, which the core's listing names its groups by */
+	char name[KP_RES_PATH];       /* in messages: the path, or a slice's file name */
+	char file[KP_RES_GROUP_FILE]; /* the file's name, which the core's listing names its groups by and the reads' sources */
 } Repack;
 
 struct KpRes {
@@ -678,12 +678,13 @@ KpRes *kp_res_open(const char *const *dirs, int count, const KpResConfig *config
 	if (r->repack_file) {
 		static const char *const CORES[] = { "koprulu.mpq", "koprulu-core.mpq" };
 		char path[KP_RES_PATH], why[KP_RES_MESSAGE];
+		const char *ignored = r->install != KP_RES_SOURCE_NONE ? " (ignored: the install is read)" : " (ignored)";
 		int found = 0;
-		for (k = 0; k < 2 && found == 0; k++)
+		for (k = 0; k < (int)(sizeof CORES / sizeof CORES[0]) && found == 0; k++)
 			if ((found = r->repack_file(r->repack_ctx, CORES[k], path, sizeof path)) < 0)
-				say(r, "res: %s (ignored: the install is read)", path, NULL);
+				say(r, "res: %s%s", path, ignored);
 			else if (found && add_repack(r, path, CORES[k], NULL, why, sizeof why) != 0)
-				say(r, "res: %s (ignored: the install is read)", why, NULL);
+				say(r, "res: %s%s", why, ignored);
 	}
 	if (r->install == KP_RES_SOURCE_NONE && r->repack_count == 0) {
 		set_err(err, err_size, count || r->repack_file ? "no usable data in the folders given or the program's repack"
@@ -800,7 +801,8 @@ static uint8_t *read_casc(KpRes *r, const char *key, int exact, size_t *size, Kp
 		size_t got = 0;
 		uint8_t *b = kp_casc_read(r->casc, names[k], &got, why, sizeof why), *rebuilt;
 		if (!b) {
-			if (why[0]) say(r, "res: %s%s", why, NULL); /* named but not installed locally */
+			/* named but not installed locally (kp_res_casc_exact's donors are probed quietly) */
+			if (why[0] && !exact) say(r, "res: %s%s", why, NULL);
 			continue;
 		}
 		if (!in || matches(b, got, in)) {
@@ -1002,7 +1004,7 @@ static KpResStream *open_file(KpRes *r, const char *name, int own, uint64_t *siz
 	if ((e = map_find(&r->listed, key)) != NULL
 		&& (s->mpq = own ? kp_mpq_open(r->repack[e->archive].path, 1, err, err_size) : r->repack[e->archive].mpq) != NULL) {
 		if ((s->mpq_file = kp_mpq_file_open(s->mpq, mname, size, err, err_size)) != NULL && *size == e->size) {
-			seen(r, key, KP_RES_REPACKED, r->repack[e->archive].name);
+			seen(r, key, KP_RES_REPACKED, r->repack[e->archive].file);
 			return s;
 		}
 		say(r, "res: %s in %s differs from its listing or cannot be read: the install's is read", mname, r->repack[e->archive].name);
@@ -1074,7 +1076,7 @@ uint8_t *kp_res_head(KpRes *r, const char *name, size_t want, size_t *got, uint6
 		*got = n;
 		*total = e->wav_size;
 		if (err_size) err[0] = 0;
-		seen(r, key, KP_RES_REPACKED, r->repack[e->archive].name);
+		seen(r, key, KP_RES_REPACKED, r->repack[e->archive].file);
 		return b;
 	}
 	if (!(s = open_file(r, name, 0, total, err, err_size))) return NULL;
