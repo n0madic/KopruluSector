@@ -1,4 +1,4 @@
-/* dat.kpd loader (kp_dat.h). */
+/* dat.kpd loader and the DAT files read directly (kp_dat.h). */
 #include "kp_dat.h"
 
 #include <stdio.h>
@@ -35,63 +35,45 @@ static const char *table_name(const uint8_t *fourcc)
 	return NULL;
 }
 
-int kp_dat_load(KpDat *dat, const uint8_t *data, size_t size, const char *name, const KpKpfExpect *expect, KpError *err)
+/* A table's bytes by its fourcc (the container's section, an original file read): NULL with err set. */
+typedef const uint8_t *(*TableBytes)(void *ctx, const char *fourcc, uint32_t *size, KpError *err);
+
+/* The tables and columns COLS describes over the tables' bytes: 0, or -1 with err set (dat's arrays left to the
+ * caller's kp_dat_free). */
+static int columns(KpDat *dat, const uint8_t *cols, uint32_t cols_size, TableBytes table, void *ctx, KpError *err)
 {
-	KpKpf c;
-	KpKpfExpect want;
-	const uint8_t *cols;
-	uint32_t cols_size;
 	uint32_t tables, t, pos, total = 0;
-	int k;
-	memset(dat, 0, sizeof *dat);
-	dat->blob = (uint8_t *)malloc(size ? size : 1);
-	if (!dat->blob) return fail(err, "out of memory");
-	memcpy(dat->blob, data, size);
-	dat->size = size;
-	if (kp_kpf_parse(&c, dat->blob, size, name, 0, err) != 0) {
-		kp_dat_free(dat);
-		return -1;
-	}
-	memset(&want, 0, sizeof want);
-	if (expect) want = *expect;
-	want.kind = KP_DAT_KIND;
-	want.schema_version = KP_DAT_SCHEMA;
-	if (kp_kpf_check(&c, &want, err) != 0 || !(cols = kp_kpf_table(&c, "COLS", &cols_size, err))) goto failed;
 	/* first pass: count the columns */
-	if (cols_size < 2) goto bad;
+	if (cols_size < 2) return fail(err, "COLS section is malformed");
 	tables = kp_le_u16(cols);
 	pos = 2;
 	for (t = 0; t < tables; t++) {
 		uint32_t ncols, j;
-		if (cols_size - pos < 8) goto bad;
+		if (cols_size - pos < 8) return fail(err, "COLS section is malformed");
 		ncols = kp_le_u16(cols + pos + 6);
 		pos += 8;
 		for (j = 0; j < ncols; j++) {
-			if (cols_size - pos < 11 || cols[pos + 10] > cols_size - pos - 11) goto bad;
+			if (cols_size - pos < 11 || cols[pos + 10] > cols_size - pos - 11) return fail(err, "COLS section is malformed");
 			pos += 11 + cols[pos + 10];
 		}
 		total += ncols;
 	}
-	if (tables > KP_DAT_MAX_TABLES) goto bad;
+	if (tables > KP_DAT_MAX_TABLES) return fail(err, "COLS section is malformed");
 	dat->columns = (KpDatColumn *)calloc(total ? total : 1, sizeof *dat->columns);
-	if (!dat->columns) {
-		fail(err, "out of memory");
-		goto failed;
-	}
+	if (!dat->columns) return fail(err, "out of memory");
 	pos = 2;
 	for (t = 0; t < tables; t++) {
-		const uint8_t *e = cols + pos;
+		const uint8_t *e = cols + pos, *bytes;
 		const char *tname = table_name(e);
-		const KpKpfSection *section;
-		uint32_t ncols = kp_le_u16(e + 6), j;
+		uint32_t ncols = kp_le_u16(e + 6), j, size;
 		char fourcc[5];
 		memcpy(fourcc, e, 4);
 		fourcc[4] = '\0';
 		if (!tname) {
 			snprintf(err->msg, sizeof err->msg, "dat: unknown table %s", fourcc);
-			goto failed;
+			return -1;
 		}
-		if (!(section = kp_kpf_require(&c, fourcc, err))) goto failed;
+		if (!(bytes = table(ctx, fourcc, &size, err))) return -1;
 		dat->tables[t].name = tname;
 		dat->tables[t].records = (uint16_t)kp_le_u16(e + 4);
 		pos += 8;
@@ -107,16 +89,53 @@ int kp_dat_load(KpDat *dat, const uint8_t *data, size_t size, const char *name, 
 			if (len >= sizeof col->name) len = sizeof col->name - 1;
 			memcpy(col->name, d + 11, len);
 			col->name[len] = '\0';
-			if (col->size != 1 && col->size != 2 && col->size != 4) goto bad;
-			if ((uint64_t)offset + (uint64_t)col->size * col->count > section->size) {
+			if (col->size != 1 && col->size != 2 && col->size != 4) return fail(err, "COLS section is malformed");
+			if ((uint64_t)offset + (uint64_t)col->size * col->count > size) {
 				snprintf(err->msg, sizeof err->msg, "dat: column %s out of bounds", col->name);
-				goto failed;
+				return -1;
 			}
-			col->data = section->data + offset;
+			col->data = bytes + offset;
 			dat->column_count++;
 			pos += 11 + d[10];
 		}
 		dat->table_count = (int)t + 1;
+	}
+	return 0;
+}
+
+static const uint8_t *container_table(void *ctx, const char *fourcc, uint32_t *size, KpError *err)
+{
+	const KpKpfSection *s = kp_kpf_require((const KpKpf *)ctx, fourcc, err);
+	if (!s) return NULL;
+	*size = s->size;
+	return s->data;
+}
+
+int kp_dat_load(KpDat *dat, const uint8_t *data, size_t size, const char *name, const KpKpfExpect *expect, KpError *err)
+{
+	KpKpf c;
+	KpKpfExpect want;
+	const uint8_t *cols;
+	uint32_t cols_size;
+	int k;
+	memset(dat, 0, sizeof *dat);
+	dat->blob = (uint8_t *)malloc(size ? size : 1);
+	if (!dat->blob) return fail(err, "out of memory");
+	memcpy(dat->blob, data, size);
+	dat->size = size;
+	if (kp_kpf_parse(&c, dat->blob, size, name, 0, err) != 0) {
+		kp_dat_free(dat);
+		return -1;
+	}
+	memset(&want, 0, sizeof want);
+	if (expect) want = *expect;
+	want.kind = KP_DAT_KIND;
+	want.schema_version = KP_DAT_SCHEMA;
+	if (kp_kpf_check(&c, &want, err) != 0 || !(cols = kp_kpf_table(&c, "COLS", &cols_size, err))
+		|| columns(dat, cols, cols_size, container_table, &c, err) != 0) {
+		kp_kpf_free(&c);
+		kp_dat_free(dat);
+		return -1;
 	}
 	for (k = 0; k < KP_DAT_REQUIREMENTS; k++) {
 		uint32_t n = 0;
@@ -129,12 +148,80 @@ int kp_dat_load(KpDat *dat, const uint8_t *data, size_t size, const char *name, 
 	}
 	kp_kpf_free(&c);
 	return 0;
-bad:
-	fail(err, "COLS section is malformed");
-failed:
-	kp_kpf_free(&c);
-	kp_dat_free(dat);
-	return -1;
+}
+
+/* The DAT files read for columns(): each table's arr\<name>.dat in a buffer of its own until kp_dat_from_files joins
+ * them in one blob. */
+typedef struct {
+	const KpFiles *files;
+	int count;
+	uint8_t *bytes[KP_DAT_MAX_TABLES];
+	size_t size[KP_DAT_MAX_TABLES];
+} DatFiles;
+
+static const uint8_t *file_table(void *ctx, const char *fourcc, uint32_t *size, KpError *err)
+{
+	DatFiles *d = (DatFiles *)ctx;
+	char path[64];
+	if (d->count >= KP_DAT_MAX_TABLES) {
+		fail(err, "too many tables");
+		return NULL;
+	}
+	snprintf(path, sizeof path, "arr\\%s.dat", table_name((const uint8_t *)fourcc));
+	if (!(d->bytes[d->count] = kp_files_need(d->files, path, &d->size[d->count], err))) return NULL;
+	*size = (uint32_t)d->size[d->count];
+	return d->bytes[d->count++];
+}
+
+/* Moves the pointers of dat's columns and requirements inside [from, from + size) to the same offsets of to. */
+static void rebase(KpDat *dat, const uint8_t *from, size_t size, const uint8_t *to)
+{
+	int k;
+	for (k = 0; k < dat->column_count; k++) {
+		const uint8_t *p = dat->columns[k].data;
+		if (p >= from && p < from + size) dat->columns[k].data = to + (p - from);
+	}
+	for (k = 0; k < KP_DAT_REQUIREMENTS; k++) {
+		const uint8_t *p = dat->requirements[k].words;
+		if (p && p >= from && p < from + size) dat->requirements[k].words = to + (p - from);
+	}
+}
+
+int kp_dat_from_files(KpDat *dat, const KpFiles *f, KpError *err)
+{
+	const KpDefsTable *cols = kp_defs_table(f->profile, "COLS");
+	DatFiles d;
+	size_t total = 0, at = 0;
+	int k, rc = -1;
+	memset(dat, 0, sizeof *dat);
+	memset(&d, 0, sizeof d);
+	d.files = f;
+	if (!cols) return fail(err, "no compiled COLS table");
+	if (columns(dat, cols->data, cols->size, file_table, &d, err) != 0) goto done;
+	for (k = 0; k < d.count; k++) total += d.size[k];
+	if (!(dat->blob = (uint8_t *)malloc(total ? total : 1))) {
+		fail(err, "out of memory");
+		goto done;
+	}
+	dat->size = total;
+	for (k = 0; k < d.count; k++) { /* one blob, as a container's copy is (kp_dat_set writes into it) */
+		memcpy(dat->blob + at, d.bytes[k], d.size[k]);
+		rebase(dat, d.bytes[k], d.size[k], dat->blob + at);
+		at += d.size[k];
+	}
+	for (k = 0; k < KP_DAT_REQUIREMENTS; k++) {
+		const KpDefsTable *t = kp_defs_table(f->profile, REQUIREMENT_NAMES[k].fourcc);
+		dat->requirements[k].name = REQUIREMENT_NAMES[k].name;
+		if (t) {
+			dat->requirements[k].words = t->data;
+			dat->requirements[k].count = t->size / 2;
+		}
+	}
+	rc = 0;
+done:
+	for (k = 0; k < d.count; k++) free(d.bytes[k]);
+	if (rc != 0) kp_dat_free(dat);
+	return rc;
 }
 
 void kp_dat_free(KpDat *dat)

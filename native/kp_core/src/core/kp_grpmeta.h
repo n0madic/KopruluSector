@@ -12,6 +12,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "kp_dat.h"
+#include "kp_files.h"
 #include "kp_kpf.h"
 
 #ifdef __cplusplus
@@ -63,6 +65,10 @@ typedef struct {
  * not checked (the hit test, kp_grpmeta_pixel_opaque, reads them). Returns -1 with err set. */
 int kp_grpmeta_load(KpGrpMeta *g, const uint8_t *data, size_t size, const char *name, const KpKpfExpect *expect,
 	KpError *err);
+/* grpmeta built from the original files (ADR 0018, stage D3) as the converter builds grpmeta.kpd (kpd.grp_set,
+ * build_grpmeta): the GRP and LO files images.dat names through images.tbl ("unit\\" + the entry, deduplicated in any
+ * case), their frame records and opacity runs, the atlases the packs are cut into (converter/packs.py). */
+int kp_grpmeta_from_files(KpGrpMeta *g, const KpFiles *files, const KpDat *dat, KpError *err);
 void kp_grpmeta_free(KpGrpMeta *g);
 
 /* grpmeta built from parts instead of loaded (the C suites build one, tests/c/test_present.c):

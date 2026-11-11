@@ -1,7 +1,10 @@
 /* UTF-8 text with the windows-1252 reading of stray bytes (kp_text.h; ADR 0016). */
 #include "kp_text.h"
+#include "kp_kpf.h"
 #include "kp_utf8.h"
 
+#include <stddef.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define C1_FIRST 0x80
@@ -146,4 +149,80 @@ size_t kp_text_to_legacy(const char *utf8, char *out, size_t size)
 	}
 	out[n] = 0;
 	return n;
+}
+
+/* --- the original files' text (ADR 0018, stage D3) --- */
+
+
+int kp_text_valid_utf8(const uint8_t *s, size_t n)
+{
+	size_t at = 0;
+	while (at < n)
+		if (kp_utf8_next(s, n, &at) == KP_UTF8_BAD) return 0;
+	return 1;
+}
+
+uint8_t *kp_text_utf8_of(const uint8_t *raw, size_t n, size_t *out_size)
+{
+	size_t k, m = 0;
+	uint8_t *out;
+	if (kp_text_valid_utf8(raw, n)) {
+		if ((out = (uint8_t *)malloc(n + 1)) == NULL) return NULL;
+		memcpy(out, raw, n);
+		out[n] = 0;
+		*out_size = n;
+		return out;
+	}
+	if ((out = (uint8_t *)malloc(n * 3 + 1)) == NULL) return NULL; /* a windows-1252 byte is at most 3 bytes of UTF-8 */
+	for (k = 0; k < n; k++) m += kp_text_encode(kp_text_from_byte(raw[k]), out + m);
+	out[m] = 0;
+	*out_size = m;
+	return out;
+}
+
+uint8_t *kp_text_table_utf8(const uint8_t *data, size_t size, size_t *out_size)
+{
+	size_t count, header, n, at, m = 0, *moved;
+	uint8_t *out;
+	ptrdiff_t growth;
+	if (size < 2) return NULL;
+	count = kp_le_u16(data);
+	header = 2 + 2 * count;
+	if (header > size) return NULL;
+	n = size - header;
+	if (kp_text_valid_utf8(data + header, n)) {
+		if ((out = (uint8_t *)malloc(size + 1)) == NULL) return NULL;
+		memcpy(out, data, size);
+		out[size] = 0;
+		*out_size = size;
+		return out;
+	}
+	if ((out = (uint8_t *)malloc(header + n * 3 + 1)) == NULL) return NULL;
+	if ((moved = (size_t *)malloc((n + 1) * sizeof *moved)) == NULL) {
+		free(out);
+		return NULL;
+	}
+	for (at = 0; at < n; at++) {
+		moved[at] = header + m;
+		m += kp_text_encode(kp_text_from_byte(data[header + at]), out + header + m);
+	}
+	moved[n] = header + m;
+	growth = (ptrdiff_t)m - (ptrdiff_t)n; /* an offset past the end stays past it */
+	out[0] = data[0];
+	out[1] = data[1];
+	for (at = 0; at < count; at++) {
+		size_t o = kp_le_u16(data + 2 + 2 * at), to;
+		to = o < header ? o : o <= size ? moved[o - header] : (size_t)((ptrdiff_t)o + growth);
+		if (to > 0xffff) {
+			free(out);
+			free(moved);
+			return NULL;
+		}
+		out[2 + 2 * at] = (uint8_t)to;
+		out[3 + 2 * at] = (uint8_t)(to >> 8);
+	}
+	free(moved);
+	out[header + m] = 0;
+	*out_size = header + m;
+	return out;
 }

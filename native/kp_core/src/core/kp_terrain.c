@@ -89,3 +89,39 @@ int kp_game_tile_flags(KpImages *w, void *ctx, int32_t index, uint32_t *flags)
 	*flags = (uint32_t)g->terrain.tiles[index];
 	return 1;
 }
+
+#define VF4_RECORD 32
+#define VF4_WALKABLE 0x0001u
+#define VF4_MIDDLE 0x0002u
+#define VF4_HIGH 0x0004u
+#define VF4_VERY_HIGH 0x0008u
+#define MFLAG_WALKABLE 0x00010000u
+#define MFLAG_UNWALKABLE 0x00040000u
+#define MFLAG_VERY_HIGH 0x01000000u
+#define MFLAG_MIDDLE 0x02000000u
+#define MFLAG_HIGH 0x04000000u
+#define MFLAG_PARTIAL_WALK 0x20000000u
+
+/* The megatile flags of a tileset's VF4 (the counting rules at 0x445562; converter/derive/terrain.py megatile_flags):
+ * one per 32-byte record of 16 mini-tile words, size / 32 of them into out. */
+void kp_terrain_megatile_flags(const uint8_t *vf4, size_t size, uint32_t *out)
+{
+	size_t m;
+	for (m = 0; m < size / VF4_RECORD; m++) {
+		int walk = 0, high = 0, middle = 0, very_high = 0, k;
+		uint32_t flags;
+		for (k = 0; k < 16; k++) {
+			uint32_t w = kp_le_u16(vf4 + m * VF4_RECORD + 2 * (size_t)k);
+			walk += (w & VF4_WALKABLE) != 0;
+			high += (w & VF4_HIGH) != 0;
+			middle += (w & VF4_MIDDLE) != 0;
+			very_high |= (w & VF4_VERY_HIGH) != 0;
+		}
+		flags = walk > 12 ? MFLAG_WALKABLE : MFLAG_UNWALKABLE;
+		if (walk > 0 && walk < 16) flags |= MFLAG_PARTIAL_WALK;
+		if (high >= 12) flags |= MFLAG_HIGH;
+		else if (middle + high >= 12) flags |= MFLAG_MIDDLE;
+		if (very_high) flags |= MFLAG_VERY_HIGH;
+		out[m] = flags;
+	}
+}

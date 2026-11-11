@@ -55,6 +55,9 @@ struct KpGame;
 int kp_terrain_set_tileset(struct KpGame *g, const uint8_t *cv5, size_t cv5_size, const uint8_t *vf4,
 	size_t vf4_size, const int64_t *mflags, int64_t mflags_count);
 void kp_terrain_free(struct KpGame *g);
+/* The megatile flags of a tileset's VF4 (the counting rules at 0x445562; converter/derive/terrain.py megatile_flags,
+ * the tileset container's MFLG): one per 32-byte record of 16 mini-tile words, size / 32 of them into out. */
+void kp_terrain_megatile_flags(const uint8_t *vf4, size_t size, uint32_t *out);
 /* The images world's tile flags read from the game's (KpTileFlags with the game as context). */
 int kp_game_tile_flags(struct KpImages *w, void *ctx, int32_t index, uint32_t *flags);
 

@@ -10,6 +10,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "kp_files.h"
 #include "kp_kpf.h"
 
 #ifdef __cplusplus
@@ -53,6 +54,9 @@ int kp_campaign_load(KpCampaign *c, const uint8_t *data, size_t size, const char
  * mapdata.dat and mapdata.tbl, converter/campaign.py). Nothing points into them afterwards. */
 int kp_campaign_from(KpCampaign *c, const uint8_t *tabl, size_t tabl_size, const uint8_t *mapd, size_t mapd_size,
 	const uint8_t *chea, size_t chea_size, const char *name, KpError *err);
+/* The campaign from the original files (ADR 0018, stage D3): MAPD built from arr\\mapdata.dat and arr\\mapdata.tbl as
+ * converter/campaign.py directories does, TABL and CHEA the profile's compiled tables. */
+int kp_campaign_from_files(KpCampaign *c, const KpFiles *files, KpError *err);
 void kp_campaign_free(KpCampaign *c);
 
 /* A campaign row: its table (0..5; -1 none) and index in it. */

@@ -6,6 +6,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "kp_files.h"
 #include "kp_kpf.h"
 
 #ifdef __cplusplus
@@ -24,6 +25,8 @@ typedef struct {
 } KpAiBins;
 
 int kp_ai_bins_load(KpAiBins *b, const uint8_t *data, size_t size, const char *name, KpError *err);
+/* aiscript.bin and bwscript.bin read directly (ADR 0018, stage D3), their directories checked as the converter does. */
+int kp_ai_bins_from_files(KpAiBins *b, const KpFiles *files, KpError *err);
 void kp_ai_bins_free(KpAiBins *b);
 
 /* FindAiScriptOffset 0x494d20: the offset of script `id` (its four bytes little-endian) in aiscript.bin's directory

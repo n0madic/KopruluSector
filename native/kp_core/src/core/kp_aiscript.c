@@ -29,6 +29,8 @@
 #define DEFENSE_COUNT 10   /* the most units a defense opcode adds */
 #define DEFENSE_LISTS 4    /* the build lists gg, ag, ga, aa; the use lists follow them */
 #define DIRECTORY_RECORD 8 /* the id and offset DWORDs a directory record starts with */
+#define AI_RECORD 16       /* aiscript.bin's directory records */
+#define BW_RECORD 8        /* bwscript.bin's */
 #define FOURCC(a, b, c, d) ((uint32_t)(a) | (uint32_t)(b) << 8 | (uint32_t)(c) << 16 | (uint32_t)(d) << 24)
 #define RESCUE_SCRIPT FOURCC('R', 's', 'c', 'u')
 
@@ -127,6 +129,53 @@ failed:
 	return -1;
 }
 
+/* scripts.ai_directory's checks: records of `stride` bytes from the DWORD at 0 up to a zero id, each inside the file
+ * with its offset inside it. */
+static int directory_valid(const uint8_t *bin, size_t size, uint32_t stride)
+{
+	uint64_t at;
+	if (size < 4) return 0;
+	for (at = kp_le_u32(bin);; at += stride) {
+		if (at + 4 > size) return 0;
+		if (kp_le_u32(bin + at) == 0) return 1;
+		if (at + stride > size || kp_le_u32(bin + at + 4) >= size) return 0;
+	}
+}
+
+int kp_ai_bins_from_files(KpAiBins *b, const KpFiles *f, KpError *err)
+{
+	static const char *const FILES[KP_AI_BINS] = { "scripts\\aiscript.bin", "scripts\\bwscript.bin" };
+	static const uint32_t STRIDES[KP_AI_BINS] = { AI_RECORD, BW_RECORD };
+	uint8_t *bin[KP_AI_BINS] = { NULL, NULL };
+	size_t size[KP_AI_BINS] = { 0, 0 };
+	int k, rc = -1;
+	memset(b, 0, sizeof *b);
+	for (k = 0; k < KP_AI_BINS; k++) {
+		if (!(bin[k] = kp_files_need(f, FILES[k], &size[k], err))) goto done;
+		if (!directory_valid(bin[k], size[k], STRIDES[k])) {
+			snprintf(err->msg, sizeof err->msg, "aiscript: %s's directory runs past the end or names an offset outside it",
+				FILES[k]);
+			goto done;
+		}
+	}
+	b->size = size[0] + size[1];
+	if (!(b->blob = (uint8_t *)malloc(b->size ? b->size : 1))) {
+		fail(err, "out of memory");
+		goto done;
+	}
+	memcpy(b->blob, bin[0], size[0]);
+	memcpy(b->blob + size[0], bin[1], size[1]);
+	b->bin[0] = b->blob;
+	b->bin[1] = b->blob + size[0];
+	b->bin_size[0] = (uint32_t)size[0];
+	b->bin_size[1] = (uint32_t)size[1];
+	rc = 0;
+done:
+	free(bin[0]);
+	free(bin[1]);
+	return rc;
+}
+
 /* A directory's offset of id (its records of `stride` bytes {id, offset, ...} from the DWORD at offset 0, up to id 0):
  * the first matching record's, 0 when none matches. */
 static uint32_t directory_find(const uint8_t *bin, uint32_t size, uint32_t id, uint32_t stride)
@@ -144,10 +193,10 @@ static uint32_t directory_find(const uint8_t *bin, uint32_t size, uint32_t id, u
 
 uint32_t kp_ai_bins_find(const KpAiBins *b, uint32_t id, int *bin)
 {
-	uint32_t off = directory_find(b->bin[0], b->bin_size[0], id, 16);
+	uint32_t off = directory_find(b->bin[0], b->bin_size[0], id, AI_RECORD);
 	*bin = 0;
 	if (off != 0) return off;
-	off = directory_find(b->bin[1], b->bin_size[1], id, 8);
+	off = directory_find(b->bin[1], b->bin_size[1], id, BW_RECORD);
 	if (off != 0) *bin = 1;
 	return off;
 }

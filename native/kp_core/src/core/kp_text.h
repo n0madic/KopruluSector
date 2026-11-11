@@ -36,6 +36,16 @@ size_t kp_text_encode(int32_t cp, uint8_t out[KP_TEXT_UTF8_MAX]);
 size_t kp_text_from_legacy(const char *legacy, char *out, size_t size);
 /* A UTF-8 string back to windows-1252 bytes, what has no byte left out: its length (never longer than utf8). */
 size_t kp_text_to_legacy(const char *utf8, char *out, size_t size);
+/* Whether n bytes are valid UTF-8 as Python's strict decoder takes it (no overlong forms, surrogates or code points
+ * past U+10FFFF). */
+int kp_text_valid_utf8(const uint8_t *s, size_t n);
+/* Raw text in UTF-8 (converter/kpf/kpd.py text_utf8): valid UTF-8 kept, else each byte as windows-1252; a malloc'd
+ * copy, NUL terminated past *out_size, or NULL when out of memory. */
+uint8_t *kp_text_utf8_of(const uint8_t *raw, size_t n, size_t *out_size);
+/* A TBL with its text in UTF-8 (kpd.table_utf8): each offset moves with the bytes the text before it grew by, one
+ * past the end by the whole growth; a malloc'd copy, NUL terminated past *out_size, or NULL when the offset table runs
+ * past the file, an offset outgrows 16 bits, or out of memory. */
+uint8_t *kp_text_table_utf8(const uint8_t *data, size_t size, size_t *out_size);
 
 #ifdef __cplusplus
 }

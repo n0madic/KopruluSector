@@ -21,6 +21,7 @@
 #include <stdint.h>
 
 #include "kp_defs.h"
+#include "kp_files.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -81,6 +82,12 @@ int kp_res_exists(KpRes *r, const char *name);
 KpResStream *kp_res_stream_open(KpRes *r, const char *name, uint64_t *size, char *err, size_t err_size);
 int kp_res_stream_read(KpResStream *s, uint64_t offset, void *out, size_t size);
 void kp_res_stream_close(KpResStream *s);
+/* A file's first `want` bytes (fewer when it is shorter) and its size, read on the calling thread through the KpRes's
+ * own handles (the sounds' and the music's headers: the size checked as a stream's, not the digest); NULL as
+ * kp_res_read. */
+uint8_t *kp_res_head(KpRes *r, const char *name, size_t want, size_t *got, uint64_t *total, char *err, size_t err_size);
+/* The reader the core builds its structures through (kp_files.h): kp_res_read and kp_res_head over r, its profile. */
+void kp_res_files(KpRes *r, KpFiles *f);
 
 /* The files read so far by status; the list of them (--res-log: "name<TAB>status<TAB>source" a line, by name). */
 void kp_res_counts(const KpRes *r, int counts[KP_RES_STATUS_COUNT]);

@@ -3,7 +3,7 @@
  * rules, and with KP_TEST_ORIGINAL and KP_TEST_SCR the real installs. */
 #define _POSIX_C_SOURCE 200809L /* mkdtemp, rmdir */
 #define _DARWIN_C_SOURCE        /* and macOS's mkdtemp (unistd.h) */
-#include "kp_test.h"
+#include "kp_test_app.h"
 
 #include <errno.h>
 #include <stdio.h>
@@ -491,24 +491,9 @@ static void res_casc_rebuilds_the_tilesets(KpT *T)
 
 /* --- the real installs (KP_TEST_ORIGINAL, KP_TEST_SCR) --- */
 
-static KpRes *install_res(KpT *T, const char *env)
-{
-	const char *dir = getenv(env), *dirs[1];
-	KpResConfig c;
-	char err[1024];
-	KpRes *r;
-	if (!dir || !dir[0]) kp_t_skip(T, "no %s", env);
-	memset(&c, 0, sizeof c);
-	dirs[0] = dir;
-	r = kp_res_open(dirs, 1, &c, err, sizeof err);
-	kp_t_ok(T, r != NULL, "%s", err);
-	kp_t_defer(T, res_close, r);
-	return r;
-}
-
 static void res_reads_the_1_17_install(KpT *T)
 {
-	KpRes *r = install_res(T, "KP_TEST_ORIGINAL");
+	KpRes *r = kp_t_install(T, "KP_TEST_ORIGINAL");
 	KpResStatus st;
 	KpResStream *s;
 	char err[1024], head[4];
@@ -529,7 +514,7 @@ static void res_reads_the_1_17_install(KpT *T)
 
 static void res_reads_the_remastered_install(KpT *T)
 {
-	KpRes *r = install_res(T, "KP_TEST_SCR");
+	KpRes *r = kp_t_install(T, "KP_TEST_SCR");
 	KpResStatus st;
 	char err[1024];
 	size_t size;

@@ -54,7 +54,8 @@ typedef struct {
 } KpMissionContours;
 
 /* The tilesets by a mission's tileset index (its era & 7) and their converted files' path under the data root. */
-extern const char *const KP_TILESET_NAMES[8];
+#define KP_TILESETS 8
+extern const char *const KP_TILESET_NAMES[KP_TILESETS];
 #define KP_TILESET_PATH "generated/data/tilesets/%s.kpd"
 
 typedef struct {

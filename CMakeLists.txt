@@ -181,7 +181,7 @@ endif()
 add_executable(kp_test ${KP_TEST_SOURCES})
 kp_target(kp_test CXX)
 target_include_directories(kp_test PRIVATE ${KP_TESTS_DIR})
-target_link_libraries(kp_test PRIVATE kp_oracle_lib kp_app_core kp_gfx_passes)
+target_link_libraries(kp_test PRIVATE kp_oracle_lib kp_app_core kp_gfx_passes kp_zlib) # zlib: test_original's PNGs
 
 endif()
 

@@ -1076,9 +1076,15 @@ static void palettes_game_tables(KpT *T)
 	kp_t_eq(T, p.tunit[2 * 8 + 3], (16 + 3 + salt) % 256, "player 2's colour 3");
 }
 
-/* The executable's tables compiled in (kp_defs.h, ADR 0018 stage D2), each found by its fourcc. */
+/* The executable's tables compiled in (kp_defs.h, ADR 0018 stage D2), each found by its fourcc: the containers' sections
+ * of the same name, and the lists the runtime builds its structures from the original files with (stage D3: the
+ * tilesets' cycles, the fonts' paths, the interface's dialogs and files), which no container carries. */
 static const char *const DEFS_TABLES[] = { "ACCL", "BTNS", "CHEA", "COLS", "ESTB", "MUSI", "RQOR", "RQRS", "RQTU",
 	"RQUN", "RQUP", "SLOT", "STLY", "TABL", "VOLT" };
+static const char *const BUILT_TABLES[] = { "CYC0", "CYC1", "CYC2", "CYC3", "CYC4", "CYC5", "CYC6", "CYC7", "FNTP",
+	"KBIN", "KEXT", "KLAB", "UBIN", "UCRD", "UDGR", "UGLF", "UGRP", "UPCX", "UTHF", "UTHM" };
+#define DEFS_COUNT (sizeof DEFS_TABLES / sizeof DEFS_TABLES[0])
+#define BUILT_COUNT (sizeof BUILT_TABLES / sizeof BUILT_TABLES[0])
 
 static void defs_tables_are_compiled(KpT *T)
 {
@@ -1086,10 +1092,11 @@ static void defs_tables_are_compiled(KpT *T)
 	size_t k;
 	kp_t_ok(T, p == &kp_defs_bw_1_17_0_1, "the profile by its id");
 	kp_t_ok(T, kp_defs_profile("bw-0") == NULL && kp_defs_profile(NULL) == NULL, "no other profile");
-	kp_t_eq(T, p->table_count, (int64_t)(sizeof DEFS_TABLES / sizeof DEFS_TABLES[0]), "the tables");
-	for (k = 0; k < sizeof DEFS_TABLES / sizeof DEFS_TABLES[0]; k++) {
-		const KpDefsTable *t = kp_defs_table(p, DEFS_TABLES[k]);
-		kp_t_ok(T, t != NULL && t->size > 0 && strcmp(t->fourcc, DEFS_TABLES[k]) == 0, "%s", DEFS_TABLES[k]);
+	kp_t_eq(T, p->table_count, (int64_t)(DEFS_COUNT + BUILT_COUNT), "the tables");
+	for (k = 0; k < DEFS_COUNT + BUILT_COUNT; k++) {
+		const char *fourcc = k < DEFS_COUNT ? DEFS_TABLES[k] : BUILT_TABLES[k - DEFS_COUNT];
+		const KpDefsTable *t = kp_defs_table(p, fourcc);
+		kp_t_ok(T, t != NULL && t->size > 0 && strcmp(t->fourcc, fourcc) == 0, "%s", fourcc);
 	}
 	kp_t_ok(T, kp_defs_table(p, "CODE") == NULL && kp_defs_table(p, "AAAA") == NULL && kp_defs_table(p, "ZZZZ") == NULL,
 		"no other table");
@@ -1159,7 +1166,7 @@ static void defs_tables_equal_the_converted_sections(KpT *T)
 			compared++;
 		}
 	}
-	kp_t_eq(T, compared, kp_defs_bw_1_17_0_1.table_count, "every compiled table compared");
+	kp_t_eq(T, compared, (int64_t)DEFS_COUNT, "every section's table compared");
 }
 
 static const KpTest TESTS[] = {

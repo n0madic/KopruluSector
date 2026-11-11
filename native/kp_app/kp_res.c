@@ -92,6 +92,7 @@ struct KpResStream {
 	KpMpqFile *mpq_file;
 	KpCasc *casc;
 	KpCascFile *casc_file;
+	int borrowed; /* the archive's handles are the KpRes's (kp_res_head on the calling thread), not closed with it */
 };
 
 /* --- small helpers --- */
@@ -668,7 +669,8 @@ int kp_res_exists(KpRes *r, const char *name)
 
 /* --- streams --- */
 
-KpResStream *kp_res_stream_open(KpRes *r, const char *name, uint64_t *size, char *err, size_t err_size)
+/* A file opened to read in pieces: on archive handles of its own (own: another thread's stream) or the KpRes's. */
+static KpResStream *open_file(KpRes *r, const char *name, int own, uint64_t *size, char *err, size_t err_size)
 {
 	char key[KP_RES_NAME], mname[KP_RES_NAME];
 	KpResStream *s = (KpResStream *)calloc(1, sizeof *s);
@@ -681,26 +683,28 @@ KpResStream *kp_res_stream_open(KpRes *r, const char *name, uint64_t *size, char
 		set_err(err, err_size, "out of memory");
 		return NULL;
 	}
+	s->borrowed = !own;
 	normalize(name, key, sizeof key);
 	mpq_name(key, mname, sizeof mname);
 	in = kp_defs_input(r->profile, key);
 	if (kp_defs_listed(r->profile->unreadable, r->profile->unreadable_count, key)
 		|| kp_defs_listed(r->profile->absent, r->profile->absent_count, key))
 		goto none;
-	if ((e = map_find(&r->listed, key)) != NULL && (s->mpq = kp_mpq_open(r->repack[e->archive].path, 1, err, err_size)) != NULL) {
+	if ((e = map_find(&r->listed, key)) != NULL
+		&& (s->mpq = own ? kp_mpq_open(r->repack[e->archive].path, 1, err, err_size) : r->repack[e->archive].mpq) != NULL) {
 		if ((s->mpq_file = kp_mpq_file_open(s->mpq, mname, size, err, err_size)) != NULL && *size == e->size) {
 			seen(r, key, KP_RES_REPACKED, r->repack[e->archive].path);
 			return s;
 		}
 		say(r, "res: %s in %s differs from its listing or cannot be read: the install's is read", mname, r->repack[e->archive].path);
 		kp_mpq_file_close(s->mpq_file);
-		kp_mpq_close(s->mpq);
+		if (own) kp_mpq_close(s->mpq);
 		s->mpq_file = NULL;
 		s->mpq = NULL;
 	}
 	for (k = 0; k < r->archive_count; k++) {
 		if (!kp_mpq_has(r->archives[k].mpq, mname)) continue;
-		if (!(s->mpq = kp_mpq_open(r->archives[k].path, 1, err, err_size))
+		if (!(s->mpq = own ? kp_mpq_open(r->archives[k].path, 1, err, err_size) : r->archives[k].mpq)
 			|| !(s->mpq_file = kp_mpq_file_open(s->mpq, mname, size, err, err_size)))
 			goto fail;
 		if (in && *size != in->size) {
@@ -717,7 +721,7 @@ KpResStream *kp_res_stream_open(KpRes *r, const char *name, uint64_t *size, char
 		int n = casc_candidates(key, names, (int)(sizeof names / sizeof names[0]));
 		for (k = 0; k < n; k++) {
 			if (ends_with(names[k], VX4EX) || !kp_casc_has(r->casc, names[k])) continue;
-			if (!s->casc && !(s->casc = kp_casc_open(r->install_dir, err, err_size))) goto fail;
+			if (!s->casc && !(s->casc = own ? kp_casc_open(r->install_dir, err, err_size) : r->casc)) goto fail;
 			if (!(s->casc_file = kp_casc_file_open(s->casc, names[k], size, err, err_size))) {
 				if (err[0]) goto fail;
 				continue;
@@ -735,6 +739,31 @@ fail:
 	return NULL;
 }
 
+KpResStream *kp_res_stream_open(KpRes *r, const char *name, uint64_t *size, char *err, size_t err_size)
+{
+	return open_file(r, name, 1, size, err, err_size);
+}
+
+uint8_t *kp_res_head(KpRes *r, const char *name, size_t want, size_t *got, uint64_t *total, char *err, size_t err_size)
+{
+	KpResStream *s = open_file(r, name, 0, total, err, err_size);
+	uint8_t *b;
+	size_t n;
+	*got = 0;
+	if (!s) return NULL;
+	n = *total < want ? (size_t)*total : want;
+	if (!(b = (uint8_t *)malloc(n + 1)) || kp_res_stream_read(s, 0, b, n) != 0) {
+		if (err_size) snprintf(err, err_size, "%s: %s", name, b ? "cannot be read" : "out of memory");
+		free(b);
+		kp_res_stream_close(s);
+		return NULL;
+	}
+	b[n] = 0;
+	*got = n;
+	kp_res_stream_close(s);
+	return b;
+}
+
 int kp_res_stream_read(KpResStream *s, uint64_t offset, void *out, size_t size)
 {
 	if (s->mpq_file) return kp_mpq_file_read(s->mpq_file, offset, out, size);
@@ -746,9 +775,11 @@ void kp_res_stream_close(KpResStream *s)
 {
 	if (!s) return;
 	kp_mpq_file_close(s->mpq_file);
-	kp_mpq_close(s->mpq);
 	kp_casc_file_close(s->casc_file);
-	kp_casc_close(s->casc);
+	if (!s->borrowed) {
+		kp_mpq_close(s->mpq);
+		kp_casc_close(s->casc);
+	}
 	free(s);
 }
 
@@ -792,4 +823,25 @@ int kp_res_write_log(const KpRes *r, const char *path, char *err, size_t err_siz
 		return -1;
 	}
 	return 0;
+}
+
+/* --- the core's reader of the original files (kp_files.h) --- */
+
+static uint8_t *files_read(void *ctx, const char *name, size_t *size, char *err, size_t err_size)
+{
+	return kp_res_read((KpRes *)ctx, name, size, NULL, err, err_size);
+}
+
+static uint8_t *files_head(void *ctx, const char *name, size_t want, size_t *got, uint64_t *total, char *err,
+	size_t err_size)
+{
+	return kp_res_head((KpRes *)ctx, name, want, got, total, err, err_size);
+}
+
+void kp_res_files(KpRes *r, KpFiles *f)
+{
+	f->read = files_read;
+	f->head = files_head;
+	f->ctx = r;
+	f->profile = r->profile;
 }

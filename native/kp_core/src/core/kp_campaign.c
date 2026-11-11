@@ -349,3 +349,55 @@ int kp_campaign_mission_name(const KpCampaign *c, int64_t index, char *out, size
 	out[k] = '\0';
 	return 1;
 }
+
+#define MAPDATA_DAT "arr\\mapdata.dat"
+#define MAPDATA_TBL "arr\\mapdata.tbl"
+
+int kp_campaign_from_files(KpCampaign *c, const KpFiles *f, KpError *err)
+{
+	const KpDefsTable *tabl = kp_defs_table(f->profile, "TABL"), *chea = kp_defs_table(f->profile, "CHEA");
+	size_t dat_size, tbl_size, at = 2;
+	uint8_t *dat = NULL, *tbl = NULL, *mapd = NULL;
+	uint32_t n, count;
+	int rc = -1;
+	memset(c, 0, sizeof *c);
+	if (!tabl || !chea) return fail(err, "campaign", "no TABL or CHEA table compiled for the profile");
+	if (!(dat = kp_files_need(f, MAPDATA_DAT, &dat_size, err)) || !(tbl = kp_files_need(f, MAPDATA_TBL, &tbl_size, err)))
+		goto done;
+	/* campaign.directories: the strings 0x51abb8 by mapdata index (u32 TBL ids), "" where the id is 0 */
+	if (dat_size < 4 * KP_CAMPAIGN_MISSIONS || tbl_size < 2 || 2 + 2 * (size_t)kp_le_u16(tbl) > tbl_size) {
+		fail(err, MAPDATA_DAT, "mapdata.dat or mapdata.tbl is malformed");
+		goto done;
+	}
+	count = kp_le_u16(tbl);
+	if (!(mapd = (uint8_t *)malloc(2 + KP_CAMPAIGN_MISSIONS * (2 + tbl_size)))) {
+		fail(err, "campaign", "out of memory");
+		goto done;
+	}
+	mapd[0] = KP_CAMPAIGN_MISSIONS;
+	mapd[1] = 0;
+	for (n = 0; n < KP_CAMPAIGN_MISSIONS; n++) {
+		uint32_t ref = kp_le_u32(dat + 4 * n);
+		size_t off = 0, end = 0;
+		if (ref != 0) {
+			if (ref > count) {
+				fail(err, MAPDATA_DAT, "a mission's string is outside mapdata.tbl");
+				goto done;
+			}
+			off = kp_le_u16(tbl + 2 * ref);
+			if (off > tbl_size) off = tbl_size; /* decode_tbl: an offset past the end is an empty string */
+			for (end = off; end < tbl_size && tbl[end]; end++) {
+			}
+		}
+		mapd[at] = (uint8_t)(end - off);
+		mapd[at + 1] = (uint8_t)((end - off) >> 8);
+		memcpy(mapd + at + 2, tbl + off, end - off);
+		at += 2 + (end - off);
+	}
+	rc = kp_campaign_from(c, tabl->data, tabl->size, mapd, at, chea->data, chea->size, "campaign", err);
+done:
+	free(dat);
+	free(tbl);
+	free(mapd);
+	return rc;
+}

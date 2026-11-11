@@ -21,6 +21,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "kp_files.h"
 #include "kp_kpf.h"
 #include "kp_images.h"
 #include "kp_mission.h"
@@ -144,9 +145,14 @@ typedef struct {
 	KpTilesetPalettes tilesets[8];
 	const uint8_t *tunit, *tminimap, *tselect, *thpbar;
 	size_t tunit_size, tminimap_size, tselect_size, thpbar_size;
+	uint8_t *owned; /* kp_palettes_from_files: what the tables point into */
 } KpPalettes;
 
 int kp_palettes_load(KpPalettes *p, const uint8_t *data, size_t size, KpError *err);
+/* The same tables from the original files (ADR 0018, stage D3; converter/kpf/kpd.py build_palettes): each tileset's
+ * remap PCXs (256 wide: a zero row, then theirs), dark.pcx's and shift.pcx's first bytes, the game's colour tables. */
+int kp_palettes_from_files(KpPalettes *p, const KpFiles *files, KpError *err);
+void kp_palettes_free(KpPalettes *p);
 
 #define KP_LOOKUP_PLAYER_ROWS 12
 #define KP_LOOKUP_PLAYER_FIRST 8
@@ -875,9 +881,19 @@ typedef struct {
 	const uint8_t *edge_png;  /* EDGE's PNG: creep's edge frame k in the 32x32 cell at (k * 32, 0), 0 transparent */
 	uint32_t edge_size;
 	uint16_t edge_count;      /* 0: none */
+	/* kp_tileset_from_files: the sheet's and the edges' indices instead of the PNGs (the same pixels), what it owns */
+	const uint8_t *sheet;     /* sheet_columns * 32 wide, 32 rows per row of megatiles */
+	int32_t sheet_w, sheet_h;
+	const uint8_t *edges;     /* edge_count * 32 wide, 32 high */
+	uint8_t *owned_cv5, *owned_flags, *owned_mmni, *owned_sheet, *owned_edges;
 } KpTileset;
 
 int kp_tileset_load(KpTileset *t, const uint8_t *data, size_t size, const char *name, KpError *err);
+/* Tileset `index` (KP_TILESET_NAMES) from tileset\<name>.cv5, .vx4, .vr4, .vf4, .wpe and .grp (ADR 0018, stage D3) as
+ * the converter builds its container (converter/kpf/kpd.py build_tileset): the same palette, cycles (the profile's
+ * compiled CYCn), CV5, megatile flags and MMNI; the sheet and the edges as indices. */
+int kp_tileset_from_files(KpTileset *t, const KpFiles *files, int index, KpError *err);
+void kp_tileset_free(KpTileset *t);
 /* ImportMapTiles 0x445720 over the mission's MTXM: the megatile id of each cell (bit 15 the tile's high bit), w * h;
  * -1 with *bad_cell when a tile selects a missing CV5 group. */
 int kp_terrain_import(const KpMission *m, const KpTileset *t, uint16_t *ids, int64_t *bad_cell);

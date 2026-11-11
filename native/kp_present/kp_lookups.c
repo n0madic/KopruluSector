@@ -15,6 +15,88 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* --- palettes from the original files (ADR 0018, stage D3) --- */
+
+static const char *const REMAP_NAMES[KP_REMAP_TABLES] = { "ofire", "gfire", "bfire", "bexpl", "trans50", "red", "green" };
+#define GAME_TABLES 4
+static const struct {
+	const char *path;
+	size_t size;
+} GAME_TABLE_FILES[GAME_TABLES] = {
+	{ "game\\tunit.pcx", 0x60 },    /* 12 player colour rows of 8 indices (0x41d570) */
+	{ "game\\tminimap.pcx", 0x0c }, /* 12 minimap player colours (0x41d570) */
+	{ "game\\tselect.pcx", 24 },    /* selection-circle colours (0x40fef0) */
+	{ "game\\thpbar.pcx", 19 },     /* health-bar colours */
+};
+
+int kp_palettes_from_files(KpPalettes *p, const KpFiles *files, KpError *err)
+{
+	const uint8_t **game[GAME_TABLES];
+	size_t *game_size[GAME_TABLES];
+	uint8_t *tables[KP_TILESETS][KP_REMAP_TABLES];
+	int32_t heights[KP_TILESETS][KP_REMAP_TABLES];
+	size_t total = 0, at = 0;
+	int t, k, rc = -1;
+	char path[80];
+	memset(p, 0, sizeof *p);
+	memset(tables, 0, sizeof tables);
+	game[0] = &p->tunit, game[1] = &p->tminimap, game[2] = &p->tselect, game[3] = &p->thpbar;
+	game_size[0] = &p->tunit_size, game_size[1] = &p->tminimap_size, game_size[2] = &p->tselect_size,
+	game_size[3] = &p->thpbar_size;
+	for (t = 0; t < KP_TILESETS; t++)
+		for (k = 0; k < KP_REMAP_TABLES; k++) {
+			int32_t w;
+			snprintf(path, sizeof path, "tileset\\%s\\%s.pcx", KP_TILESET_NAMES[t], REMAP_NAMES[k]);
+			if (!(tables[t][k] = kp_files_pcx(files, path, &w, &heights[t][k], err))) goto done;
+			if (w != 256 || heights[t][k] >= 0xffff) {
+				snprintf(err->msg, sizeof err->msg, "%s is %d x %d; the game's table is 256 wide", path, (int)w,
+					(int)heights[t][k]);
+				goto done;
+			}
+			total += ((size_t)heights[t][k] + 1) * 256;
+		}
+	total += KP_TILESETS * (KP_DARK_SIZE + 256);
+	for (k = 0; k < GAME_TABLES; k++) total += GAME_TABLE_FILES[k].size;
+	if (!(p->owned = (uint8_t *)calloc(total, 1))) {
+		kp_present_fail(err, "palettes", "out of memory");
+		goto done;
+	}
+	for (t = 0; t < KP_TILESETS; t++) {
+		for (k = 0; k < KP_REMAP_TABLES; k++) { /* a zero row, then the PCX's (kpd.tileset_palette_tables) */
+			p->tilesets[t].remap[k].rows = (uint16_t)(heights[t][k] + 1);
+			p->tilesets[t].remap[k].data = p->owned + at;
+			memcpy(p->owned + at + 256, tables[t][k], (size_t)heights[t][k] * 256);
+			at += ((size_t)heights[t][k] + 1) * 256;
+		}
+		snprintf(path, sizeof path, "tileset\\%s\\dark.pcx", KP_TILESET_NAMES[t]);
+		if (kp_files_pcx_prefix(files, path, p->owned + at, KP_DARK_SIZE, err) != 0) goto done;
+		p->tilesets[t].dark = p->owned + at;
+		at += KP_DARK_SIZE;
+		snprintf(path, sizeof path, "tileset\\%s\\shift.pcx", KP_TILESET_NAMES[t]);
+		if (kp_files_pcx_prefix(files, path, p->owned + at, 256, err) != 0) goto done;
+		p->tilesets[t].shift = p->owned + at;
+		at += 256;
+	}
+	for (k = 0; k < GAME_TABLES; k++) {
+		if (kp_files_pcx_prefix(files, GAME_TABLE_FILES[k].path, p->owned + at, GAME_TABLE_FILES[k].size, err) != 0) goto done;
+		*game[k] = p->owned + at;
+		*game_size[k] = GAME_TABLE_FILES[k].size;
+		at += GAME_TABLE_FILES[k].size;
+	}
+	rc = 0;
+done:
+	for (t = 0; t < KP_TILESETS; t++)
+		for (k = 0; k < KP_REMAP_TABLES; k++) free(tables[t][k]);
+	if (rc != 0) kp_palettes_free(p);
+	return rc;
+}
+
+void kp_palettes_free(KpPalettes *p)
+{
+	free(p->owned);
+	memset(p, 0, sizeof *p);
+}
+
 int kp_palettes_load(KpPalettes *p, const uint8_t *data, size_t size, KpError *err)
 {
 	static const char *const GAME[4] = { "TUNI", "TMIN", "TSEL", "THPB" };

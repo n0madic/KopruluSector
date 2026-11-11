@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import struct
 import sys
 from pathlib import Path
 
@@ -38,7 +39,50 @@ def tables() -> list[tuple[str, bytes]]:
     m = campaign.load(PROFILE)
     out += [("TABL", campaign.tables_section(m)), ("CHEA", campaign.cheats_section(m))]
     out += [("SLOT", kpd.slots_section(iscript.Table.load(PROFILE).header_animations))]
+    out += built_tables()
     return sorted(out)
+
+
+def names_table(names: list[str]) -> bytes:
+    """A list of names: u16 count; per name u8 length, its bytes (latin-1)."""
+    out = bytearray(struct.pack("<H", len(names)))
+    for n in names:
+        raw = n.encode("latin-1")
+        out += bytes([len(raw)]) + raw
+    return bytes(out)
+
+
+def built_tables() -> list[tuple[str, bytes]]:
+    """What the runtime builds its structures from the original files with (stage D3): the interface's lists of files
+    (defs/ui: the dialogs' BINs UBIN, the themes UTHM and their files UTHF, the dialog GRPs UDGR, the GRPs UGRP, the
+    PCXs UPCX, the glue's files UGLF, the credits' scripts UCRD), our own dialogs built as the original's BINs (KBIN,
+    files sections as the converter's), the records we append to an original's (KEXT: each a BIN with a root container
+    the runtime leaves out), the texts we give records that have none (KLAB: u16 count; per text the dialog's label, u16
+    record, u16 length, its UTF-8), the fonts' plaintext files (FNTP) and each tileset's colour cycles (CYCn, the
+    container's CYCL)."""
+    from converter.formats import dialog, palette
+    from converter.kpf import kpd
+
+    ui = kpd.ui_defs()
+    out = [("UBIN", names_table(ui["bins"])), ("UTHM", names_table(ui["themes"])),
+           ("UTHF", names_table(ui["theme_files"])), ("UDGR", names_table(ui["dialog_grps"])),
+           ("UGRP", names_table(ui["grps"])), ("UPCX", names_table(ui["pcx"])),
+           ("UGLF", names_table(ui["glue_files"])), ("UCRD", names_table(list(kpd.CREDITS_SCRIPTS)))]
+    k = kpd.koprulu_defs()
+    root = {"type": dialog.TYPE_CONTAINER, "id": 0, "flags": 0, "rect": [0, 0, 640, 480]}
+    out.append(("KBIN", kpd.files_section(lambda n: dialog.build(k["dialogs"][n]), list(k["dialogs"]))))
+    out.append(("KEXT", kpd.files_section(lambda n: dialog.build([root, *k["extend"][n]]), list(k["extend"]))))
+    labels = bytearray(struct.pack("<H", sum(len(v) for v in k["labels"].values())))
+    for name, records in k["labels"].items():
+        for index, text in records.items():
+            raw = text.encode("utf-8")
+            labels += kpd._label(name) + struct.pack("<HH", int(index), len(raw)) + raw
+    out.append(("KLAB", bytes(labels)))
+    out.append(("FNTP", names_table([f["plaintext"] for f in kpd.font_defs()["fonts"]])))
+    for i, name in enumerate(palette.TILESETS):
+        ranges = palette.CYCLE_RANGES[name]
+        out.append((f"CYC{i}", bytes([len(ranges), palette.CYCLE_SPEED]) + b"".join(bytes(r) for r in ranges)))
+    return out
 
 
 def c_bytes(data: bytes) -> list[str]:

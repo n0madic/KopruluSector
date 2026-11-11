@@ -11,6 +11,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "kp_files.h"
 #include "kp_kpf.h"
 
 #ifdef __cplusplus
@@ -54,6 +55,9 @@ typedef struct {
 
 /* expect may be NULL; it adds profile and source-hash checks. Returns -1 with err set. */
 int kp_dat_load(KpDat *dat, const uint8_t *data, size_t size, const char *name, const KpKpfExpect *expect, KpError *err);
+/* The same tables from the original files (ADR 0018, stage D3): each table COLS lays out read as arr\<name>.dat, the
+ * requirements the profile's compiled tables (kp_defs_table); one blob as kp_dat_load's. */
+int kp_dat_from_files(KpDat *dat, const KpFiles *files, KpError *err);
 void kp_dat_free(KpDat *dat);
 
 const KpDatColumn *kp_dat_column(const KpDat *dat, const char *table, const char *column);
