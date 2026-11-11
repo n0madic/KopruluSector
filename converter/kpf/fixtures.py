@@ -643,7 +643,7 @@ def _dialog_texts(texts: list) -> bytes:
 def scr_fixture() -> dict[str, bytes]:
     """Synthetic inputs of StarCraft: Remastered's formats and what converter/casc/rebuild.py makes of them (scr/),
     read by test_scr: kp_scr.c, the C of rebuild.py, gives the same bytes (stage D6; over a real install
-    `kp_data_probe --digests` checks every rebuild against `converter scr-digests`). Images: an uncompressed DDS with
+    `kp_convert digests` checks every rebuild against `converter scr-digests`). Images: an uncompressed DDS with
     alpha, DXT1 in both colour modes, DXT5 in both alpha modes, a `.dds.grp` of the first two; each decoded (`.rgba`), its
     indices in palette.pal (`.indices`, rebuild.indices: duplicate colours, translucent and missing ones) and brought
     to another size (`fit-<name>`: u32 rows above, then the RGBA; rebuild.fit's three modes). A PCX (rebuild.pcx_file

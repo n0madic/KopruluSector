@@ -20,17 +20,19 @@
 #   KOPRULU_CLANG=<clang 17 or later, not Apple's, with its clang++ beside it> for the LLVM sanitizer step (one that
 #     does not qualify stops the run; default: Homebrew's llvm, or a clang on the PATH that qualifies; the step is
 #     skipped without one);
-#   KOPRULU_ORIGINAL=<dir with StarCraft.exe and the profile MPQs> enables the tests that read original data and
-#     kp_data_probe's read of every manifest file through StormLib (ADR 0018; KOPRULU_SCR: through CascLib, each
-#     file's status and SHA-256 equal to converter scr-digests', the Remastered rebuilds included), and with FFmpeg
-#     checks the golden of its cinematics' decodes (tools/oracle/export_smk_ffmpeg.py --check);
+#   KOPRULU_ORIGINAL=<dir with StarCraft.exe and the profile MPQs> enables the tests that read original data,
+#     kp_convert verify's read of every manifest file through StormLib (ADR 0018; KOPRULU_SCR: kp_convert digests'
+#     through CascLib, each file's status and SHA-256 equal to converter scr-digests', the Remastered rebuilds
+#     included) and kp_convert's test scenarios and terrain checks written from the install into generated/ (from
+#     KOPRULU_SCR without it; ADR 0019), and with FFmpeg checks the golden of its cinematics' decodes
+#     (tools/oracle/export_smk_ffmpeg.py --check);
 #   KOPRULU_SCR=<StarCraft: Remastered install dir> classifies the manifest's files on that install
 #     (converter/tests/test_scr_source.py) and, with KOPRULU_ORIGINAL, compares Remastered's DAT tables and
 #     scripts with the profile's (converter/tests/test_casc.py); it also converts the install's languages (every
 #     check of converter locale on each it holds, their base computed from the install) and their speech (FFmpeg,
 #     every check of converter speech), and KOPRULU_APP's product runs each language with its speech;
 #   KOPRULU_APP=1 builds the product for macOS (tools/product.sh macos debug, needs generated/ and its repack,
-#     generated/repack-single: python3 -m converter repack --single; ADR 0018, stage D8b) and runs its
+#     generated/repack-single: kp_convert repack DIR --single; ADR 0018, stage D8b) and runs its
 #     development checks, with no window on the screen and no sound (--headless, APP_WINDOW's size whatever the
 #     display): the autotest (every mission's terrain against the converter's CRCs, and with
 #     KOPRULU_ORIGINAL its composed views rebuilt on the CPU from the retail files, tools/viewer_compose_check.py),
@@ -45,7 +47,7 @@
 #     menus with no SD pixel where HD art exists; each language's walk on terran01 too, without the HD art its first
 #     screen); with KOPRULU_ORIGINAL or KOPRULU_SCR the cine check over the install's own movies (stage D7: the 1.17
 #     install's Smacker files, Remastered's SD WebM and their subtitles, its HD2 set too when KOPRULU_CINEMATICS asks)
-#     and the install's repack (stage D8, converter repack into build/repack: the 1.17 install's groups, Remastered's
+#     and the install's repack (stage D8, kp_convert repack into build/repack: the 1.17 install's groups, Remastered's
 #     one koprulu.mpq), the scripts over it writing what they write over the install and over the bundle's repack, and
 #     with a mission's group taken out the same over the install beside it, the mission refused with none;
 #   KOPRULU_CINEMATICS=sd|hd2|both, with KOPRULU_APP, builds the product with the packs from generated/video and runs
@@ -248,7 +250,7 @@ if [ -n "${KOPRULU_SCR:-}" ]; then
 fi
 if [ -n "${KOPRULU_ORIGINAL:-}" ]; then
   step "data readers (ADR 0018): every file of the input manifest read from the 1.17 install through kp_res, checked"
-  build/cmake/kp_data_probe "$KOPRULU_ORIGINAL" 2>/dev/null | tail -4
+  build/cmake/kp_convert verify "$KOPRULU_ORIGINAL" 2>/dev/null | tail -4
   if [ -z "$PUBLIC" ] && command -v ffmpeg >/dev/null; then
     # stage D7: test_movies decodes the install's Smacker movies (palette records, sound) as FFmpeg does
     step "the 1.17 cinematics' FFmpeg decodes are current (tools/oracle/export_smk_ffmpeg.py)"
@@ -257,11 +259,17 @@ if [ -n "${KOPRULU_ORIGINAL:-}" ]; then
 fi
 if [ -n "${KOPRULU_SCR:-}" ]; then
   step "data readers (ADR 0018): the input manifest's files read from Remastered's CASC through kp_res, by the converter's rules"
-  build/cmake/kp_data_probe "$KOPRULU_SCR" --digests build/scr-digests-c.tsv 2>/dev/null | tail -4
+  build/cmake/kp_convert digests "$KOPRULU_SCR" --out build/scr-digests-c.tsv 2>/dev/null | tail -4
   # the twin (stage D6): each file's status and bytes as converter/casc/source.py makes them, the rebuilds included
   step "the same files read by the converter (converter scr-digests): each status and SHA-256 equal to kp_res's"
   "$PYTHON" -m converter scr-digests --scr "$KOPRULU_SCR" --out build/scr-digests-py.tsv 2>&1 | tail -1
   diff build/scr-digests-py.tsv build/scr-digests-c.tsv | head -20 # pipefail: a difference stops the run
+fi
+if [ -n "${KOPRULU_ORIGINAL:-}${KOPRULU_SCR:-}" ]; then
+  # before the C suites and the autotest, which read them: a file that holds its bytes already is left as it is
+  step "the test scenarios and the terrain checks from the install (kp_convert scenarios, terrain; ADR 0019)"
+  build/cmake/kp_convert scenarios "${KOPRULU_ORIGINAL:-$KOPRULU_SCR}" --out generated 2>/dev/null | tail -1
+  build/cmake/kp_convert terrain "${KOPRULU_ORIGINAL:-$KOPRULU_SCR}" --out generated 2>/dev/null | tail -1
 fi
 step "kp_hd_phone: small packs through etc2 and astc, opened and read back"
 KP_HD_PHONE_THREADS=2 build/cmake/kp_hd_phone --selftest build/cmake | tail -1
@@ -544,7 +552,7 @@ if [ -n "${KOPRULU_APP:-}" ]; then
     # the repack (stage D8): the install's files in koprulu-*.mpq groups, the WAVs as Ogg Vorbis where that is smaller;
     # the same runs over it with no install beside it write the same files and play the same sounds
     step "product scripts over the 1.17 install's repack (its groups): the install's files, frames and sounds"
-    logged build/repack_original.log 1 "$PYTHON" -m converter repack --data "$KOPRULU_ORIGINAL" --out build/repack/original
+    logged build/repack_original.log 1 build/cmake/kp_convert repack "$KOPRULU_ORIGINAL" --out build/repack/original
     [ -f build/repack/original/koprulu-core.mpq ] && [ -f build/repack/original/koprulu-music.mpq ]
     SCRIPT_RUN=determinism_repack app_script determinism 0 "$APP" --data build/repack/original
     grep -qF 'data: the original data from a repack' build/script_determinism_repack.err
@@ -573,7 +581,7 @@ if [ -n "${KOPRULU_APP:-}" ]; then
     # Remastered's repack in one koprulu.mpq (the desktops'): its copies and rebuilds with their statuses; a run over
     # it writes what the same run over the install writes
     step "product script over Remastered and its repack (one koprulu.mpq): the same files"
-    logged build/repack_scr.log 1 "$PYTHON" -m converter repack --scr "$KOPRULU_SCR" --single --out build/repack/scr
+    logged build/repack_scr.log 1 build/cmake/kp_convert repack "$KOPRULU_SCR" --single --out build/repack/scr
     SCRIPT_RUN=determinism_scr app_script determinism 0 "$APP" --data "$KOPRULU_SCR"
     SCRIPT_RUN=determinism_scr_repack app_script determinism 0 "$APP" --data build/repack/scr
     grep -qF 'data: the original data from a repack' build/script_determinism_scr_repack.err

@@ -3,6 +3,7 @@ and the base of the languages (converter/gamedata.py, converter/base.py, convert
 the 1.17 install's."""
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 import unittest
@@ -14,16 +15,20 @@ from converter.formats.palette import TILESETS
 ORIGINAL = os.environ.get("KOPRULU_ORIGINAL")
 PROFILE = "bw-1.17.0.1"
 PACKS = {"campaign\\terran\\terran01": ["doodads", "effects"], "Campaign\\Zerg\\zerg01": ["zerg"]}
+SCENARIO_PACKS = {"zerg_build": ["zerg"], "ai_queen": ["effects", "zerg"]}
 
 
 class PacksRecordTest(unittest.TestCase):
     def test_the_packs_are_written_by_directory_and_read_back(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "packs.json"
-            missions.write_packs(path, PROFILE, PACKS)
+            missions.write_packs(path, PROFILE, PACKS, SCENARIO_PACKS)
             text = path.read_text()
             assert text.index("terran01") < text.index("zerg01")  # sorted without regard to case
-            assert text.count("\n") == 8 and text.endswith("]\n }\n}\n")  # one mission a line
+            assert text.index("ai_queen") < text.index("zerg_build")
+            assert text.count("\n") == 12 and text.endswith("]\n }\n}\n")  # one mission or scenario a line
+            data = json.loads(text)
+            assert data["missions"] == PACKS and data["scenarios"] == SCENARIO_PACKS
 
     def test_the_repositorys_record_names_the_catalog_missions(self):
         packs = missions.load_packs(PROFILE)

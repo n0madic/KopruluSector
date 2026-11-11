@@ -2,7 +2,7 @@
  * The original data read at run time (ADR 0018, stage D1): files by their MPQ path ("arr\\units.dat", any case, '\\'
  * or '/') from the sources the player names, each checked against the profile's input manifest (kp_defs.h):
  *
- *   - a repack (koprulu.mpq, or koprulu-core.mpq and the groups its listing names; converter/repack.py): the
+ *   - a repack (koprulu.mpq, or koprulu-core.mpq and the groups its listing names; kp_convert repack): the
  *     converter's archives of the files the game reads, in their original formats (Remastered's rebuilt 1.17 files
  *     among them, a WAV as Ogg Vorbis where that is smaller); its "(koprulu)" file names the profile and each file's
  *     size, SHA-256 and status (the source's: exact, derived, differs, ...; an Ogg's WAV's digest, size and header).

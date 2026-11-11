@@ -21,7 +21,7 @@ typedef struct {
 
 /* A table of the executable's, serialized as the converter's container section of the same name (tools/defs_c.py
  * tables: COLS, RQ**, BTNS, STLY, MUSI, VOLT, ACCL, ESTB, TABL, CHEA, SLOT), or one the runtime builds its structures
- * from the original files with (built_tables, scr_tables: the interface's lists, CHKL, MPAK, CINM, the SCR rebuilds). */
+ * from the original files with (built_tables, scr_tables: the interface's lists, CHKL, MPAK, SPAK, CINM, the SCR rebuilds). */
 typedef struct {
 	char fourcc[5];
 	const uint8_t *data;
@@ -32,6 +32,7 @@ typedef struct {
 	const char *id;
 	const char *executable;
 	uint32_t executable_size;
+	const char *executable_sha256; /* lower-case hexadecimal (kp_convert verify, icon) */
 	const KpDefsArchive *archives;
 	int archive_count;
 	/* sorted by name (strcmp) */

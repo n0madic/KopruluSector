@@ -98,7 +98,7 @@ web only code, the documents) is checked by the full CI without it.
 
 ## Icons
 
-The game's icon is StarCraft.exe's (the red Wraith, `RT_GROUP_ICON` 102: 16, 32, 48 and 64 pixels in RGBA), taken from the profile's 1.17 install: `python3 -m converter icon --data <install>` writes the files of every platform to `generated/icon/` (`converter/icon.py`, `converter/tests/test_icon.py`). The art is the original's, so it stays in the converter's output and never enters the repository; a build made with no `generated/icon/` (or from Remastered alone, which has no executable: `tools/product.sh` also looks in `generated/icon`) simply has the platform's default icon. The sizes the executable lacks are made from the 64-pixel image by a bilinear resampling on premultiplied colour (the four original sizes are kept exactly).
+The game's icon is StarCraft.exe's (the red Wraith, `RT_GROUP_ICON` 102: 16, 32, 48 and 64 pixels in RGBA), taken from the profile's 1.17 install: `kp_convert icon <install>` writes the files of every platform to `generated/icon/` (`native/kp_convert/kp_icon.c`, `test_convert`; until phase C's C1 `python3 -m converter icon`, byte for byte the same). The art is the original's, so it stays in the converter's output and never enters the repository; a build made with no `generated/icon/` (or from Remastered alone, which has no executable: `tools/product.sh` also looks in `generated/icon`) simply has the platform's default icon. The sizes the executable lacks are made from the 64-pixel image by a bilinear resampling on premultiplied colour (the four original sizes are kept exactly).
 
 | Platform | The icon | Where it is wired |
 |---|---|---|

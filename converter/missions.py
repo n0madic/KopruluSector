@@ -90,16 +90,25 @@ def load_packs(profile_id: str) -> dict[str, list[str]]:
     return json.loads(packs_path(profile_id).read_text())["missions"]
 
 
-def write_packs(path: Path, profile_id: str, packs: dict[str, list[str]]) -> None:
-    """The packs of `survey`'s missions by directory, one mission a line."""
-    rows = sorted(packs.items(), key=lambda r: r[0].lower())
+def load_scenario_packs(profile_id: str) -> dict[str, list[str]]:
+    """Each test scenario's resource packs by its name (`write_packs`)."""
+    return json.loads(packs_path(profile_id).read_text())["scenarios"]
+
+
+def write_packs(path: Path, profile_id: str, packs: dict[str, list[str]], scenarios: dict[str, list[str]]) -> None:
+    """The packs of `survey`'s missions by directory and of the test scenarios by name, one a line."""
+    def rows(table: dict[str, list[str]]) -> str:
+        return ",\n".join(f"  {json.dumps(k)}: {json.dumps(p)}" for k, p in sorted(table.items(), key=lambda r: r[0].lower()))
+
     text = (
         "{\n"
-        f' "comment": "The resource packs of each campaign mission (converter/analyze/profile.py over its scenario and '
-        f'the data): the PACK of a mission the runtime reads from its CHK (ADR 0018, stage D4; tools/defs_c.py MPAK). '
-        f'Written by python3 -m converter scr-manifest --data DIR.",\n'
+        f' "comment": "The resource packs of each campaign mission and each test scenario (converter/analyze/profile.py '
+        f'over its scenario and the data): the PACK of a mission the runtime reads from its CHK (ADR 0018, stage D4; '
+        f'tools/defs_c.py MPAK), and of a test scenario, which kp_convert scenarios writes into its index (ADR 0019, '
+        f'stage C1; SPAK). Written by python3 -m converter scr-manifest --data DIR.",\n'
         f' "profile": {json.dumps(profile_id)},\n'
-        ' "missions": {\n' + ",\n".join(f"  {json.dumps(d)}: {json.dumps(p)}" for d, p in rows) + "\n }\n}\n"
+        ' "missions": {\n' + rows(packs) + "\n },\n"
+        ' "scenarios": {\n' + rows(scenarios) + "\n }\n}\n"
     )
     write_if_changed(path, text)
 

@@ -1,13 +1,25 @@
 /* kp_test: the C suites' runner (kp_test.h). */
+#ifndef _WIN32
+#define _POSIX_C_SOURCE 200809L /* lstat */
+#endif
 #include "kp_test.h"
 
 #include "kp_sha256.h"
 #include "kp_webm.h"
 
+#include <errno.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+#ifdef _WIN32
+#include <direct.h>
+#include <io.h>
+#else
+#include <dirent.h>
+#include <sys/stat.h>
+#endif
 
 static const KpSuite *const SUITES[] = {
 	&kp_suite_rng, &kp_suite_initial_state, &kp_suite_scenarios, &kp_suite_damage_table, &kp_suite_save,
@@ -16,6 +28,7 @@ static const KpSuite *const SUITES[] = {
 	&kp_suite_fog, &kp_suite_campaign, &kp_suite_touch, &kp_suite_player_reach, &kp_suite_gfx,
 	&kp_suite_flow, &kp_suite_locale, &kp_suite_speech, &kp_suite_script, &kp_suite_res, &kp_suite_formats,
 	&kp_suite_original, &kp_suite_chk, &kp_suite_cine, &kp_suite_scr, &kp_suite_movies, &kp_suite_encoders,
+	&kp_suite_convert,
 };
 #define SUITE_COUNT ((int)(sizeof SUITES / sizeof SUITES[0]))
 #define DEFAULT_LOGS "build/c-tests"
@@ -367,6 +380,71 @@ char *kp_t_strdup(KpT *T, const char *s)
 	memcpy(copy, s, n);
 	kp_t_defer(T, free, copy);
 	return copy;
+}
+
+int kp_t_mkdir(const char *path)
+{
+#ifdef _WIN32
+	return _mkdir(path);
+#else
+	return mkdir(path, 0700);
+#endif
+}
+
+/* A folder and everything in it removed (what cannot be is left). */
+static void remove_tree(const char *path)
+{
+	char p[KP_T_PATH];
+#ifdef _WIN32
+	struct _finddata_t found;
+	intptr_t h;
+	snprintf(p, sizeof p, "%s/*", path);
+	if ((h = _findfirst(p, &found)) != -1) {
+		do {
+			if (strcmp(found.name, ".") == 0 || strcmp(found.name, "..") == 0) continue;
+			snprintf(p, sizeof p, "%s/%s", path, found.name);
+			if (found.attrib & _A_SUBDIR) remove_tree(p);
+			else remove(p);
+		} while (_findnext(h, &found) == 0);
+		_findclose(h);
+	}
+	_rmdir(path);
+#else
+	DIR *d = opendir(path);
+	struct dirent *e;
+	struct stat st;
+	if (d) {
+		while ((e = readdir(d)) != NULL) {
+			if (strcmp(e->d_name, ".") == 0 || strcmp(e->d_name, "..") == 0) continue;
+			snprintf(p, sizeof p, "%s/%s", path, e->d_name);
+			if (lstat(p, &st) == 0 && S_ISDIR(st.st_mode)) remove_tree(p);
+			else remove(p);
+		}
+		closedir(d);
+	}
+	remove(path);
+#endif
+}
+
+static void temp_dir_release(void *p) { remove_tree((const char *)p); }
+
+const char *kp_t_temp_dir(KpT *T, const char *parent)
+{
+	static unsigned serial; /* a process's folders apart; another process's apart by mkdir failing on its name */
+	unsigned seed = (unsigned)time(NULL) * 2654435761u ^ (unsigned)(uintptr_t)&serial;
+	char *dir = (char *)malloc(KP_T_PATH);
+	int tries;
+	if (!dir) kp_t_fail(T, "out of memory");
+	kp_t_defer(T, free, dir); /* the cleanups run last first: the folder is removed before its name is freed */
+	for (tries = 0; tries < 100; tries++) {
+		snprintf(dir, KP_T_PATH, "%s/%s_%08x", parent ? parent : "build", T->test, seed + ++serial * 0x9e3779b9u);
+		if (kp_t_mkdir(dir) == 0) {
+			kp_t_defer(T, temp_dir_release, dir);
+			return dir;
+		}
+		if (errno != EEXIST) break;
+	}
+	kp_t_fail(T, "a directory %s: %s", dir, strerror(errno));
 }
 
 /* The failure message of a game whose C code failed (its world's error). */

@@ -1083,10 +1083,34 @@ static void palettes_game_tables(KpT *T)
 static const char *const DEFS_TABLES[] = { "ACCL", "BTNS", "CHEA", "COLS", "ESTB", "MUSI", "RQOR", "RQRS", "RQTU",
 	"RQUN", "RQUP", "SLOT", "STLY", "TABL", "VOLT" };
 static const char *const BUILT_TABLES[] = { "CHKL", "CINM", "CYC0", "CYC1", "CYC2", "CYC3", "CYC4", "CYC5", "CYC6",
-	"CYC7", "FNTP", "KBIN", "KEXT", "KLAB", "MPAK", "SBIN", "SGRP", "SPAL", "SPCX", "SSMK", "STBL", "UBIN", "UCRD", "UDGR",
-	"UGLF", "UGRP", "UPCX", "UTHF", "UTHM" };
+	"CYC7", "FNTP", "KBIN", "KEXT", "KLAB", "MPAK", "SBIN", "SGRP", "SPAK", "SPAL", "SPCX", "SSMK", "STBL", "UBIN", "UCRD",
+	"UDGR", "UGLF", "UGRP", "UPCX", "UTHF", "UTHM" };
 #define DEFS_COUNT (sizeof DEFS_TABLES / sizeof DEFS_TABLES[0])
 #define BUILT_COUNT (sizeof BUILT_TABLES / sizeof BUILT_TABLES[0])
+
+/* The compiled MPAK and SPAK (defs/campaign/packs-bw-1.17.0.1.json): a campaign mission's packs by its directory and a
+ * test scenario's by its name, either spelling, each the PACK payload of its list; a key or table the profile lacks none.
+ * kp_convert scenarios writes SPAK's into the scenarios' index. */
+static void packs_entries_of_the_compiled_tables(KpT *T)
+{
+	const KpDefsProfile *p = &kp_defs_bw_1_17_0_1;
+	uint8_t want[64];
+	size_t size = 0, again = 0;
+	const uint8_t *e;
+	int n = kp_mission_packs_payload("doodads,effects,neutral,terran,zerg", want, sizeof want);
+	kp_t_ok(T, n > 0, "the list's payload");
+	e = kp_mission_packs_entry(p, "MPAK", "campaign\\terran\\terran01", &size);
+	kp_t_ok(T, e && size == (size_t)n && memcmp(e, want, size) == 0, "terran01's packs");
+	kp_t_ok(T, kp_mission_packs_entry(p, "MPAK", "Campaign/Terran/TERRAN01", &again) == e && again == size,
+		"the directory in any case and with '/'");
+	n = kp_mission_packs_payload("doodads,effects,protoss,terran,zerg", want, sizeof want);
+	e = kp_mission_packs_entry(p, "SPAK", "addon_orphan", &size);
+	kp_t_ok(T, n > 0 && e && size == (size_t)n && memcmp(e, want, size) == 0, "a test scenario's packs");
+	kp_t_ok(T, kp_mission_packs_entry(p, "SPAK", "ADDON_ORPHAN", &again) == e, "the name in any case");
+	kp_t_ok(T, kp_mission_packs_entry(p, "SPAK", "no_such_scenario", &size) == NULL, "an unknown scenario");
+	kp_t_ok(T, kp_mission_packs_entry(p, "MPAK", "addon_orphan", &size) == NULL, "a scenario is not a mission");
+	kp_t_ok(T, kp_mission_packs_entry(p, "XPAK", "addon_orphan", &size) == NULL, "a table the profile lacks");
+}
 
 static void defs_tables_are_compiled(KpT *T)
 {
@@ -1136,5 +1160,6 @@ static const KpTest TESTS[] = {
 	{ "palettes_tables", palettes_tables, 0 },
 	{ "palettes_game_tables", palettes_game_tables, 0 },
 	{ "defs_tables_are_compiled", defs_tables_are_compiled, 0 },
+	{ "packs_entries_of_the_compiled_tables", packs_entries_of_the_compiled_tables, 0 },
 };
 KP_SUITE(kp_suite_data, "test_data", TESTS);

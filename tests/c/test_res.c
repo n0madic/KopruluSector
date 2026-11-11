@@ -1,8 +1,6 @@
 /* The reading of the original data (ADR 0018): the SHA-256 the input manifest's digests are checked with, kp_res's
  * sources over archives the tests write with StormLib (a 1.17 install of a test profile, repacks), its Remastered
  * rules, and with KP_TEST_ORIGINAL and KP_TEST_SCR the real installs. */
-#define _POSIX_C_SOURCE 200809L /* mkdtemp, rmdir */
-#define _DARWIN_C_SOURCE        /* and macOS's mkdtemp (unistd.h) */
 #include "kp_test_app.h"
 
 #include <errno.h>
@@ -94,9 +92,9 @@ static void sha256_hex_decodes(KpT *T)
 
 #define DIR_FILES 16
 
-/* A folder of the test's own under build/ and the files written to it, removed at the end. */
+/* A folder of the test's own under build/ (kp_t_temp_dir, removed at the end) and the paths of the files written to it. */
 typedef struct {
-	char dir[256];
+	const char *dir;
 	char files[DIR_FILES][320];
 	int count;
 } Dir;
@@ -104,25 +102,12 @@ typedef struct {
 /* kp_res_close as a deferred cleanup (a call through another function type is undefined) */
 static void res_close(void *p) { kp_res_close((KpRes *)p); }
 
-static void dir_release(void *p)
-{
-	Dir *d = (Dir *)p;
-	int k;
-	for (k = 0; k < d->count; k++) remove(d->files[k]);
-	if (d->dir[0]) rmdir(d->dir);
-}
-
 static Dir *dir_new(KpT *T)
 {
 	Dir *d = (Dir *)calloc(1, sizeof *d);
 	kp_t_ok(T, d != NULL, "out of memory");
-	snprintf(d->dir, sizeof d->dir, "build/res_%s_XXXXXX", T->test);
-	kp_t_defer(T, free, d); /* the cleanups run last first: the files are removed before d is freed */
-	if (!mkdtemp(d->dir)) {
-		d->dir[0] = 0;
-		kp_t_fail(T, "a directory: %s", strerror(errno));
-	}
-	kp_t_defer(T, dir_release, d);
+	kp_t_defer(T, free, d);
+	d->dir = kp_t_temp_dir(T, NULL);
 	return d;
 }
 
@@ -867,6 +852,17 @@ static KpRes *open_res_bundle(KpT *T, Profile *p, const char *const *dirs, int c
 	return r;
 }
 
+/* The slices of an open file are StormLib's POSIX file provider's (tools/toolchain/patches/StormLib-9.40): the Android
+ * APK's groups; Windows has none to read. */
+static void need_slices(KpT *T)
+{
+#ifdef _WIN32
+	kp_t_skip(T, "an APK's slices are Android's (StormLib's POSIX file provider)");
+#else
+	(void)T;
+#endif
+}
+
 static void res_repack_read_in_place_from_slices(KpT *T)
 {
 	static const char *const CORE[] = { "a\\one.dat", ONE, NULL };
@@ -882,6 +878,7 @@ static void res_repack_read_in_place_from_slices(KpT *T)
 	uint64_t size = 0;
 	char err[512], file[128], piece[8];
 	int counts[KP_RES_STATUS_COUNT];
+	need_slices(T);
 	profile_init(T, &p);
 	pack = dir_new(T);
 	core[0] = KP_RES_LISTING;
@@ -932,6 +929,7 @@ static void res_repack_slice_refused(KpT *T)
 	KpMpq *m;
 	KpResStatus st;
 	char err[512], name[128];
+	need_slices(T);
 	profile_init(T, &p);
 	pack = dir_new(T);
 	core[0] = KP_RES_LISTING;

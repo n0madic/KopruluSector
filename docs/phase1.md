@@ -43,7 +43,7 @@ The loader tables in `defs/chk/` are compared with `StarCraft.exe` bytes by `con
 
 ## Map viewer, terrain (items 4 and 7)
 
-**Converter output.** `python3 -m converter terrain` writes:
+**Converter output.** `kp_convert terrain` (until phase C `python3 -m converter terrain`) writes:
 - an L8 tilesource of all megatiles per tileset;
 - a 256×256 tilemap template defined by its two corner cells;
 - a mission template collection per tileset, holding the tilemap and `presentation/terrain.script`.

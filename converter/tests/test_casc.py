@@ -183,7 +183,7 @@ class SyntheticStorageTest(unittest.TestCase):
 
 
 class CommandLineTest(unittest.TestCase):
-    """scr-extract and scr-compare: their output, exit status and one-line errors."""
+    """scr-compare: its output and exit status."""
 
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
@@ -192,19 +192,6 @@ class CommandLineTest(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
-
-    def test_scr_extract(self):
-        out = self.root / "units.dat"
-        with self.assertLogs("converter", "INFO") as logs:
-            assert main(["scr-extract", "--scr", str(self.root / "scr"), "arr\\units.dat", str(out)]) == 0
-        assert out.read_bytes() == SyntheticStorageTest.FILES["arr/units.dat"]
-        assert any("CASC 1.23.10.13515" in line for line in logs.output)
-
-    def test_scr_extract_errors_in_one_line(self):
-        with self.assertLogs("converter", "ERROR") as logs:
-            assert main(["scr-extract", "--scr", str(self.root / "scr"), "arr/weapons.dat", str(self.root / "w")]) == 1
-            assert main(["scr-extract", "--scr", str(self.root / "none"), "arr/units.dat", str(self.root / "w")]) == 1
-        assert len(logs.output) == 2 and "weapons.dat" in logs.output[0] and ".build.info" in logs.output[1]
 
     def compare_with(self, equal: bool) -> int:
         result = [Comparison("arr\\units.dat", "StarDat.mpq", 2048, 2048, equal)]

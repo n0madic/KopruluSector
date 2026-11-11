@@ -368,11 +368,9 @@ failed:
 	return NULL;
 }
 
-/* PACK: the mission's resource packs, the profile's compiled MPAK (each campaign mission's packs by its lowercased
- * directory, recorded from the reference install: converter/missions.py write_packs); NULL when it has none */
-static const uint8_t *mission_packs(const KpDefsProfile *p, const char *directory, size_t *size)
+const uint8_t *kp_mission_packs_entry(const KpDefsProfile *p, const char *fourcc, const char *directory, size_t *size)
 {
-	const KpDefsTable *t = p ? kp_defs_table(p, "MPAK") : NULL;
+	const KpDefsTable *t = p ? kp_defs_table(p, fourcc) : NULL;
 	size_t pos = 2, dn = strlen(directory);
 	uint32_t count, k;
 	if (!t || t->size < 2) return NULL;
@@ -550,7 +548,7 @@ int kp_mission_from_files(KpMission *m, const KpFiles *f, const char *directory,
 	uint8_t *chk;
 	size_t chk_size, pack_size = 0;
 	memset(m, 0, sizeof *m);
-	if (!(packs = mission_packs(f->profile, directory, &pack_size)))
+	if (!(packs = kp_mission_packs_entry(f->profile, "MPAK", directory, &pack_size)))
 		return fail(err, directory, "the profile has no resource packs for this mission (MPAK)");
 	snprintf(path, sizeof path, "%s\\staredit\\scenario.chk", directory);
 	if (!(chk = kp_files_need(f, path, &chk_size, err))) return -1;

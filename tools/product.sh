@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # The product's builds (plan phase S, stage S6; ADR 0012): kp_app over SDL 3.4 with the original data's repack.
 #   tools/product.sh macos|web|android|ios|ios-sim|linux|windows [release|debug]
-# The data staged for a bundle (ADR 0018, stage D8b): the repack of the original files (python3 -m converter repack):
-# a computer's one koprulu.mpq (generated/repack-single, repack --single), a phone's and the web's groups
+# The data staged for a bundle (ADR 0018, stage D8b): the repack of the original files (kp_convert repack DIR):
+# a computer's one koprulu.mpq (generated/repack-single, repack DIR --single), a phone's and the web's groups
 # (generated/repack, but its cinematics' group: the cinematics are the packs below), the web's core preloaded and
 # the other groups beside the page, fetched when needed (a mission's before it starts, the music's from the start),
 # Android's read in place from the APK (stored uncompressed: tools/native/android_app.sh's noCompress);
@@ -41,8 +41,8 @@ case "$DIST" in /*) ;; *) DIST="$ROOT/$DIST" ;; esac # the platforms' scripts ta
 OUT="$DIST/$PLATFORM"
 STAGE="$ROOT/build/product/data-$VARIANT"
 GENERATED="${KOPRULU_GENERATED:-generated}"
-# the icon files of the converter (python3 -m converter icon), when it ran: beside the data or in generated/ (a
-# conversion from StarCraft: Remastered alone has no executable to take the icon from)
+# the icon files (kp_convert icon DIR), when it ran: beside the data or in generated/ (a conversion from StarCraft:
+# Remastered alone has no executable to take the icon from)
 ICON=""
 for dir in "$GENERATED/icon" generated/icon; do
   if [ -z "$ICON" ] && [ -d "$dir" ]; then ICON="$(cd "$dir" && pwd)"; fi
@@ -117,8 +117,8 @@ echo "product: speech ${SPEECH:-none} (KOPRULU_SPEECH)" >&2
 
 # The repack (ADR 0018): a computer's one file, a phone's and the web's groups (each read or fetched when needed)
 case "$PLATFORM" in
-  web|android|ios|ios-sim) REPACK=repack; REPACK_HINT="python3 -m converter repack --data DIR|--scr DIR" ;;
-  *) REPACK=repack-single; REPACK_HINT="python3 -m converter repack --single --data DIR|--scr DIR" ;;
+  web|android|ios|ios-sim) REPACK=repack; REPACK_HINT="kp_convert repack DIR, make repack SC=DIR|SCR=DIR" ;;
+  *) REPACK=repack-single; REPACK_HINT="kp_convert repack DIR --single, make repack SC=DIR|SCR=DIR" ;;
 esac
 if [ ! -f "$GENERATED/$REPACK/koprulu-core.mpq" ] && [ ! -f "$GENERATED/$REPACK/koprulu.mpq" ]; then
   echo "product: no $GENERATED/$REPACK ($REPACK_HINT)" >&2

@@ -2,7 +2,7 @@
 
 Code: `converter/analyze/`. It gives each mission the resource packs it loads before it starts ([`PACK`](formats/kpm.md#pack)):
 - a campaign mission's, through `converter/missions.py` `survey`, which `python3 -m converter scr-manifest` records in `defs/campaign/packs-<profile>.json` (compiled into the runtime as the profile's `MPAK`, `tools/defs_c.py`);
-- a test scenario's, on its line of `generated/scenarios/index.txt` (`python3 -m converter scenarios`).
+- a test scenario's, on its line of `generated/scenarios/index.txt` (`kp_convert scenarios`).
 
 Since [ADR 0018](adr/0018-original-data-at-run-time.md) (stage D8d) the converter writes no per-mission profile or campaign report (`reports/profiles/`, `reports/analysis.json`); the figures below were taken from them.
 

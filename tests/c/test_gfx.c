@@ -4,14 +4,12 @@
  * the draws (kp_gfx_internal.h; kp_gfx_gl.c is the product's): the depth state each pass draws with, the HD
  * sprites' lighting layers and light.
  */
-#define _POSIX_C_SOURCE 200809L /* popen, mkdtemp */
-#define _DARWIN_C_SOURCE        /* and macOS's mkdtemp (unistd.h) */
+#define _POSIX_C_SOURCE 200809L /* popen */
 #include "kp_test.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 
 #include "kp_gfx_internal.h"
 
@@ -184,8 +182,6 @@ int kp_gb_alive(const KpGfxBackend *b)
 /* The desktop GL versions the host asks for (KpGfxApi.glsl_version). */
 static const int CORE_VERSIONS[] = KP_GFX_GLSL_CORE;
 
-static void remove_dir(void *dir) { (void)remove((const char *)dir); }
-
 /* Writes header and body into path (0, else -1). */
 static int write_shader(const char *path, const char *header, const char *body)
 {
@@ -242,14 +238,11 @@ static int glslang_runs(KpT *T)
  * own (kp_test processes run beside each other). */
 static void shaders_compile_for_every_context(KpT *T)
 {
-	static char dir[400]; /* read by its removal at the test's end */
-	const char *tmp = getenv("TMPDIR");
+	const char *tmp = getenv("TMPDIR"), *dir;
 	char log[4096], header[64];
 	int k, v;
 	if (glslang_runs(T) <= 0) return;
-	snprintf(dir, sizeof dir, "%s/kp_gfx_XXXXXX", tmp && tmp[0] ? tmp : "/tmp");
-	kp_t_ok(T, mkdtemp(dir) != NULL, "%s: no directory", dir);
-	kp_t_defer(T, remove_dir, dir);
+	dir = kp_t_temp_dir(T, tmp && tmp[0] ? tmp : "/tmp");
 	for (k = 0; k < KP_PROGRAMS; k++) {
 		const KpGfxProgramSource *p = &KP_GFX_PROGRAMS[k];
 		kp_t_eq(T, p->prog, k, "the table in KP_PROG_* order");

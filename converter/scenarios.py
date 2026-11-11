@@ -247,11 +247,13 @@ def base_chk(resolver: Source, spec: dict) -> bytes:
     return resolver.read(base_entry(resolver, spec).chk_path)[1]
 
 
-def convert(resolver: Source, out: Path) -> list[Path]:
+def convert(resolver: Source, out: Path) -> dict[str, list[str]]:
     """`scenarios/<name>.chk` of each spec and the list `scenarios/index.txt` (the runtime reads them as a campaign
-    mission's scenario, ADR 0018, stage D8c; the container twins went in D8d)."""
+    mission's scenario, ADR 0018, stage D8c; the container twins went in D8d); each scenario's packs by its name, which
+    scr-manifest records for kp_convert scenarios (ADR 0019, stage C1: the C twin of this writer, which the emulator's
+    scenario.py and scr-manifest keep until stage C7)."""
     tables = chk.LoaderTables.load(resolver.profile.id)
-    written = []
+    written = {}
     index = []
     context = profile.Context.load(lambda p: resolver.read(p)[1], resolver.has)
     for path in sorted(SPECS.glob("*.json")):
@@ -263,7 +265,7 @@ def convert(resolver: Source, out: Path) -> list[Path]:
         target = out / "scenarios" / f"{spec['name']}.chk"
         changed = write_if_changed(target, scenario_bytes)
         log.info("%s %s", "wrote" if changed else "same ", target)
-        written.append(target)
+        written[spec["name"]] = packs
         index.append(f"{spec['name']} {spec['base']} {era} {scenario.u16('DIM ')} {scenario.u16('DIM ', 1)} "
                      f"{','.join(packs) or '-'}")
     # The scenarios' list (kp_data.c: the app's --mission, the oracle's tools): name, base map, tileset, width, height,

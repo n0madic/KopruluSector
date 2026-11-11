@@ -4,17 +4,12 @@
  * in-game menus' exits) and the campaign's next game, the cinematics between them, the saves, the video options and
  * the view. The world, the sound and the drawing are the host's (sdl/kp_app_flow.c in the product).
  */
-#define _POSIX_C_SOURCE 200809L /* mkdir, mkdtemp, rmdir */
-#define _DARWIN_C_SOURCE        /* and macOS's mkdtemp (unistd.h) */
 #include "kp_test_app.h"
 #include "kp_test_ui.h"
 
-#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/stat.h>
-#include <unistd.h>
 
 #include "kp_flow.h"
 #include "kp_script_flow.h"
@@ -62,8 +57,7 @@ typedef struct {
 	KpSaveIdentity identity;
 	KpTileset tileset;
 	int has_tileset;
-	char dir[200];           /* the test's own directory of the saves ("" none yet) */
-	char pref[256];
+	char pref[256];          /* the saves' folder, the test's own (kp_t_temp_dir), and '/' */
 	double now;
 	/* what the host was asked */
 	int quits, profile_saves, syncs, builds, frees, world_frames, ticks, restarts, stops, palettes_set, interfaces;
@@ -76,7 +70,7 @@ typedef struct {
 	int cine_starts, cine_count, cine_preludes, cine_ids[CINE_IDS];
 	uint8_t available;
 	char last_log[512];
-	char saves[8][400];      /* the save files the test wrote (removed at its end) */
+	char saves[8][400];      /* the save files the test wrote */
 	int save_count;
 	int languages;           /* the languages' packs are there (else the data are a conversion of the 1.17 data's) */
 	int speech;              /* the speech's packs are there (converter speech) */
@@ -275,14 +269,11 @@ static void save_path(const Host *H, const char *name, char *out, size_t size)
 	snprintf(out, size, "%s%s", H->pref, file);
 }
 
-/* The flow ended and what it loaded released, before the files it reads (deferred after them: run first). */
+/* The flow ended and what it loaded released, before the saves' folder is removed (deferred after it: run first). */
 static void release_host(void *p)
 {
 	Host *H = (Host *)p;
-	int k;
 	kp_flow_free(&H->f);
-	for (k = 0; k < H->save_count; k++) remove(H->saves[k]);
-	if (H->dir[0]) rmdir(H->dir);
 	if (H->has_tileset) kp_tileset_free(&H->tileset);
 }
 
@@ -308,16 +299,11 @@ static Host *new_host(KpT *T)
 	H->now = 1;
 	f = &H->f;
 	H->data = kp_t_data(T);
+	/* the saves in a directory of the test's own: two runs of the suite at once share no file */
+	snprintf(H->pref, sizeof H->pref, "%s/", kp_t_temp_dir(T, NULL));
 	kp_t_defer(T, release_host, H);
 	kp_save_identity(&H->identity, &H->data->files, &H->data->dat);
 	kp_profile_init(&H->profile);
-	/* the saves in a directory of the test's own: two runs of the suite at once share no file */
-	snprintf(H->dir, sizeof H->dir, "build/flow_%s_XXXXXX", T->test);
-	if (!mkdtemp(H->dir)) {
-		H->dir[0] = '\0';
-		kp_t_fail(T, "a directory for the saves: %s", strerror(errno));
-	}
-	snprintf(H->pref, sizeof H->pref, "%s/", H->dir);
 	h = &f->host;
 	h->ctx = H;
 	h->now = host_now;
@@ -1825,29 +1811,14 @@ static void glue_load_that_fails_opens_the_load_screen_again(KpT *T)
 	wait_for(H, "rez\\gluload.bin", MENU_FRAMES);
 }
 
-/* A save's path held by a directory with a file in it (a delete cannot remove it as a file). */
-typedef struct {
-	char path[400], inner[460];
-} HeldSave;
-
-static void release_held(void *p)
-{
-	const HeldSave *s = (const HeldSave *)p;
-	remove(s->inner);
-	rmdir(s->path);
-}
-
 /* The interface's delete: a save's file and its name in the profile (a missing file counts as deleted); a file that
  * stays keeps its name. */
 static void delete_keeps_the_name_of_a_file_that_stays(KpT *T)
 {
 	Host *H = new_host(T);
-	HeldSave *held;
+	char held[400], inner[460];
 	FILE *f;
 	if (!H) return;
-	held = (HeldSave *)calloc(1, sizeof *held);
-	kp_t_ok(T, held != NULL, "out of memory");
-	kp_t_defer(T, free, held);
 	init(H);
 	kp_profile_add_save(&H->profile, "flowstays");
 	kp_profile_add_save(&H->profile, "flowmissing");
@@ -1855,14 +1826,11 @@ static void delete_keeps_the_name_of_a_file_that_stays(KpT *T)
 	kp_t_eq(T, H->profile.save_count, 1, NULL);
 	kp_t_eq_str(T, H->profile.saves[0].name, "flowstays", NULL);
 	kp_t_eq(T, H->profile_saves, 1, "the profile kept");
-	/* a directory with a file in it cannot be removed as a file (removed when the test ends, passed or failed, and
-	 * before it: a run that crashed left it) */
-	save_path(H, "flowstays", held->path, sizeof held->path);
-	snprintf(held->inner, sizeof held->inner, "%s/held", held->path);
-	release_held(held);
-	kp_t_ok(T, mkdir(held->path, 0700) == 0, "%s", held->path);
-	kp_t_defer(T, release_held, held);
-	kp_t_ok(T, (f = fopen(held->inner, "wb")) != NULL, "%s", held->inner);
+	/* a directory with a file in it cannot be removed as a file (removed with the saves' folder) */
+	save_path(H, "flowstays", held, sizeof held);
+	snprintf(inner, sizeof inner, "%s/held", held);
+	kp_t_ok(T, kp_t_mkdir(held) == 0, "%s", held);
+	kp_t_ok(T, (f = fopen(inner, "wb")) != NULL, "%s", inner);
 	fclose(f);
 	kp_t_eq(T, H->f.ui->delete_save(H->f.ui->host, "flowstays"), 0, "the file stays");
 	kp_t_eq(T, H->profile.save_count, 1, "its name stays");

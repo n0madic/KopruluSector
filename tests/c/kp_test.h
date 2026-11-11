@@ -48,6 +48,7 @@ typedef struct {
 
 #define KP_T_CLEANUPS 256
 #define KP_T_MESSAGE 8192
+#define KP_T_PATH 1024 /* the paths of kp_t_temp_dir and the files in it */
 
 struct KpT {
 	const char *suite, *test;
@@ -136,6 +137,11 @@ char *kp_t_strdup(KpT *T, const char *s);
 int kp_t_pcall(KpT *T, void (*fn)(KpT *T, void *ud), void *ud, char *msg, size_t size);
 /* A buffer released at the end. */
 KpBuf *kp_t_buf(KpT *T);
+/* A folder of the test's own, <parent>/<test>_<8 hexadecimal digits> made anew (parent NULL: build; two kp_test
+ * processes at once share none), removed with everything in it when the test ends. */
+const char *kp_t_temp_dir(KpT *T, const char *parent);
+/* A folder made (mode 0700 where there are modes): 0, or -1 with errno. */
+int kp_t_mkdir(const char *path);
 /* The resources registered so far, and the release of those registered after a mark (a loop's games and goldens). */
 int kp_t_mark(const KpT *T);
 void kp_t_release(KpT *T, int mark);
@@ -174,7 +180,7 @@ extern const KpSuite kp_suite_rng, kp_suite_initial_state, kp_suite_scenarios, k
 	kp_suite_kp_ui, kp_suite_present, kp_suite_session, kp_suite_hud, kp_suite_data, kp_suite_ui_data, kp_suite_images,
 	kp_suite_fog, kp_suite_campaign, kp_suite_touch, kp_suite_player_reach, kp_suite_gfx, kp_suite_flow,
 	kp_suite_locale, kp_suite_speech, kp_suite_script, kp_suite_res, kp_suite_formats, kp_suite_original,
-	kp_suite_chk, kp_suite_cine, kp_suite_scr, kp_suite_movies, kp_suite_encoders;
+	kp_suite_chk, kp_suite_cine, kp_suite_scr, kp_suite_movies, kp_suite_encoders, kp_suite_convert;
 
 #define KP_SUITE(var, label, tests) const KpSuite var = { label, tests, (int)(sizeof tests / sizeof tests[0]) }
 

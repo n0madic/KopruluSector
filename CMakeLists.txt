@@ -129,18 +129,52 @@ target_include_directories(kp_app_core PUBLIC ${KP_APP_DIR})
 # kp_res (ADR 0018); the video decoders (kp_cine.c, kp_webm.c)
 target_link_libraries(kp_app_core PUBLIC kp_present kp_storm kp_casc_c kp_vpx kp_nestegg kp_zlib) # zlib: kp_res_scr's SBIN
 
+# --- kp_json: the tools' JSON (the oracle's goldens, kp_convert's scenario specs) ---
+if(KP_TOOLS OR KP_ENCODERS)
+	add_library(kp_json STATIC ${KP_TOOLS_DIR}/kp_json.c)
+	kp_target(kp_json CXX)
+	target_include_directories(kp_json PUBLIC ${KP_TOOLS_DIR})
+endif()
+
+# --- kp_convert: the repack and the rest of the converted data, in C on every desktop (ADR 0019); with KP_ENCODERS,
+# which a desktop's product build turns on as well (tools/product.sh) ---
+if(KP_ENCODERS)
+	set(KP_CONVERT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/native/kp_convert)
+	file(GLOB KP_CONVERT_SOURCES CONFIGURE_DEPENDS ${KP_CONVERT_DIR}/*.c)
+	list(REMOVE_ITEM KP_CONVERT_SOURCES ${KP_CONVERT_DIR}/kp_convert.c)
+	add_library(kp_convert_lib STATIC ${KP_CONVERT_SOURCES})
+	kp_target(kp_convert_lib CXX)
+	# the icons' resampling rounded as written, no fused multiply-adds: the same pixels on every desktop
+	set_source_files_properties(${KP_CONVERT_DIR}/kp_icon.c PROPERTIES COMPILE_OPTIONS -ffp-contract=off)
+	target_include_directories(kp_convert_lib PUBLIC ${KP_CONVERT_DIR})
+	find_package(Threads REQUIRED) # the encoders' workers
+	target_link_libraries(kp_convert_lib PUBLIC kp_app_core kp_json kp_vorbis Threads::Threads)
+	add_executable(kp_convert ${KP_CONVERT_DIR}/kp_convert.c)
+	kp_target(kp_convert CXX)
+	target_link_libraries(kp_convert PRIVATE kp_convert_lib)
+	set_target_properties(kp_convert PROPERTIES LINKER_LANGUAGE CXX) # kp_casc_c's C++
+	if(MINGW) # one file to copy beside the game: libstdc++, libgcc and winpthread linked in
+		target_link_options(kp_convert PRIVATE -static)
+	endif()
+	# the C++ check sees the encoders' halves (kp_convert, test_encoders) too
+	get_target_property(KP_VORBIS_INCLUDES kp_vorbis INTERFACE_INCLUDE_DIRECTORIES)
+	set(KP_CXX_ENCODERS_INCLUDE -DKP_ENCODERS=1 -I${KP_CONVERT_DIR})
+	foreach(dir ${KP_VORBIS_INCLUDES})
+		list(APPEND KP_CXX_ENCODERS_INCLUDE -isystem ${dir})
+	endforeach()
+endif()
+
 if(KP_TOOLS)
 # --- the oracle library: replays, goldens, the native games of the oracles, the campaign chains, the interface's
 # replays (native/kp_core/tools/kp_runner.h, kp_oracle.h) ---
 set(KP_ORACLE_SOURCES
 	${KP_TOOLS_DIR}/kp_runner.c
-	${KP_TOOLS_DIR}/kp_json.c
 	${KP_TOOLS_DIR}/kp_oracle.c
 	${KP_TOOLS_DIR}/kp_oracle_ui.c)
 add_library(kp_oracle_lib STATIC ${KP_ORACLE_SOURCES})
 kp_target(kp_oracle_lib CXX)
 target_include_directories(kp_oracle_lib PUBLIC ${KP_TOOLS_DIR})
-target_link_libraries(kp_oracle_lib PUBLIC kp_core kp_present kp_app_core) # kp_data: the original data the tools play from
+target_link_libraries(kp_oracle_lib PUBLIC kp_core kp_present kp_app_core kp_json) # kp_data: the original data the tools play from
 
 # --- the tools ---
 foreach(tool kp_replay kp_bench)
@@ -169,10 +203,6 @@ target_link_libraries(kp_load_check PRIVATE kp_core)
 add_executable(kp_oracle ${KP_TOOLS_DIR}/kp_oracle_main.c ${KP_TOOLS_DIR}/kp_oracle_cli_ui.c)
 kp_target(kp_oracle CXX)
 target_link_libraries(kp_oracle PRIVATE kp_oracle_lib)
-add_executable(kp_data_probe ${KP_TOOLS_DIR}/kp_data_probe.c)
-kp_target(kp_data_probe CXX)
-target_link_libraries(kp_data_probe PRIVATE kp_app_core)
-set_target_properties(kp_data_probe PROPERTIES LINKER_LANGUAGE CXX)
 
 # --- kp_test: the C suites (tests/c) ---
 file(GLOB KP_TEST_SOURCES CONFIGURE_DEPENDS ${KP_TESTS_DIR}/*.c)
@@ -180,15 +210,9 @@ add_executable(kp_test ${KP_TEST_SOURCES})
 kp_target(kp_test CXX)
 target_include_directories(kp_test PRIVATE ${KP_TESTS_DIR})
 target_link_libraries(kp_test PRIVATE kp_oracle_lib kp_app_core kp_gfx_passes) # kp_app_core's zlib: test_original's PNGs too
-if(KP_ENCODERS) # test_encoders: kp_vpx is the build with VP9's encoder then
+if(KP_ENCODERS) # test_encoders, test_convert: kp_vpx is the build with VP9's encoder then
 	target_compile_definitions(kp_test PRIVATE KP_ENCODERS=1)
-	target_link_libraries(kp_test PRIVATE kp_vorbis)
-	# the C++ check sees test_encoders' encoding half too
-	get_target_property(KP_VORBIS_INCLUDES kp_vorbis INTERFACE_INCLUDE_DIRECTORIES)
-	set(KP_CXX_ENCODERS_INCLUDE -DKP_ENCODERS=1)
-	foreach(dir ${KP_VORBIS_INCLUDES})
-		list(APPEND KP_CXX_ENCODERS_INCLUDE -isystem ${dir})
-	endforeach()
+	target_link_libraries(kp_test PRIVATE kp_convert_lib)
 endif()
 
 endif()
@@ -196,7 +220,7 @@ endif()
 # --- the C++11 check of everything above (a stamp per run of the check, redone when a source changes) ---
 if(KP_CXX_CHECK AND KP_TOOLS)
 	file(GLOB KP_CXX_HEADERS CONFIGURE_DEPENDS ${KP_CORE_DIR}/src/core/*.h ${KP_CORE_DIR}/src/defs/*.h ${KP_PRESENT_DIR}/*.h ${KP_APP_DIR}/*.h ${KP_TOOLS_DIR}/*.h
-		${KP_TESTS_DIR}/*.h ${KP_GFX_DIR}/kp_gfx.h ${KP_GFX_DIR}/kp_gfx_internal.h)
+		${KP_TESTS_DIR}/*.h ${KP_GFX_DIR}/kp_gfx.h ${KP_GFX_DIR}/kp_gfx_internal.h ${CMAKE_CURRENT_SOURCE_DIR}/native/kp_convert/*.h)
 	get_property(KP_CXX_SOURCES GLOBAL PROPERTY KP_CXX_SOURCES)
 	set(KP_CXX_STAMP ${CMAKE_BINARY_DIR}/kp_cxx_check.stamp)
 	set(KP_CXX_HOST_DEFS "")

@@ -197,7 +197,7 @@ int kp_app_load_data(KpApp *a, char *err, size_t err_size)
 	char *scenarios;
 	if (!a->res) {
 		snprintf(err, err_size, "no original data: --data names a StarCraft 1.17.0.1 install, StarCraft: Remastered's or "
-			"a repack (python3 -m converter repack)");
+			"a repack (kp_convert repack)");
 		return -1;
 	}
 	font_count = read_vector_fonts(a, fonts);

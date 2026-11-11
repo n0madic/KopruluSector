@@ -1,16 +1,15 @@
 /*
- * The encoders kp_convert builds on (ADR 0019, stage C0): libvpx's VP9 encoder with the cinematics' settings (ADR 0015:
- * profile 1, 4:4:4 sRGB planes G, B, R, constant quality 32, good, cpu-used 2, a key frame at most every 128 frames, one
- * thread) and libvorbisenc's Ogg Vorbis at oggenc's -q 3, each run over a made-up input and decoded back: what they
- * write decodes to the input's frames and samples, and the same input gives the same bytes (the cache of converted files
- * relies on it). Built with KP_ENCODERS only (the host's tools, CMakeLists.txt); elsewhere its tests skip.
+ * The encoder kp_convert's movies will build on (ADR 0019, stage C0; C4 makes the movies of it): libvpx's VP9 encoder
+ * with the cinematics' settings (ADR 0015: profile 1, 4:4:4 sRGB planes G, B, R, constant quality 32, good, cpu-used 2,
+ * a key frame at most every 128 frames, one thread) run over made-up frames and decoded back: what it writes decodes to
+ * the input's frames, and the same frames give the same bytes (the cache of converted files relies on it). The Ogg
+ * Vorbis half is kp_convert's own since stage C1 (kp_ogg.h, test_convert.c). Built with KP_ENCODERS only (the host's
+ * tools, CMakeLists.txt); elsewhere its test skips.
  */
 #include "kp_test.h"
 
 #ifdef KP_ENCODERS
 #include <math.h>
-
-#include <vorbis/vorbisenc.h>
 
 #include "vpx/vp8cx.h"
 #include "vpx/vp8dx.h"
@@ -25,13 +24,6 @@
 #define VP9_CPU_USED 2
 #define VP9_KEY_INTERVAL 128
 #define VP9_PSNR_FLOOR 45.0 /* 50.4 dB measured on this picture (macOS arm64; Terran2 at the same settings 41.4, ADR 0019) */
-
-#define SOUND_RATE 22050
-#define SOUND_FRAMES (SOUND_RATE + 37) /* not a multiple of the 1024 samples fed at a time: the stream's end is flushed */
-#define SOUND_QUALITY 0.3f             /* oggenc -q 3 */
-#define SOUND_SERIAL 0x4b505331
-#define SOUND_SNR_FLOOR 30.0 /* 34.0 dB measured */
-#define FEED 1024
 
 typedef struct {
 	uint8_t *data;
@@ -174,146 +166,12 @@ static void vp9_round_trip(KpT *T)
 	kp_t_ok(T, psnr >= VP9_PSNR_FLOOR, "PSNR %.2f dB at least %.1f", psnr, VP9_PSNR_FLOOR);
 }
 
-static float sound_sample(uint32_t i)
-{
-	return (float)(0.4 * sin(2.0 * 3.14159265358979 * 440.0 * i / SOUND_RATE)
-		+ 0.1 * sin(2.0 * 3.14159265358979 * 1250.0 * i / SOUND_RATE));
-}
-
-static void ogg_put_page(KpT *T, Out *o, const ogg_page *og)
-{
-	out_put(T, o, og->header, (size_t)og->header_len);
-	out_put(T, o, og->body, (size_t)og->body_len);
-}
-
-static void vorbis_encode(KpT *T, Out *o)
-{
-	vorbis_info vi;
-	vorbis_comment vc;
-	vorbis_dsp_state vd;
-	vorbis_block vb;
-	ogg_stream_state os;
-	ogg_page og;
-	ogg_packet op, head, comment, code;
-	uint32_t k = 0;
-	vorbis_info_init(&vi);
-	kp_t_eq(T, vorbis_encode_init_vbr(&vi, 1, SOUND_RATE, SOUND_QUALITY), 0, "the encoder takes the quality");
-	vorbis_comment_init(&vc);
-	vorbis_analysis_init(&vd, &vi);
-	vorbis_block_init(&vd, &vb);
-	ogg_stream_init(&os, SOUND_SERIAL);
-	vorbis_analysis_headerout(&vd, &vc, &head, &comment, &code);
-	ogg_stream_packetin(&os, &head);
-	ogg_stream_packetin(&os, &comment);
-	ogg_stream_packetin(&os, &code);
-	while (ogg_stream_flush(&os, &og)) ogg_put_page(T, o, &og); /* the headers end their page, as the format asks */
-	for (;;) {
-		uint32_t n = SOUND_FRAMES - k < FEED ? SOUND_FRAMES - k : FEED, i;
-		if (n == 0) {
-			vorbis_analysis_wrote(&vd, 0); /* the end: the last samples are encoded and the last page marked */
-		} else {
-			float **buf = vorbis_analysis_buffer(&vd, (int)n);
-			for (i = 0; i < n; i++) buf[0][i] = sound_sample(k + i);
-			vorbis_analysis_wrote(&vd, (int)n);
-			k += n;
-		}
-		while (vorbis_analysis_blockout(&vd, &vb) == 1) {
-			vorbis_analysis(&vb, NULL);
-			vorbis_bitrate_addblock(&vb);
-			while (vorbis_bitrate_flushpacket(&vd, &op)) {
-				ogg_stream_packetin(&os, &op);
-				while (ogg_stream_pageout(&os, &og)) ogg_put_page(T, o, &og);
-			}
-		}
-		if (n == 0) break;
-	}
-	while (ogg_stream_flush(&os, &og)) ogg_put_page(T, o, &og);
-	ogg_stream_clear(&os);
-	vorbis_block_clear(&vb);
-	vorbis_dsp_clear(&vd);
-	vorbis_comment_clear(&vc);
-	vorbis_info_clear(&vi);
-}
-
-static void vorbis_round_trip(KpT *T)
-{
-	Out *a = out_new(T), *b = out_new(T);
-	ogg_sync_state oy;
-	ogg_stream_state os;
-	ogg_page og;
-	ogg_packet op;
-	vorbis_info vi;
-	vorbis_comment vc;
-	vorbis_dsp_state vd;
-	vorbis_block vb;
-	int headers = 0, last_page = 0;
-	int64_t granule = -1;
-	uint32_t decoded = 0;
-	double signal = 0, noise = 0, snr;
-	char *buf;
-	vorbis_encode(T, a);
-	vorbis_encode(T, b);
-	kp_t_ok(T, a->size == b->size && memcmp(a->data, b->data, a->size) == 0, "the same samples give the same bytes");
-	ogg_sync_init(&oy);
-	buf = ogg_sync_buffer(&oy, (long)a->size);
-	memcpy(buf, a->data, a->size);
-	ogg_sync_wrote(&oy, (long)a->size);
-	vorbis_info_init(&vi);
-	vorbis_comment_init(&vc);
-	ogg_stream_init(&os, SOUND_SERIAL);
-	while (ogg_sync_pageout(&oy, &og) == 1) {
-		kp_t_eq(T, ogg_page_serialno(&og), SOUND_SERIAL, "the stream's serial");
-		kp_t_ok(T, !last_page, "no page after the last");
-		last_page = ogg_page_eos(&og);
-		granule = ogg_page_granulepos(&og);
-		ogg_stream_pagein(&os, &og);
-		while (ogg_stream_packetout(&os, &op) == 1) {
-			float **pcm;
-			int n;
-			if (headers < 3) {
-				kp_t_eq(T, vorbis_synthesis_headerin(&vi, &vc, &op), 0, "header %d", headers);
-				if (++headers == 3) {
-					kp_t_eq(T, vi.channels, 1, "channels");
-					kp_t_eq(T, vi.rate, SOUND_RATE, "rate");
-					vorbis_synthesis_init(&vd, &vi);
-					vorbis_block_init(&vd, &vb);
-				}
-				continue;
-			}
-			kp_t_eq(T, vorbis_synthesis(&vb, &op), 0, "a packet decodes");
-			vorbis_synthesis_blockin(&vd, &vb);
-			while ((n = vorbis_synthesis_pcmout(&vd, &pcm)) > 0) {
-				int i;
-				for (i = 0; i < n; i++, decoded++) {
-					double want = decoded < SOUND_FRAMES ? sound_sample(decoded) : 0.0, d = pcm[0][i] - want;
-					signal += want * want;
-					noise += d * d;
-				}
-				vorbis_synthesis_read(&vd, n);
-			}
-		}
-	}
-	kp_t_eq(T, headers, 3, "the three headers");
-	vorbis_block_clear(&vb);
-	vorbis_dsp_clear(&vd);
-	vorbis_comment_clear(&vc);
-	vorbis_info_clear(&vi);
-	ogg_stream_clear(&os);
-	ogg_sync_clear(&oy);
-	kp_t_ok(T, last_page, "the last page ends the stream");
-	kp_t_eq(T, granule, SOUND_FRAMES, "the last page's granule is the sample count");
-	kp_t_eq(T, decoded, SOUND_FRAMES, "every sample decodes back, no more");
-	snr = 10.0 * log10(signal / (noise > 0 ? noise : 1e-30));
-	kp_t_ok(T, snr >= SOUND_SNR_FLOOR, "SNR %.1f dB at least %.1f", snr, SOUND_SNR_FLOOR);
-}
 #else
 static void vp9_round_trip(KpT *T) { kp_t_skip(T, "built without KP_ENCODERS"); }
-static void vorbis_round_trip(KpT *T) { kp_t_skip(T, "built without KP_ENCODERS"); }
 #endif
 
 static const KpTest TESTS[] = {
 	{ "vp9_round_trip", vp9_round_trip, 0 },
-	{ "vorbis_round_trip", vorbis_round_trip, 0 },
 };
 
 KP_SUITE(kp_suite_encoders, "test_encoders", TESTS);

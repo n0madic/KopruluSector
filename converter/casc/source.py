@@ -10,7 +10,8 @@ rebuilds what is derivable, and checks every result against the manifest `defs/s
 - `differs`: no candidate reaches the hash; the first readable copy is used (an approximation);
 - `unlisted`: a name the manifest does not hold, read from CASC unchecked.
 
-A name the manifest lists as absent stays absent, so the conversion sees the data set the 1.17 install has. `reports/scr-import.json` records each file's status.
+A name the manifest lists as absent stays absent, so the conversion sees the data set the 1.17 install has. `status` keeps each
+file's.
 """
 from __future__ import annotations
 
@@ -33,7 +34,6 @@ from .storage import CascError, CascStorage, normalize
 log = logging.getLogger(__name__)
 
 DIALOG_FRAMES = re.compile(r"^SD/glue/pal[a-z]+/dlg\.dds\.grp$", re.I)
-REPORT = Path("reports") / "scr-import.json"
 # Where Remastered keeps the profile's files: its SD copies (sounds, campaign maps, briefing texts) first,
 # since the copies at the root are its own where both exist (16-bit sounds); the enUS locale last.
 PREFIXES = ("SD/", "", "locales/enUS/Assets/SD/", "locales/enUS/Assets/")
@@ -425,20 +425,6 @@ class ScrSource:
             log.debug("%s: %s (CASC %s)", name, status, casc_name)
         self.status[name] = (status, casc_name)
         return f"CASC {casc_name}", data
-
-    def write_report(self, out: Path) -> dict[str, int]:
-        """Merge this run's statuses into out/reports/scr-import.json; return the counts by status."""
-        path = out / REPORT
-        files = json.loads(path.read_text())["files"] if path.is_file() else {}
-        files.update({name: list(v) for name, v in self.status.items()})
-        counts: dict[str, int] = {}
-        for status, _ in files.values():
-            counts[status] = counts.get(status, 0) + 1
-        report = {"build": self.version, "profile": self.profile.id, "counts": counts,
-                  "files": dict(sorted(files.items(), key=lambda kv: kv[0].lower()))}
-        path.parent.mkdir(parents=True, exist_ok=True)
-        write_if_changed(path, json.dumps(report, indent=1) + "\n")
-        return counts
 
 
 def build_texts(read_original, names: list[str], storage: CascStorage) -> dict:

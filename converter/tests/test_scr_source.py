@@ -7,7 +7,6 @@ the exact and derived files may not drop below the counts measured on 1.23.10.13
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import struct
 import tempfile
@@ -94,10 +93,6 @@ class SyntheticSourceTest(unittest.TestCase):
             with self.assertRaises(SourceError):
                 s.read("missing\\file.dat")
             assert s.status["missing\\file.dat"] == ("missing", "")
-            counts = s.write_report(self.root / "out")
-            assert counts == {"differs": 1, "unlisted": 1, "exact": 1, "missing": 1}
-            report = json.loads((self.root / "out" / "reports" / "scr-import.json").read_text())
-            assert report["build"] == "1.23.10.13515" and report["files"]["rez\\stat_txt.tbl"][0] == "differs"
 
     def test_pcx_rebuilt_from_rgba_with_a_donors_palette(self):
         from converter.casc import rebuild

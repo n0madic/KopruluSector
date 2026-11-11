@@ -96,6 +96,10 @@ int kp_mission_from_files(KpMission *m, const KpFiles *f, const char *directory,
  * (kp_mission_packs_payload). Returns -1 with err set. */
 int kp_mission_from_chk(KpMission *m, const KpFiles *f, uint8_t *chk, size_t chk_size, const char *name,
 	const char *directory, const uint8_t *packs, size_t pack_size, KpError *err);
+/* A PACK payload of the profile's compiled table fourcc by its key, matched in lower case with '\\' for '/' (MPAK: each
+ * campaign mission's packs by its directory; SPAK: each test scenario's by its name; recorded from the reference install
+ * by converter/missions.py write_packs): its size in *size, or NULL when the table has no such key. */
+const uint8_t *kp_mission_packs_entry(const KpDefsProfile *p, const char *fourcc, const char *key, size_t *size);
 /* PACK's payload (kpm.packs_payload: u8 count, then u8 length + name a pack, sorted) of a list "a,b,c" ("": none) into
  * out: its size, or -1 for an empty or too long name, too many packs or too small an out. */
 int kp_mission_packs_payload(const char *list, uint8_t *out, size_t cap);

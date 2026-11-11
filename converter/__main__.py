@@ -1,18 +1,13 @@
 """Converter CLI. Run from the repository root: python3 -m converter <command> ...
 
+kp_convert (native/kp_convert, ADR 0019) has verify, extract, the repack, the test scenarios, the terrain checks and
+the icon; what is left here goes to it by stage C7 (docs/phaseC.md).
+
 Commands:
-  verify --data DIR            check StarCraft.exe (SHA-256) and the files the conversion reads from the
-                               profile MPQs (SHA-256 against defs/scr/inputs-<profile>.json)
-  extract --data DIR PATH OUT  write the effective copy of an MPQ path to OUT
   console --scr DIR [--out generated]
                                write the console's pieces generated/data/console.kpd from StarCraft:
                                Remastered's art (the only SD container the converter still writes; `hd`
                                writes it too)
-  scenarios --data DIR|--scr DIR [--out generated]
-                               write the test scenarios of tests/scenarios/ as scenarios/<name>.chk and
-                               their list scenarios/index.txt
-  terrain --data DIR|--scr DIR [--out generated]
-                               write the terrain checks' viewer/<tileset>.mcrc
   scr-manifest --data DIR [--scr DIR] [--out generated]
                                read everything the conversion reads from the profile's install (the
                                game's data, the campaign's scenarios and sounds, the test scenarios and
@@ -36,29 +31,14 @@ Commands:
                                supplement generated/locale/glyphs.kpd (the base they are measured against
                                is computed from the install; build the kp_fnt_make target;
                                reports/locale-<LOC>.json has the checks)
-  repack --data DIR|--scr DIR [--out DIR] [--single] [--res-log FILE] [--wav]
-         [--cache generated/cache/repack-ogg]
-                               write the koprulu*.mpq repack (ADR 0018, stage D8; converter/repack.py):
-                               the files the game reads in their original formats, Remastered's
-                               rebuilt 1.17 files from --scr, a WAV as Ogg Vorbis when that is smaller
-                               (oggenc, each encoded once into --cache; --wav keeps the WAVs), the
-                               names --res-log read unlisted; its groups (the core, a group per
-                               mission, the music, the cinematics) into generated/repack, or with
-                               --single one koprulu.mpq (the cinematics' group beside it) into
-                               generated/repack-single
   dump FILE [--section XXXX]   print a .kpd/.kpm container in readable form
-  --scr DIR (scenarios, terrain) reads the profile's files from a StarCraft:
-                               Remastered install instead (converter/casc/source.py) and writes
-                               reports/scr-import.json
-  scr-extract --scr DIR PATH OUT
-                               write a file of a local StarCraft: Remastered CASC install to OUT
   scr-compare --data DIR --scr DIR
                                compare Remastered's DAT tables and scripts with the profile's
                                effective copies (exit status 1 if any differ)
   scr-digests --scr DIR --out FILE
                                write each manifest file's normalized name, status and the SHA-256 of
                                the bytes read from a StarCraft: Remastered install (empty when none), a
-                               tab between, in the manifest's order: the twin of kp_data_probe --digests
+                               tab between, in the manifest's order: the twin of kp_convert digests
                                (ADR 0018, stage D6; tools/ci.sh compares them)
 """
 from __future__ import annotations
@@ -70,43 +50,10 @@ import sys
 from pathlib import Path
 
 from .errors import ConverterError
-from .mpq.profile import DEFAULT_PROFILE, Profile, ProfileError, Resolver, verify_file
+from .mpq.profile import DEFAULT_PROFILE, Profile, Resolver
 from .mpq.stormlib import StormLibError
 
 log = logging.getLogger("converter")
-
-
-def _verify(args: argparse.Namespace) -> int:
-    """StarCraft.exe by its SHA-256, the archives by the files the conversion reads (their effective copies'
-    SHA-256 against the input manifest), so that archives packed differently from the reference copies pass."""
-    profile = Profile.load(args.profile)
-    root = Path(args.data)
-    verify_file(root, profile.executable)
-    log.info("ok %s", profile.executable.name)
-    with Resolver(root, profile) as resolver:
-        problems, damaged = resolver.verify_contents()
-        count = len(resolver.manifest.files)
-    for spec in profile.archives:
-        size = (root / spec.name).stat().st_size
-        log.info("%s: %d bytes%s", spec.name, size, "" if size == spec.size else
-                 f" (the reference copy has {spec.size}; checked by its files)")
-    for line in damaged:
-        log.warning("damaged copy (it cannot be read whole; a sound copy of the file reads): %s", line)
-    for line in problems:
-        log.error("%s", line)
-    if problems:
-        raise ProfileError(f"{len(problems)} of the {count} files profile {profile.id} reads differ or are missing")
-    log.info("profile %s verified: %d files match%s", profile.id, count - len(damaged),
-             f", {len(damaged)} damaged" if damaged else "")
-    return 0
-
-
-def _extract(args: argparse.Namespace) -> int:
-    with Resolver(args.data, Profile.load(args.profile)) as resolver:
-        archive, data = resolver.read(args.path)
-    Path(args.out).write_bytes(data)
-    log.info("%s: %d bytes from %s", args.path, len(data), archive)
-    return 0
 
 
 def _open_source(args: argparse.Namespace):
@@ -119,17 +66,6 @@ def _open_source(args: argparse.Namespace):
     return Resolver(args.data, profile)
 
 
-def _run(args: argparse.Namespace, *steps) -> list:
-    """Run conversion steps on one source; a Remastered source also reports each file's status."""
-    with _open_source(args) as source:
-        results = [step(source, Path(args.out)) for step in steps]
-        if args.scr:
-            counts = source.write_report(Path(args.out))
-            log.info("StarCraft: Remastered %s: %s", source.version,
-                     ", ".join(f"{n} {status}" for status, n in sorted(counts.items())))
-    return results
-
-
 def _console(args: argparse.Namespace) -> int:
     """The console's pieces (generated/data/console.kpd) from StarCraft: Remastered's art."""
     from .casc.source import ScrSource
@@ -137,20 +73,6 @@ def _console(args: argparse.Namespace) -> int:
 
     with ScrSource(args.scr, Profile.load(args.profile)) as source:
         hd_ui.write_console(source, Path(args.out))
-    return 0
-
-
-def _scenarios(args: argparse.Namespace) -> int:
-    from .scenarios import convert
-
-    _run(args, convert)
-    return 0
-
-
-def _terrain(args: argparse.Namespace) -> int:
-    from .emit import terrain
-
-    _run(args, terrain.generate)
     return 0
 
 
@@ -171,9 +93,9 @@ def _scr_manifest(args: argparse.Namespace) -> int:
     with RecordingSource(Resolver(args.data, profile, reference=True), rebuild.describe) as source:
         survey = missions.survey(source)
         gamedata.build(source)
-        for step in (scenarios.convert, terrain.generate):
-            step(source, out)
-        missions.write_packs(missions.packs_path(profile.id), profile.id, survey.packs)
+        scenario_packs = scenarios.convert(source, out)
+        terrain.generate(source, out)
+        missions.write_packs(missions.packs_path(profile.id), profile.id, survey.packs, scenario_packs)
         path = manifest_path(profile.id)
         files = {**source.files, **damaged_entries(profile.id, source.damaged)}
         for name in sorted(source.damaged, key=str.lower):
@@ -269,29 +191,10 @@ def _speech(args: argparse.Namespace) -> int:
     return 0
 
 
-def _icon(args: argparse.Namespace) -> int:
-    """The game's icon in each platform's format (generated/icon/), from the profile's StarCraft.exe."""
-    from . import icon
-
-    icon.convert(args.data, Profile.load(args.profile), Path(args.out))
-    return 0
-
-
 def _dump(args: argparse.Namespace) -> int:
     from .kpf.dump import dump
 
     print(dump(Path(args.file).read_bytes(), args.section))
-    return 0
-
-
-def _scr_extract(args: argparse.Namespace) -> int:
-    from .casc.storage import CascStorage
-
-    with CascStorage(args.scr) as storage:
-        data = storage.read(args.path)
-        version = storage.version
-    Path(args.out).write_bytes(data)
-    log.info("%s: %d bytes from CASC %s", args.path, len(data), version)
     return 0
 
 
@@ -309,32 +212,6 @@ def _scr_compare(args: argparse.Namespace) -> int:
     differ = sum(not c.equal for c in result)
     log.info("CASC %s against profile %s: %d of %d files differ", version, args.profile, differ, len(result))
     return 1 if differ else 0
-
-
-def _repack(args: argparse.Namespace) -> int:
-    from . import repack
-
-    extra = []
-    if args.res_log:  # kp_res's log: "name<TAB>status<TAB>source", the names read that the manifest does not hold
-        rows = (line.split("\t") for line in Path(args.res_log).read_text().splitlines())
-        extra = [row[0].replace("/", "\\") for row in rows if len(row) > 1 and row[1] == "unlisted"]
-    oggs = None if args.wav else repack.OggStore(Path(args.cache))
-    with _open_source(args) as source:
-        out = Path(args.out or ("generated/repack-single" if args.single else "generated/repack"))
-        report = repack.write(source, out, kind="remastered" if args.scr else "1.17", single=args.single, extra=extra,
-                              oggs=oggs)
-    for name in report.missing[:10]:
-        log.warning("not in the source, left out: %s", name)
-    if len(report.missing) > 10:
-        log.warning("... %d files left out in all", len(report.missing))
-    for name in report.damaged:
-        log.warning("damaged in the source (its copy cannot be read whole), left out: %s", name)
-    for group in sorted(report.files):
-        log.info("%s: %d files, %.1f MB", group, report.files[group], report.sizes[group] / 1e6)
-    log.info("%s: %d files (%s), %d WAVs as Ogg Vorbis (%.1f MB for %.1f MB)%s", out, sum(report.files.values()),
-             ", ".join(f"{n} {s}" for s, n in sorted(report.statuses.items())), report.ogg, report.ogg_bytes / 1e6,
-             report.wav_bytes / 1e6, f", {oggs.encoded} encoded" if oggs else "")
-    return 0
 
 
 def _scr_digests(args: argparse.Namespace) -> int:
@@ -371,26 +248,10 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="converter")
     parser.add_argument("--profile", default=DEFAULT_PROFILE)
     sub = parser.add_subparsers(dest="command", required=True)
-    p = sub.add_parser("verify", help="verify original files against the profile")
-    p.add_argument("--data", required=True)
-    p.set_defaults(func=_verify)
-    p = sub.add_parser("extract", help="extract the effective copy of an MPQ path")
-    p.add_argument("--data", required=True)
-    p.add_argument("path", help="MPQ path, e.g. 'arr\\\\units.dat'")
-    p.add_argument("out")
-    p.set_defaults(func=_extract)
     p = sub.add_parser("console", help="write the console's pieces from StarCraft: Remastered's art")
     p.add_argument("--scr", required=True, help="a StarCraft: Remastered install (.build.info and Data/)")
     p.add_argument("--out", default="generated")
     p.set_defaults(func=_console)
-    p = sub.add_parser("scenarios", help="write the test scenarios as CHK and their list")
-    _source_arguments(p)
-    p.add_argument("--out", default="generated")
-    p.set_defaults(func=_scenarios)
-    p = sub.add_parser("terrain", help="write the terrain checks' CRCs")
-    _source_arguments(p)
-    p.add_argument("--out", default="generated")
-    p.set_defaults(func=_terrain)
     p = sub.add_parser("scr-manifest", help="read everything from the profile's install and record the Remastered "
                                             "manifest and the missions' packs")
     p.add_argument("--data", required=True)
@@ -426,28 +287,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--locale", required=True, help="the language, such as ruRU (defs/l10n/locales.json)")
     p.add_argument("--out", default="generated")
     p.set_defaults(func=_speech)
-    p = sub.add_parser("icon", help="write the executable's icon for the product's bundles")
-    p.add_argument("--data", required=True, help="the profile's install (StarCraft.exe)")
-    p.add_argument("--out", default="generated")
-    p.set_defaults(func=_icon)
-    p = sub.add_parser("repack", help="write the koprulu*.mpq repack: the files the game reads, in their formats")
-    _source_arguments(p)
-    p.add_argument("--out", help="the folder (default generated/repack, with --single generated/repack-single)")
-    p.add_argument("--single", action="store_true",
-                   help="one koprulu.mpq instead of the groups, the cinematics' beside it (the desktops)")
-    p.add_argument("--res-log", help="kp_res's --res-log of a run: the names it read unlisted go in too")
-    p.add_argument("--wav", action="store_true", help="keep the WAVs as they are (no oggenc)")
-    p.add_argument("--cache", default="generated/cache/repack-ogg", help="where each WAV's Ogg Vorbis is kept")
-    p.set_defaults(func=_repack)
     p = sub.add_parser("dump", help="print a Koprulu container")
     p.add_argument("file")
     p.add_argument("--section")
     p.set_defaults(func=_dump)
-    p = sub.add_parser("scr-extract", help="extract a file of a local StarCraft: Remastered CASC install")
-    p.add_argument("--scr", required=True, help="install directory holding .build.info and Data/")
-    p.add_argument("path", help="CASC name, e.g. 'arr/units.dat' (MPQ separators accepted)")
-    p.add_argument("out")
-    p.set_defaults(func=_scr_extract)
     p = sub.add_parser("scr-compare", help="compare Remastered's DAT tables and scripts with the profile")
     p.add_argument("--data", required=True)
     p.add_argument("--scr", required=True, help="install directory holding .build.info and Data/")

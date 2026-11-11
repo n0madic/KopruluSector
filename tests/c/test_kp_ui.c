@@ -1797,7 +1797,7 @@ static void vector_text_logs_the_caret_without_advance(KpT *T)
 	t.highlight = 'H';
 	(void)kp_ui_draw_text(&t, 4, 4, text);
 	kp_t_eq(T, (int64_t)log->count, 6, "the text's five glyphs and the caret");
-	for (k = 0; k < 5; k++) kp_t_ok(T, log->glyphs[k].advance > 0, "glyph %zu advances", k);
+	for (k = 0; k < 5; k++) kp_t_ok(T, log->glyphs[k].advance > 0, "glyph %lu advances", (unsigned long)k);
 	kp_t_eq(T, log->glyphs[5].advance, 0, "the caret does not advance");
 	kp_t_eq(T, log->glyphs[5].pen_x, log->glyphs[4].pen_x + log->glyphs[4].advance, "the caret at the pen after the text");
 }

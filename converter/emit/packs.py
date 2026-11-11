@@ -1,7 +1,7 @@
 """The OGG file names of the sounds the converter still encodes (`converter speech`, converter/emit/speech.py).
 
 The pack, music and mission sound containers this module wrote went with the SD containers (ADR 0018, stage D8d): the
-runtime packs the GRPs and reads the sounds from the original files, and `converter repack` stores them as Ogg Vorbis.
+runtime packs the GRPs and reads the sounds from the original files, and `kp_convert repack` stores them as Ogg Vorbis.
 """
 from __future__ import annotations
 

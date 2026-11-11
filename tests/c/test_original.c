@@ -62,7 +62,7 @@ static int ui_paths_eq(const KpUiFile *x, int xn, const KpUiFile *y, int yn)
  * PCXs and GRPs from its DDS, the portraits' SMKs as KPW1 over its WebM) has the 1.17 interface's parts: the same
  * dialogs with the same records' counts, the same files by name, the fonts, the sounds' records and the portraits'
  * rows equal (Remastered keeps those exactly), each portrait movie a KPW1. Its pictures and some of its texts are the
- * rebuilds' approximations (`kp_data_probe --digests` checks those against the converter's byte for byte). */
+ * rebuilds' approximations (`kp_convert digests` checks those against the converter's byte for byte). */
 static void remastered_interface(KpT *T)
 {
 	KpUi *a, *b;

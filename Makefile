@@ -1,5 +1,6 @@
 # Shortcuts for converting the original data and building the game. `make` alone prints the help.
-# The real work is done by `python3 -m converter` and tools/product.sh; this file only chains them.
+# The real work is done by kp_convert (built here), `python3 -m converter` and tools/product.sh; this file only chains
+# them.
 # Works with the GNU make 3.81 that macOS ships.
 
 SHELL := /bin/bash
@@ -20,6 +21,8 @@ BUILD_DIR ?= build/app
 TOOLS_DIR ?= build/cmake
 
 CONVERTER := $(PYTHON) -m converter
+# The C converter (ADR 0019): verify, the repack, the test scenarios, the terrain checks and the icon
+KP_CONVERT := $(TOOLS_DIR)/kp_convert
 # The 1.17 install has only the SD set: a CINE given on the command line or in the environment goes to the converter,
 # which refuses hd2 there; CINE's default (hd2) is Remastered's
 CINE_DATA := $(if $(filter file,$(origin CINE)),,--variant $(CINE))
@@ -31,8 +34,8 @@ PLATFORMS := macos web android ios ios-sim linux windows
 
 .DEFAULT_GOAL := help
 .PHONY: help convert convert-remastered remastered-extras check-source check-sc check-scr verify repack console \
-	scenarios terrain icon hd cinematics locale speech fnt-tool toolchain app run test serve install-android clean \
-	$(PLATFORMS)
+	scenarios terrain icon hd cinematics locale speech convert-tool fnt-tool toolchain app run test serve \
+	install-android clean $(PLATFORMS)
 
 help:
 	@echo "Koprulu Sector: convert the original data, then build the game."
@@ -75,11 +78,7 @@ help:
 # --- Conversion ---------------------------------------------------------------------------------------------------
 
 # The source of the repack, the scenarios and the terrain: the 1.17 folder if given, else the Remastered one
-ifneq ($(strip $(SC)),)
-SOURCE := --data "$(SC)"
-else ifneq ($(strip $(SCR)),)
-SOURCE := --scr "$(SCR)"
-endif
+SOURCE := $(if $(strip $(SC)),$(SC),$(SCR))
 
 check-source:
 	@if [ -z "$(strip $(SC))$(strip $(SCR))" ]; then \
@@ -123,25 +122,25 @@ ifneq ($(strip $(SPEECH)),)
 	$(MAKE) speech
 endif
 
-verify: check-sc
-	$(CONVERTER) verify --data "$(SC)"
+verify: check-sc convert-tool
+	$(KP_CONVERT) verify "$(SC)"
 
-scenarios: check-source
-	$(CONVERTER) scenarios $(SOURCE) --out "$(OUT)"
+scenarios: check-source convert-tool
+	$(KP_CONVERT) scenarios "$(SOURCE)" --out "$(OUT)"
 
-terrain: check-source
-	$(CONVERTER) terrain $(SOURCE) --out "$(OUT)"
+terrain: check-source convert-tool
+	$(KP_CONVERT) terrain "$(SOURCE)" --out "$(OUT)"
 
 console: check-scr
 	$(CONVERTER) console --scr "$(SCR)" --out "$(OUT)"
 
 # The game's data (ADR 0018): the original files repacked, in groups and in one file (the cinematics apart in both)
-repack: check-source
-	$(CONVERTER) repack $(SOURCE) --out "$(OUT)/repack"
-	$(CONVERTER) repack $(SOURCE) --single --out "$(OUT)/repack-single"
+repack: check-source convert-tool
+	$(KP_CONVERT) repack "$(SOURCE)" --out "$(OUT)/repack"
+	$(KP_CONVERT) repack "$(SOURCE)" --single --out "$(OUT)/repack-single"
 
-icon: check-sc
-	$(CONVERTER) icon --data "$(SC)" --out "$(OUT)"
+icon: check-sc convert-tool
+	$(KP_CONVERT) icon "$(SC)" --out "$(OUT)"
 
 hd: check-scr
 	$(CONVERTER) hd --scr "$(SCR)" --variant $(HD) --out "$(OUT)"
@@ -163,6 +162,10 @@ speech: check-scr
 		echo "$(CONVERTER) speech --scr \"$(SCR)\" --locale $$loc --out \"$(OUT)\""; \
 		$(CONVERTER) speech --scr "$(SCR)" --locale $$loc --out "$(OUT)"; \
 	done
+
+convert-tool: toolchain
+	cmake -S . -B $(TOOLS_DIR) -G Ninja -DCMAKE_BUILD_TYPE=Release
+	cmake --build $(TOOLS_DIR) --target kp_convert
 
 # The converter's locale step runs this font tool (converter/emit/locale.py looks for it in build/cmake)
 fnt-tool: toolchain

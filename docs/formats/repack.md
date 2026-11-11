@@ -1,6 +1,6 @@
 # The repack (`koprulu*.mpq`)
 
-[ADR 0018](../adr/0018-original-data-at-run-time.md), stage D8. `python3 -m converter repack` (`converter/repack.py`) writes the files the game reads from an install, in their original formats, into MPQ archives; `kp_res` (`native/kp_app/kp_res.c`) reads them before an install in `--data`.
+[ADR 0018](../adr/0018-original-data-at-run-time.md), stage D8. `kp_convert repack` (`native/kp_convert/kp_repack.c`, since ADR 0019's stage C1; before it `python3 -m converter repack`) writes the files the game reads from an install, in their original formats, into MPQ archives; `kp_res` (`native/kp_app/kp_res.c`) reads them before an install in `--data`.
 
 ## The archives
 
@@ -31,7 +31,7 @@ group <file> <prefix>
 
 - `group` lines are the core's only: a group's file and the normalized prefix of its names (lower case, `/`). `kp_res` adds a group lying beside the core when it opens it; `kp_res_group_wanted` names the group of a name while it is not open (the web fetches it, then `kp_res_add_repack`).
 - `<sha256>` and `<size>` are the stored bytes'. `<status>` is the source's: `exact`, `derived`, `differs`, `equivalent`, `colour-equal`, `approximation` (Remastered's statuses, `converter/casc/source.py`), `unlisted` (a name the manifest does not hold). `<name>` is the source's spelling, `\` separated.
-- `ogg`: a WAV stored as Ogg Vorbis (oggenc at the packs' quality, the CRC-32 of the normalized name as the stream's serial), done only when the Ogg is smaller and the WAV's header, up to its data chunk, fits in 4,096 bytes. The WAV's digest, size and header (hexadecimal) follow: `kp_res_head` answers them for the WAV (the game computes the sounds' durations from the header), `kp_res_read` gives the Ogg (SDL3_mixer tells the formats apart by their bytes).
+- `ogg`: a WAV stored as Ogg Vorbis (libvorbisenc at `-q 3`, the CRC-32 of the normalized name as the stream's serial; the bytes can differ by processor, what they decode to cannot beyond the encoder's rounding), done only when the Ogg is smaller and the WAV's header, up to its data chunk, fits in 4,096 bytes. The WAV's digest, size and header (hexadecimal) follow: `kp_res_head` answers them for the WAV (the game computes the sounds' durations from the header), `kp_res_read` gives the Ogg (SDL3_mixer tells the formats apart by their bytes).
 
 ## Android: the groups read in place
 

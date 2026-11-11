@@ -11,7 +11,7 @@ The converter becomes `kp_convert`, in C, sharing its builders with the runtime.
 | Stage | What | State |
 |---|---|---|
 | C0 | ADR 0019; libogg, libvorbis with vorbisenc and libvpx's VP9 encoder built for the host's tools (`KP_ENCODERS`); the spikes | done 2026-11-11 |
-| C1 | `kp_convert`: `repack`, `verify`, `digests`, `manifest` (`kp_data_probe` folded in), `icon`, `scenarios`, `terrain`; `kp_res`: raw CASC and repack names, `kp_res_raw_stream_open`; the Makefile, README, `tools/product.sh` and `tools/ci.sh` on `kp_convert` | |
+| C1 | `kp_convert`: `repack`, `verify`, `digests`, `extract` (`kp_data_probe` folded in), `icon`, `scenarios`, `terrain`, on macOS, Linux and Windows; the Makefile, README, `tools/product.sh` and `tools/ci.sh` on `kp_convert`; `manifest`, the listing v3 and `kp_res_raw_stream_open` moved to the stages that need them | done 2026-11-11 |
 | C2 | Speech: the lines and voices of `locales/<loc>/Assets/` played as they are, TIME merged from the language's CHK when a mission loads; the repack's language group recompressed; the speech overlays go | |
 | C3 | Language texts: `kp_locale.c` (the six tables, dialogs by `defs/l10n`, `rez\*.txt`, the maps' STR, subtitles, the glyphs at start, VFNT from TTF); `kp_convert locale-check`; the text overlays and `glyphs.kpd` go | |
 | C4 | Cinematics: the 1.17 SMK transcoded to VP9 and Vorbis in our own WebM by `kp_convert repack`; Remastered's WebM as they are; `CINE` and FFmpeg go | |
@@ -61,5 +61,54 @@ The converter becomes `kp_convert`, in C, sharing its builders with the runtime.
 **Open after C0:**
 - The encoders' generic C build (`generic-enc`) is not compared with the SIMD builds' bytes.
 - Not measured yet: the anims' read with a cold cache (C5), the glyphs on the Fold7 (C3), the language group on the web (C7).
-- On Linux with GCC 15.2, `tests/c/test_res.c`'s `dir_path` trips `-Werror=restrict` at `-O3`. This is a false overlap between two members of one structure, and it predates phase C. The Linux tools build is not part of `tools/ci.sh`, so it went unseen. The C0 check was built with `-Wno-error=restrict`.
-- `kp_test` does not build for Windows (`mkdir` with a mode, among others). The user decided `kp_convert` is built for every desktop, Windows, Linux and macOS (2026-11-11), so C1 makes `kp_test` build there too.
+- On Linux with GCC 15.2, `tests/c/test_res.c`'s `dir_path` tripped `-Werror=restrict` at `-O3`: a false overlap between two members of one structure, older than phase C. Resolved in C1: the folder is the test's own string (`kp_t_temp_dir`).
+- `kp_test` did not build for Windows (`mkdir` with a mode, among others). Resolved in C1: it builds with mingw-w64 and runs under Wine.
+
+## C1 as built (2026-11-11)
+
+**`kp_convert`** (`native/kp_convert/`, the `kp_convert` target; `kp_convert_lib` holds all but `main` for `test_convert`). One C tool on `kp_app_core`, built where `KP_ENCODERS` is on: by default with the host's tools, and alone with `-DKP_TOOLS=OFF -DKP_ENCODERS=ON` (macOS 4.7 MB, linking only the system's C and C++ libraries).
+
+| Command | What | Was |
+|---|---|---|
+| `verify DIR...` | every manifest file read through `kp_res`, the statuses and time by kind; exact and derived files checked to the byte; a 1.17 install's `StarCraft.exe` by its SHA-256 (`executable_sha256`, compiled in by `tools/defs_c.py`) | `kp_data_probe`, `converter verify` |
+| `digests DIR --out PATH` | each manifest file's name, status and SHA-256 | `kp_data_probe --digests` |
+| `extract DIR NAME OUT` | a file as `kp_res` reads it, or a Remastered file by its CASC name (`kp_res_casc_file`) | `converter extract`, `scr-extract` |
+| `repack DIR [--single] [--wav] [--res-log] [--cache] [--threads]` | `kp_repack.c`: the groups or one `koprulu.mpq`, StormLib's writer; a WAV as Ogg Vorbis (`kp_ogg.c`, libvorbisenc at `-q 3`, the CRC-32 of the name as the serial) on every core (`kp_work.c`), each kept in `generated/cache/repack-vorbis/<sha>-q3-s<serial>.ogg` | `converter repack` (oggenc) |
+| `scenarios DIR` | `kp_scenario.c`: each spec of `tests/scenarios/` rewrites its base CHK (OWNR, UNIT, THG2, MBRF, TRIG, STR, MRGN, PTEC); `index.txt` with the packs of the profile's compiled `SPAK` | `converter scenarios` |
+| `terrain DIR` | the eight tilesets' megatile CRCs | `converter terrain` |
+| `icon DIR` | `kp_icon.c`: the executable's icon group 102 (a bounds-checked PE32 reader), the sizes it lacks resampled on premultiplied colour, PNG, ICO and ICNS, the iOS, web and Android files | `converter icon` |
+
+A command writes a file only when its bytes change, and says how many it wrote.
+
+**Equal to the Python converter**, from the 1.17 install and from Remastered's, on macOS arm64, Linux arm64 (Docker, GCC 15.2) and Windows x86-64 (mingw-w64, under Wine):
+- the test scenarios: 159 CHKs and `index.txt`, byte for byte;
+- the terrain checks' CRCs, byte for byte;
+- the icon's 27 files, byte for byte. `kp_icon.c` is built with `-ffp-contract=off`: otherwise clang on arm64 and GCC fuse the resampling's multiply-adds and a few pixels differ by one;
+- the repack's listings: every file's digest, size and status, each Ogg's WAV fields. The Ogg files themselves are within 195 bytes of oggenc's over 101 MB.
+
+**The Ogg bytes depend on the processor.** libvorbis computes in floating point: the Windows x86-64 build's Oggs differ from macOS arm64's in 1,678 of 2,244 files, though they decode to the same sound within the encoder's rounding. The listings are equal. `test_convert` checks what the Ogg decodes to, not its bytes.
+
+**Measured** (the M-series Mac, the cache empty): the 1.17 install's repack takes 20.8 s with 2,244 WAVs encoded (the Python converter took 44.7 s); Remastered's `--single` takes 10.3 s. The Windows build under Wine takes 29 s for the 1.17 repack.
+
+**`kp_test` on every desktop.** The suites build with mingw-w64 and run under Wine; a test's folders come from `kp_t_temp_dir` (removed when the test ends) and `kp_t_mkdir`, not `mkdtemp` and `mkdir` with a mode. `kp_fs_list` skips folders on POSIX as it does on Windows. The two tests of a repack read from slices of one file skip on Windows: StormLib's `fd:` streams are POSIX's (Android's APK). On Linux the build needs no `-Wno-error=restrict` any more.
+
+**`test_convert`** (13 tests; they skip without `KP_ENCODERS`): the Ogg of a 16-bit mono and an 8-bit stereo WAV decodes back above its SNR floor, the same bytes twice, a float WAV refused; the serial is the name's CRC; a stand-in profile's repack reads back through `kp_res` alone (the Ogg's serial, the WAV's header), then `--single` from the cache with nothing encoded; a repack of a repack refused; the groups by name; a scenario's sections rewritten, a bad spec refused; the icon group of a synthetic PE32, the resampling, the PNG rows, the 24 files of one image and nothing written the second time; `kp_fs`, `kp_work`.
+
+**The tools moved:**
+- `Makefile`: `verify`, `repack`, `scenarios`, `terrain` and `icon` build `kp_convert` (`convert-tool`) and run it on `SC`, else `SCR`;
+- `tools/ci.sh`: `kp_convert verify` over the 1.17 install, `digests` over Remastered's (compared with `converter scr-digests`), `scenarios` and `terrain` from the install before the app's checks, the repacks by `kp_convert`;
+- `tools/product.sh`: the repacks' hints name `kp_convert repack`;
+- README.
+
+**Removed:** `converter verify`, `extract`, `scr-extract`, `scenarios`, `terrain`, `icon` and `repack`; `converter/repack.py`, `converter/icon.py`, their tests, StormLib's writer in `converter/mpq/stormlib.py` and `reports/scr-import.json`; `native/kp_core/tools/kp_data_probe.c`.
+
+**Decisions taken in C1:**
+- **`manifest` stays `converter scr-manifest` until C7.** It records what the Python conversion reads, so it goes with that conversion. It now also records the test scenarios' packs (`defs/campaign/packs-bw-1.17.0.1.json`, `scenarios`), compiled as `SPAK`. Its run dropped `rez\video.bin` from the input manifest: nothing has read it since our own Video Options dialog replaced it (2026-10-27).
+- **`scr-compare`, `scr-digests` and `dump` stay in Python until C7**: they check the Python readers, which go then.
+- **The listing stays `koprulu repack 2` until C2**: v3's raw names come with the language group, the first files that need them.
+- **The bundles carry no `kp_convert`.** A bundle is the converter's output, its repack; a player with an install points `--data` at the install, which needs no conversion. `kp_convert` builds and runs on each desktop on its own (README: mingw-w64 for Windows).
+- **`kp_res_raw_stream_open` waits for its consumer**, the HD page thread of C5. `extract` reads a raw CASC name through `kp_res_casc_file`.
+
+**Open after C1:**
+- The old `generated/cache/repack-ogg/` is not read any more; it can be deleted by hand.
+- macOS's linker warns of `libkp_app_core.a` given twice when it links `kp_test`; harmless.
