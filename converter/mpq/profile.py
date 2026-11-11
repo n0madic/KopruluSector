@@ -82,9 +82,9 @@ class Resolver:
 
     The archives are checked by content, not as whole files: copies of the same release are packed differently
     (an installer's or a disc's StarDat.mpq and StarCraft.mpq differ in size and hash), while the files the
-    conversion reads are the same. Each effective copy must have the input manifest's SHA-256 (inputs.py); a name the
-    manifest lists as absent stays absent and one it lists as unreadable stays unreadable, so the conversion sees the
-    reference install's data set. A name the manifest does not hold (an `extract` of another file) is read unchecked.
+    conversion reads are the same. Each effective copy must have the input manifest's SHA-256 (inputs.py) and a name the
+    manifest lists as absent stays absent, so the conversion sees the reference install's data set. A damaged copy
+    (one StormLib cannot read whole: a disc copied with a bad read) raises StormLibError. A name the manifest does not hold (an `extract` of another file) is read unchecked.
 
     `reference=True` is the reference install itself, for `scr-manifest`, which writes the manifest: its archives
     must have the profile's sizes and nothing is checked against the manifest.
@@ -126,7 +126,7 @@ class Resolver:
     def has(self, name: str) -> bool:
         if self.manifest is not None:
             key = normalize(name)
-            if key in self.manifest.files or key in self.manifest.unreadable:
+            if key in self.manifest.files:
                 return True  # a listed file the install lacks is refused by `read`, not skipped
             if key in self.manifest.absent:
                 return False
@@ -145,11 +145,8 @@ class Resolver:
     def read(self, name: str) -> tuple[str, bytes]:
         """Return (archive name, bytes) for the effective copy of `name`."""
         key = normalize(name)
-        if self.manifest is not None:
-            if key in self.manifest.unreadable:
-                raise StormLibError(f"{name}: unreadable in profile {self.profile.id}'s reference install")
-            if key in self.manifest.absent:
-                raise MpqFileNotFound(f"{name} not found in profile {self.profile.id}")
+        if self.manifest is not None and key in self.manifest.absent:
+            raise MpqFileNotFound(f"{name} not found in profile {self.profile.id}")
         found = self._effective(name)
         if found is not None:
             self._check(key, name, *found)
@@ -192,14 +189,18 @@ class Resolver:
                                    f"expects size {entry.size}, sha256 {entry.sha256}")
         self._checked.add(key)
 
-    def verify_contents(self) -> list[str]:
-        """Read every file of the input manifest and return a line per file that is missing or differs."""
+    def verify_contents(self) -> tuple[list[str], list[str]]:
+        """Read every file of the input manifest: a line per file that is missing or differs, and a line per damaged
+        copy (one StormLib cannot read whole: a disc copied with a bad read), reported apart: the install's, not the
+        data set's."""
         if self.manifest is None:
             raise ProfileError("a reference resolver has no input manifest to verify against")
-        problems = []
+        problems, damaged = [], []
         for entry in sorted(self.manifest.files.values(), key=lambda e: e.name.lower()):
             try:
                 self.read(entry.name)
-            except (ProfileError, StormLibError) as exc:
+            except ProfileError as exc:
                 problems.append(str(exc))
-        return problems
+            except StormLibError as exc:  # a listed name is never MpqFileNotFound: `read` refuses it as ProfileError
+                damaged.append(str(exc))
+        return problems, damaged

@@ -94,6 +94,16 @@ class LinesTest(unittest.TestCase):
         self.assertEqual(files, [(0, Path("out/a.ogg"))])
         self.assertEqual(kept, self.PATHS[1:])
 
+    def test_a_sound_the_base_lacks_keeps_its_place(self):
+        # the base's "" (a file it lacks, issue #2's damaged copy): no line for it, and c.wav's index stays its WAV
+        # string's position, as kp_mission.c's WAVS has it whatever the install's files
+        paths = [self.PATHS[0], "", self.PATHS[2]]
+        install = FakeInstall({speech.language_path("ruRU", p, ".ogg"): b"ogg " + p[-5:].encode() for p in paths if p})
+        jobs, files, kept = speech.line_sources(install, "ruRU", paths, Path("out"), "terran/terran01")
+        self.assertEqual(files, [(0, Path("out/a.ogg")), (2, Path("out/c.ogg"))])
+        self.assertEqual(len(jobs), 2)
+        self.assertEqual(kept, [])
+
     def test_no_lines_at_all(self):
         jobs, files, kept = speech.line_sources(FakeInstall({}), "ruRU", self.PATHS[:1], Path("out"), "terran/terran01")
         self.assertEqual((jobs, files, kept), ({}, [], self.PATHS[:1]))

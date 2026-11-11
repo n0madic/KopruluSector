@@ -68,7 +68,10 @@ class StandInArchive:
         return name.lower() in self.files
 
     def read(self, name: str) -> bytes:
-        return self.files[name.lower()]
+        data = self.files[name.lower()]
+        if isinstance(data, Exception):  # a damaged copy
+            raise data
+        return data
 
     def close(self) -> None:
         pass
@@ -88,12 +91,12 @@ class ContentCheckTest(unittest.TestCase):
             f.truncate(self.profile.executable.size)
         for spec in self.profile.archives:
             (self.root / spec.name).write_bytes(b"packed otherwise")  # not the reference copies' sizes
-        self.manifest = manifest(self.REFERENCE, absent=("glue\\none.pcx",), unreadable=("sound\\bad.wav",))
+        self.manifest = manifest(self.REFERENCE, absent=("glue\\none.pcx",))
         self.archives = {spec.name: {} for spec in self.profile.archives}
         self.archives["Patch_rt.mpq"] = {"scripts\\iscript.bin": b"patched"}
         self.archives["StarDat.mpq"] = {"arr\\units.dat": b"units", "rez\\stat_txt.tbl": b"strings",
                                         "scripts\\iscript.bin": b"older", "glue\\none.pcx": b"extra",
-                                        "sound\\bad.wav": b"readable here", "maps\\other.chk": b"unlisted"}
+                                        "maps\\other.chk": b"unlisted"}
         patcher = mock.patch("converter.mpq.profile.Archive", StandInArchive)
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -106,14 +109,15 @@ class ContentCheckTest(unittest.TestCase):
         with self.resolver() as r:
             assert r.read("arr\\units.dat") == ("StarDat.mpq", b"units")
             assert r.read("scripts\\iscript.bin") == ("Patch_rt.mpq", b"patched")  # the effective copy is checked
-            assert r.verify_contents() == []
+            assert r.verify_contents() == ([], [])
 
     def test_a_changed_file_is_refused_by_name(self):
         self.archives["StarDat.mpq"]["rez\\stat_txt.tbl"] = b"edited"
         with self.resolver() as r:
             with self.assertRaisesRegex(ProfileError, r"StarDat\.mpq: rez\\stat_txt\.tbl has size 6"):
                 r.read("rez\\stat_txt.tbl")
-            assert len(r.verify_contents()) == 1
+            problems, damaged = r.verify_contents()
+            assert len(problems) == 1 and not damaged
 
     def test_a_listed_file_the_archives_lack_is_refused(self):
         del self.archives["StarDat.mpq"]["arr\\units.dat"]
@@ -121,16 +125,24 @@ class ContentCheckTest(unittest.TestCase):
             assert r.has("arr\\units.dat")
             with self.assertRaisesRegex(ProfileError, r"arr\\units\.dat: in none of the archives"):
                 r.read("arr\\units.dat")
-            assert len(r.verify_contents()) == 1
+            problems, damaged = r.verify_contents()
+            assert len(problems) == 1 and not damaged
+
+    def test_a_damaged_copy_is_told_apart(self):
+        # a disc copied with a bad read (issue #2): the archive holds the listed name, StormLib cannot read it whole
+        self.archives["StarDat.mpq"]["sound\\bad.wav"] = StormLibError("sound\\bad.wav: short read 4096/8192")
+        self.manifest = manifest({**self.REFERENCE, "sound\\bad.wav": b"the release's"}, absent=("glue\\none.pcx",))
+        with self.resolver() as r:
+            assert r.has("sound\\bad.wav")
+            with self.assertRaises(StormLibError):
+                r.read("sound\\bad.wav")
+            assert r.verify_contents() == ([], ["sound\\bad.wav: short read 4096/8192"])
 
     def test_the_reference_data_set_is_kept(self):
         with self.resolver() as r:
             assert not r.has("glue\\none.pcx")
             with self.assertRaises(MpqFileNotFound):
                 r.read("glue\\none.pcx")
-            assert r.has("sound\\bad.wav")
-            with self.assertRaises(StormLibError):
-                r.read("sound\\bad.wav")
             with self.assertLogs("converter.mpq.profile", "WARNING"):
                 assert r.read("maps\\other.chk") == ("StarDat.mpq", b"unlisted")
 

@@ -4,9 +4,12 @@
  * time (a read includes kp_res's check: a file the simulation reads hashed, the rest by its size). The probe
  * then checks every exact or derived file to the byte against the manifest.
  *
- *   kp_data_probe DIR...          the exit status is 1 when a file was refused or could not be read, when an exact
- *                                 or derived file's bytes are not the manifest's, or when a 1.17 install's core
- *                                 archives miss a file of the manifest
+ *   kp_data_probe DIR...          the exit status is 1 when a file was refused, when an exact or derived file's
+ *                                 bytes are not the manifest's, or when a file of the core could not be read or a
+ *                                 1.17 install's core archives miss it: the game cannot start without it. A mission's
+ *                                 sound or a track the install's archives hold but cannot give whole (a damaged copy:
+ *                                 a disc copied with a bad read, issue #2) is reported: the game goes without it, as
+ *                                 it does without one the CDs' archives miss
  *   --res-log PATH                the list of the files read, their status and source (kp_res_write_log)
  *   --digests PATH                each manifest file's normalized name, status and the SHA-256 of the bytes read (empty
  *                                 when none), a tab between, in the manifest's order: the twin of `python3 -m converter
@@ -120,8 +123,10 @@ int main(int argc, char **argv)
 		} else if (digests) {
 			fprintf(digests, "%s\t%s\t\n", name, kp_res_status_name(st));
 		}
-		if (st == KP_RES_REFUSED || st == KP_RES_ERROR) {
+		if (st == KP_RES_REFUSED || (st == KP_RES_ERROR && kind_of(name) == KIND_CORE)) {
 			if (failed++ < 5) printf("%s\n", err);
+		} else if (st == KP_RES_ERROR) {
+			printf("damaged copy, the game goes without it: %s\n", err);
 		} else if (st == KP_RES_MISSING && kp_res_install(res) == KP_RES_SOURCE_MPQ && kind_of(name) == KIND_CORE) {
 			if (failed++ < 5) printf("missing %s\n", name);
 		}

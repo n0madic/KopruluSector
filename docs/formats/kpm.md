@@ -88,12 +88,12 @@ Disabled actions are included.
 
 **Sound path.** The original builds the path as `<mission directory>\<string>` (`0x4b6240`, `0x44fd10`).
 
-**Sound index.** The sound index is the position among the existing sounds of the mission in string-id order. The runtime reads the sound by its path (the WAV, or the repack's Ogg Vorbis of it); a speech's `generated/speech/<id>/missions/<campaign>/<mission>_sounds.kpd` ([`MSND`](packs.md#msnd-schema-1)) holds its lines by this index. `0xffff` means the file is missing from the archives, unreadable, or rejected by the native WAV parser (`ParseWaveFile` `0x49d830`, which plays nothing then; the converter's survey lists it, `converter/missions.py` `survey`). Of the 1,106 references in the catalog, 1,105 read correctly. The exception is `campaign\protoss\protoss10\staredit\wav\PAB05ura.wav`, the MBRF Transmission (record 0, action 14) of the Protoss 10 briefing. It is a damaged entry of the retail StarCraft.mpq (`tools/research/probe_storm_read.py`):
+**Sound index.** The sound index is the WAV string's position among the mission's WAV strings in string-id order, whether or not the other strings' files exist (until 2026-11-11 the position among the existing sounds: a file one install lacked moved every index after it, issue #2). The runtime reads the sound by its path (the WAV, or the repack's Ogg Vorbis of it); a speech's `generated/speech/<id>/missions/<campaign>/<mission>_sounds.kpd` ([`MSND`](packs.md#msnd-schema-1)) holds its lines by this index. `0xffff` means the file is missing from the archives or rejected by the native WAV parser (`ParseWaveFile` `0x49d830`, which plays nothing then; the converter's survey lists it, `converter/missions.py` `survey`). The runtime finds a file by its header (`kp_files_wav`), so a damaged copy whose header reads keeps its index and plays nothing. Of the 1,106 references in the catalog, 1,105 read whole on the reference install. The exception is `campaign\protoss\protoss10\staredit\wav\PAB05ura.wav`, the MBRF Transmission (record 0, action 14) of the Protoss 10 briefing, a damaged entry of that install's StarCraft.mpq, not of the release ([campaigns](../research/campaigns.md#damaged-archive-entry), `tools/research/probe_storm_read.py`):
 - the original `storm.dll`, run in the emulator's machine, decodes sectors 0–218;
 - it fails on sector 219 of 244 with Storm error `0x85100083`, shown through `SErrDisplayError`, which terminates the process. The original game on this installation therefore exits when the briefing reaches that line;
 - StormLib already fails on sector 218.
 
-The remake cannot reproduce the termination. The game and the converter treat the line as missing (no sound) rather than inventing content.
+The remake cannot reproduce the termination: on such a copy the line plays nothing. A sound copy and Remastered's play it.
 
 ## Derived sections
 

@@ -317,15 +317,16 @@ int kp_mission_sound_path(const KpMission *m, const char *directory, uint32_t st
 	return wav_path(m->strings.data, m->strings.size, directory, string_id, out, size);
 }
 
-/* WAVS (kpm.mission_sounds, build): u16 count; per WAV string its id, its index among the files found
- * (KP_MISSION_NO_SOUND: missing, unreadable or refused by the original's parser), the data chunk's length and
- * nAvgBytesPerSec. malloc'd, NULL with the reason. */
+/* WAVS (kpm.mission_sounds, build): u16 count; per WAV string its id, its index: its position among the WAV strings
+ * (KP_MISSION_NO_SOUND: its file missing or refused by the original's parser; kp_files_wav reads a file's header
+ * alone, so a damaged copy whose header reads is found), the data chunk's length and nAvgBytesPerSec. malloc'd, NULL
+ * with the reason. */
 static uint8_t *mission_wavs(const KpFiles *f, const char *directory, const KpChkSection *strs,
 	const KpChkSection *trig, const KpChkSection *mbrf, size_t *size, KpError *err)
 {
 	uint8_t *seen = (uint8_t *)malloc(STRING_IDS), *out = NULL;
 	uint16_t *ids = (uint16_t *)malloc(STRING_IDS * sizeof *ids);
-	int n, k, index = 0;
+	int n, k;
 	if (!seen || !ids) goto oom;
 	n = wav_string_ids(trig, mbrf, seen, ids);
 	*size = 2 + (size_t)n * WAVS_ENTRY;
@@ -351,10 +352,9 @@ static uint8_t *mission_wavs(const KpFiles *f, const char *directory, const KpCh
 			if ((found = kp_files_wav(f, path, &w, err)) == -2) goto failed;
 		}
 		kp_le_put16(e, ids[k]);
-		kp_le_put16(e + 2, found == 1 ? (uint32_t)index : KP_MISSION_NO_SOUND);
+		kp_le_put16(e + 2, found == 1 ? (uint32_t)k : KP_MISSION_NO_SOUND);
 		kp_le_put32(e + 4, found == 1 ? w.data_length : 0);
 		kp_le_put32(e + 8, found == 1 ? w.avg_bytes_per_sec : 0);
-		index += found == 1;
 	}
 	free(seen);
 	free(ids);

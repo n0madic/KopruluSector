@@ -23,7 +23,7 @@ All integers are little-endian.
 
 ## `MSND` (schema 1)
 
-`SNDS`: u16 count; per sound, sorted by key: u16 key, u32 size, the OGG bytes (`oggenc -q 3`, a stream serial fixed per output path; `converter/emit/sound.py` `OggCache`). A mission's are keyed by the mission's sound index: entry i is sound index i of the mission's [`WAVS`](kpm.md#wavs) (the position among existing sounds in string-id order); `units.kpd`'s by sfx id.
+`SNDS`: u16 count; per sound, sorted by key: u16 key, u32 size, the OGG bytes (`oggenc -q 3`, a stream serial fixed per output path; `converter/emit/sound.py` `OggCache`). A mission's are keyed by the mission's sound index: entry i is sound index i of the mission's [`WAVS`](kpm.md#wavs) (the WAV string's position in string-id order); `units.kpd`'s by sfx id.
 
 ## Stock contents
 

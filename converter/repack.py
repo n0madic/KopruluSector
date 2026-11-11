@@ -2,12 +2,13 @@
 `koprulu*.mpq` archives with StormLib, each with a `(koprulu)` listing the runtime checks every file against
 (native/kp_app/kp_res.c).
 
-The files are the input manifest's (defs/scr/inputs-<profile>.json) but its absent and unreadable names, in the
-compiled manifest's order (a Remastered rebuild's palette is kept for the files after it: the order kp_res reads them
+The files are the input manifest's (defs/scr/inputs-<profile>.json) but its absent names, in the compiled manifest's
+order (a Remastered rebuild's palette is kept for the files after it: the order kp_res reads them
 in), then the 1.17 install's cinematics (defs/campaign/cinematics.json, checked as the converter checks them). From a
 Remastered install (ScrSource) the copies and rebuilds keep their statuses and no cinematics go in: Remastered's are
 WebM, which the runtime reads from the install, and the builds without one take the cinematics packs. A file the source
-lacks (a 1.17 install without its CDs' archives: music, cinematics, speech) is left out and reported.
+lacks (a 1.17 install without its CDs' archives: music, cinematics, speech), or holds a damaged copy of (one StormLib
+cannot read whole: a disc copied with a bad read), is left out and reported.
 
 A WAV goes in as Ogg Vorbis when that is smaller (oggenc at sound.OGG_QUALITY, the CRC-32 of its normalized name as the
 stream serial; encoded once into the cache): the listing keeps the WAV's digest, size and header up to its data chunk,
@@ -42,7 +43,7 @@ from pathlib import Path
 from .casc.storage import normalize
 from .emit import cinematics, cinematics_smk, sound
 from .formats import wav
-from .mpq.stormlib import MpqFileNotFound, NewArchive
+from .mpq.stormlib import MpqFileNotFound, NewArchive, StormLibError
 from .source import SourceError
 
 log = logging.getLogger(__name__)
@@ -147,6 +148,7 @@ class Report:
     sizes: dict[str, int] = field(default_factory=dict)   # group -> stored bytes
     statuses: dict[str, int] = field(default_factory=dict)
     missing: list[str] = field(default_factory=list)
+    damaged: list[str] = field(default_factory=list)  # the install's copy cannot be read whole
     ogg: int = 0
     wav_bytes: int = 0  # the WAVs' bytes the Oggs replace
     ogg_bytes: int = 0
@@ -164,7 +166,7 @@ def _reads(source, extra: list[str], movies: bool) -> list[tuple[str, str, int |
             name = cinematics_smk.SMK_PATH.format(name=movie)
             size, digest = known[movie]
             out.append((name, normalize(name), size, digest))
-    keys = {key for _, key, _, _ in out} | manifest.absent | manifest.unreadable
+    keys = {key for _, key, _, _ in out} | manifest.absent
     for name in extra:
         if normalize(name) not in keys:
             out.append((name, normalize(name), None, None))
@@ -214,7 +216,12 @@ def write(source, out: Path, *, kind: str, single: bool = False, extra: list[str
             for at in range(0, len(reads), WINDOW):
                 jobs = []
                 for name, key, size, digest in reads[at:at + WINDOW]:
-                    got = _read(source, kind, name, size, digest)
+                    try:
+                        got = _read(source, kind, name, size, digest)
+                    except StormLibError as e:  # MpqFileNotFound is _read's None
+                        log.debug("%s: %s", name, e)
+                        report.damaged.append(name)
+                        continue
                     if got is None:
                         report.missing.append(name)
                     else:

@@ -84,17 +84,20 @@ def _verify(args: argparse.Namespace) -> int:
     verify_file(root, profile.executable)
     log.info("ok %s", profile.executable.name)
     with Resolver(root, profile) as resolver:
-        problems = resolver.verify_contents()
+        problems, damaged = resolver.verify_contents()
         count = len(resolver.manifest.files)
     for spec in profile.archives:
         size = (root / spec.name).stat().st_size
         log.info("%s: %d bytes%s", spec.name, size, "" if size == spec.size else
                  f" (the reference copy has {spec.size}; checked by its files)")
+    for line in damaged:
+        log.warning("damaged copy (it cannot be read whole; a sound copy of the file reads): %s", line)
     for line in problems:
         log.error("%s", line)
     if problems:
         raise ProfileError(f"{len(problems)} of the {count} files profile {profile.id} reads differ or are missing")
-    log.info("profile %s verified: %d files match", profile.id, count)
+    log.info("profile %s verified: %d files match%s", profile.id, count - len(damaged),
+             f", {len(damaged)} damaged" if damaged else "")
     return 0
 
 
@@ -159,7 +162,7 @@ def _scr_manifest(args: argparse.Namespace) -> int:
     from . import gamedata, missions, scenarios
     from .casc import rebuild
     from .casc.source import build_texts, write_manifest, write_texts
-    from .inputs import manifest_path, texts_path
+    from .inputs import damaged_entries, manifest_path, texts_path
     from .emit import terrain
     from .source import RecordingSource
 
@@ -172,9 +175,12 @@ def _scr_manifest(args: argparse.Namespace) -> int:
             step(source, out)
         missions.write_packs(missions.packs_path(profile.id), profile.id, survey.packs)
         path = manifest_path(profile.id)
-        write_manifest(path, profile.id, source.files, source.absent, source.unreadable)
-        log.info("%s: %d files, %d absent, %d unreadable", path, len(source.files),
-                 len(source.absent - set(source.files)), len(source.unreadable))
+        files = {**source.files, **damaged_entries(profile.id, source.damaged)}
+        for name in sorted(source.damaged, key=str.lower):
+            log.warning("%s: the reference install's copy cannot be read whole: the manifest's entry is kept", name)
+        write_manifest(path, profile.id, files, source.absent)
+        log.info("%s: %d files (%d damaged in the install), %d absent", path, len(files), len(source.damaged),
+                 len(source.absent - set(files)))
         if args.scr:
             from .casc.storage import CascStorage
 
@@ -321,6 +327,8 @@ def _repack(args: argparse.Namespace) -> int:
         log.warning("not in the source, left out: %s", name)
     if len(report.missing) > 10:
         log.warning("... %d files left out in all", len(report.missing))
+    for name in report.damaged:
+        log.warning("damaged in the source (its copy cannot be read whole), left out: %s", name)
     for group in sorted(report.files):
         log.info("%s: %d files, %.1f MB", group, report.files[group], report.sizes[group] / 1e6)
     log.info("%s: %d files (%s), %d WAVs as Ogg Vorbis (%.1f MB for %.1f MB)%s", out, sum(report.files.values()),

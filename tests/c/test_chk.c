@@ -3,7 +3,7 @@
  * tables gives the fixture's mission (its fields: test_data); variants of it are refused as converter/tests/test_chk.py
  * and the trigger validation refuse them; every campaign mission of the installs of KP_TEST_ORIGINAL (1.17) and
  * KP_TEST_SCR (StarCraft: Remastered) is built from its files, and the two installs' missions are equal but their
- * speech (Remastered's own recordings). */
+ * speech's lengths and rates (Remastered's own recordings). */
 #include "kp_test_app.h"
 
 #include <stdio.h>
@@ -101,8 +101,9 @@ static void mission_free(void *p) { kp_mission_free((KpMission *)p); }
 
 #define SAME(field) kp_t_ok(T, bytes_eq(a->field.data, a->field.size, b->field.data, b->field.size), "%s: " #field, name)
 
-/* sounds: the WAVs' records compared too, not their string ids alone */
-static void mission_eq(KpT *T, const KpMission *a, const KpMission *b, const char *name, int sounds)
+/* Two installs' missions: every part, and of the WAVs their strings and indices (not the lengths and rates of the
+ * speech's recordings) */
+static void mission_eq(KpT *T, const KpMission *a, const KpMission *b, const char *name)
 {
 	int k;
 	kp_t_ok(T, a->chk_version == b->chk_version && a->era == b->era && a->width == b->width && a->height == b->height
@@ -133,9 +134,7 @@ static void mission_eq(KpT *T, const KpMission *a, const KpMission *b, const cha
 	for (k = 0; k < a->sound_count && k < b->sound_count; k++) {
 		const KpMissionSound *x = &a->sounds[k], *y = &b->sounds[k];
 		kp_t_eq(T, y->string_id, x->string_id, "%s: sound %d's string", name, k);
-		if (sounds)
-			kp_t_ok(T, x->index == y->index && x->length == y->length && x->avg_bytes_per_sec == y->avg_bytes_per_sec,
-				"%s: sound %d", name, k);
+		kp_t_eq(T, y->index, x->index, "%s: sound %d's index (string %u)", name, k, (unsigned)x->string_id);
 	}
 	kp_t_eq(T, b->pack_count, a->pack_count, "%s: the packs", name);
 	for (k = 0; k < a->pack_count && k < b->pack_count; k++) SAME(packs[k]);
@@ -354,7 +353,8 @@ static void original_missions(KpT *T) { missions_built(T, "KP_TEST_ORIGINAL"); }
 
 static void remastered_missions(KpT *T) { missions_built(T, "KP_TEST_SCR"); }
 
-/* 1.17's missions equal Remastered's but the speech's WAV records (Remastered's own recordings). */
+/* 1.17's missions equal Remastered's but the speech's WAV records' lengths and rates (Remastered's own recordings): the
+ * same files are found at the same indices, which a language's speech is keyed by (kp_app_world.c). */
 static void installs_missions_equal(KpT *T)
 {
 	KpFiles fa, fb;
@@ -365,7 +365,7 @@ static void installs_missions_equal(KpT *T)
 		int mark = kp_t_mark(T);
 		kp_t_eq_str(T, b->directories[k], a->directories[k], "mission %d's directory", k);
 		if (k == 0 || !a->directories[k][0]) continue; /* index 0 is no mission */
-		mission_eq(T, campaign_mission(T, &fa, a, k), campaign_mission(T, &fb, b, k), a->directories[k], 0);
+		mission_eq(T, campaign_mission(T, &fa, a, k), campaign_mission(T, &fb, b, k), a->directories[k]);
 		kp_t_release(T, mark);
 		compared++;
 	}

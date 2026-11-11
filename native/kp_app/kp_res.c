@@ -371,7 +371,7 @@ const char *kp_res_source_name(KpResSourceKind kind)
 const char *kp_res_status_name(KpResStatus status)
 {
 	static const char *const NAMES[KP_RES_STATUS_COUNT] = {
-		"missing", "absent", "unreadable", "repacked", "exact", "derived", "differs", "unlisted", "refused", "error",
+		"missing", "absent", "repacked", "exact", "derived", "differs", "unlisted", "refused", "error",
 		"equivalent", "colour-equal", "approximation",
 	};
 	return (unsigned)status < KP_RES_STATUS_COUNT ? NAMES[status] : "?";
@@ -927,9 +927,7 @@ uint8_t *kp_res_read(KpRes *r, const char *name, size_t *size, KpResStatus *stat
 	if (err_size) err[0] = 0;
 	source[0] = 0;
 	normalize(name, key, sizeof key);
-	if (kp_defs_listed(r->profile->unreadable, r->profile->unreadable_count, key)) {
-		st = KP_RES_UNREADABLE;
-	} else if (kp_defs_listed(r->profile->absent, r->profile->absent_count, key)) {
+	if (kp_defs_listed(r->profile->absent, r->profile->absent_count, key)) {
 		st = KP_RES_ABSENT;
 	} else if ((b = read_repack(r, key, size, source)) != NULL) {
 		st = KP_RES_REPACKED;
@@ -950,8 +948,7 @@ int kp_res_exists(KpRes *r, const char *name)
 	char key[KP_RES_NAME], mname[KP_RES_NAME], names[CASC_MOVED_COUNT + 2 * CASC_PREFIX_COUNT][KP_RES_NAME];
 	int k, n;
 	normalize(name, key, sizeof key);
-	if (kp_defs_listed(r->profile->unreadable, r->profile->unreadable_count, key)
-		|| kp_defs_listed(r->profile->absent, r->profile->absent_count, key))
+	if (kp_defs_listed(r->profile->absent, r->profile->absent_count, key))
 		return 0;
 	if (map_find(&r->listed, key) || (r->casc && kp_defs_input(r->profile, key))) return 1;
 	mpq_name(key, mname, sizeof mname);
@@ -1007,8 +1004,7 @@ static KpResStream *open_file(KpRes *r, const char *name, int own, uint64_t *siz
 	normalize(name, key, sizeof key);
 	mpq_name(key, mname, sizeof mname);
 	in = kp_defs_input(r->profile, key);
-	if (kp_defs_listed(r->profile->unreadable, r->profile->unreadable_count, key)
-		|| kp_defs_listed(r->profile->absent, r->profile->absent_count, key))
+	if (kp_defs_listed(r->profile->absent, r->profile->absent_count, key))
 		goto none;
 	if ((e = map_find(&r->listed, key)) != NULL
 		&& (s->mpq = own ? kp_mpq_open(r->repack[e->archive].path, 1, err, err_size) : r->repack[e->archive].mpq) != NULL) {

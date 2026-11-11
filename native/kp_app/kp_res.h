@@ -44,7 +44,6 @@ typedef enum {
 typedef enum {
 	KP_RES_MISSING,    /* no source has it */
 	KP_RES_ABSENT,     /* the manifest lists it as absent from the reference install */
-	KP_RES_UNREADABLE, /* the manifest lists it as unreadable in the reference install */
 	KP_RES_REPACKED,   /* from a repack, equal to its listing */
 	KP_RES_EXACT,      /* from an install, the manifest's (1.17: a file that only shows or plays by its size) */
 	KP_RES_DERIVED,    /* rebuilt from Remastered's copy, or its own formats, to the manifest's digest */
@@ -99,7 +98,7 @@ int kp_res_repacks(const KpRes *r);
 const KpDefsProfile *kp_res_profile(const KpRes *r);
 
 /* A malloc'd copy of a file's bytes (NUL terminated past size) and its status, or NULL: err empty when no source has
- * it (missing, absent, unreadable), the reason otherwise (a refused copy, a failed read). */
+ * it (missing, absent), the reason otherwise (a refused copy, a failed read: a damaged copy). */
 uint8_t *kp_res_read(KpRes *r, const char *name, size_t *size, KpResStatus *status, char *err, size_t err_size);
 /* Whether a source has the file; a Remastered install has every file of the manifest (source.py has: a rebuild stands
  * in for one it lacks). */

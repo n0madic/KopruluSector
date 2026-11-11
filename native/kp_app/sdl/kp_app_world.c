@@ -444,9 +444,9 @@ static int build(KpApp *a, char *err, size_t err_size)
 	}
 	kp_fog_layer_init(&w->fog);
 	/* the triggers' WAVs (a catalog mission's): the chosen speech's lines by WAVS index (ADR 0016, stage L5), else each
-	 * from the scenario's directory when it plays (kp_app_audio.c). TODO: (stage D8c, the speech's base computed in
-	 * memory) the lines are indexed by the WAVS of the mission the speech was converted against; a mission built from
-	 * another install whose WAVs the native parser takes differently would hear them shifted. */
+	 * from the scenario's directory when it plays (kp_app_audio.c). The index is the WAV string's position (kp_mission.c
+	 * WAVS), the CHK's alone, so the base the speech was converted against (converter/base.py) and every source give
+	 * the same, a repack that leaves a damaged copy out too (issue #2; test_chk compares the two installs'). */
 	if (entry->catalog && a->flags.speech[0] != 0 && strcmp(a->flags.speech, KP_LOCALE_BASE) != 0) {
 		size_t n = 0;
 		snprintf(path, sizeof path, "generated/speech/%s/missions/%s_sounds.kpd", a->flags.speech, entry->name);

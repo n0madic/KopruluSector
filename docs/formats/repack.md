@@ -14,7 +14,7 @@ MPQ version 1, written by StormLib, with a `(listfile)` and no `(attributes)` (S
 | `koprulu-music.mpq` | `music\` |
 | `koprulu-cinematics.mpq` | `smk\`: the 1.17 install's 28 movies (Remastered's WebM are not repacked); apart from `koprulu.mpq` with `--single` too |
 
-A group with no file is not written. `--out` defaults to `generated/repack`, with `--single` to `generated/repack-single`: the folders a bundle stages (`tools/product.sh`, under its data's `generated/`) and the app looks in when no `--data` names a source. A bundle carries no cinematics' group (the cinematics packs show the movies). The files are the input manifest's (`defs/scr/inputs-<profile>.json`) but its absent and unreadable names, in its sorted order, then the 1.17 cinematics, then the names a `--res-log` of a run read unlisted; a file the source lacks is left out and reported.
+A group with no file is not written. `--out` defaults to `generated/repack`, with `--single` to `generated/repack-single`: the folders a bundle stages (`tools/product.sh`, under its data's `generated/`) and the app looks in when no `--data` names a source. A bundle carries no cinematics' group (the cinematics packs show the movies). The files are the input manifest's (`defs/scr/inputs-<profile>.json`) but its absent names, in its sorted order, then the 1.17 cinematics, then the names a `--res-log` of a run read unlisted; a file the source lacks, or holds a damaged copy of (one StormLib cannot read whole), is left out and reported.
 
 ## The listing `(koprulu)`
 

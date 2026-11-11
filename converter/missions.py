@@ -21,7 +21,7 @@ from .formats import chk
 from .kpf import kpm
 from .mpq.stormlib import StormLibError
 from .provenance import DEFS_ROOT
-from .source import Source, SourceUnreadable
+from .source import Source
 
 log = logging.getLogger(__name__)
 
@@ -37,7 +37,7 @@ class CatalogScenario:
 class Survey:
     packs: dict[str, list[str]]  # each catalog mission's resource packs by its directory, sorted
     rejected: dict[str, str]  # the prerelease scenarios outside the catalog the native preflight rejects: why
-    unreadable_sounds: list[str]
+    unreadable_sounds: list[str]  # the install's damaged copies and the WAVs the native parser rejects
 
 
 def catalog_scenarios(source: Source) -> list[tuple[CatalogEntry, chk.Scenario]]:
@@ -105,18 +105,17 @@ def write_packs(path: Path, profile_id: str, packs: dict[str, list[str]]) -> Non
 
 
 def _reader(source: Source, unreadable: list[str]):
-    """Mission WAV reader. A file the archives list but StormLib cannot decompress is
-    treated as missing and reported (as is one the native WAV parser rejects, by
-    kpm.mission_sounds): campaign\\protoss\\protoss10\\staredit\\wav\\PAB05ura.wav
-    in the retail StarCraft.mpq has sectors 218-219 of 244 that fail to decompress (the
-    research extraction failed on it too, evidence/campaign-media.json)."""
+    """Mission WAV reader. A copy the archives hold but StormLib cannot read whole (a disc copied with a bad read: the
+    reference install's campaign\\protoss\\protoss10\\staredit\\wav\\PAB05ura.wav, docs/research/campaigns.md) is
+    treated as missing and reported, as is one the native WAV parser rejects (kpm.mission_sounds). Neither changes the
+    other sounds' indices, which are their WAV strings' positions."""
     def read(path: str) -> bytes | None:
         if not source.has(path):
             return None
         try:
             return source.read(path)[1]
-        except (StormLibError, SourceUnreadable) as exc:
-            log.warning("unreadable mission sound, treated as missing: %s", exc)
+        except StormLibError as exc:  # not MpqFileNotFound: `has` said the archives hold it
+            log.warning("damaged mission sound, treated as missing: %s", exc)
             unreadable.append(path)
             return None
     return read

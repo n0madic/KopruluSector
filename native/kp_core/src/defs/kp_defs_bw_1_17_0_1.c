@@ -869,6 +869,7 @@ static const KpDefsInput FILES[] = {
 	{ "campaign/protoss/protoss10/staredit/wav/pab01uta.wav", 862082u, "8cc70a1ea18ee982477ed9fbf027cb69b62cb6dd10addc5d908298961b4f4b39" },
 	{ "campaign/protoss/protoss10/staredit/wav/pab02uta.wav", 978136u, "8fa75e7e1a0ee6c12b9415e719f9818b8690947bbd2709ba82f36e4ba53af968" },
 	{ "campaign/protoss/protoss10/staredit/wav/pab03uze.wav", 74488u, "64342cd460a0c82a5a457a890747948b2e8f58ee8ef667f703e3cc2af203cb69" },
+	{ "campaign/protoss/protoss10/staredit/wav/pab05ura.wav", 997594u, "1ebee7e48e9e915d2ea6cc5d5dedb2fd90c729231c3c2d667b7d543e4d987aec" },
 	{ "campaign/protoss/protoss10/staredit/wav/pab06uta.wav", 244492u, "8d4e6cab23ca5da44fd566376114a3842fbff619252cd9c5687c6fc027dee5ee" },
 	{ "campaign/protoss/protoss10/staredit/wav/pam00uta.wav", 1355822u, "c8d7dc710d5619f656cf4b2066484dd8fa72b384eb3a5d06f257c40cd3a9c80e" },
 	{ "campaign/protoss/tutorial/staredit/scenario.chk", 126697u, "32ef9e86a07566c39d5434bd738c7decb328588763b128725ffbc522c16a6a41" },
@@ -5737,10 +5738,6 @@ static const char *const ABSENT[] = {
 	"sound/bullet/pzefir00.wav",
 	"sound/bullet/tbafir00.wav",
 	"sound/protoss/darchon/pdrdth00.wav",
-};
-
-static const char *const UNREADABLE[] = {
-	"campaign/protoss/protoss10/staredit/wav/pab05ura.wav",
 };
 
 static const uint8_t T_ACCL[] = {
@@ -14544,6 +14541,5 @@ const KpDefsProfile kp_defs_bw_1_17_0_1 = {
 	ARCHIVES, (int)(sizeof ARCHIVES / sizeof ARCHIVES[0]),
 	FILES, (int)(sizeof FILES / sizeof FILES[0]),
 	ABSENT, (int)(sizeof ABSENT / sizeof ABSENT[0]),
-	UNREADABLE, (int)(sizeof UNREADABLE / sizeof UNREADABLE[0]),
 	TABLES, (int)(sizeof TABLES / sizeof TABLES[0]),
 };

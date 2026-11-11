@@ -1,7 +1,7 @@
 """StarCraft: Remastered as a source of profile bw-1.17.0.1's files (converter/casc/source.py).
 
-Synthetic storages check the lookup order, the moved files, the tileset rebuilds, the manifest's absent and
-unreadable names and the report. With KOPRULU_SCR every manifest file is classified on the real install, and
+Synthetic storages check the lookup order, the moved files, the tileset rebuilds, the manifest's absent names, a
+damaged 1.17 copy's entry kept, and the report. With KOPRULU_SCR every manifest file is classified on the real install, and
 the exact and derived files may not drop below the counts measured on 1.23.10.13515.
 """
 from __future__ import annotations
@@ -15,21 +15,21 @@ import unittest
 from pathlib import Path
 
 from converter.casc.source import CV5_GROUP, ScrSource, vx4_from_vx4ex, write_manifest
-from converter.inputs import Entry, Manifest, manifest_path
+from converter.inputs import Entry, Manifest, ManifestError, damaged_entries, manifest_path
 from converter.mpq.profile import Profile
-from converter.source import RecordingSource, SourceError, SourceUnreadable
+from converter.mpq.stormlib import StormLibError
+from converter.source import RecordingSource, SourceError
 from converter.tests.test_casc import write_storage
 
 SCR = os.environ.get("KOPRULU_SCR")
 PROFILE = Profile.load()
 
 
-def manifest(files: dict[str, bytes], absent=(), unreadable=(), extras=None, palettes=None) -> Manifest:
+def manifest(files: dict[str, bytes], absent=(), extras=None, palettes=None) -> Manifest:
     return Manifest(PROFILE.id, {n.lower().replace("\\", "/"): Entry(hashlib.sha256(d).hexdigest(), len(d), n,
                                                                     (extras or {}).get(n, {}))
                                  for n, d in files.items()},
-                    frozenset(n.lower().replace("\\", "/") for n in absent),
-                    frozenset(n.lower().replace("\\", "/") for n in unreadable), {"tbl": {}, "bin": {}},
+                    frozenset(n.lower().replace("\\", "/") for n in absent), {"tbl": {}, "bin": {}},
                     palettes or {})
 
 
@@ -78,25 +78,24 @@ class SyntheticSourceTest(unittest.TestCase):
         assert vx4_from_vx4ex(struct.pack("<2I", 1, 0x10000), 4) is None
         assert vx4_from_vx4ex(struct.pack("<2I", 1, 2), 4) == struct.pack("<2H", 1, 2)
 
-    def test_differs_unlisted_absent_unreadable(self):
+    def test_differs_unlisted_absent(self):
+        # a.wav: a file the 1.17 reference copy cannot give whole, listed as the release has it (issue #2)
         with self.source({"rez/stat_txt.tbl": b"edited", "music/new.ogg": b"ogg", "glue/x.smk": b"",
                           "campaign/p10/wav/a.wav": b"intact"},
-                         {"rez\\stat_txt.tbl": b"original"}, absent=("glue\\x.smk",),
-                         unreadable=("campaign\\p10\\wav\\a.wav",)) as s:
+                         {"rez\\stat_txt.tbl": b"original", "campaign\\p10\\wav\\a.wav": b"intact"},
+                         absent=("glue\\x.smk",)) as s:
             assert s.read("rez\\stat_txt.tbl")[1] == b"edited"
             assert s.status["rez\\stat_txt.tbl"][0] == "differs"
             assert s.read("music\\new.ogg")[1] == b"ogg" and s.status["music\\new.ogg"][0] == "unlisted"
             assert not s.has("glue\\x.smk")
             with self.assertRaises(SourceError):
                 s.read("glue\\x.smk")
-            assert s.has("campaign\\p10\\wav\\a.wav")
-            with self.assertRaises(SourceUnreadable):
-                s.read("campaign\\p10\\wav\\a.wav")
+            assert s.has("campaign\\p10\\wav\\a.wav") and s.read("campaign\\p10\\wav\\a.wav")[1] == b"intact"
             with self.assertRaises(SourceError):
                 s.read("missing\\file.dat")
             assert s.status["missing\\file.dat"] == ("missing", "")
             counts = s.write_report(self.root / "out")
-            assert counts == {"differs": 1, "unlisted": 1, "unreadable": 1, "missing": 1}
+            assert counts == {"differs": 1, "unlisted": 1, "exact": 1, "missing": 1}
             report = json.loads((self.root / "out" / "reports" / "scr-import.json").read_text())
             assert report["build"] == "1.23.10.13515" and report["files"]["rez\\stat_txt.tbl"][0] == "differs"
 
@@ -125,8 +124,8 @@ class SyntheticSourceTest(unittest.TestCase):
             profile = PROFILE
 
             def read(self, name):
-                if name == "bad.wav":
-                    raise SourceUnreadable(name)
+                if name == "bad.wav":  # a damaged copy: StormLib cannot read it whole
+                    raise StormLibError(f"{name}: short read")
                 return "MPQ", files[name]
 
             def has(self, name):
@@ -142,15 +141,19 @@ class SyntheticSourceTest(unittest.TestCase):
         for name in files:
             rec.read(name)
         assert not rec.has("glue\\none.pcx")
-        with self.assertRaises(SourceUnreadable):
+        with self.assertRaises(StormLibError):
             rec.read("bad.wav")
-        path = self.root / "inputs.json"
-        write_manifest(path, PROFILE.id, rec.files, rec.absent, rec.unreadable)
+        assert rec.damaged == {"bad.wav"}
+        sound = Entry(hashlib.sha256(b"sound copy").hexdigest(), 10, "bad.wav", {})  # the committed entry
         with mock_manifest_dir(self.root):
-            (self.root / f"inputs-{PROFILE.id}.json").write_text(path.read_text())
+            with self.assertRaises(ManifestError):  # no entry to keep yet
+                damaged_entries(PROFILE.id, rec.damaged)
+            write_manifest(manifest_path(PROFILE.id), PROFILE.id, {sound.name: (sound.sha256, sound.size, {})}, set())
+            write_manifest(manifest_path(PROFILE.id), PROFILE.id, {**rec.files, **damaged_entries(PROFILE.id, rec.damaged)},
+                           rec.absent)
             m = Manifest.load(PROFILE.id)
         assert m.files["arr/units.dat"] == Entry(hashlib.sha256(b"units").hexdigest(), 5, "arr\\units.dat", {})
-        assert m.absent == {"glue/none.pcx"} and m.unreadable == {"bad.wav"}
+        assert m.files["bad.wav"] == sound and m.absent == {"glue/none.pcx"}
 
 
 def mock_filled(table):

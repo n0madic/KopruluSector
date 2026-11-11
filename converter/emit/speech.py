@@ -139,14 +139,17 @@ def language_path(locale_id: str, mpq_path: str, suffix: str) -> str:
 
 def line_sources(install, locale_id: str, paths: list[str], ogg_dir: Path,
                  mission: str) -> tuple[dict[Path, tuple[bytes, str]], list[tuple[int, Path]], list[str]]:
-    """A mission's lines by the base's WAVS index (the order of its existing sounds): (OGG path -> the language's file
-    and its name, [(index, its OGG path)], the lines the base's sound keeps). A line the install lacks, or keeps empty
-    (Remastered's silent nullsound files), is left out: the runtime plays the base's own file at its index."""
-    names = mission_ogg_names(mission, paths)
+    """A mission's lines by the base's WAVS index (a WAV string's position; "" for a sound whose file the base lacks,
+    which the runtime does not play): (OGG path -> the language's file and its name, [(index, its OGG path)], the lines
+    the base's sound keeps). A line the install lacks, or keeps empty (Remastered's silent nullsound files), is left
+    out: the runtime plays the base's own file at its index."""
+    names = mission_ogg_names(mission, [p for p in paths if p])
     jobs: dict[Path, tuple[bytes, str]] = {}
     files: list[tuple[int, Path]] = []
     kept: list[str] = []
     for index, path in enumerate(paths):
+        if not path:
+            continue
         source = language_path(locale_id, path, ".ogg")
         data = install.read(source) if install.has(source) else b""
         if data:

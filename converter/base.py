@@ -15,7 +15,9 @@ class Mission:
     strs: bytes  # the CHK's STR
     trig: bytes
     mbrf: bytes
-    sounds: tuple[str, ...]  # the paths of the WAVS sounds that exist, in string-id order: the mission's sound indices
+    # each WAV string's path in string-id order, "" for a file that does not exist: the position is the sound's index
+    # (kp_mission.c WAVS), whatever the other files of the install it was read from
+    sounds: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -33,5 +35,6 @@ def load(source: Source) -> Base:
     return Base(source.profile.id, source.data_set_hash(), gamedata.strings(source), gamedata.ui(source),
                 gamedata.fonts(source), gamedata.sounds(source),
                 {m.entry.name: Mission(m.scenario.sections["STR "], m.scenario.sections["TRIG"],
-                                       m.scenario.sections["MBRF"], tuple(s.path for s in m.sounds if s.exists))
+                                       m.scenario.sections["MBRF"],
+                                       tuple(s.path if s.exists else "" for s in m.sounds))
                  for m in missions.load_catalog(source)})

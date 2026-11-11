@@ -10,8 +10,7 @@ rebuilds what is derivable, and checks every result against the manifest `defs/s
 - `differs`: no candidate reaches the hash; the first readable copy is used (an approximation);
 - `unlisted`: a name the manifest does not hold, read from CASC unchecked.
 
-A name the manifest lists as absent stays absent, and one it lists as unreadable stays unreadable, so the
-conversion sees the data set the 1.17 install has. `reports/scr-import.json` records each file's status.
+A name the manifest lists as absent stays absent, so the conversion sees the data set the 1.17 install has. `reports/scr-import.json` records each file's status.
 """
 from __future__ import annotations
 
@@ -27,7 +26,7 @@ from ..formats import dds, grp, kpw, pcx
 from ..formats.palette import Colours
 from ..inputs import Entry, Manifest
 from ..mpq.profile import Profile
-from ..source import SourceError, SourceUnreadable
+from ..source import SourceError
 from . import rebuild
 from .storage import CascError, CascStorage, normalize
 
@@ -84,13 +83,12 @@ def palette_groups(files: dict[str, tuple[str, int, dict | None]]) -> tuple[dict
     return groups, grp_palettes
 
 
-def write_manifest(path: Path, profile_id: str, files: dict[str, tuple[str, int, dict | None]], absent: set[str],
-                   unreadable: set[str]) -> None:
+def write_manifest(path: Path, profile_id: str, files: dict[str, tuple[str, int, dict | None]], absent: set[str]) -> None:
     """One file per line: [name, size, sha256] and its extras (rebuild.describe; a GRP's palette), sorted by name;
     the PCX files of each palette."""
     groups, grp_palettes = palette_groups(files)
-    pcx_palettes = {e[2]["palette"]: e[2]["_palette_rgb"] for n, e in files.items()
-                    if n.lower().endswith(".pcx") and e[2]}
+    pcx_palettes = {e[2]["palette"]: e[2]["_palette_rgb"] for n, e in files.items()  # a kept entry has no RGB
+                    if n.lower().endswith(".pcx") and e[2] and "_palette_rgb" in e[2]}
     rows = []
     for name, (sha, size, extras) in sorted(files.items(), key=lambda kv: kv[0].lower()):
         extras = dict(extras or {})
@@ -113,8 +111,7 @@ def write_manifest(path: Path, profile_id: str, files: dict[str, tuple[str, int,
         ' "files": [\n  ' + ",\n  ".join(lines) + "\n ],\n"
         ' "absent": [\n  ' + ",\n  ".join(absent_lines) + "\n ],\n"
         ' "palettes": {\n  ' + ",\n  ".join(f"{json.dumps(k)}: {json.dumps(v)}" for k, v in sorted(groups.items()))
-        + "\n },\n"
-        f' "unreadable": {json.dumps(sorted(unreadable, key=str.lower))}\n'
+        + "\n }\n"
         "}\n"
     )
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -177,7 +174,7 @@ class ScrSource:
 
     def has(self, name: str) -> bool:
         key = normalize(name)
-        if key in self.manifest.files or key in self.manifest.unreadable:
+        if key in self.manifest.files:
             return True
         if key in self.manifest.absent:
             return False
@@ -197,9 +194,6 @@ class ScrSource:
 
     def read(self, name: str) -> tuple[str, bytes]:
         key = normalize(name)
-        if key in self.manifest.unreadable:
-            self.status[name] = ("unreadable", "")
-            raise SourceUnreadable(f"{name}: unreadable in profile {self.profile.id}'s install")
         if key in self.manifest.absent:
             raise SourceError(f"{name}: not in profile {self.profile.id}")
         if self._rebuilt.get(key) is not None:

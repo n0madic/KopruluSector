@@ -46,10 +46,12 @@ class KpmTest(unittest.TestCase):
         from converter.missions import load_catalog, survey
         from converter.mpq.profile import Resolver
 
-        unreadable = "campaign\\protoss\\protoss10\\staredit\\wav\\PAB05ura.wav"
+        # the reference install's copy of this line is damaged (a disc copied with a bad read); a sound copy reads it
+        # (issue #2, docs/research/campaigns.md)
+        damaged = "campaign\\protoss\\protoss10\\staredit\\wav\\PAB05ura.wav"
         with Resolver(ORIGINAL) as r:
             first = survey(r)
             assert first == survey(r) and len(first.packs) == 64 and len(first.rejected) == 4
-            assert first.unreadable_sounds == [unreadable]
+            assert set(first.unreadable_sounds) <= {damaged}
             sounds = [s for m in load_catalog(r) for s in m.sounds]
-        assert sounds and all(s.exists for s in sounds if s.path != unreadable)
+        assert sounds and all(s.exists for s in sounds if s.path not in first.unreadable_sounds)

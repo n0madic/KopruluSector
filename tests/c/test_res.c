@@ -156,7 +156,6 @@ static void dir_mpq(KpT *T, Dir *d, const char *archive, const char *const *pair
 static const char ONE[] = "the first copy of one", ONE_SHADOWED[] = "B's copy of one", TWO[] = "two as listed",
 	TWO_CHANGED[] = "two, changed", THREE[] = "three";
 static const char *const ABSENT[] = { "a/gone.dat" };
-static const char *const UNREADABLE[] = { "a/bad.wav" };
 static const KpDefsArchive ARCHIVES[] = { { "A.mpq", 0, "core" }, { "B.mpq", 0, "core" }, { "C.mpq", 0, "campaign" } };
 
 typedef struct {
@@ -186,8 +185,6 @@ static void profile_init(KpT *T, Profile *p)
 	p->profile.file_count = 3;
 	p->profile.absent = ABSENT;
 	p->profile.absent_count = 1;
-	p->profile.unreadable = UNREADABLE;
-	p->profile.unreadable_count = 1;
 }
 
 static void profile_log(void *ctx, const char *line)
@@ -201,7 +198,7 @@ static void profile_log(void *ctx, const char *line)
 static Dir *test_install(KpT *T)
 {
 	static const char *const A[] = { "a\\one.dat", ONE, NULL };
-	static const char *const B[] = { "a\\one.dat", ONE_SHADOWED, "a\\two.dat", TWO_CHANGED, "a\\extra.txt", "unlisted", "a\\bad.wav", "x", NULL };
+	static const char *const B[] = { "a\\one.dat", ONE_SHADOWED, "a\\two.dat", TWO_CHANGED, "a\\extra.txt", "unlisted", NULL };
 	Dir *d = dir_new(T);
 	dir_write(T, d, "Game.exe", "MZ");
 	dir_mpq(T, d, "A.mpq", A);
@@ -264,10 +261,66 @@ static void res_reads_a_1_17_install_checked(KpT *T)
 	kp_t_eq(T, st, KP_RES_UNLISTED, "extra's status");
 	kp_t_ok(T, strstr(p.log, "a\\extra.txt is not in the input manifest") != NULL, "logged: %s", p.log);
 	kp_t_ok(T, read_text(T, r, "a\\gone.dat", &st, err, sizeof err) == NULL && st == KP_RES_ABSENT && !err[0], "absent: %s", err);
-	kp_t_ok(T, read_text(T, r, "a\\bad.wav", &st, err, sizeof err) == NULL && st == KP_RES_UNREADABLE && !err[0], "unreadable: %s", err);
 	kp_t_ok(T, read_text(T, r, "a\\three.dat", &st, err, sizeof err) == NULL && st == KP_RES_MISSING && !err[0], "missing: %s", err);
 	kp_t_ok(T, kp_res_exists(r, "a/one.dat") && kp_res_exists(r, "a/extra.txt"), "exists");
-	kp_t_ok(T, !kp_res_exists(r, "a/gone.dat") && !kp_res_exists(r, "a/bad.wav") && !kp_res_exists(r, "a/three.dat"), "does not exist");
+	kp_t_ok(T, !kp_res_exists(r, "a/gone.dat") && !kp_res_exists(r, "a/three.dat"), "does not exist");
+}
+
+/* A damaged copy (a disc copied with a bad read, issue #2): its archive lists it at the manifest's size, its first
+ * sectors read but not all of them. It exists and its head reads (a mission's WAV probe, kp_files_wav: the sound keeps
+ * its index); a whole read fails with the reason (the line plays nothing, kp_app_audio.c). */
+static void res_damaged_copy_reads_its_head(KpT *T)
+{
+	enum { BIG = 40000, HEAD = 4096, CUT = 32 };
+	static char big[BIG + 1];
+	static const char *const B[] = { "a\\two.dat", TWO, NULL };
+	const char *pairs[5], *dirs[1];
+	char path[400], err[512];
+	uint8_t *mpq, *head;
+	size_t mpq_size = 0, got = 0;
+	uint64_t total = 0;
+	uint32_t x = 1, data_end, at, k;
+	Profile p;
+	Dir *d = dir_new(T);
+	KpRes *r;
+	KpResStatus st;
+	FILE *f;
+	for (k = 0; k < BIG; k++) big[k] = (char)('a' + ((x = x * 1103515245u + 12345u) >> 16) % 16); /* ~10 zlib sectors */
+	big[BIG] = 0;
+	profile_init(T, &p);
+	memmove(p.files + 1, p.files, 3 * sizeof p.files[0]); /* sorted by name: a/bad.wav first */
+	p.files[0].name = "a/bad.wav";
+	p.files[0].size = BIG;
+	p.files[0].sha256 = hex_of(T, big, BIG);
+	p.profile.file_count = 4;
+	pairs[0] = "a\\bad.wav"; /* zlib-compressed by sector (dir_mpq) */
+	pairs[1] = big;
+	pairs[2] = "a\\one.dat";
+	pairs[3] = ONE;
+	pairs[4] = NULL;
+	dir_write(T, d, "Game.exe", "MZ");
+	dir_mpq(T, d, "A.mpq", pairs);
+	dir_mpq(T, d, "B.mpq", B);
+	/* the bytes three quarters into the files' data (after the 32-byte header, before the hash table): a late sector of
+	 * a\bad.wav's, whose first ones stay whole */
+	snprintf(path, sizeof path, "%s/A.mpq", d->dir);
+	mpq = kp_t_read(T, path, &mpq_size);
+	kp_t_ok(T, mpq_size > 32 && memcmp(mpq, "MPQ\x1a", 4) == 0, "an MPQ with its header first");
+	data_end = (uint32_t)mpq[16] | (uint32_t)mpq[17] << 8 | (uint32_t)mpq[18] << 16 | (uint32_t)mpq[19] << 24;
+	kp_t_ok(T, data_end > 32 + HEAD && data_end <= mpq_size, "the hash table after the data");
+	at = 32 + (data_end - 32) / 4 * 3;
+	for (k = 0; k < CUT; k++) mpq[at + k] ^= 0xa5u;
+	f = fopen(path, "wb");
+	kp_t_ok(T, f != NULL && fwrite(mpq, 1, mpq_size, f) == mpq_size && fclose(f) == 0, "cannot rewrite %s", path);
+	dirs[0] = d->dir;
+	r = open_res(T, &p, dirs, 1);
+	kp_t_ok(T, kp_res_exists(r, "a/bad.wav"), "a damaged copy exists");
+	kp_t_ok(T, read_text(T, r, "a\\bad.wav", &st, err, sizeof err) == NULL && st == KP_RES_ERROR && err[0],
+		"a whole read fails with the reason: %s", err);
+	head = kp_res_head(r, "a\\bad.wav", HEAD, &got, &total, err, sizeof err);
+	kp_t_ok(T, head != NULL, "its head reads: %s", err);
+	kp_t_ok(T, head && got == HEAD && total == BIG && memcmp(head, big, HEAD) == 0, "its first %d bytes", HEAD);
+	free(head);
 }
 
 static void res_install_needs_its_core_archives(KpT *T)
@@ -1054,6 +1107,7 @@ static const KpTest TESTS[] = {
 	{ "sha256_padding_edges", sha256_padding_edges, 0 },
 	{ "sha256_hex_decodes", sha256_hex_decodes, 0 },
 	{ "res_reads_a_1_17_install_checked", res_reads_a_1_17_install_checked, 0 },
+	{ "res_damaged_copy_reads_its_head", res_damaged_copy_reads_its_head, 0 },
 	{ "res_install_needs_its_core_archives", res_install_needs_its_core_archives, 0 },
 	{ "res_hashes_only_what_the_simulation_reads", res_hashes_only_what_the_simulation_reads, 0 },
 	{ "res_repack_comes_before_the_install", res_repack_comes_before_the_install, 0 },

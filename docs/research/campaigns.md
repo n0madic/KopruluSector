@@ -106,11 +106,20 @@ The evidence establishes static data and analysis coverage. Campaign execution a
 
 ## Damaged archive entry
 
-`campaign\protoss\protoss10\staredit\wav\PAB05ura.wav` in the profile's StarCraft.mpq (997,594 bytes, 244 sectors of 4 KB) cannot be read completely. [probe_storm_read.py](../../tools/research/probe_storm_read.py) runs the installation's original `storm.dll` in the full-game emulator's machine:
+`campaign\protoss\protoss10\staredit\wav\PAB05ura.wav` in the reference install's StarCraft.mpq (997,594 bytes, 244 sectors of 4 KB) cannot be read completely. [probe_storm_read.py](../../tools/research/probe_storm_read.py) runs the installation's original `storm.dll` in the full-game emulator's machine:
 
 | Reader | Result |
 |---|---|
 | Original `storm.dll` | Decodes sectors 0–218. On sector 219 it reports error `0x85100083` through `SErrDisplayError` and terminates the process |
 | StormLib | Already fails on sector 218 |
 
-The file is the Transmission of the Protoss 10 briefing (MBRF record 0, action 14). On this installation the original game therefore exits during that briefing unless Start is pressed before the line plays. The remake treats the line as missing ([kpm format](../formats/kpm.md#wavs)). No other effective file read by the converter (DAT, TBL, scripts, tilesets, PCX, GRP, FNT, BIN, WAV, SMK) fails.
+The file is the Transmission of the Protoss 10 briefing (MBRF record 0, action 14). On this installation the original game therefore exits during that briefing unless Start is pressed before the line plays. No other effective file read by the converter (DAT, TBL, scripts, tilesets, PCX, GRP, FNT, BIN, WAV, SMK) fails.
+
+**The damage is this copy's, not the release's** (issue #2, 2026-11-11). A player's StarCraft.mpq of the same size and date (601,389,682 bytes, 1998-03-27, SHA-256 `ba155a30…`) reads the file whole and plays it; the reference copy's SHA-256 is `6812af9a…`. [probe_damaged_sectors.py](../../tools/research/probe_damaged_sectors.py) compares the reference copy with Remastered's `SD/campaign/protoss/protoss10/staredit/wav/pab05ura.wav` (997,594 bytes, SHA-256 `1ebee7e4…`):
+- 242 of the 244 sectors read and equal Remastered's copy byte for byte; sectors 218 and 219 do not read;
+- Remastered's sectors compressed again with StormLib (ADPCM mono and Huffman, mask `0x41`) and encrypted with the file's keys equal 138 stored sectors byte for byte (215, 217, 220 and 221 among them). The other readable ones come out otherwise from some byte to their end, or at another length: Storm's 1998 encoder chose other ADPCM codes than StormLib's (sector 216 reads and decodes to Remastered's samples, yet compresses again to other bytes from its byte 863);
+- sector 219 alone comes out equal again after a difference: from its byte 113 to its end (1,179 bytes). The encryption's state at a byte depends on every byte before it in the sector, so sector 219 was Remastered's sector compressed, and its first 113 bytes are broken (its mask byte reads `0x98`);
+- the unreadable sector 218 (the archive's offsets `0x1d0c184f`–`0x1d0c1d4e`) and the broken head of sector 219 (to `0x1d0c1dbf`) lie within one 2,048-byte block of the disc (block 237,955): a bad read when the disc was copied;
+- the copy cannot be repaired to the byte: StormLib does not make Storm's ADPCM codes, so sector 218's stored bytes cannot be made again.
+
+The profile lists the release's file as Remastered keeps it (`defs/scr/inputs-bw-1.17.0.1.json`; until then the manifest named it `unreadable`, and every source, Remastered's and a sound disc's too, dropped the line). On the reference install it is a damaged copy: its header reads, so the mission finds it and no sound index moves (an index is the WAV string's position, [kpm format](../formats/kpm.md#wavs)), and a whole read fails, so the line plays nothing; `verify` reports it as a warning, `repack` leaves it out and says so, and `scr-manifest` keeps the manifest's entry for it (`converter/inputs.py` `damaged_entries`).

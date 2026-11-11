@@ -860,6 +860,7 @@
   ["campaign\\protoss\\protoss10\\staredit\\wav\\PAB01uta.wav", 862082, "8cc70a1ea18ee982477ed9fbf027cb69b62cb6dd10addc5d908298961b4f4b39"],
   ["campaign\\protoss\\protoss10\\staredit\\wav\\PAB02uta.wav", 978136, "8fa75e7e1a0ee6c12b9415e719f9818b8690947bbd2709ba82f36e4ba53af968"],
   ["campaign\\protoss\\protoss10\\staredit\\wav\\PAB03uze.wav", 74488, "64342cd460a0c82a5a457a890747948b2e8f58ee8ef667f703e3cc2af203cb69"],
+  ["campaign\\protoss\\protoss10\\staredit\\wav\\PAB05ura.wav", 997594, "1ebee7e48e9e915d2ea6cc5d5dedb2fd90c729231c3c2d667b7d543e4d987aec"],
   ["campaign\\protoss\\protoss10\\staredit\\wav\\PAB06uta.wav", 244492, "8d4e6cab23ca5da44fd566376114a3842fbff619252cd9c5687c6fc027dee5ee"],
   ["campaign\\protoss\\protoss10\\staredit\\wav\\PAM00uta.wav", 1355822, "c8d7dc710d5619f656cf4b2066484dd8fa72b384eb3a5d06f257c40cd3a9c80e"],
   ["campaign\\protoss\\tutorial\\staredit\\scenario.chk", 126697, "32ef9e86a07566c39d5434bd738c7decb328588763b128725ffbc522c16a6a41"],
@@ -5787,6 +5788,5 @@
   "f184c846bafea85a115b22f7511d10ae7733bb51d84c83c22482592f761010e1": ["glue\\mainmenu\\pCredit.pcx", "glue\\mainmenu\\pIntro.pcx"],
   "f2c30f5d0778c4fbec8f584ee6f6c86891076c4391f96b694dbbbad36f88fa3c": ["glue\\Chatroom\\pChat.pcx", "glue\\Chatroom\\pJoin.pcx", "glue\\Chatroom\\pList.pcx", "glue\\create\\pInfo.pcx", "glue\\create\\pListMap.pcx", "glue\\create\\pListMap2.pcx", "glue\\create\\pSlots.pcx", "glue\\gamesel\\pJoin.pcx", "glue\\gamesel\\pListLrg.pcx", "glue\\Load\\pList.pcx", "glue\\login\\pList.pcx", "glue\\modem\\pInfo.pcx", "glue\\modem\\pPhones.pcx", "glue\\PalNl\\Backgnd.pcx", "glue\\PalNl\\pCancel.pcx", "glue\\PalNl\\pDPopup.pcx", "glue\\PalNl\\pEPopup.pcx", "glue\\PalNl\\pOk.pcx", "glue\\PalNl\\pOPopup.pcx", "glue\\PalNl\\tEffect.pcx", "glue\\PalNl\\tFont.pcx", "glue\\palnl\\tfont.pcx", "glue\\selconn\\pGateway.pcx", "glue\\selconn\\pInfo.pcx", "glue\\selconn\\pListSml.pcx"],
   "f879c99205898471cb1eeb1b0a3454d82b9db469a5d2d37cbb59e53da71bd942": ["tileset\\ashworld\\bexpl.pcx", "tileset\\ashworld\\bfire.pcx", "tileset\\ashworld\\dark.pcx", "tileset\\ashworld\\gfire.pcx", "tileset\\ashworld\\green.pcx", "tileset\\ashworld\\ofire.pcx", "tileset\\ashworld\\red.pcx", "tileset\\ashworld\\shift.pcx", "tileset\\ashworld\\trans50.pcx"]
- },
- "unreadable": ["campaign\\protoss\\protoss10\\staredit\\wav\\PAB05ura.wav"]
+ }
 }

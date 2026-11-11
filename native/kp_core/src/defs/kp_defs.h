@@ -39,8 +39,6 @@ typedef struct {
 	int file_count;
 	const char *const *absent; /* looked for by the conversion, not in the reference install */
 	int absent_count;
-	const char *const *unreadable; /* in the reference install's archives, not readable there */
-	int unreadable_count;
 	const KpDefsTable *tables; /* sorted by fourcc */
 	int table_count;
 } KpDefsProfile;

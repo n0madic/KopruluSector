@@ -22,10 +22,6 @@ class SourceError(ConverterError, RuntimeError):
     """A source cannot provide a file."""
 
 
-class SourceUnreadable(SourceError):
-    """A file the data set lists but its original copy cannot be read (the manifest's `unreadable`)."""
-
-
 class Source(Protocol):
     profile: Profile
 
@@ -44,7 +40,8 @@ class Source(Protocol):
 
 class RecordingSource:
     """Forwards to `inner` and records each file read (its SHA-256, size and what `describe` keeps of it), each
-    name `has` denied and each read that failed."""
+    name `has` denied and each copy the archives hold but cannot give whole (`damaged`: a disc copied with a bad read;
+    scr-manifest keeps the manifest's entry for it)."""
 
     def __init__(self, inner: Source, describe=None):
         self.inner = inner
@@ -52,15 +49,15 @@ class RecordingSource:
         self.describe = describe
         self.files: dict[str, tuple[str, int, dict | None]] = {}
         self.absent: set[str] = set()
-        self.unreadable: set[str] = set()
+        self.damaged: set[str] = set()
 
     def read(self, name: str) -> tuple[str, bytes]:
         try:
             provider, data = self.inner.read(name)
         except MpqFileNotFound:
             raise
-        except (StormLibError, SourceUnreadable):
-            self.unreadable.add(name)
+        except StormLibError:
+            self.damaged.add(name)
             raise
         if name not in self.files:
             extras = self.describe(name, data) if self.describe else None

@@ -35,7 +35,7 @@ Results on the 1.17.0.1 data:
 - **No duplicate sections** in the corpus.
 - **Every `VCOD`** equals the executable resource.
 - **`MTXM`/`MASK` sizes** match the dimensions in every map.
-- **WAV references.** 1,105 of the 1,106 resolve and read. The exception is `protoss10\...\PAB05ura.wav`, a retail archive entry with two undecompressable sectors; it is reported and treated as missing.
+- **WAV references.** 1,105 of the 1,106 resolve and read. The exception is `protoss10\...\PAB05ura.wav`, an archive entry with two undecompressable sectors; it is reported and treated as missing. (2026-11-11, issue #2: the reference copy's damage, not the release's; [campaigns](research/campaigns.md#damaged-archive-entry).)
 
 The converter output is byte-identical across runs (test).
 

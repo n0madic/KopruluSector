@@ -37,7 +37,9 @@ typedef struct {
 } KpMissionRule;
 
 typedef struct {
-	uint16_t string_id, index; /* index KP_MISSION_NO_SOUND: the file is missing */
+	/* index: the WAV string's position among the mission's (string-id order), whether or not the others' files are
+	 * there, so a language's speech keyed by it never shifts (ADR 0016); KP_MISSION_NO_SOUND: this file is missing */
+	uint16_t string_id, index;
 	uint32_t length, avg_bytes_per_sec;
 } KpMissionSound;
 

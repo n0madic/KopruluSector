@@ -97,9 +97,10 @@ static void remastered_interface(KpT *T)
 		"the executable's tables");
 }
 
-/* Each trigger WAV a mission finds (WAVS: an index) is the file its string names in the scenario's directory, which
- * the data has; the ones it does not find name a file the data lacks. */
-static void mission_sounds_found(KpT *T, const char *env, const char *name, const char *directory)
+/* Each trigger WAV a mission finds (WAVS: an index, its string's position among the WAV strings) is the file its string
+ * names in the scenario's directory, which the data has; the ones it does not find name a file the data lacks. The
+ * install, for a caller's further reads. */
+static KpRes *mission_sounds_found(KpT *T, const char *env, const char *name, const char *directory)
 {
 	char path[260];
 	KpFiles f;
@@ -116,10 +117,12 @@ static void mission_sounds_found(KpT *T, const char *env, const char *name, cons
 		int has = kp_mission_sound_path(&m, directory, s->string_id, path, sizeof path) == 1;
 		kp_t_ok(T, has || s->index == KP_MISSION_NO_SOUND, "WAV string %u names no file", (unsigned)s->string_id);
 		if (has) kp_t_eq(T, kp_res_exists(res, path), s->index != KP_MISSION_NO_SOUND, "%s", path);
+		if (s->index != KP_MISSION_NO_SOUND) kp_t_eq(T, s->index, k, "%s's index", path);
 		found += s->index != KP_MISSION_NO_SOUND;
 	}
 	kp_mission_free(&m);
 	kp_t_ok(T, found > 0, "%s plays WAVs", name);
+	return res;
 }
 
 static void original_mission_sounds(KpT *T)
@@ -131,9 +134,33 @@ static void remastered_mission_sounds(KpT *T)
 	mission_sounds_found(T, "KP_TEST_SCR", "zerg/zerg02", "campaign\\zerg\\zerg02");
 }
 
+/* Protoss 10's briefing line (issue #2): the manifest lists the release's file. The reference 1.17 install's copy is
+ * damaged (a disc copied with a bad read, docs/research/campaigns.md): it is found by its header, so no index moves,
+ * and a whole read fails with the reason, which a sound copy does not; Remastered's is the release's file. */
+#define PROTOSS10_LINE "campaign\\protoss\\protoss10\\staredit\\wav\\PAB05ura.wav"
+
+static void protoss10_line(KpT *T, const char *env)
+{
+	char err[KP_ERROR_SIZE];
+	size_t size = 0;
+	KpResStatus st;
+	KpRes *res = mission_sounds_found(T, env, "protoss/protoss10", "campaign\\protoss\\protoss10");
+	uint8_t *b;
+	kp_t_ok(T, kp_res_exists(res, PROTOSS10_LINE), "the line exists");
+	b = kp_res_read(res, PROTOSS10_LINE, &size, &st, err, sizeof err);
+	kp_t_ok(T, b ? st == KP_RES_EXACT && size == 997594 : st == KP_RES_ERROR && err[0], "read whole: %s (%s)",
+		kp_res_status_name(st), err);
+	if (strcmp(env, "KP_TEST_SCR") == 0) kp_t_ok(T, b != NULL, "Remastered's copy is the release's");
+	free(b);
+}
+static void original_protoss10_line(KpT *T) { protoss10_line(T, "KP_TEST_ORIGINAL"); }
+static void remastered_protoss10_line(KpT *T) { protoss10_line(T, "KP_TEST_SCR"); }
+
 static const KpTest TESTS[] = {
 	{ "the_1_17_mission_wavs_are_found", original_mission_sounds, 0 },
 	{ "the_remastered_mission_wavs_are_found", remastered_mission_sounds, 0 },
+	{ "the_1_17_protoss10_line_keeps_the_indices", original_protoss10_line, 0 },
+	{ "the_remastered_protoss10_line_is_the_releases", remastered_protoss10_line, 0 },
 	{ "the_remastered_interface_has_the_1_17_parts", remastered_interface, 0 },
 };
 KP_SUITE(kp_suite_original, "test_original", TESTS);
