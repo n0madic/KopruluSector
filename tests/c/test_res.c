@@ -302,6 +302,53 @@ static const char *listing(KpT *T, const char *profile, const char *extra, const
 	return kp_t_strdup(T, text);
 }
 
+/* A 1.17 file the simulation is built from is the manifest's to the byte; one that only shows or plays is taken by its
+ * size, as a repack's copy is (ADR 0018: neither is hashed when read) */
+static void res_hashes_only_what_the_simulation_reads(KpT *T)
+{
+	static const char PIC[] = "a picture", PIC_EDITED[] = "a pictur3", ONE_EDITED[] = "the first copy of 0ne",
+		TWO_SAME_SIZE[] = "two AS listed";
+	static const char *const A[] = { "a\\one.dat", ONE_EDITED, "a\\pic.pcx", PIC_EDITED, NULL };
+	static const char *const B[] = { "a\\three.dat", THREE, NULL };
+	static const char *const LISTED[] = { "a\\two.dat", TWO, NULL };
+	const char *repack[5], *dirs[2], *s;
+	Profile p;
+	Dir *install, *pack;
+	KpRes *r;
+	KpResStatus st;
+	char err[512];
+	profile_init(T, &p);
+	p.files[3] = p.files[2]; /* sorted: a/one.dat, a/pic.pcx, a/three.dat, a/two.dat */
+	p.files[2] = p.files[1];
+	p.files[1].name = "a/pic.pcx";
+	p.files[1].size = (uint32_t)strlen(PIC);
+	p.files[1].sha256 = hex_of(T, PIC, strlen(PIC));
+	p.profile.file_count = 4;
+	install = dir_new(T);
+	dir_write(T, install, "Game.exe", "MZ");
+	dir_mpq(T, install, "A.mpq", A);
+	dir_mpq(T, install, "B.mpq", B);
+	pack = dir_new(T);
+	repack[0] = KP_RES_LISTING;
+	repack[1] = listing(T, "test-1", "", LISTED);
+	repack[2] = "a\\two.dat";
+	repack[3] = TWO_SAME_SIZE;
+	repack[4] = NULL;
+	dir_mpq(T, pack, "koprulu.mpq", repack);
+	dirs[0] = install->dir;
+	dirs[1] = pack->dir;
+	r = open_res(T, &p, dirs, 2);
+	s = read_text(T, r, "a/pic.pcx", &st, err, sizeof err);
+	kp_t_eq_str(T, s, PIC_EDITED, "a picture of the manifest's size");
+	kp_t_eq(T, st, KP_RES_EXACT, "the picture's status");
+	s = read_text(T, r, "a/one.dat", &st, err, sizeof err);
+	kp_t_ok(T, s == NULL && st == KP_RES_REFUSED, "a DAT of the manifest's size but other bytes is refused");
+	kp_t_ok(T, strstr(err, "sha256") != NULL, "%s", err);
+	s = read_text(T, r, "a/two.dat", &st, err, sizeof err);
+	kp_t_eq_str(T, s, TWO_SAME_SIZE, "the repack's copy of its listed size");
+	kp_t_eq(T, st, KP_RES_REPACKED, "two's status");
+}
+
 static void res_repack_comes_before_the_install(KpT *T)
 {
 	/* two as listed (the install's copy is refused), three listed but stored changed (the install has none) */
@@ -765,6 +812,7 @@ static const KpTest TESTS[] = {
 	{ "sha256_hex_decodes", sha256_hex_decodes, 0 },
 	{ "res_reads_a_1_17_install_checked", res_reads_a_1_17_install_checked, 0 },
 	{ "res_install_needs_its_core_archives", res_install_needs_its_core_archives, 0 },
+	{ "res_hashes_only_what_the_simulation_reads", res_hashes_only_what_the_simulation_reads, 0 },
 	{ "res_repack_comes_before_the_install", res_repack_comes_before_the_install, 0 },
 	{ "res_repack_of_another_profile_is_ignored", res_repack_of_another_profile_is_ignored, 0 },
 	{ "res_repack_without_its_profile_leaves_nothing", res_repack_without_its_profile_leaves_nothing, 0 },

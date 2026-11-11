@@ -6,7 +6,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "kp_sha256.h"
 #include "kp_smk.h"
 #include "kp_utf8.h"
 #include "kp_webm.h"
@@ -489,12 +488,9 @@ int kp_cine_catalog(KpCineCatalog *c, const uint8_t *t, size_t size)
 	return 0;
 }
 
-int kp_cine_catalog_check(const KpCineCatalog *c, int k, const uint8_t *data, size_t size)
+int kp_cine_catalog_check(const KpCineCatalog *c, int k, size_t size)
 {
-	uint8_t d[KP_SHA256_SIZE];
-	if (k < 0 || k >= c->count || size != c->movies[k].size) return -1;
-	kp_sha256(data, size, d);
-	return memcmp(d, c->movies[k].sha256, sizeof d) == 0 ? 0 : -1;
+	return k >= 0 && k < c->count && size == c->movies[k].size ? 0 : -1;
 }
 
 void kp_cine_index_original(KpCineIndex *ix, int variant, const KpCineCatalog *c, int (*has)(void *ctx, int k), void *ctx)

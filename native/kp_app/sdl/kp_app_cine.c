@@ -403,11 +403,10 @@ static void original_subtitles(KpApp *a, KpCineMovie *m, const char *movie)
 	}
 }
 
-/* The run's load: the movie of the clip read whole from the install (a 1.17 copy checked against the reference
- * install's size and SHA-256, as the converter checks it), with its subtitles. On this Mac the longest 1.17 movie
- * loads in 0.3 s (its 79 MB read and hashed, its sound decoded), a Remastered WebM in 30 ms.
+/* The run's load: the movie of the clip read whole from the install or the repack (a 1.17 copy taken when its size is
+ * the reference install's: a movie only shows and plays, it is not hashed), with its subtitles.
  * TODO: stream a movie for the phones and the web (stage D8's repack): its frames read as they are due, its sound
- * decoded ahead of the picture, the digest checked on the way. */
+ * decoded ahead of the picture. */
 static KpCineMovie *host_load(void *ctx, const KpCineClip *clip, KpError *err)
 {
 	KpApp *a = (KpApp *)ctx;
@@ -432,7 +431,7 @@ static KpCineMovie *host_load(void *ctx, const KpCineClip *clip, KpError *err)
 		if (m) original_subtitles(a, m, clip->name + 4);
 		return m;
 	}
-	if (kp_cine_catalog_check(&a->cine.catalog, clip->id, data, size) != 0) {
+	if (kp_cine_catalog_check(&a->cine.catalog, clip->id, size) != 0) {
 		free(data);
 		snprintf(err->msg, sizeof err->msg, "cinematics: %s differs from the reference install's copy (%u bytes)", name,
 			(unsigned)a->cine.catalog.movies[clip->id].size);

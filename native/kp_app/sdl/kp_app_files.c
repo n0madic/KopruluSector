@@ -11,6 +11,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "kp_sha256.h"
+
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
 #endif
@@ -240,12 +242,14 @@ static int has_line(const char *text, size_t size, const char *line, size_t len)
 	return 0;
 }
 
-/* An asset copied into path (through a file beside it, renamed when whole): 0, or -1 with the reason. */
-static int copy_asset(const char *asset, const char *path, char *err, size_t err_size)
+/* An asset copied into path (through a file beside it, renamed when whole and of the SHA-256 the list names: the
+ * repack's bytes are checked here, once, not when they are read): 0, or -1 with the reason. */
+static int copy_asset(const char *asset, const char *path, const uint8_t want[KP_SHA256_SIZE], char *err, size_t err_size)
 {
 	char tmp[1100];
 	SDL_IOStream *in = SDL_IOFromFile(asset, "rb"), *out;
-	uint8_t *buf = (uint8_t *)malloc(REPACK_COPY);
+	uint8_t *buf = (uint8_t *)malloc(REPACK_COPY), digest[KP_SHA256_SIZE];
+	KpSha256 sha;
 	size_t n;
 	int ok = 1;
 	snprintf(tmp, sizeof tmp, "%s.part", path);
@@ -256,9 +260,21 @@ static int copy_asset(const char *asset, const char *path, char *err, size_t err
 		free(buf);
 		return -1;
 	}
-	while (ok && (n = SDL_ReadIO(in, buf, REPACK_COPY)) > 0) ok = SDL_WriteIO(out, buf, n) == n;
+	kp_sha256_init(&sha);
+	while (ok && (n = SDL_ReadIO(in, buf, REPACK_COPY)) > 0) {
+		kp_sha256_update(&sha, buf, n);
+		ok = SDL_WriteIO(out, buf, n) == n;
+	}
 	ok = ok && SDL_GetIOStatus(in) != SDL_IO_STATUS_ERROR;
 	SDL_CloseIO(in);
+	kp_sha256_final(&sha, digest);
+	if (ok && memcmp(digest, want, sizeof digest) != 0) {
+		SDL_CloseIO(out);
+		SDL_RemovePath(tmp);
+		snprintf(err, err_size, "the repack's %s in the APK is not the file its %s names (SHA-256)", asset, REPACK_LIST);
+		free(buf);
+		return -1;
+	}
 	ok = SDL_CloseIO(out) && ok && SDL_RenamePath(tmp, path);
 	free(buf);
 	if (!ok) {
@@ -285,18 +301,21 @@ static int android_repack(KpApp *a, char *dir, size_t dir_size, char *err, size_
 	SDL_CreateDirectory(dir);
 	old = (char *)read_plain(list_path, &old_size);
 	for (line = list; rc == 0 && line && *line; line = next) {
-		char file[128], path[1100], asset[sizeof REPACK_ASSETS + sizeof file];
+		char file[128], path[1100], asset[sizeof REPACK_ASSETS + sizeof file], hex[2 * KP_SHA256_SIZE + 1];
+		uint8_t sha[KP_SHA256_SIZE];
 		unsigned long long want;
 		SDL_PathInfo info;
 		size_t len;
 		next = strchr(line, '\n');
 		len = next ? (size_t)(next - line) : strlen(line);
 		if (next) next++;
-		if (sscanf(line, "%127s %llu", file, &want) != 2 || strchr(file, '/')) continue;
+		if (sscanf(line, "%127s %llu %64s", file, &want, hex) != 3 || strchr(file, '/')
+			|| kp_hex_decode(hex, sha, KP_SHA256_SIZE) != 0)
+			continue;
 		snprintf(path, sizeof path, "%s/%s", dir, file);
 		if (old && has_line(old, old_size, line, len) && SDL_GetPathInfo(path, &info) && info.size == (Uint64)want) continue;
 		snprintf(asset, sizeof asset, "%s%s", REPACK_ASSETS, file);
-		rc = copy_asset(asset, path, err, err_size);
+		rc = copy_asset(asset, path, sha, err, err_size);
 		copied += (size_t)want;
 	}
 	if (rc == 0 && copied) {

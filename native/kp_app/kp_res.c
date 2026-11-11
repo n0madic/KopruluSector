@@ -58,8 +58,7 @@ static const struct {
 typedef struct {
 	char *name;       /* normalized; NULL: an empty slot */
 	char *source;     /* the seen table's: where it was read from */
-	uint32_t size;    /* the repack table's: the listed size and digest, the archive */
-	uint8_t sha[KP_SHA256_SIZE];
+	uint32_t size;    /* the repack table's: the listed size, the archive */
 	int archive;
 	int status;       /* the seen table's: what the read found; the repack table's: the listed status */
 	uint8_t *head;    /* the repack table's Ogg of a WAV: the WAV's header and size */
@@ -413,7 +412,7 @@ static int add_group(KpRes *r, const char *spec)
 
 /* A listing's file line into the repack table: "SHA256 SIZE STATUS NAME", or "SHA256 SIZE STATUS ogg WAV-SHA256
  * WAV-SIZE WAV-HEADER NAME" (the header in hexadecimal). An exact or derived file is the manifest's: its listed digest
- * (an Ogg's, its WAV's) is checked against the manifest's here, its bytes against the listing's when read. 0, or -1
+ * (an Ogg's, its WAV's) is checked against the manifest's here, its size against the listing's when read. 0, or -1
  * for a line that is not a file's or does not hold. */
 static int listed_file(KpRes *r, int archive, const char *line)
 {
@@ -467,7 +466,6 @@ static int listed_file(KpRes *r, int archive, const char *line)
 		free(head);
 		return -1;
 	}
-	memcpy(e->sha, sha, sizeof sha);
 	e->size = (uint32_t)n;
 	e->archive = archive;
 	e->status = status;
@@ -675,18 +673,30 @@ const KpDefsProfile *kp_res_profile(const KpRes *r) { return r->profile; }
 
 /* --- reading --- */
 
-static int digest_equal(const uint8_t *data, size_t size, uint32_t want_size, const uint8_t want[KP_SHA256_SIZE])
+/* Whether data is the manifest entry's file: its size and SHA-256 */
+static int matches(const uint8_t *data, size_t size, const KpDefsInput *in)
 {
-	uint8_t d[KP_SHA256_SIZE];
-	if (size != want_size) return 0;
+	uint8_t want[KP_SHA256_SIZE], d[KP_SHA256_SIZE];
+	if (size != in->size || kp_hex_decode(in->sha256, want, KP_SHA256_SIZE) != 0) return 0;
 	kp_sha256(data, size, d);
 	return memcmp(d, want, KP_SHA256_SIZE) == 0;
 }
 
-static int matches(const uint8_t *data, size_t size, const KpDefsInput *in)
+/* Whether the simulation is built from the file (a normalized name), so an install's copy must be the manifest's to
+ * the byte: the DAT tables, the scripts and dialog BINs, the missions' CHK, the tilesets' CV5 and VF4 (the walk
+ * raster), the GRPs and LO files grpmeta reads (the saves' identity has its CRC), the string tables (images.tbl names
+ * the GRPs). The rest only shows or plays (sounds, movies, pictures, the tilesets' VX4, VR4 and WPE, fonts, texts):
+ * its size is checked. */
+static int simulation_input(const char *key)
 {
-	uint8_t want[KP_SHA256_SIZE];
-	return kp_hex_decode(in->sha256, want, KP_SHA256_SIZE) == 0 && digest_equal(data, size, in->size, want);
+	static const char *const KINDS[] = { ".dat", ".bin", ".chk", ".cv5", ".vf4", ".grp", ".tbl" };
+	const char *dot = strrchr(key, '.');
+	size_t k;
+	if (!dot || strchr(dot, '/')) return 0;
+	if (strlen(dot) == 4 && strncmp(dot, ".lo", 3) == 0) return 1; /* .loa, .lob, ...: the overlays' offsets */
+	for (k = 0; k < sizeof KINDS / sizeof KINDS[0]; k++)
+		if (strcmp(dot, KINDS[k]) == 0) return 1;
+	return 0;
 }
 
 uint8_t *kp_res_casc_rebuild(const char *key, const char *casc_name, const uint8_t *data, size_t size, uint32_t want)
@@ -816,7 +826,7 @@ static uint8_t *read_mpq(KpRes *r, const char *key, size_t *size, KpResStatus *s
 		snprintf(source, KP_RES_NAME, "%s", r->archive_names[k]);
 		if (!in) {
 			*status = KP_RES_UNLISTED;
-		} else if (!matches(b, got, in)) {
+		} else if (simulation_input(key) ? !matches(b, got, in) : got != in->size) {
 			uint8_t d[KP_SHA256_SIZE];
 			char hex[2 * KP_SHA256_SIZE + 1];
 			kp_sha256(b, got, d);
@@ -836,7 +846,8 @@ static uint8_t *read_mpq(KpRes *r, const char *key, size_t *size, KpResStatus *s
 	return NULL;
 }
 
-/* A repack's copy, equal to its listing; NULL when it has none or its copy differs (logged: the install's is read). */
+/* A repack's copy of its listed size; NULL when it has none or its copy differs (logged: the install's is read). The
+ * repack is the converter's, written from files it checked: its bytes are not hashed again when read. */
 static uint8_t *read_repack(KpRes *r, const char *key, size_t *size, char *source)
 {
 	Entry *e = map_find(&r->listed, key);
@@ -846,7 +857,7 @@ static uint8_t *read_repack(KpRes *r, const char *key, size_t *size, char *sourc
 	if (!e) return NULL;
 	mpq_name(key, name, sizeof name);
 	b = kp_mpq_read(r->repack[e->archive].mpq, name, &got, why, sizeof why);
-	if (b && digest_equal(b, got, e->size, e->sha)) {
+	if (b && got == e->size) {
 		const char *base = strrchr(r->repack[e->archive].path, '/');
 		snprintf(source, KP_RES_NAME, "%s", base ? base + 1 : r->repack[e->archive].path);
 		*size = got;

@@ -7,10 +7,12 @@
  *     among them, a WAV as Ogg Vorbis where that is smaller); its "(koprulu)" file names the profile and each file's
  *     size, SHA-256 and status (the source's: exact, derived, differs, ...; an Ogg's WAV's digest, size and header).
  *     It is read before the install; an exact or derived file is the manifest's (its listed digest checked against
- *     the manifest's), a file that differs from its listing, or a repack of another profile, falls back to the
- *     install;
+ *     the manifest's), a file that is not its listed size, or a repack of another profile, falls back to the install
+ *     (the repack is the converter's, written from files it checked: its bytes are not hashed when read; Android
+ *     checks each group's SHA-256 as it copies it out of the APK);
  *   - an install: 1.17 (StarCraft.exe and the profile's archives, the first copy of a name in the profile's order;
- *     a copy that differs from the manifest is refused) or StarCraft: Remastered (.build.info, CASC: the converter's
+ *     a copy that differs from the manifest is refused: a file the simulation is built from to the byte, one that
+ *     only shows or plays by its size) or StarCraft: Remastered (.build.info, CASC: the converter's
  *     ScrSource rules, converter/casc/source.py: its prefixes, the moved files, the tilesets' 1.17 prefix, .vx4 from
  *     .vx4ex; the files only Remastered's own formats hold rebuilt from them, stage D6, kp_res_scr.c: PCX and GRP from
  *     DDS, TBL and dialog BINs from its XML strings, an SMK as the KPW1 over its WebM, kp_smk.h; a copy no rule brings
@@ -44,7 +46,7 @@ typedef enum {
 	KP_RES_ABSENT,     /* the manifest lists it as absent from the reference install */
 	KP_RES_UNREADABLE, /* the manifest lists it as unreadable in the reference install */
 	KP_RES_REPACKED,   /* from a repack, equal to its listing */
-	KP_RES_EXACT,      /* from an install, equal to the manifest */
+	KP_RES_EXACT,      /* from an install, the manifest's (1.17: a file that only shows or plays by its size) */
 	KP_RES_DERIVED,    /* rebuilt from Remastered's copy, or its own formats, to the manifest's digest */
 	KP_RES_DIFFERS,    /* Remastered's copy, which no rule brings to the manifest's digest */
 	KP_RES_UNLISTED,   /* a name the manifest does not hold, read unchecked */

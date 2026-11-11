@@ -447,7 +447,9 @@ static void original_smk_movies_decode_as_ffmpeg(KpT *T)
 		data = kp_res_read(res, name, &size, &st, err, sizeof err);
 		kp_t_ok(T, data != NULL, "%s: %s", name, err);
 		kp_t_defer(T, free, data);
-		kp_t_eq(T, kp_cine_catalog_check(&cat, k, data, size), 0, "%s: the reference copy's size and SHA-256", name);
+		kp_t_eq(T, kp_cine_catalog_check(&cat, k, size), 0, "%s: the reference copy's size", name);
+		kp_sha256(data, size, digest);
+		kp_t_ok(T, memcmp(digest, cat.movies[k].sha256, sizeof digest) == 0, "%s: the reference copy's SHA-256", name);
 		rec = kp_json_get(g, cat.movies[k].name);
 		kp_t_ok(T, rec != NULL, "%s in the golden", name);
 		kp_t_eq(T, kp_smk_open(&s, data, size), 0, "%s opens", name);
@@ -589,7 +591,9 @@ static void run_plays_an_installs_movies(KpT *T)
 		kp_t_eq(T, kp_cine_catalog(&cut, table, at), -1, "a prelude of a movie past the table's");
 		table[at - 2] = 2;
 	}
-	kp_t_eq(T, kp_cine_catalog_check(&cat, 0, (const uint8_t *)"", 0), -1, "a copy unlike the reference's");
+	kp_t_eq(T, kp_cine_catalog_check(&cat, 0, cat.movies[0].size), 0, "a copy of the reference's size");
+	kp_t_eq(T, kp_cine_catalog_check(&cat, 0, cat.movies[0].size + 1), -1, "a copy of another size than the reference's");
+	kp_t_eq(T, kp_cine_catalog_check(&cat, cat.count, cat.movies[0].size), -1, "a movie past the table");
 	kp_cine_index_original(&h->r.index, 0, &cat, has_even, NULL);
 	kp_t_ok(T, h->r.index.original && h->r.index.count == 2, "the movies the install has");
 	kp_t_eq_str(T, h->r.index.clips[1].name, "smk\\m2", "named as a pack's clip");

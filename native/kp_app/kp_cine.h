@@ -126,8 +126,9 @@ typedef struct {
 
 /* The catalog of a CINM table: 0, or -1 when it is cut short, too long or names a prelude past its movies. */
 int kp_cine_catalog(KpCineCatalog *c, const uint8_t *table, size_t size);
-/* Whether data is movie k's reference copy (its size and SHA-256): 0, or -1. */
-int kp_cine_catalog_check(const KpCineCatalog *c, int k, const uint8_t *data, size_t size);
+/* Whether a copy of size bytes is taken for movie k: its size is the reference copy's (a movie only shows and plays,
+ * so it is not hashed when it loads; ADR 0018): 0, or -1. */
+int kp_cine_catalog_check(const KpCineCatalog *c, int k, size_t size);
 /* The index of an install's movies (original set, variant 0 SD or 1 HD2): a clip "smk\<name>" numbered as the catalog
  * for each movie has(ctx, k) finds, its size, rate and frames those of the movie the host loads (KpCineHost.load); the
  * catalog's preludes. */

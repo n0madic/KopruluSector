@@ -27,7 +27,7 @@ A review of the phase's diff (a71f36f..2224d72) fixed:
 - **A Smacker palette record is bounded by its own length** (`kp_smk.c`), not the frame's end.
 - **Cleanups**: `kp_hex_decode` (`kp_sha256`) for the three hexadecimal parsers of `kp_res.c` and `kp_res_scr.c` (`test_res.sha256_hex_decodes`); `kp_kpf.h`'s little-endian helpers in `kp_scr.c` and `kp_ui_data.c`; `kp_res_casc_exact` is `read_casc`'s exact pass; the unused Vorbis `prev_mask` and `palette_of_pcx` removed.
 
-Left: a movie read from a repack is hashed twice when it loads, against its listing (`read_repack`) and against the catalog (`kp_cine_catalog_check`).
+Then **the hashes kept where they decide** ([ADR 0018](adr/0018-original-data-at-run-time.md), item 2): a 1.17 install's file is hashed when the simulation is built from it (`simulation_input`: DAT, the scripts and dialog BINs, CHK, CV5, VF4, GRP, LO, TBL), checked by its size when it only shows or plays; a repack's file by its size (its groups' SHA-256 checked when Android copies them out of its APK); a movie by its size against `CINM` (so the double hash the review found is gone); Remastered's files stay hashed (the digest picks the copy and the rebuild). `kp_data_probe` checks every exact or derived file to the byte. `test_res.res_hashes_only_what_the_simulation_reads`. Measured with the probe: the repack's core 0.39 to 0.19 s, the 1.17 install's core 1.51 to 1.22 s. On the Fold7 the debug APK's 70 groups (139.9 MB) were copied out and hashed in 0.46 s, then `play_1` ran at 0 failures from them.
 
 ## D8 design
 
@@ -59,7 +59,7 @@ D8 is four commits, each with the full CI:
     - `bench_combat`, four runs: frame 1.89 / 6.86 / 16.8 to 3.67 / 14.5 / 21.2; game and presentation 0.75 / 5.8 / 16.0 to 1.49 / 12.0 / 19.6;
     - `terran01`, two runs: frame 1.53 / 2.99 / 10.8 and 2.52 / 4.49 / 14.2.
   - **Reading the benchmarks**: within a session the drawing's CPU time moved with the frame, 0.10 to 0.18 ms, so the spread is the phone's clocks rather than the code. phase S's 1.74 / 5.85 / 11.0 for `bench_combat` (S8, 2026-10) came before the HD art and phase 10, so it is no baseline for phase D. No before-and-after of phase D was measured on the phone; this is left open.
-  - **The sounds' first play** now goes through `kp_res`: an MPQ read and the listing's SHA-256 of the file, before the decode the packs' Ogg also had.
+  - **The sounds' first play** now goes through `kp_res`: an MPQ read (the listing's SHA-256 of the file too until the hashes were kept where they decide), before the decode the packs' Ogg also had.
 
 ## D8c as built
 

@@ -1,10 +1,12 @@
 /*
  * kp_data_probe: reads every file of the input manifest through kp_res (ADR 0018) from the data folders given (a
  * repack, a 1.17 install, a StarCraft: Remastered install; kp_res_open's rules) and reports each kind's statuses and
- * time (a read includes its check against the manifest).
+ * time (a read includes kp_res's check: a 1.17 file the simulation reads hashed, the rest by its size). The probe
+ * then checks every exact or derived file to the byte against the manifest.
  *
- *   kp_data_probe DIR...          the exit status is 1 when a file was refused or could not be read, or when a 1.17
- *                                 install's core archives miss a file of the manifest
+ *   kp_data_probe DIR...          the exit status is 1 when a file was refused or could not be read, when an exact
+ *                                 or derived file's bytes are not the manifest's, or when a 1.17 install's core
+ *                                 archives miss a file of the manifest
  *   --res-log PATH                the list of the files read, their status and source (kp_res_write_log)
  *   --digests PATH                each manifest file's normalized name, status and the SHA-256 of the bytes read (empty
  *                                 when none), a tab between, in the manifest's order: the twin of `python3 -m converter
@@ -102,14 +104,21 @@ int main(int argc, char **argv)
 		t->files++;
 		t->status[st]++;
 		t->bytes += (double)size;
-		if (digests) {
-			uint8_t digest[KP_SHA256_SIZE];
-			char hex[2 * KP_SHA256_SIZE + 1] = "";
-			if (b) {
-				kp_sha256(b, size, digest);
-				kp_sha256_hex(digest, hex);
+		if (b && (digests || st == KP_RES_EXACT || st == KP_RES_DERIVED)) {
+			uint8_t digest[KP_SHA256_SIZE], want[KP_SHA256_SIZE];
+			kp_sha256(b, size, digest);
+			if ((st == KP_RES_EXACT || st == KP_RES_DERIVED)
+				&& (size != p->files[i].size || kp_hex_decode(p->files[i].sha256, want, KP_SHA256_SIZE) != 0
+					|| memcmp(digest, want, sizeof want) != 0)) {
+				if (failed++ < 5) printf("%s is %s but not the manifest's bytes\n", name, kp_res_status_name(st));
 			}
-			fprintf(digests, "%s\t%s\t%s\n", name, kp_res_status_name(st), hex);
+			if (digests) {
+				char hex[2 * KP_SHA256_SIZE + 1];
+				kp_sha256_hex(digest, hex);
+				fprintf(digests, "%s\t%s\t%s\n", name, kp_res_status_name(st), hex);
+			}
+		} else if (digests) {
+			fprintf(digests, "%s\t%s\t\n", name, kp_res_status_name(st));
 		}
 		if (st == KP_RES_REFUSED || st == KP_RES_ERROR) {
 			if (failed++ < 5) printf("%s\n", err);
