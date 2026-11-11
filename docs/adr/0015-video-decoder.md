@@ -55,7 +55,7 @@ Colour as libvpx reports it: the SD movies are `VPX_IMG_FMT_I444`, `cs = VPX_CS_
 ## Consequences
 
 - A build with cinematics has one third-party library more; the default build has none. `tools/ci.sh` checks both.
-- The packs are large (198 MB SD, 329 MB HD2). `tools/product.sh` stages the best pack converted (`KOPRULU_CINEMATICS=auto`, its default: HD2, else SD, else none; the web's beside the page), so a bundle of converted data carries the movies and, on Android, the APK grows by the pack; `KOPRULU_CINEMATICS=none` leaves them out. The plain CMake build has no player (`KP_CINEMATICS` off).
+- The packs are large (198 MB SD, 329 MB HD2). `tools/product.sh` stages the best pack converted (`KOPRULU_CINEMATICS=auto`, its default: HD2, else SD, else none; the web's beside the page), so a bundle of converted data carries the movies and, on Android, the APK grows by the pack; `KOPRULU_CINEMATICS=none` leaves them out. The plain CMake build had no player (`KP_CINEMATICS` off) until ADR 0018's stage D6 built the decoders everywhere (below).
 - Remastered's subtitle files (`locales/<locale>/Assets/Smk/*.srt`, only the install's own locale downloaded) go into the packs' `SUBS` (schema 2, 2026-11-04) and are drawn over the movies in `ui.kpd`'s TrueType text font (`docs/phase10.md`).
 - The libvpx archive pinned is GitHub's tag archive, whose bytes GitHub does not promise to keep: a changed checksum stops the fetch, and the source is then taken from the library's own releases page.
 
@@ -70,3 +70,11 @@ A conversion from the 1.17 install had no cinematics ([issue 1](https://github.c
 - **Time.** libvpx in one thread per movie (the same tools give the same bytes), the movies side by side in a thread pool of one worker per core; 138 s on 14 cores of an M-series Mac (1013 s of CPU), the longest movies (`xProtoss` 137 s, `starXintr` 132 s) setting it. The IVF is cached under `generated/cache/cinematics/` by the movie's SHA-256 and the settings, the Ogg also by its stream serial, so a second conversion encodes nothing.
 - **Makefile.** `make convert SC=DIR` ends with `cinematics --optional`: without FFmpeg's `libvpx-vp9` encoder, ffprobe or oggenc the converter warns and writes nothing (`CINE=none` leaves them out); `make cinematics SC=DIR` runs them alone and fails without those tools. A `CINE` given on the command line goes to the converter as `--variant`, which refuses `hd2` for the 1.17 install.
 - **One pack per set, Remastered's first.** The 1.17 movies and Remastered's SD set are both `cinematics-sd.kpd`, and Remastered's wins whichever was converted first: `cinematics --scr` writes over a 1.17 pack, and `cinematics --data` keeps a pack there whose source hash is not the 1.17 data set's (`cinematics.remastered_pack`, which reads the container's header alone: `container.header`) and writes nothing; a damaged pack, one of another kind or schema (the player refuses those) or the install's own is converted again. Both packs carry the profile `bw-1.17.0.1`, so the source hash is what tells them apart. `KOPRULU_CINEMATICS=auto` prefers Remastered's HD2 pack anyway.
+
+## Every build has the decoder (ADR 0018, stage D6, 2026-11-11)
+
+[ADR 0018](0018-original-data-at-run-time.md) plays StarCraft: Remastered's WebM as it is: the portraits (VP9) and the glue's overlays (VP8 with an alpha stream) of a Remastered install, and the HD portraits. The decoder stops being optional:
+
+- libvpx is built with its VP8 decoder too (`third_party/vpx/kp_vpx.cmake`: VP8's C, its NEON on arm64, its MMX..SSSE3 and `.asm` on x86-64; the generated headers regenerated, `regenerate.sh`), and nestegg (ISC, the WebM demuxer, a commit pinned by SHA-256: it has no releases) beside it. `tools/toolchain/fetch.sh` fetches both by default.
+- `KP_CINEMATICS` is gone: the cinematics' player (`kp_cine.c`) is in every build, `test_cine` always runs. The packs stay optional (`KOPRULU_CINEMATICS`, `--cinematics`), as above.
+- The colour conversion is shared (`kp_vpx_rgba`, `kp_vpx_yuv_rgb`, `kp_webm.h`).

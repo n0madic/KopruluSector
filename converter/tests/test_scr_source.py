@@ -21,7 +21,6 @@ from converter.source import RecordingSource, SourceError, SourceUnreadable
 from converter.tests.test_casc import write_storage
 
 SCR = os.environ.get("KOPRULU_SCR")
-CACHE_DIR = Path(__file__).resolve().parents[2] / "build" / "scr-test-cache"  # the converted movies, kept between runs
 PROFILE = Profile.load()
 
 
@@ -180,7 +179,7 @@ class RemasteredInstallTest(unittest.TestCase):
     MIN_EXACT, MIN_DERIVED, MIN_EQUIVALENT = 2823, 225, 6
 
     def test_every_manifest_file_is_classified(self):
-        with ScrSource(SCR, cache=CACHE_DIR) as s:
+        with ScrSource(SCR) as s:
             for name in (e.name for e in s.manifest.files.values()):
                 try:
                     s.read(name)

@@ -1,7 +1,7 @@
 # Phase S progress
 
 Plan: the move from Defold to SDL 3.4.18 without Lua ([ADR 0012](adr/0012-sdl3-runtime.md)). Started 2026-10-25, after the user approved the plan (inline design document, 2026-10-25):
-- SDL 3.4.18 is the base; components of the SDL ecosystem are used where they cover everything the game needs (SDL3_mixer 3.2.4 for audio, SDL 3.4's PNG); no other third-party libraries in the default build (the cinematics' VP9 decoder, libvpx, is an optional build dependency, `-DKP_CINEMATICS=ON`, [ADR 0015](adr/0015-video-decoder.md));
+- SDL 3.4.18 is the base; components of the SDL ecosystem are used where they cover everything the game needs (SDL3_mixer 3.2.4 for audio, SDL 3.4's PNG); no other third-party libraries in the default build (the cinematics' VP9 decoder, libvpx, was an optional build dependency, [ADR 0015](adr/0015-video-decoder.md), until [ADR 0018](adr/0018-original-data-at-run-time.md) built it, with nestegg, StormLib and CascLib, into every build);
 - no Lua anywhere: the runtime, the test suites (`tests/c`, `kp_test`) and the oracle's tools (`kp_oracle`) are C, and the golden files are JSON; offline tooling stays Python;
 - HTML5 stays a target, so drawing is GLES 3.0 / WebGL2 through SDL's GL context on every platform, behind a narrow backend interface; a native SDL_GPU backend is a deferred stage (S9);
 - on Apple the system GL is used, with ANGLE as the fallback;

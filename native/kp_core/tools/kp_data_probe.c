@@ -6,6 +6,9 @@
  *   kp_data_probe DIR...          the exit status is 1 when a file was refused or could not be read, or when a 1.17
  *                                 install's core archives miss a file of the manifest
  *   --res-log PATH                the list of the files read, their status and source (kp_res_write_log)
+ *   --digests PATH                each manifest file's normalized name, status and the SHA-256 of the bytes read (empty
+ *                                 when none), a tab between, in the manifest's order: the twin of `python3 -m converter
+ *                                 scr-digests` (tools/ci.sh compares them over a StarCraft: Remastered install)
  *
  * Run from anywhere: the profile and the manifest are compiled in (kp_defs.h, tools/defs_c.py).
  */
@@ -16,6 +19,7 @@
 #include <time.h>
 
 #include "kp_res.h"
+#include "kp_sha256.h"
 
 #define DIRS_MAX 8
 
@@ -52,7 +56,8 @@ static void log_line(void *ctx, const char *line)
 
 int main(int argc, char **argv)
 {
-	const char *dirs[DIRS_MAX], *res_log = NULL;
+	const char *dirs[DIRS_MAX], *res_log = NULL, *digests_path = NULL;
+	FILE *digests = NULL;
 	int dir_count = 0, i, k, failed = 0, shown = 0;
 	const KpDefsProfile *p = &kp_defs_bw_1_17_0_1;
 	KpResConfig config;
@@ -62,10 +67,15 @@ int main(int argc, char **argv)
 	double t0;
 	for (i = 1; i < argc; i++) {
 		if (strcmp(argv[i], "--res-log") == 0 && i + 1 < argc) res_log = argv[++i];
+		else if (strcmp(argv[i], "--digests") == 0 && i + 1 < argc) digests_path = argv[++i];
 		else if (dir_count < DIRS_MAX) dirs[dir_count++] = argv[i];
 	}
 	if (!dir_count) {
-		fprintf(stderr, "usage: kp_data_probe DIR... [--res-log PATH]\n");
+		fprintf(stderr, "usage: kp_data_probe DIR... [--res-log PATH] [--digests PATH]\n");
+		return 2;
+	}
+	if (digests_path && !(digests = fopen(digests_path, "w"))) {
+		fprintf(stderr, "kp_data_probe: cannot write %s\n", digests_path);
 		return 2;
 	}
 	memset(&config, 0, sizeof config);
@@ -74,6 +84,7 @@ int main(int argc, char **argv)
 	t0 = now();
 	if (!(res = kp_res_open(dirs, dir_count, &config, err, sizeof err))) {
 		fprintf(stderr, "kp_data_probe: %s\n", err);
+		if (digests) fclose(digests);
 		return 2;
 	}
 	printf("%s%s: opened in %.3f s\n", kp_res_source_name(kp_res_install(res)),
@@ -91,6 +102,15 @@ int main(int argc, char **argv)
 		t->files++;
 		t->status[st]++;
 		t->bytes += (double)size;
+		if (digests) {
+			uint8_t digest[KP_SHA256_SIZE];
+			char hex[2 * KP_SHA256_SIZE + 1] = "";
+			if (b) {
+				kp_sha256(b, size, digest);
+				kp_sha256_hex(digest, hex);
+			}
+			fprintf(digests, "%s\t%s\t%s\n", name, kp_res_status_name(st), hex);
+		}
 		if (st == KP_RES_REFUSED || st == KP_RES_ERROR) {
 			if (failed++ < 5) printf("%s\n", err);
 		} else if (st == KP_RES_MISSING && kp_res_install(res) == KP_RES_SOURCE_MPQ && kind_of(name) == KIND_CORE) {
@@ -103,6 +123,10 @@ int main(int argc, char **argv)
 		for (k = 0; k < KP_RES_STATUS_COUNT; k++)
 			if (tally[i].status[k]) printf(" %d %s", tally[i].status[k], kp_res_status_name((KpResStatus)k));
 		printf("\n");
+	}
+	if (digests && fclose(digests) != 0) {
+		fprintf(stderr, "kp_data_probe: cannot write %s\n", digests_path);
+		failed = 1;
 	}
 	if (res_log && kp_res_write_log(res, res_log, err, sizeof err) != 0) {
 		fprintf(stderr, "kp_data_probe: %s\n", err);

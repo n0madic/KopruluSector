@@ -1,8 +1,7 @@
 /* The data built from the original files (ADR 0018, stage D3: each structure's *_from_files over kp_res) equals what the
  * converter's containers give (*_load over generated/data, which the converter makes the same from either install):
- * the installs of KP_TEST_ORIGINAL (1.17) and KP_TEST_SCR (StarCraft: Remastered; the parts it lacks until stage D6
- * rebuilds them are left out: the interface's
- * dialogs come from XML there), skipped without them or the converted data. */
+ * the installs of KP_TEST_ORIGINAL (1.17) and KP_TEST_SCR (StarCraft: Remastered; its interface from the stage D6
+ * rebuilds, compared part by part), skipped without them or the converted data. */
 #include "kp_test_app.h"
 
 #include <stdio.h>
@@ -478,10 +477,9 @@ static int ui_files_eq(const KpUiFile *x, int xn, const KpUiFile *y, int yn)
 	return 1;
 }
 
-/* The interface over the files' data (kp_interface_new_data) holds what the one over the containers does
- * (kp_interface_new): the dialogs' records, the files, the fonts, the colour rows, the tables, the strings, the sounds'
- * records, the portraits, the cheats. */
-static void interface_equals(KpT *T, const char *env)
+/* The interface over the converted containers (kp_interface_new) and the one over an install's files
+ * (kp_interface_new_data), released at the end. */
+static void interfaces(KpT *T, const char *env, KpUi **out_a, KpUi **out_b)
 {
 	uint8_t *files[KP_UI_FILES];
 	size_t sizes[KP_UI_FILES];
@@ -511,6 +509,17 @@ static void interface_equals(KpT *T, const char *env)
 	b = kp_interface_new_data(d, NULL, why, sizeof why);
 	kp_t_ok(T, b != NULL, "the files' interface: %s", why);
 	kp_t_defer(T, interface_free, b);
+	*out_a = a;
+	*out_b = b;
+}
+
+/* The interface over the files' data holds what the one over the containers does: the dialogs' records, the files, the
+ * fonts, the colour rows, the tables, the strings, the sounds' records, the portraits, the cheats. */
+static void interface_equals(KpT *T, const char *env)
+{
+	KpUi *a, *b;
+	int k;
+	interfaces(T, env, &a, &b);
 	kp_t_eq(T, b->bin_count, a->bin_count, "dialogs");
 	for (k = 0; k < a->bin_count; k++) {
 		const KpUiBin *x = &a->bins[k], *y = &b->bins[k];
@@ -540,6 +549,53 @@ static void interface_equals(KpT *T, const char *env)
 		&& memcmp(a->portrait_rows, b->portrait_rows, (size_t)a->portrait_row_count * 8) == 0, "the portraits' rows");
 	kp_t_ok(T, ui_files_eq(a->portrait_files, a->portrait_file_count, b->portrait_files, b->portrait_file_count),
 		"the portraits' movies");
+	kp_t_ok(T, a->status_layout_count == b->status_layout_count && a->button_set_count == b->button_set_count
+		&& bytes_eq(a->cheats, a->cheats_size, b->cheats, b->cheats_size)
+		&& bytes_eq(a->establishing, a->establishing_size, b->establishing, b->establishing_size),
+		"the executable's tables");
+}
+
+static int ui_paths_eq(const KpUiFile *x, int xn, const KpUiFile *y, int yn)
+{
+	int k;
+	if (xn != yn) return 0;
+	for (k = 0; k < xn; k++)
+		if (!bytes_eq((const uint8_t *)x[k].path, x[k].path_len, (const uint8_t *)y[k].path, y[k].path_len)) return 0;
+	return 1;
+}
+
+/* The interface over StarCraft: Remastered's files (stage D6: the dialogs' BINs and the TBLs rebuilt from its XML, the
+ * PCXs and GRPs from its DDS, the portraits' SMKs as KPW1 over its WebM) has the 1.17 interface's parts: the same
+ * dialogs with the same records' counts, the same files by name, the fonts, the sounds' records and the portraits'
+ * rows equal (Remastered keeps those exactly), each portrait movie a KPW1. Its pictures and some of its texts are the
+ * rebuilds' approximations (`kp_data_probe --digests` checks those against the converter's byte for byte). */
+static void remastered_interface(KpT *T)
+{
+	KpUi *a, *b;
+	int k;
+	interfaces(T, "KP_TEST_SCR", &a, &b);
+	kp_t_eq(T, b->bin_count, a->bin_count, "dialogs");
+	for (k = 0; k < a->bin_count; k++) {
+		const KpUiBin *x = &a->bins[k], *y = &b->bins[k];
+		kp_t_ok(T, bytes_eq((const uint8_t *)x->name, x->name_len, (const uint8_t *)y->name, y->name_len)
+			&& x->widget_count == y->widget_count && x->smk_count == y->smk_count, "dialog %d's records", k);
+	}
+	kp_t_ok(T, ui_paths_eq(a->grps, a->grp_count, b->grps, b->grp_count), "the dialogs' GRPs");
+	kp_t_ok(T, ui_paths_eq(a->pcx, a->pcx_count, b->pcx, b->pcx_count), "the PCXs");
+	kp_t_ok(T, ui_paths_eq(a->glue_files, a->glue_file_count, b->glue_files, b->glue_file_count), "the glue's files");
+	kp_t_ok(T, ui_paths_eq(a->ghosts, a->ghost_count, b->ghosts, b->ghost_count), "the ghosts");
+	for (k = 0; k < KP_UI_FNT_FONTS; k++) {
+		kp_t_ok(T, bytes_eq(a->font_files[k], a->font_file_sizes[k], b->font_files[k], b->font_file_sizes[k]), "font %d", k);
+	}
+	kp_t_ok(T, a->sound_count == b->sound_count
+		&& memcmp(a->sounds, b->sounds, (size_t)a->sound_count * KP_UI_SOUND_RECORD) == 0, "the sounds' records");
+	kp_t_ok(T, a->portrait_row_count == b->portrait_row_count && a->portrait_row_count > 0
+		&& memcmp(a->portrait_rows, b->portrait_rows, (size_t)a->portrait_row_count * 8) == 0, "the portraits' rows");
+	kp_t_ok(T, ui_paths_eq(a->portrait_files, a->portrait_file_count, b->portrait_files, b->portrait_file_count),
+		"the portraits' movies by name");
+	for (k = 0; k < b->portrait_file_count; k++)
+		kp_t_ok(T, b->portrait_files[k].size > 4 && memcmp(b->portrait_files[k].data, "KPW1", 4) == 0,
+			"portrait movie %d is a KPW1", k);
 	kp_t_ok(T, a->status_layout_count == b->status_layout_count && a->button_set_count == b->button_set_count
 		&& bytes_eq(a->cheats, a->cheats_size, b->cheats, b->cheats_size)
 		&& bytes_eq(a->establishing, a->establishing_size, b->establishing, b->establishing_size),
@@ -742,5 +798,6 @@ static const KpTest TESTS[] = {
 	{ "the_remastered_catalog_equals_the_converted", remastered_catalog, 0 },
 	{ "the_remastered_game_plays_as_the_converted", remastered_game, 0 },
 	{ "the_remastered_mission_wavs_are_found", remastered_mission_sounds, 0 },
+	{ "the_remastered_interface_has_the_1_17_parts", remastered_interface, 0 },
 };
 KP_SUITE(kp_suite_original, "test_original", TESTS);

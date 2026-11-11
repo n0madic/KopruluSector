@@ -52,9 +52,7 @@ int kp_audio_init(KpAudio *au, const uint8_t *sounds_kpd, size_t size)
 	for (k = 0; k < KP_APP_STREAMS; k++) au->streams[k] = MIX_CreateTrack(au->mixer);
 	au->music = MIX_CreateTrack(au->mixer);
 	au->click = MIX_CreateTrack(au->mixer);
-#ifdef KP_CINEMATICS
 	au->cine = MIX_CreateTrack(au->mixer);
-#endif
 	return 0;
 }
 
@@ -550,8 +548,6 @@ void kp_audio_stop_all(KpAudio *au)
 	for (k = 0; k < KP_APP_CHANNELS; k++) MIX_StopTrack(au->channels[k], 0);
 	for (k = 0; k < KP_APP_STREAMS; k++) MIX_StopTrack(au->streams[k], 0);
 	drop_music(au);
-#ifdef KP_CINEMATICS
 	if (au->cine) MIX_StopTrack(au->cine, 0);
-#endif
 	au->has_track = 0;
 }

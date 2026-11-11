@@ -4,7 +4,7 @@
  * packets with libvpx into RGBA frames at the times the host asks for. Headless: the host reads the file through a
  * callback and plays the movie's Ogg Vorbis (kp_cine_audio) with its own audio; it asks for the picture by the clock
  * (the sound's position). A run (KpCineRun) plays the host's queue of movies one after the other, a press ending the
- * one shown; the host draws its pictures. Built only with KP_CINEMATICS (libvpx, `tools/toolchain/fetch.sh vpx`).
+ * one shown; the host draws its pictures (libvpx, `tools/toolchain/fetch.sh vpx`).
  */
 #ifndef KP_CINE_H
 #define KP_CINE_H
@@ -167,9 +167,6 @@ void kp_cine_clock_begin(KpCineClock *c, uint64_t ticks, int audio);
 uint64_t kp_cine_clock_ms(KpCineClock *c, uint64_t ticks, int playing, int64_t sound_ms);
 /* The time since the last call (of either) went in waiting for the movie's data: none of it is the movie's. */
 void kp_cine_clock_hold(KpCineClock *c, uint64_t ticks);
-
-/* The studio-range (limited: 16..235, chroma 16..240) or full-range YCbCr of a pixel as 8-bit RGB; matrix 601 or 709. */
-void kp_cine_yuv_rgb(int y, int cb, int cr, int matrix, int full_range, uint8_t rgb[3]);
 
 typedef struct KpCinePlayer KpCinePlayer;
 

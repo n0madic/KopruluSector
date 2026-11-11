@@ -40,7 +40,7 @@ from fractions import Fraction
 from pathlib import Path
 from typing import Protocol
 
-from ..formats import ffmpeg, ivf, kpv, smk, wav
+from ..formats import ffmpeg, ivf, kpw, smk, wav
 from ..mpq.profile import sha256_file
 from ..mpq.stormlib import MpqFileNotFound
 from ..provenance import DEFS_ROOT
@@ -113,7 +113,7 @@ def transcode(name: str, src: Path, cache: Path | None) -> Movie:
     the header's, a sound of another length than the video."""
     with src.open("rb") as f:
         head = f.read(smk.HEADER_SIZE)
-    if head[:4] == kpv.MAGIC:
+    if head[:4] == kpw.MAGIC:
         raise CinematicsError(f"{name}: not a Smacker movie that plays once")
     try:
         h = smk.header(head)

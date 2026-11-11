@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from fractions import Fraction
 
 from ..errors import ConverterError
-from . import kpv
+from . import kpw
 
 PALETTE_BYTES = 1024  # FFmpeg pal8 rawvideo: 256 x (B, G, R, A) after each frame
 HEADER_SIZE = 104  # the fixed header: signature, size, frames, rate, flags, 7 audio sizes, tree sizes, 7 audio rates
@@ -63,9 +63,9 @@ class Frame:
 
 
 def header(data: bytes) -> Header:
-    if data[:4] == kpv.MAGIC:  # a Remastered WebM converted for the SMK's place (formats/kpv.py)
-        width, height, frames, rate, ring = kpv.header(data)
-        return Header(kpv.MAGIC, width, height, frames, ring, rate)
+    if data[:4] == kpw.MAGIC:  # a Remastered WebM in the SMK's place (formats/kpw.py)
+        width, height, frames, rate, ring = kpw.header(data)
+        return Header(kpw.MAGIC, width, height, frames, ring, rate)
     if len(data) < HEADER_SIZE or data[:4] not in (b"SMK2", b"SMK4"):
         raise SmkError("not a Smacker file")
     width, height, frames, interval, flags = struct.unpack_from("<IIIiI", data, 4)
@@ -78,8 +78,8 @@ def available() -> bool:
 
 def decode(data: bytes) -> tuple[Header, list[Frame]]:
     h = header(data)
-    if h.signature == kpv.MAGIC:
-        _, palette, stored = kpv.decode(data)
+    if h.signature == kpw.MAGIC:
+        _, palette, stored = kpw.decode(data)
         return h, [Frame(f, palette) for f in stored]
     with tempfile.NamedTemporaryFile(suffix=".smk") as f:
         f.write(data)

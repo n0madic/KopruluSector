@@ -21,7 +21,8 @@
 #     does not qualify stops the run; default: Homebrew's llvm, or a clang on the PATH that qualifies; the step is
 #     skipped without one);
 #   KOPRULU_ORIGINAL=<dir with StarCraft.exe and the profile MPQs> enables the tests that read original data and
-#     kp_data_probe's read of every manifest file through StormLib (ADR 0018; KOPRULU_SCR: through CascLib);
+#     kp_data_probe's read of every manifest file through StormLib (ADR 0018; KOPRULU_SCR: through CascLib, each
+#     file's status and SHA-256 equal to converter scr-digests', the Remastered rebuilds included);
 #   KOPRULU_SCR=<StarCraft: Remastered install dir> classifies the manifest's files on that install
 #     (converter/tests/test_scr_source.py) and, with KOPRULU_ORIGINAL, compares Remastered's DAT tables and
 #     scripts with the profile's (converter/tests/test_casc.py); with generated/data/ui.kpd it also converts the
@@ -41,10 +42,10 @@
 #     imported, the HD interface (hd_glue.kps, hd_game.kps on each race: the glue's screens and the game's screens and
 #     menus with no SD pixel where HD art exists; each language's walk on terran01 too, without the HD art its first
 #     screen);
-#   KOPRULU_CINEMATICS=sd|hd2|both builds the cinematics' player over libvpx (fetched) and runs its suite (also under
-#     ASan and UBSan) and, with KOPRULU_APP, builds the product with the packs from generated/video and runs the cine
-#     check (every cinematic decoded to its end, the first pictures also drawn by the GPU); unset or none (the default
-#     here, whatever product.sh's auto would take), the products are built without them;
+#   KOPRULU_CINEMATICS=sd|hd2|both, with KOPRULU_APP, builds the product with the packs from generated/video and runs
+#     the cine check (every cinematic decoded to its end, the first pictures also drawn by the GPU); unset or none (the
+#     default here, whatever product.sh's auto would take), the products are built without them (the player and its
+#     suite, over libvpx, are in every build);
 #   KOPRULU_WEB=1 builds the product for the web (tools/product.sh web debug, needs emcmake);
 #   KOPRULU_ANDROID=1 builds the APK and runs the play scripts, the autotest, the touch script and the frame benchmark
 #     on the attached, unlocked phone: only for the changes that need a real phone (docs/phaseS.md, "Device runs");
@@ -245,7 +246,11 @@ if [ -n "${KOPRULU_ORIGINAL:-}" ]; then
 fi
 if [ -n "${KOPRULU_SCR:-}" ]; then
   step "data readers (ADR 0018): the input manifest's files read from Remastered's CASC through kp_res, by the converter's rules"
-  build/cmake/kp_data_probe "$KOPRULU_SCR" 2>/dev/null | tail -4
+  build/cmake/kp_data_probe "$KOPRULU_SCR" --digests build/scr-digests-c.tsv 2>/dev/null | tail -4
+  # the twin (stage D6): each file's status and bytes as converter/casc/source.py makes them, the rebuilds included
+  step "the same files read by the converter (converter scr-digests): each status and SHA-256 equal to kp_res's"
+  "$PYTHON" -m converter scr-digests --scr "$KOPRULU_SCR" --out build/scr-digests-py.tsv 2>&1 | tail -1
+  diff build/scr-digests-py.tsv build/scr-digests-c.tsv | head -20 # pipefail: a difference stops the run
 fi
 step "kp_hd_phone: small packs through etc2 and astc, opened and read back"
 KP_HD_PHONE_THREADS=2 build/cmake/kp_hd_phone --selftest build/cmake | tail -1
@@ -366,18 +371,6 @@ if [ -d generated/data ]; then
     | sort \
     | xargs build/cmake-asan/kp_load_check | tail -1
 fi
-if [ "$CINEMATICS" != none ]; then
-  # the cinematics' player over libvpx (ADR 0015): the default build above has none of it
-  step "cinematics: libvpx (fetched) and the player's suite, on the host and under ASan and UBSan"
-  tools/toolchain/fetch.sh vpx >/dev/null
-  cmake -S . -B build/cmake-cine -G Ninja -DKP_CINEMATICS=ON >/dev/null
-  cmake --build build/cmake-cine >/dev/null
-  c_suites cine build/cmake-cine/kp_test all "" "" KP_TEST_GLSLANG=1 KP_TEST_LOGS=build/c-tests-cine
-  cmake -S . -B build/cmake-asan-cine -G Ninja -DKP_CINEMATICS=ON -DKP_SANITIZE=ON -DKP_CXX_CHECK=OFF >/dev/null
-  cmake --build build/cmake-asan-cine >/dev/null
-  c_suites asan-cine build/cmake-asan-cine/kp_test long "" "$(cc --version | head -n 1)" \
-    KP_TEST_GLSLANG=1 KP_TEST_LOGS=build/c-tests-asan-cine
-fi
 if command -v emcmake >/dev/null && command -v node >/dev/null; then
   # the jobs are wasm's under node, their dispatch the host's runner
   step "C suites in wasm under node (the HTML5 proxy: the deterministic core in WebAssembly)"
@@ -385,12 +378,6 @@ if command -v emcmake >/dev/null && command -v node >/dev/null; then
   cmake --build build/cmake-wasm >/dev/null
   c_suites wasm build/cmake/kp_test long "build/cmake-wasm/kp_test.js build/cmake-wasm/kp_test.wasm" \
     "$(node --version)" "KP_TEST_EXEC=node build/cmake-wasm/kp_test.js" KP_TEST_LOGS=build/c-tests-wasm "$RES_ORIGINAL" "$RES_SCR"
-  if [ "$CINEMATICS" != none ]; then
-    step "cinematics in wasm under node (libvpx from C, as the web's page has it)"
-    emcmake cmake -S . -B build/cmake-wasm-cine -G Ninja -DCMAKE_BUILD_TYPE=Release -DKP_CINEMATICS=ON >/dev/null
-    cmake --build build/cmake-wasm-cine >/dev/null
-    node build/cmake-wasm-cine/kp_test.js test_cine | tail -20
-  fi
 else
   step "C suites in wasm: skipped (no emcmake or node on the PATH)"
 fi

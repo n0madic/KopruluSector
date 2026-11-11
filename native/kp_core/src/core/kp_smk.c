@@ -6,8 +6,8 @@
 #include <string.h>
 
 #define HEADER_SIZE 104
-#define KPV_HEADER_SIZE (24 + 768) /* "KPV1", width, height, frames, frame rate, flags, the palette */
-#define KPV_LITERALS 128
+#define KPW_HEADER_SIZE (24 + 768) /* "KPW1", width, height, frames, frame rate, flags, the palette */
+#define KPW_ALPHA_CUT 128 /* a pixel below this alpha is transparent (index 0) */
 #define SMK_NODE 0x80000000u
 #define FLAG_RING 1u
 #define TYPE_PALETTE 1u
@@ -169,7 +169,7 @@ static int header_tree(Bits *b, KpSmkTree *t, uint32_t size)
 
 /* The one block a movie keeps (the portraits open one at every change, so not a block per tree): the four header
  * trees' entries, then the frame's width * height indices, all zero. The trees are given their declared sizes (none
- * for a KPV1). */
+ * for a KPW1). */
 static int alloc_mem(KpSmk *s, const uint32_t tree_sizes[KP_SMK_TREES])
 {
 	size_t offsets[KP_SMK_TREES], at = 0, pixels = (size_t)s->width * s->height;
@@ -206,63 +206,49 @@ static uint32_t code(Bits *b, KpSmkTree *t)
 	return (uint32_t)v;
 }
 
+static const KpSmkVideo *video_codec;
+
+void kp_smk_set_video(const KpSmkVideo *codec) { video_codec = codec; }
+
 void kp_smk_close(KpSmk *s)
 {
+	if (s->video) video_codec->close(s->video);
+	kp_index_map_free(&s->map);
 	free(s->mem);
 	memset(s, 0, sizeof *s);
 }
 
-const uint8_t *kp_smk_palette(const KpSmk *s) { return s->kpv ? s->data + KPV_HEADER_SIZE - 768 : NULL; }
-
-static int kpv_open(KpSmk *s, const uint8_t *data, size_t size)
+static int kpw_open(KpSmk *s, const uint8_t *data, size_t size)
 {
-	uint32_t count, i;
-	size_t at = KPV_HEADER_SIZE;
-	s->kpv = 1;
+	uint32_t w = 0, h = 0;
+	s->kpw = 1;
 	s->width = kp_le_u32(data + 4);
 	s->height = kp_le_u32(data + 8);
 	s->frames = kp_le_u32(data + 12);
 	s->frame_rate = (int32_t)kp_le_u32(data + 16);
 	s->flags = kp_le_u32(data + 20);
 	s->ring = (s->flags & FLAG_RING) ? 1u : 0u;
-	if (s->width == 0 || s->height == 0 || s->width > 4096 || s->height > 4096 || s->frames == 0 || s->frames > 65536) {
+	if (!video_codec || s->width == 0 || s->height == 0 || s->width > 4096 || s->height > 4096 || s->frames == 0
+		|| s->frames > 65536)
 		return -1;
-	}
-	count = s->frames + s->ring;
-	for (i = 0; i < count; i++) { /* every stored frame within the file */
-		uint32_t n;
-		if (at + 4 > size) return -1;
-		n = kp_le_u32(data + at);
-		if (n > size - at - 4) return -1;
-		at += 4 + (size_t)n;
-	}
-	s->frames_at = KPV_HEADER_SIZE;
-	if (alloc_mem(s, NULL) != 0) return -1;
+	if (!(s->video = video_codec->open(data + KPW_HEADER_SIZE, size - KPW_HEADER_SIZE, &w, &h)) || w != s->width
+		|| h != s->height)
+		return -1;
+	if (alloc_mem(s, NULL) != 0 || kp_index_map_init(&s->map, data + 24) != 0) return -1;
 	kp_smk_rewind(s);
 	return 0;
 }
 
-/* A KPV1 frame: runs of literal indices (c < 128: c + 1 of them) and of one index (c - 125 times). */
-static int kpv_frame(KpSmk *s, const uint8_t *p, size_t n)
+/* A KPW1 frame: the WebM's frame of the same number (its last past its end), each pixel its colour's index in the
+ * screen's palette (kp_index_map.h), alpha below KPW_ALPHA_CUT transparent */
+static int kpw_frame(KpSmk *s)
 {
 	uint8_t *pixels = s->target ? s->target : s->pixels;
-	size_t want = (size_t)s->width * s->height, got = 0, i = 0;
-	while (got < want) {
-		size_t c, k;
-		if (i + 2 > n) return -1;
-		c = p[i];
-		k = c < KPV_LITERALS ? c + 1 : c - 125;
-		if (k > want - got) return -1;
-		if (c < KPV_LITERALS) {
-			if (i + 1 + k > n) return -1;
-			memcpy(pixels + got, p + i + 1, k);
-			i += 1 + k;
-		} else {
-			memset(pixels + got, p[i + 1], k);
-			i += 2;
-		}
-		got += k;
-	}
+	size_t i, n = (size_t)s->width * s->height;
+	const uint8_t *rgba = video_codec->frame(s->video, s->frame);
+	if (!rgba) return -1;
+	for (i = 0; i < n; i++, rgba += 4)
+		pixels[i] = kp_index_map(&s->map, rgba[0], rgba[1], rgba[2], rgba[3] >= KPW_ALPHA_CUT ? KP_INDEX_OPAQUE : 0);
 	return 0;
 }
 
@@ -271,10 +257,10 @@ int kp_smk_open(KpSmk *s, const uint8_t *data, size_t size)
 	uint32_t tree_size, tree_sizes[KP_SMK_TREES], count, i;
 	Bits b;
 	memset(s, 0, sizeof *s);
-	if (size >= KPV_HEADER_SIZE && memcmp(data, "KPV1", 4) == 0) {
+	if (size >= KPW_HEADER_SIZE && memcmp(data, "KPW1", 4) == 0) {
 		s->data = data;
 		s->size = size;
-		if (kpv_open(s, data, size) != 0) {
+		if (kpw_open(s, data, size) != 0) {
 			kp_smk_close(s);
 			return -1;
 		}
@@ -450,19 +436,14 @@ static int decode_video(KpSmk *s, const uint8_t *p, size_t n)
 	return b.error ? -1 : 0;
 }
 
-static int kpv_decode(KpSmk *s)
+static int kpw_decode(KpSmk *s)
 {
-	size_t pos = s->frame_pos;
-	uint32_t n = kp_le_u32(s->data + pos);
-	if (kpv_frame(s, s->data + pos + 4, n) != 0) return -1;
-	s->frame_pos = pos + 4 + n;
+	if (kpw_frame(s) != 0) return -1;
 	s->frame++;
 	if (s->ring && s->frame == s->frames + 1) { /* as an SMK ring movie: its extra frame, then frame 1 */
 		s->frame = 1;
-		s->frame_pos = s->frames_at + 4 + kp_le_u32(s->data + s->frames_at);
 	} else if (!s->ring && s->frame >= s->frames) {
 		s->frame = 0;
-		s->frame_pos = s->frames_at;
 	}
 	return 0;
 }
@@ -472,7 +453,7 @@ int kp_smk_decode(KpSmk *s)
 	uint32_t frame_size, type, i;
 	size_t pos = s->frame_pos, end;
 	if (s->frame >= s->frames + s->ring) kp_smk_rewind(s);
-	if (s->kpv) return kpv_decode(s);
+	if (s->kpw) return kpw_decode(s);
 	pos = s->frame_pos;
 	frame_size = kp_le_u32(s->data + s->sizes_at + 4 * (size_t)s->frame) & ~3u;
 	type = s->frame_types[s->frame];

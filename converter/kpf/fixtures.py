@@ -17,7 +17,7 @@ from pathlib import Path
 
 from . import container as kpf
 from ..emit import cinematics
-from ..formats import dialog, grp, kpv
+from ..formats import dialog, grp, kpw
 from . import kpd, kpm
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -530,6 +530,164 @@ class _CineStorage:
         return self.movies[name.lower()]
 
 
+# KPW1 fixtures (formats/kpw.py), read by test_ui_data's kpw tests: each movie's file and its stored frames' indices
+# (`.indices`, frames + ring of width * height), the frames it was encoded from
+KPW_PALETTE = bytes(c for i in range(256) for c in (i, 255 - i, (i * 37) % 256))  # 256 distinct colours
+KPW_SRGB = (8, 4, 3, 100)  # width, height, WebM frames, frame rate: lossless VP9 4:4:4 sRGB as the SD portraits
+KPW_ALPHA = (16, 16, 100)  # width, height, frame rate: VP8 with alpha as the glue's overlays
+# the alpha movie's frames, colours far apart (a lossy 4:2:0 movie's colours come back near, not equal): white
+# opaque; red, its left half transparent; green opaque
+KPW_ALPHA_COLOURS = ((255, 255, 255), (255, 0, 0), (0, 255, 0))
+KPW_ALPHA_INDICES = (10, 20, 30)
+
+
+def kpw_srgb_indices(frame: int, pixel: int) -> int:
+    return (pixel * 7 + frame * 13) % 255 + 1
+
+
+def _webm(frames: list[bytes], width: int, height: int, rate_ms: int, args: list[str]) -> bytes | None:
+    """The RGBA frames encoded by FFmpeg (bitexact), or None where it cannot."""
+    if shutil.which("ffmpeg") is None:
+        return None
+    with tempfile.TemporaryDirectory() as tmp:
+        out = Path(tmp) / "m.webm"
+        run = subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgba", "-s",
+                              f"{width}x{height}", "-r", f"{1000 / rate_ms:g}", "-i", "-", *args, "-fflags", "+bitexact",
+                              "-flags", "+bitexact", str(out)], input=b"".join(frames), capture_output=True, check=False)
+        return out.read_bytes() if run.returncode == 0 and out.exists() else None
+
+
+def kpw_fixture() -> dict[str, bytes]:
+    """movie.kpw (the sRGB ring movie: its header counts the WebM's 3 frames and a ring frame past them, the last
+    repeated) and movie-alpha.kpw (2 frames and the ring frame), each with `.indices`; empty without FFmpeg's
+    libvpx encoders (the C tests then skip)."""
+    width, height, count, rate = KPW_SRGB
+    indices = [bytes(kpw_srgb_indices(f, i) for i in range(width * height)) for f in range(count)]
+    rgba = [b"".join(KPW_PALETTE[3 * k:3 * k + 3] + b"\xff" for k in f) for f in indices]
+    srgb = _webm(rgba, width, height, rate, ["-c:v", "libvpx-vp9", "-pix_fmt", "gbrp", "-lossless", "1"])
+    aw, ah, arate = KPW_ALPHA
+    palette = bytearray(bytes((128, 128, 128)) * 256)
+    palette[:3] = bytes(3)
+    for colour, index in zip(KPW_ALPHA_COLOURS, KPW_ALPHA_INDICES):
+        palette[3 * index:3 * index + 3] = bytes(colour)
+    alpha_rgba, alpha_indices = [], []
+    for f, (colour, index) in enumerate(zip(KPW_ALPHA_COLOURS, KPW_ALPHA_INDICES)):
+        clear = [f == 1 and x < aw // 2 for _ in range(ah) for x in range(aw)]
+        alpha_rgba.append(b"".join(bytes(colour) + (b"\0" if c else b"\xff") for c in clear))
+        alpha_indices.append(bytes(0 if c else index for c in clear))
+    alpha = _webm(alpha_rgba, aw, ah, arate, ["-c:v", "libvpx", "-pix_fmt", "yuva420p", "-auto-alt-ref", "0",
+                                              "-crf", "4", "-b:v", "1M"])
+    if srgb is None or alpha is None:
+        log.warning("kpw fixtures: ffmpeg with libvpx and libvpx-vp9 is not available")
+        return {}
+    return {"movie.kpw": kpw.encode(width, height, count, rate, True, KPW_PALETTE, srgb),
+            "movie.kpw.indices": b"".join(indices + indices[-1:]),
+            "movie-alpha.kpw": kpw.encode(aw, ah, 2, arate, True, bytes(palette), alpha),
+            "movie-alpha.kpw.indices": b"".join(alpha_indices)}
+
+
+def _dds(width: int, height: int, fourcc: bytes, body: bytes) -> bytes:
+    """A DDS file: uncompressed 32-bit R, G, B, A in byte order (fourcc b""), or DXT1 / DXT5 blocks."""
+    from ..formats import dds
+
+    header = bytearray(dds.HEADER_SIZE)
+    header[:4] = dds.MAGIC
+    struct.pack_into("<II", header, 12, height, width)
+    if fourcc:
+        struct.pack_into("<I4s", header, 80, dds.PF_FOURCC, fourcc)
+    else:
+        struct.pack_into("<I4sI4I", header, 80, dds.PF_RGB | 1, b"\0\0\0\0", 32, 0xFF, 0xFF00, 0xFF0000, 0xFF000000)
+    return bytes(header) + body
+
+
+def _dialog_texts(texts: list) -> bytes:
+    """The inputs of rebuild.dialog_rebuild for test_scr: u16 count; per text u32 offset, u32 length, u8 hotkey, u8
+    pointers and their u32 fields, u16 text length and its bytes."""
+    out = bytearray(struct.pack("<H", len(texts)))
+    for t, text in texts:
+        out += struct.pack("<IIBB", t.offset, t.length, t.hotkey, len(t.pointers))
+        out += struct.pack(f"<{len(t.pointers)}I", *t.pointers) + struct.pack("<H", len(text)) + text
+    return bytes(out)
+
+
+def scr_fixture() -> dict[str, bytes]:
+    """Synthetic inputs of StarCraft: Remastered's formats and what converter/casc/rebuild.py makes of them (scr/),
+    read by test_scr: kp_scr.c, the C of rebuild.py, gives the same bytes (stage D6; over a real install
+    `kp_data_probe --digests` checks every rebuild against `converter scr-digests`). Images: an uncompressed DDS with
+    alpha, DXT1 in both colour modes, DXT5 in both alpha modes, a `.dds.grp` of the first two; each decoded (`.rgba`), its
+    indices in palette.pal (`.indices`, rebuild.indices: duplicate colours, translucent and missing ones) and brought
+    to another size (`fit-<name>`: u32 rows above, then the RGBA; rebuild.fit's three modes). A PCX (rebuild.pcx_file
+    of pcx.pixels), a TBL (tbl_encode), two string XMLs (xml_strings, the second as RC3.xml's escapes: `.expect`, per
+    string its id, a NUL, u32 size and the value), a dialog rebuilt (dialog_rebuild of dialog.skeleton by
+    dialog.texts), a GRP of plain rows (uncompressed_grp of plain.in: u16 box width, height, frames; per frame x, y,
+    w, h, u32 offset and its w * h pixels; u32 size) and a row-compressed GRP drawn in another palette (remap_grp of
+    remap.grp from remap.wpe)."""
+    from ..casc import rebuild
+    from ..formats import dds
+
+    files: dict[str, bytes] = {}
+    # a palette with duplicate colours (k and k + 128 share theirs), index 0 black
+    colours = tuple(((k % 128) * 2, (k % 128 * 7) % 256, 255 - (k % 128) * 2) for k in range(256))
+    files["scr/palette.pal"] = b"".join(bytes(c) for c in colours)
+    rgba = bytes(c for k in range(6) for c in (*colours[k * 9 + 3], (0, 128, 255, 170, 255, 1)[k]))
+    images = {
+        "rgba": _dds(3, 2, b"", rgba),
+        # block 1: four colours (c0 > c1), block 2: three and transparent (c0 <= c1), its texels using index 3
+        "dxt1": _dds(8, 4, b"DXT1", struct.pack("<HHI", 0xF800, 0x001F, 0x1B1B1B1B)
+                     + struct.pack("<HHI", 0x07E0, 0xFFE0, 0xE4E4E4E4)),
+        # block 1: eight alphas (a0 > a1), block 2: six and 0, 255 (a0 <= a1)
+        "dxt5": _dds(8, 4, b"DXT5", bytes((200, 20)) + bytes.fromhex("88c6fa2ba6c6") + struct.pack("<HHI", 0xFFFF, 0x0000, 0x1B1B1B1B)
+                     + bytes((20, 200)) + bytes.fromhex("f8c6fa7fa6ff") + struct.pack("<HHI", 0x07FF, 0xF81F, 0x4E4E4E4E)),
+    }
+    for name, data in images.items():
+        image = dds.decode(data)
+        files[f"scr/{name}.dds"], files[f"scr/{name}.rgba"] = data, image.rgba
+        files[f"scr/{name}.indices"] = rebuild.indices(image, colours)
+    for name, source, size in (("crop", "dxt1", (6, 3)), ("sample", "dxt1", (4, 2)), ("bottom", "rgba", (3, 5))):
+        image, above = rebuild.fit(dds.decode(images[source]), *size)
+        files[f"scr/fit-{name}"] = struct.pack("<I", above) + image.rgba
+    body = b"".join(struct.pack("<IHHI", 0, dds.header(images[n]).width, dds.header(images[n]).height, len(images[n])) + images[n] for n in ("rgba", "dxt1"))
+    files["scr/images.dds.grp"] = struct.pack("<IHH", 8 + len(body), 2, 1) + body
+    pixels = bytes((k * 37) % 256 for k in range(15))
+    files["scr/pcx.pixels"] = pixels
+    files["scr/pcx.pcx"] = rebuild.pcx_file(5, 3, pixels, colours, bytes((1, 2, 3, 4, 5, 6)))
+    files["scr/strings.tbl"] = rebuild.tbl_encode([b"first", b"", b"third\0part", b"\x01colour"])
+    xml = ("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<strings>\n"
+           "  <string>\n    <id>a-1</id>\n    <value>Plain &amp; &lt;simple&gt;</value>\n  </string>\n"
+           "  <string><id>b-2</id><value>Caf\u00e9 \u2014 \u20ac 5\u0007two</value></string>\n"
+           "  <string> <id>a-1</id> <value>the last of equal ids</value> </string>\n"
+           "  <string><id>c-3</id><value>\\\\4red\\n\\0041 \\t end\\</value></string>\n</strings>\n").encode("utf-8")
+    for name, rc3 in (("strings", False), ("rc3", True)):
+        files[f"scr/{name}.xml"] = xml
+        strings = rebuild.xml_strings(xml)
+        if rc3:
+            strings = [(k, rebuild.unescape_rc3(v)) for k, v in strings]
+        files[f"scr/{name}.expect"] = b"".join(k.encode() + b"\0" + struct.pack("<I", len(v)) + v for k, v in strings)
+    original = dialog_bin()
+    texts = []
+    for offset, length, pointers, hotkey, _ in rebuild.dialog_strings(original):
+        t = rebuild.DialogText(offset, length, tuple(pointers), "", hotkey)
+        # the button's hotkey text longer (appended, stored upper case), the movie's name of the same length
+        texts.append((t, b"quit now" if hotkey else original[offset:offset + length].upper()))
+    files["scr/dialog.skeleton"] = rebuild.dialog_skeleton(original)
+    files["scr/dialog.texts"] = _dialog_texts(texts)
+    files["scr/dialog.bin"] = rebuild.dialog_rebuild(files["scr/dialog.skeleton"], texts)
+    layout = {"box": [6, 4], "frames": [[0, 0, 3, 2, 50], [1, 1, 3, 2, 50], [2, 0, 4, 3, 60]]}
+    frames = [bytes(range(10, 16)), bytes(range(20, 26)), bytes(range(30, 42))]
+    files["scr/plain.in"] = (struct.pack("<3H", 6, 4, 3) + b"".join(struct.pack("<4BI", *f) + px
+                                                                   for f, px in zip(layout["frames"], frames))
+                             + struct.pack("<I", 80))
+    files["scr/plain.grp"] = rebuild.uncompressed_grp(layout, frames, 80)
+    mask = bytes((255, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 0))
+    source = grp.Grp(4, 3, (grp.Frame(0, 0, 4, 3, bytes(k * 20 % 256 if m else 0 for k, m in enumerate(mask)), mask),))
+    files["scr/remap.grp"] = grp.encode(4, 3, list(source.frames))
+    wpe = b"".join(bytes((*colours[(k * 5) % 256], 0)) for k in range(256))
+    wpe = wpe[:4 * 60] + bytes((1, 2, 3, 0)) + wpe[4 * 61:]  # a colour palette.pal lacks: the nearest
+    files["scr/remap.wpe"] = wpe
+    files["scr/remap.out"] = rebuild.remap_grp(grp.decode(files["scr/remap.grp"]), wpe, colours)
+    return files
+
+
 def cine_fixture(source_hash: bytes) -> dict[str, bytes]:
     """cine.kpd (cinematic 0: gbrp, 1: yuv420p) and the movies' FFmpeg-decoded frames, cine0.rgba and cine1.rgba, and
     cine1.yuv, the second movie's decoded planes (VP9 decoding is exact: libvpx, in C or with SIMD, gives FFmpeg's);
@@ -578,16 +736,15 @@ def build_fixtures(out: Path = DEFAULT_OUT) -> list[Path]:
                                               profile_id="bw-1.17.0.1", data_set_hash=source_hash).to_bytes(),
              "aiscript.kpd": kpd.build_aiscript(ai_bin(AI_RECORDS, 16), ai_bin(BW_RECORDS, 8),
                                                 profile_id="bw-1.17.0.1", data_set_hash=source_hash).to_bytes()}
-    # KPV1 (formats/kpv.py), read by test_ui_data.kpv_movie_plays_as_an_smk: a 2 x 2 ring movie, the same frames as
-    # the test's own bytes
-    files["movie.kpv"] = kpv.encode(2, 2, 100, bytes(range(256)) * 3, [b"\1\2\3\4", b"\x09" * 4, b"\5\6\7\x08"],
-                                    ring=True)
+    files.update(kpw_fixture())
+    files.update(scr_fixture())
     files.update(cine_fixture(source_hash))
     grpmeta_set, _ = grpmeta_fixture()
     files["grpmeta.kpd"] = kpd.build_grpmeta(grpmeta_set, profile_id="bw-1.17.0.1", data_set_hash=source_hash).to_bytes()
     written = []
     for name, data in files.items():
         path = out / name
+        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(data)
         written.append(path)
 

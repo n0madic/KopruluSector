@@ -54,7 +54,6 @@ if [ "$CINEMATICS" = auto ]; then # the best pack converted (generated/video), n
   [ "$CINEMATICS" = none ] || echo "product: cinematics $CINEMATICS (auto; KOPRULU_CINEMATICS=none builds none)" >&2
 fi
 CINE_VARIANTS=""
-KP_CINE_CMAKE="-DKP_CINEMATICS=OFF" # a build directory's earlier choice is not kept
 case "$CINEMATICS" in
   none) ;;
   sd | hd2 | both)
@@ -68,11 +67,9 @@ case "$CINEMATICS" in
         exit 1
       fi
     done
-    tools/toolchain/fetch.sh vpx >/dev/null
-    KP_CINE_CMAKE="-DKP_CINEMATICS=ON" ;;
+    ;;
   *) echo "product: KOPRULU_CINEMATICS is auto, none, sd, hd2 or both" >&2; exit 2 ;;
 esac
-export KP_CINE_CMAKE
 
 LOCALES="${KOPRULU_LOCALES:-auto}"
 case "$LOCALES" in
@@ -249,7 +246,7 @@ configure_build() { # <build dir> <cmake args...>
 case "$PLATFORM" in
   macos)
     stage_data
-    configure_build build/app-macos $KP_CINE_CMAKE
+    configure_build build/app-macos
     APP="$OUT/KopruluSector.app"
     rm -rf "$APP"
     mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
@@ -274,7 +271,7 @@ PLIST
   web)
     stage_data
     emcmake cmake -S . -B build/app-web -G Ninja -DCMAKE_BUILD_TYPE="$BUILD_TYPE" -DKP_APP=ON \
-      "-DKP_WEB_LINK=--preload-file;$STAGE@/data" $KP_CINE_CMAKE >/dev/null
+      "-DKP_WEB_LINK=--preload-file;$STAGE@/data" >/dev/null
     rm -f build/app-web/koprulu.html # the link packs the staged data, which Ninja does not track
     cmake --build build/app-web --target koprulu
     rm -rf "$OUT"
@@ -293,7 +290,7 @@ PLIST
     [ "$PLATFORM" = ios-sim ] && SDK=iphonesimulator
     cmake -S . -B "build/app-$PLATFORM" -G Xcode -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT="$SDK" \
       -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0 -DKP_APP=ON -DKP_TOOLS=OFF \
-      "-DKP_APP_RESOURCES=$STAGE" "-DKP_APP_ICONS=${ICON:+$ICON/ios}" $KP_CINE_CMAKE >/dev/null
+      "-DKP_APP_RESOURCES=$STAGE" "-DKP_APP_ICONS=${ICON:+$ICON/ios}" >/dev/null
     cmake --build "build/app-$PLATFORM" --target koprulu --config "$BUILD_TYPE" -- -sdk "$SDK" CODE_SIGNING_ALLOWED=NO
     mkdir -p "$OUT"
     rm -rf "$OUT/koprulu.app"
@@ -305,7 +302,7 @@ PLIST
   windows)
     stage_data
     configure_build build/app-windows -DCMAKE_TOOLCHAIN_FILE="$ROOT/tools/toolchain/cross-windows.cmake" \
-      "-DKP_APP_ICON=${ICON:+$ICON/icon.ico}" $KP_CINE_CMAKE
+      "-DKP_APP_ICON=${ICON:+$ICON/icon.ico}"
     rm -rf "$OUT"
     mkdir -p "$OUT"
     cp build/app-windows/koprulu.exe "$OUT/"

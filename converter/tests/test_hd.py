@@ -251,7 +251,7 @@ class HdVideoTest(unittest.TestCase):
             def has(self, name):
                 return False
 
-        self.assertIsNone(hd_video.clip(Empty(), b"", "portrait/x/y.webm", None))
+        self.assertIsNone(hd_video.clip(Empty(), "portrait/x/y.webm"))
 
 
 @unittest.skipIf(not SCR, "KOPRULU_SCR not set")

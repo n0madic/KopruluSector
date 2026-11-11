@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Regenerates third_party/vpx/generated/ from the fetched libvpx source (tools/toolchain/fetch.sh vpx): the headers
-# configure writes for the decoder build of kp_vpx.cmake, generic/ for the C of the generic-gnu target, arm64/ for
+# configure writes for the VP8 and VP9 decoder build of kp_vpx.cmake, generic/ for the C of the generic-gnu target, arm64/ for
 # AArch64's NEON (configured as arm64-darwin24-gcc, so run it on an arm64 Mac; the headers are the same for Android and
 # Linux: nothing in them names the OS) and x86_64/ for x86-64's SSE2..AVX2 chosen at run time (configured as
 # x86_64-darwin24-gcc with runtime CPU detection, which needs NASM on the PATH; the same for Linux and Windows: nothing
@@ -13,16 +13,16 @@ SRC="$(pwd)/tools/toolchain/vpx/libvpx-1.17.0"
 OUT="$(pwd)/third_party/vpx/generated"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
-COMMON=(--disable-multithread --disable-vp8 --enable-vp9 --disable-vp9-encoder --disable-vp9-highbitdepth
+COMMON=(--disable-multithread --disable-vp8-encoder --enable-vp9 --disable-vp9-encoder --disable-vp9-highbitdepth
   --disable-examples --disable-docs --disable-unit-tests --disable-tools --disable-postproc --disable-webm-io
   --disable-libyuv --disable-runtime-cpu-detect --enable-static --disable-shared)
 generate() { # [LATE=ARG] generate DIR CONFIGURE_ARGS...: LATE comes after COMMON (an option of COMMON's it turns over)
-  local dir="$1" files=(vpx_config.h vpx_config.c vp9_rtcd.h vpx_dsp_rtcd.h vpx_scale_rtcd.h) late=()
+  local dir="$1" files=(vpx_config.h vpx_config.c vp8_rtcd.h vp9_rtcd.h vpx_dsp_rtcd.h vpx_scale_rtcd.h) late=()
   shift
   [ -n "${LATE:-}" ] && late=("$LATE")
   mkdir -p "$WORK/$dir" "$OUT/$dir"
   (cd "$WORK/$dir" && "$SRC/configure" "$@" "${COMMON[@]}" ${late[@]+"${late[@]}"} >/dev/null \
-    && make -j4 vpx_config.h vp9_rtcd.h vpx_dsp_rtcd.h vpx_scale_rtcd.h vpx_version.h >/dev/null \
+    && make -j4 vpx_config.h vp8_rtcd.h vp9_rtcd.h vpx_dsp_rtcd.h vpx_scale_rtcd.h vpx_version.h >/dev/null \
     && cp "${files[@]}" "$OUT/$dir/" && cp vpx_version.h "$OUT/" \
     && if [ -f vpx_config.asm ]; then cp vpx_config.asm "$OUT/$dir/"; fi)
   sed -i.bak 's/#define HAVE_PTHREAD_H 1/#define HAVE_PTHREAD_H 0/; s/#define HAVE_UNISTD_H 1/#define HAVE_UNISTD_H 0/' \

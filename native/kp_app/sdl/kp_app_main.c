@@ -313,6 +313,7 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
 	if (!m) return SDL_APP_FAILURE;
 	*appstate = m;
 	a = &m->app;
+	kp_smk_set_video(&kp_webm_smk_video); /* the KPW1 movies (Remastered's WebM in an SMK's place) */
 	usage_flags(&a->flags, argc, argv);
 	data_root(&a->flags);
 	/* a script's header sets flags (its mission, the originals' options and video), so it is read before they are

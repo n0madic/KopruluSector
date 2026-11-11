@@ -10,7 +10,7 @@
 #include <SDL3/SDL.h>
 #include <SDL3_mixer/SDL_mixer.h>
 
-#include "kp_cine.h" /* without KP_CINEMATICS only its constants: --cine-play's queue */
+#include "kp_cine.h"
 #include "kp_flow.h"
 #include "kp_gfx.h"
 #include "kp_hud.h"
@@ -19,6 +19,7 @@
 #include "kp_res.h"
 #include "kp_session.h"
 #include "kp_touch.h"
+#include "kp_webm.h"
 
 #define KP_APP_NAME "KopruluSector" /* the identifier: the profile's directory (SDL_GetPrefPath), never shown */
 #define KP_APP_TITLE "Koprulu Sector" /* the name shown: the window's title, the application's metadata, a message box */
@@ -41,9 +42,7 @@
 typedef struct {
 	MIX_Mixer *mixer;
 	MIX_Track *channels[KP_APP_CHANNELS], *music, *streams[KP_APP_STREAMS], *click;
-#ifdef KP_CINEMATICS
 	MIX_Track *cine;                  /* a cinematic's Ogg Vorbis (kp_app_cine.c) */
-#endif
 	int stream_next;
 	MIX_Audio *sfx[KP_APP_SFX];       /* decoded on first play */
 	MIX_Audio *wavs[KP_APP_WAVS];     /* the mission's trigger WAVs by WAVS index */
@@ -118,9 +117,8 @@ void kp_hd_loaded_free(KpHdLoaded *r);
 #define KP_APP_HD_UI_FETCHES 16 /* the interface's frames fetched at once (the web) */
 typedef struct {
 	char path[KP_HD_UI_PATH]; /* the SD movie's path; "" a free slot */
-	uint8_t *bytes;
-	KpSmk smk;
-	uint8_t *rgba;
+	uint8_t *bytes;           /* its WebM */
+	KpWebm *movie;
 	KpFetch *fetch;           /* its clip on its way (the web) */
 	uint32_t size;
 	int32_t uploaded;         /* the frame in the atlas, -1 none */
@@ -233,7 +231,6 @@ typedef struct {
 #define KP_HD_PRIME_PAGES 64 /* the pages the first frame waits for at most */
 
 /* kp_app_cine.c: the cinematics' state (ADR 0015) */
-#ifdef KP_CINEMATICS
 typedef struct {
 	KpCineRun run;          /* the movies' queue and the one playing (kp_cine.c), on SDL's clock */
 	char path[1200];        /* the pack's file */
@@ -255,7 +252,6 @@ typedef struct {
 	int sound_waits;        /* it has not begun yet, though it is to */
 #endif
 } KpAppCine;
-#endif
 
 typedef struct KpApp KpApp;
 
@@ -299,9 +295,7 @@ struct KpApp {
 	/* the flow: the glue, the games, the saves, the video options, the screen's layout and the view (kp_flow.h) */
 	KpFlow flow;
 	KpAppWorld world;
-#ifdef KP_CINEMATICS
 	KpAppCine cine;
-#endif
 	KpAppHdUi hd_ui;         /* the HD interface's art (stage R4d) */
 	uint8_t *web_sizes;      /* the web: the fetched files' sizes (KP_APP_WEB_SIZES), read when first needed */
 	size_t web_sizes_size;
@@ -390,8 +384,8 @@ void kp_audio_drop_packs(KpAudio *au);
 SDL_IOStream *kp_app_range_io(const char *full, Sint64 start, Sint64 size);
 #endif
 
-/* kp_app_cine.c: the cinematics (ADR 0015), built with KP_CINEMATICS over libvpx; without it nothing plays and every
- * call below answers as if the pack were absent. */
+/* kp_app_cine.c: the cinematics (ADR 0015) over libvpx; without a pack nothing plays and every call below answers as
+ * if the movie were absent. */
 /* The pack chosen by --cinematics read at start; 0 whether or not there is one (a missing pack is logged). */
 int kp_app_cine_open(KpApp *a);
 /* Whether cinematic id (the original's number) is in the pack. */

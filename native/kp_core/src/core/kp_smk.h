@@ -4,14 +4,19 @@
  * Huffman trees recoding a 16-bit big tree with three escape values and the last-three cache), the frames' chunks;
  * libavcodec's smacker decoder and demuxer document the same bit stream.
  *
- * It also plays KPV1, the converter's stand-in for an SMK that only StarCraft: Remastered's WebM copy has (ADR 0013,
- * converter/formats/kpv.py): the SMK header's size, frame count, frame rate and ring flag, one palette, then each
- * stored frame as its byte size and runs of indices. */
+ * It also plays KPW1, the stand-in for an SMK that only StarCraft: Remastered's WebM copy has (ADR 0018, stage D6;
+ * kp_res and converter/formats/kpw.py make it): "KPW1", u32 width, height, frames, i32 frame rate, u32 flags (the SMK
+ * header's: 1 a ring movie, whose extra last frame leads back to frame 1), the 768 bytes of its screen's palette, then
+ * the WebM. Frame n is the WebM's frame n (its last past its end), each pixel its colour's index in that palette
+ * (kp_index_map.h), transparent (0) below alpha 128. The WebM is decoded by the codec the host gives
+ * (kp_smk_set_video: libvpx, which the core does not link); without one a KPW1 does not open. */
 #ifndef KP_SMK_H
 #define KP_SMK_H
 
 #include <stddef.h>
 #include <stdint.h>
+
+#include "kp_index_map.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -29,7 +34,7 @@ typedef struct {
 	const uint8_t *data;
 	size_t size;
 	int v4;
-	int kpv;                          /* a KPV1 file */
+	int kpw;                          /* a KPW1 file */
 	uint32_t width, height, frames, flags, ring;
 	int32_t frame_rate;               /* the header's: > 0 ms, < 0 in 10 microsecond units, 0 the default */
 	const uint8_t *frame_types;
@@ -40,7 +45,19 @@ typedef struct {
 	uint8_t *mem;                     /* the one allocation: the trees' entries, then the pixels */
 	uint8_t *pixels;                  /* width * height indices, kept between frames */
 	uint8_t *target;                  /* kp_smk_set_target: frames decode there instead (SmackToBuffer) */
+	void *video;                      /* a KPW1's: the codec's movie */
+	KpIndexMap map;
 } KpSmk;
+
+/* The WebM codec a KPW1 is decoded with (the host's): open a WebM in memory (it outlives the movie; NULL: cannot) with
+ * its size, frame n as RGBA (width * height * 4, the last frame past the end; NULL: malformed), close. */
+typedef struct {
+	void *(*open)(const uint8_t *data, size_t size, uint32_t *width, uint32_t *height);
+	const uint8_t *(*frame)(void *movie, uint32_t n);
+	void (*close)(void *movie);
+} KpSmkVideo;
+/* The codec of every KPW1 opened after (set once at start; NULL: none). */
+void kp_smk_set_video(const KpSmkVideo *codec);
 
 /* Opens an SMK in memory (the bytes must outlive it): 0, or -1 for a malformed file. */
 int kp_smk_open(KpSmk *s, const uint8_t *data, size_t size);
@@ -54,8 +71,6 @@ void kp_smk_set_target(KpSmk *s, uint8_t *target);
 void kp_smk_rewind(KpSmk *s);
 /* The time of a frame in 10 microsecond units (SmackOpen's +0x424). */
 uint32_t kp_smk_frame_time(const KpSmk *s);
-/* A KPV1's palette (256 x R, G, B; index 0 transparent), NULL for an SMK (its palettes are not decoded). */
-const uint8_t *kp_smk_palette(const KpSmk *s);
 
 #ifdef __cplusplus
 }

@@ -1,5 +1,5 @@
 /*
- * The cinematics' pack and its player (native/kp_app/kp_cine.c, ADR 0015), built with KP_CINEMATICS: the index, the
+ * The cinematics' pack and its player (native/kp_app/kp_cine.c, ADR 0015): the index, the
  * colour, the frames of a pack the converter writes (converter.kpf.fixtures: a 4:4:4 sRGB movie as the SD ones are and a
  * 4:2:0 studio-range one as the HD2 ones, 64 x 48, 12 frames, each with the frames FFmpeg decodes from the same WebM) and
  * the refusals of a pack or a packet that is not right; a run of its movies over a host that records what it is asked.
@@ -7,6 +7,7 @@
 #include "kp_test.h"
 
 #include "kp_cine.h"
+#include "kp_webm.h"
 #include "kp_kpf.h"
 
 #include <math.h>
@@ -336,19 +337,19 @@ static void frames_are_due_at_their_times(KpT *T)
 static void colour_follows_the_matrices(KpT *T)
 {
 	uint8_t rgb[3];
-	kp_cine_yuv_rgb(16, 128, 128, 601, 0, rgb);
+	kp_vpx_yuv_rgb(16, 128, 128, 601, 0, rgb);
 	kp_t_ok(T, rgb[0] == 0 && rgb[1] == 0 && rgb[2] == 0, "studio black");
-	kp_cine_yuv_rgb(235, 128, 128, 601, 0, rgb);
+	kp_vpx_yuv_rgb(235, 128, 128, 601, 0, rgb);
 	kp_t_ok(T, rgb[0] == 255 && rgb[1] == 255 && rgb[2] == 255, "studio white");
-	kp_cine_yuv_rgb(0, 128, 128, 601, 1, rgb);
+	kp_vpx_yuv_rgb(0, 128, 128, 601, 1, rgb);
 	kp_t_ok(T, rgb[0] == 0 && rgb[1] == 0 && rgb[2] == 0, "full-range black");
-	kp_cine_yuv_rgb(255, 128, 128, 709, 1, rgb);
+	kp_vpx_yuv_rgb(255, 128, 128, 709, 1, rgb);
 	kp_t_ok(T, rgb[0] == 255 && rgb[1] == 255 && rgb[2] == 255, "full-range white");
-	kp_cine_yuv_rgb(81, 90, 240, 601, 0, rgb); /* BT.601 studio red */
+	kp_vpx_yuv_rgb(81, 90, 240, 601, 0, rgb); /* BT.601 studio red */
 	kp_t_ok(T, rgb[0] >= 253 && rgb[1] <= 2 && rgb[2] <= 2, "red: %d %d %d", rgb[0], rgb[1], rgb[2]);
-	kp_cine_yuv_rgb(63, 102, 240, 709, 0, rgb); /* BT.709 studio red */
+	kp_vpx_yuv_rgb(63, 102, 240, 709, 0, rgb); /* BT.709 studio red */
 	kp_t_ok(T, rgb[0] >= 253 && rgb[1] <= 2 && rgb[2] <= 2, "red 709: %d %d %d", rgb[0], rgb[1], rgb[2]);
-	kp_cine_yuv_rgb(81, 90, 240, 709, 0, rgb);
+	kp_vpx_yuv_rgb(81, 90, 240, 709, 0, rgb);
 	kp_t_ok(T, rgb[1] > 2, "the matrices differ");
 }
 
@@ -877,7 +878,7 @@ static void picture_gives_the_planes_and_the_matrix(KpT *T)
 			want[2] = l + pic.cb_b * cb;
 			kp_t_ok(T, pic.y_low > 0.06f && pic.y_low < 0.07f && pic.y_scale > 1.16f && pic.y_scale < 1.17f,
 				"studio range (%.3f, %.3f)", pic.y_low, pic.y_scale);
-			kp_cine_yuv_rgb(pic.planes[0][0], pic.planes[1][0], pic.planes[2][0], 601, 0, rgb);
+			kp_vpx_yuv_rgb(pic.planes[0][0], pic.planes[1][0], pic.planes[2][0], 601, 0, rgb);
 			kp_t_ok(T, memcmp(rgba, rgb, 3) == 0, "BT.601 when the picture names no matrix");
 			for (ch = 0; ch < 3; ch++) {
 				float v = want[ch] < 0 ? 0 : want[ch] > 1 ? 1 : want[ch];

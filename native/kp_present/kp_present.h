@@ -707,7 +707,7 @@ typedef struct {
 void kp_hd_ui_count_coverage(const KpUiCanvas *v, const KpHdUiCovered *items, int32_t count, KpHdUiCoverage *out);
 
 /* The HD portraits (portraits.kpd, HDPV; stage R4e, kp_hd_ui.c; converter/emit/hd_video.py): per SD portrait movie
- * (by its path) a KPV1 clip with its frames, read from the file when the movie is first shown. */
+ * (by its path) its HD clip, a WebM (kp_webm.h), read from the file when the movie is first shown. */
 #define KP_HD_VIDEO_KIND "HDPV"
 #define KP_HD_VIDEO_MAX 256 /* a clip's largest width and height */
 typedef struct {

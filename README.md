@@ -170,7 +170,7 @@ cmake --build build/app --target koprulu
 build/app/koprulu            # from the repository root it finds generated/ by itself
 ```
 
-Add `-DKP_CINEMATICS=ON` (after `tools/toolchain/fetch.sh vpx`) to build the cinematics player.
+Every build has the cinematics player and the WebM decoder (libvpx and nestegg, fetched by `tools/toolchain/fetch.sh`; ADR 0015, ADR 0018).
 
 ## Command-line options
 
@@ -179,7 +179,7 @@ the settings for one run:
 
 | Option | Meaning |
 |---|---|
-| `--data DIR` | the data folder (default: `generated/` under the current folder, else `data/` beside the executable); any number of times: a folder with a 1.17 install, StarCraft: Remastered's install or a `koprulu.mpq` repack is the original data, read and checked at run time ([ADR 0018](docs/adr/0018-original-data-at-run-time.md)): a 1.17 install runs the game, its interface, sounds and music with no conversion (the HD art, the cinematics and the languages still come from `generated/` when it is there); StarCraft: Remastered's install waits for phase D's stage D6 |
+| `--data DIR` | the data folder (default: `generated/` under the current folder, else `data/` beside the executable); any number of times: a folder with a 1.17 install, StarCraft: Remastered's install or a `koprulu.mpq` repack is the original data, read and checked at run time ([ADR 0018](docs/adr/0018-original-data-at-run-time.md)): a 1.17 install or StarCraft: Remastered's runs the game, its interface, sounds and music with no conversion (Remastered's files that only its own formats hold, DDS, XML and WebM, rebuilt when read; its HD portraits read from it too; the rest of the HD art, the cinematics and the languages still come from `generated/` when it is there) |
 | `--res-log PATH` | the original files read, their status and source, written when the program ends |
 | `--graphics original\|hd2\|hd` | the art (HD needs `converter hd`) |
 | `--lighting on\|off` | the HD sprites' lighting |

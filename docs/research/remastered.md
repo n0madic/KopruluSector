@@ -9,7 +9,10 @@ Checked on 26 October 2026 against the local install `/Applications/StarCraft` (
 ```
 python3 -m converter scr-extract --scr /Applications/StarCraft 'arr\units.dat' units.dat
 python3 -m converter scr-compare --data <profile dir> --scr /Applications/StarCraft
+python3 -m converter scr-digests --scr /Applications/StarCraft --out scr-digests.tsv
 ```
+
+`scr-digests` lists each manifest file's normalized name, status and SHA-256 as the converter reads it; `kp_data_probe /Applications/StarCraft --digests PATH` writes the same list from the runtime's C (`kp_res`, ADR 0018 stage D6), and `tools/ci.sh` compares the two.
 
 `converter/tests/test_casc.py` checks the reader on a synthetic storage, and with `KOPRULU_ORIGINAL` and `KOPRULU_SCR` that Remastered's rules files equal the profile's.
 

@@ -27,18 +27,18 @@ class EmitTest(unittest.TestCase):
 
             def make() -> bytes:
                 made.append(1)
-                return b"KPV1 data"
+                return b"MOVIE data"
 
             def ok(d: bytes) -> bool:
-                return d.startswith(b"KPV1")
+                return d.startswith(b"MOVIE")
 
-            assert cached(root / "c", b"key", ".kpv", make, ok) == b"KPV1 data" and len(made) == 1
-            assert cached(root / "c", b"key", ".kpv", make, ok) == b"KPV1 data" and len(made) == 1  # read back
+            assert cached(root / "c", b"key", ".bin", make, ok) == b"MOVIE data" and len(made) == 1
+            assert cached(root / "c", b"key", ".bin", make, ok) == b"MOVIE data" and len(made) == 1  # read back
             (path,) = (root / "c").iterdir()
-            path.write_bytes(b"KPV")  # a file an interrupted run left: not complete, made again
-            assert cached(root / "c", b"key", ".kpv", make, ok) == b"KPV1 data" and len(made) == 2
-            assert path.read_bytes() == b"KPV1 data"
-            assert cached(None, b"key", ".kpv", make, ok) == b"KPV1 data" and len(made) == 3  # no cache
+            path.write_bytes(b"MOV")  # a file an interrupted run left: not complete, made again
+            assert cached(root / "c", b"key", ".bin", make, ok) == b"MOVIE data" and len(made) == 2
+            assert path.read_bytes() == b"MOVIE data"
+            assert cached(None, b"key", ".bin", make, ok) == b"MOVIE data" and len(made) == 3  # no cache
 
     def test_link_file_shares_the_file(self):
         with tempfile.TemporaryDirectory() as tmp:

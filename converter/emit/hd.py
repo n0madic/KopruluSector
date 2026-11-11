@@ -301,8 +301,7 @@ def generate(source: Source, storage: CascStorage, out: Path, variant: str, port
     read = lambda path: source.read(path)[1]  # noqa: E731
     ui = hd_ui.generate(read, storage, root, prefix, scale, profile_id, source_hash)
     if portraits is None:
-        portraits = hd_video.generate(read, source.has, storage, root, profile_id, source_hash,
-                                      getattr(source, "cache", None))
+        portraits = hd_video.generate(read, source.has, storage, root, profile_id, source_hash)
     else:
         link_file(Path(portraits["path"]), root / "portraits.kpd")
     log.info("hd %s: %d of %d GRPs drawn by %d anims; packs (frames, pages, lit pages) %s; tiles %s; water normals %s; "

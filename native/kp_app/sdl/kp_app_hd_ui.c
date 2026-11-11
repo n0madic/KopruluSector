@@ -3,8 +3,9 @@
  * frames and pictures), from generated/hd/<variant>/ui.kpd of the variant --graphics and the scale pick. Each frame
  * the canvas's items are resolved to their HD frame and its rectangle on the logical screen, the frames not yet in the
  * atlas are read, decoded and placed there, and the item table goes to kp_gfx, which draws an item's image where the
- * canvas's item plane names it. A movie's item (a portrait, stage R4e) is drawn from its clip in portraits.kpd,
- * decoded on the CPU into a place of its own in the atlas.
+ * canvas's item plane names it. A movie's item (a portrait, stage R4e) is drawn from its HD clip, Remastered's WebM
+ * (HD2's, else HD's): read from a Remastered install (--data) when there is one, else from portraits.kpd; decoded on the
+ * CPU (kp_webm.c) into a place of its own in the atlas, the SD movie's frame n the clip's frame n.
  */
 #include "kp_app.h"
 
@@ -23,9 +24,8 @@
 static void clip_free(KpAppHdClip *cl)
 {
 	kp_fetch_free(cl->fetch);
-	kp_smk_close(&cl->smk);
+	kp_webm_close(cl->movie);
 	free(cl->bytes);
-	free(cl->rgba);
 	memset(cl, 0, sizeof *cl);
 }
 
@@ -248,18 +248,22 @@ static int resolve(const KpAppHdUi *u, const KpUiCanvasItem *it, int32_t *frame,
 	return src[2] <= (float)f.w;
 }
 
-/* A clip's frame decoded into its pixels (frames read on from the last one, or from the first); 0 when it has none. */
-static int decode_to(KpSmk *s, int32_t frame)
+/* An SD portrait movie's HD clip in a Remastered install (hd_video.py SOURCES: HD2's, else HD's): its WebM, or NULL. */
+static uint8_t *casc_clip(KpApp *a, const char *path, size_t len, uint32_t *size)
 {
-	uint32_t n;
-	if (frame < 0 || (uint32_t)frame >= s->frames + s->ring) return 0;
-	if (s->frame > (uint32_t)frame) kp_smk_rewind(s);
-	for (n = 0; n <= s->frames + s->ring; n++) {
-		uint32_t at = s->frame;
-		if (kp_smk_decode(s) != 0) return 0;
-		if (at == (uint32_t)frame) return 1;
+	static const char *const SOURCES[] = { "HD2/", "" };
+	char name[KP_HD_UI_PATH + 16], err[256];
+	size_t k, n = len > 4 ? len - 4 : 0, got = 0; /* without ".smk" */
+	uint8_t *b = NULL;
+	for (k = 0; k < sizeof SOURCES / sizeof SOURCES[0] && !b; k++) {
+		size_t at = (size_t)snprintf(name, sizeof name, "%s", SOURCES[k]), i;
+		for (i = 0; i < n && at + 1 < sizeof name; i++) name[at++] = path[i] == '\\' ? '/' : (char)SDL_tolower(path[i]);
+		name[at] = 0;
+		SDL_strlcat(name, ".webm", sizeof name);
+		b = kp_res_casc_file(a->res, name, &got, err, sizeof err);
 	}
-	return 0;
+	*size = (uint32_t)got;
+	return b;
 }
 
 /* The atlas place of a movie's item with the item's frame of its HD clip in it, and the clip's rectangle on the
@@ -270,12 +274,12 @@ static KpHdUiPlace *video(KpApp *a, const KpUiCanvasItem *it, float rect[4], flo
 	KpAppHdUi *u = &a->hd_ui;
 	KpAppHdClip *cl = NULL;
 	KpHdUiPlace *p;
-	uint32_t offset, size;
+	uint32_t offset = 0, size = 0;
 	int32_t k, w, h;
-	int fresh;
+	int fresh, casc = a->res && kp_res_install(a->res) == KP_RES_SOURCE_CASC;
 	float cut;
-	if (!u->video_head || it->w <= 0 || it->h <= 0 || it->path_len >= sizeof cl->path
-		|| kp_hd_video_clip(&u->video, it->path, it->path_len, &offset, &size) < 0) {
+	if (it->w <= 0 || it->h <= 0 || it->path_len >= sizeof cl->path
+		|| (!casc && (!u->video_head || kp_hd_video_clip(&u->video, it->path, it->path_len, &offset, &size) < 0))) {
 		return NULL;
 	}
 	for (k = 0; k < KP_APP_HD_CLIPS && !cl; k++) {
@@ -291,26 +295,33 @@ static KpHdUiPlace *video(KpApp *a, const KpUiCanvasItem *it, float rect[4], flo
 		clip_free(cl);
 		memcpy(cl->path, it->path, it->path_len);
 		cl->uploaded = -1;
-		cl->size = size;
-		cl->fetch = kp_fetch_start(u->video_path, offset, size);
+		if (casc) {
+			cl->bytes = casc_clip(a, it->path, it->path_len, &cl->size);
+		} else {
+			cl->size = size;
+			cl->fetch = kp_fetch_start(u->video_path, offset, size);
+		}
 	}
 	cl->used = ++u->clock;
 	if (cl->fetch) { /* the clip on its way (fetched on the web) */
 		if (kp_fetch_state(cl->fetch) == KP_FETCH_PENDING) return NULL;
 		cl->bytes = kp_fetch_take(cl->fetch, NULL);
 		cl->fetch = NULL;
-		if (!cl->bytes || kp_smk_open(&cl->smk, cl->bytes, cl->size) != 0 || !kp_smk_palette(&cl->smk)
-			|| cl->smk.width > KP_HD_VIDEO_MAX || cl->smk.height > KP_HD_VIDEO_MAX
-			|| !(cl->rgba = (uint8_t *)malloc((size_t)cl->smk.width * cl->smk.height * 4))) {
-			SDL_Log("hd ui: the HD portrait of %s could not be read", cl->path);
-			kp_smk_close(&cl->smk);
+	}
+	if (cl->bytes && !cl->movie) {
+		char err[256];
+		if (!(cl->movie = kp_webm_open(cl->bytes, cl->size, err, sizeof err)) || kp_webm_width(cl->movie) > KP_HD_VIDEO_MAX
+			|| kp_webm_height(cl->movie) > KP_HD_VIDEO_MAX) {
+			SDL_Log("hd ui: the HD portrait of %s could not be read%s%s", cl->path, cl->movie ? "" : ": ", cl->movie ? "" : err);
+			kp_webm_close(cl->movie);
+			cl->movie = NULL;
 			free(cl->bytes);
 			cl->bytes = NULL;
 		}
 	}
-	if (!cl->bytes) return NULL;
-	w = (int32_t)cl->smk.width;
-	h = (int32_t)cl->smk.height;
+	if (!cl->movie) return NULL;
+	w = (int32_t)kp_webm_width(cl->movie);
+	h = (int32_t)kp_webm_height(cl->movie);
 	if (!(p = kp_hd_ui_atlas_place(&u->atlas, u->index.frame_count + (int32_t)(cl - u->clips), KP_HD_VIDEO_MAX,
 			  KP_HD_VIDEO_MAX, &fresh))) {
 		*full = 1;
@@ -318,17 +329,9 @@ static KpHdUiPlace *video(KpApp *a, const KpUiCanvasItem *it, float rect[4], flo
 	}
 	if (fresh) cl->uploaded = -1;
 	if (cl->uploaded != it->frame) {
-		const uint8_t *pal = kp_smk_palette(&cl->smk);
-		size_t i;
-		if (!decode_to(&cl->smk, it->frame)) return NULL;
-		for (i = 0; i < (size_t)w * (size_t)h; i++) {
-			uint8_t v = cl->smk.pixels[i];
-			cl->rgba[4 * i] = pal[3 * v];
-			cl->rgba[4 * i + 1] = pal[3 * v + 1];
-			cl->rgba[4 * i + 2] = pal[3 * v + 2];
-			cl->rgba[4 * i + 3] = v ? 255 : 0; /* index 0: transparent */
-		}
-		kp_gfx_ui_atlas_put(a->gfx, p->layer, p->x, p->y, w, h, cl->rgba);
+		const uint8_t *rgba = it->frame >= 0 ? kp_webm_frame(cl->movie, (uint32_t)it->frame) : NULL;
+		if (!rgba) return NULL;
+		kp_gfx_ui_atlas_put(a->gfx, p->layer, p->x, p->y, w, h, rgba);
 		cl->uploaded = it->frame;
 	}
 	rect[0] = (float)it->x;

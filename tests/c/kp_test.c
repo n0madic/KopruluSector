@@ -1,6 +1,8 @@
 /* kp_test: the C suites' runner (kp_test.h). */
 #include "kp_test.h"
 
+#include "kp_webm.h"
+
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -12,10 +14,7 @@ static const KpSuite *const SUITES[] = {
 	&kp_suite_kp_ui, &kp_suite_present, &kp_suite_session, &kp_suite_hud, &kp_suite_data, &kp_suite_ui_data, &kp_suite_images,
 	&kp_suite_fog, &kp_suite_campaign, &kp_suite_touch, &kp_suite_music, &kp_suite_player_reach, &kp_suite_gfx,
 	&kp_suite_flow, &kp_suite_locale, &kp_suite_speech, &kp_suite_script, &kp_suite_res, &kp_suite_formats,
-	&kp_suite_original, &kp_suite_chk,
-#ifdef KP_CINEMATICS
-	&kp_suite_cine,
-#endif
+	&kp_suite_original, &kp_suite_chk, &kp_suite_cine, &kp_suite_scr,
 };
 #define SUITE_COUNT ((int)(sizeof SUITES / sizeof SUITES[0]))
 #define DEFAULT_LOGS "build/c-tests"
@@ -709,6 +708,7 @@ int main(int argc, char **argv)
 	int passed = 0, failed = 0, k;
 	char label[160];
 	setvbuf(stdout, NULL, _IOLBF, 0);
+	kp_smk_set_video(&kp_webm_smk_video); /* the KPW1 movies, as the app has them */
 	if (argc > 1 && strcmp(argv[1], "--list") == 0) {
 		Job *jobs = (Job *)calloc(MAX_JOBS, sizeof *jobs);
 		int count = jobs ? list_jobs(jobs, MAX_JOBS, 0, 0) : 0;

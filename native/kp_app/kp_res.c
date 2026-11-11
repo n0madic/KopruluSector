@@ -8,6 +8,7 @@
 
 #include "kp_casc.h"
 #include "kp_mpq.h"
+#include "kp_res_scr.h"
 #include "kp_sha256.h"
 
 #define KP_RES_PATH 1024
@@ -84,6 +85,7 @@ struct KpRes {
 	const char *archive_names[KP_RES_ARCHIVES];
 	int archive_count;
 	KpCasc *casc;
+	KpResScr *scr; /* the rebuilds from Remastered's own formats (NULL: the profile has no tables for them) */
 	Map seen;    /* the names read: their status and source */
 };
 
@@ -250,6 +252,7 @@ const char *kp_res_status_name(KpResStatus status)
 {
 	static const char *const NAMES[KP_RES_STATUS_COUNT] = {
 		"missing", "absent", "unreadable", "repacked", "exact", "derived", "differs", "unlisted", "refused", "error",
+		"equivalent", "colour-equal", "approximation",
 	};
 	return (unsigned)status < KP_RES_STATUS_COUNT ? NAMES[status] : "?";
 }
@@ -417,6 +420,8 @@ KpRes *kp_res_open(const char *const *dirs, int count, const KpResConfig *config
 			kp_res_close(r);
 			return NULL;
 		}
+		if (kind == KP_RES_SOURCE_CASC && !(r->scr = kp_res_scr_new(r->profile)))
+			say(r, "res: profile %s has no rebuilds of Remastered's own formats: its PCX, GRP, TBL, BIN and SMK files only it holds are missing", r->profile->id, NULL);
 		say(r, "res: %s %s", kp_res_source_name(kind), dir);
 	}
 	if (r->install == KP_RES_SOURCE_NONE && r->repack_count == 0) {
@@ -434,6 +439,7 @@ void kp_res_close(KpRes *r)
 	for (k = 0; k < r->repack_count; k++) kp_mpq_close(r->repack[k].mpq);
 	for (k = 0; k < r->archive_count; k++) kp_mpq_close(r->archives[k].mpq);
 	kp_casc_close(r->casc);
+	kp_res_scr_free(r->scr);
 	map_free(&r->listed);
 	map_free(&r->seen);
 	free(r);
@@ -544,7 +550,14 @@ static uint8_t *read_casc(KpRes *r, const char *key, size_t *size, KpResStatus *
 			free(b);
 		}
 	}
-	/* TODO: stage D6 rebuilds PCX, GRP, TBL, dialogs and movies from Remastered's own formats (converter/casc/rebuild.py) */
+	/* a listed file no copy reaches: rebuilt from Remastered's own formats, before its copy is taken as it is */
+	if (in && r->scr) {
+		uint8_t *made = kp_res_scr_remake(r, r->scr, r->casc, key, in, size, status, source);
+		if (made) {
+			free(kept);
+			return made;
+		}
+	}
 	if (kept) {
 		snprintf(source, KP_RES_NAME, "CASC %s", names[fallback]);
 		*status = KP_RES_DIFFERS;
@@ -655,7 +668,7 @@ int kp_res_exists(KpRes *r, const char *name)
 	if (kp_defs_listed(r->profile->unreadable, r->profile->unreadable_count, key)
 		|| kp_defs_listed(r->profile->absent, r->profile->absent_count, key))
 		return 0;
-	if (map_find(&r->listed, key)) return 1;
+	if (map_find(&r->listed, key) || (r->casc && kp_defs_input(r->profile, key))) return 1;
 	mpq_name(key, mname, sizeof mname);
 	for (k = 0; k < r->archive_count; k++)
 		if (kp_mpq_has(r->archives[k].mpq, mname)) return 1;
@@ -665,6 +678,42 @@ int kp_res_exists(KpRes *r, const char *name)
 			if (kp_casc_has(r->casc, names[k])) return 1;
 	}
 	return 0;
+}
+
+uint8_t *kp_res_casc_file(KpRes *r, const char *casc_name, size_t *size, char *err, size_t err_size)
+{
+	*size = 0;
+	if (!r->casc) {
+		if (err_size) err[0] = 0;
+		return NULL;
+	}
+	return kp_casc_read(r->casc, casc_name, size, err, err_size);
+}
+
+uint8_t *kp_res_casc_exact(KpRes *r, const char *key, size_t *size)
+{
+	char names[CASC_MOVED_COUNT + 2 * CASC_PREFIX_COUNT][KP_RES_NAME];
+	int n = casc_candidates(key, names, (int)(sizeof names / sizeof names[0])), k;
+	const KpDefsInput *in = kp_defs_input(r->profile, key);
+	if (!in || !r->casc) return NULL;
+	for (k = 0; k < n; k++) {
+		char why[KP_RES_MESSAGE];
+		size_t got = 0;
+		uint8_t *b = kp_casc_read(r->casc, names[k], &got, why, sizeof why), *rebuilt;
+		if (!b) continue;
+		if (matches(b, got, in)) {
+			*size = got;
+			return b;
+		}
+		rebuilt = kp_res_casc_rebuild(key, names[k], b, got, in->size);
+		free(b);
+		if (rebuilt && matches(rebuilt, in->size, in)) {
+			*size = in->size;
+			return rebuilt;
+		}
+		free(rebuilt);
+	}
+	return NULL;
 }
 
 /* --- streams --- */

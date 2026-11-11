@@ -2,11 +2,7 @@
 
 Remastered keeps the glue and console art as RGBA images (`SD/…/*.DDS`, uncompressed or DXT) where 1.17 has
 palette-indexed PCX and GRP files. The palette is the one of a PCX Remastered keeps exactly (a donor the
-manifest names); each pixel takes the palette index of its colour:
-- alpha 0 is index 0 (transparent);
-- an opaque pixel takes the lowest index of its colour, a translucent one (the popups' 170) the highest, which
-  is how 1.17's files use their duplicate colours (measured on 173 images: 154 exact);
-- a colour the palette lacks (DXT's rounding) takes the nearest one.
+manifest names); each pixel takes the palette index of its colour by formats/palette.py's IndexMap.
 The manifest's hashes then say whether the result is the original (`pixels`), shows the same colours (`rgb`)
 or neither.
 """
@@ -23,53 +19,24 @@ from dataclasses import dataclass
 
 from ..errors import ConverterError
 from ..formats import dds, dialog, grp, pcx, smk
-
-TRANSPARENT = 0
-OPAQUE = 255
-Palette = tuple[tuple[int, int, int], ...]
+from ..formats.palette import OPAQUE, Colours, IndexMap
 
 
 def plane_hash(width: int, height: int, plane: bytes) -> str:
     return hashlib.sha256(struct.pack("<HH", width, height) + plane).hexdigest()
 
 
-def rgb_plane(pixels: bytes, palette: Palette) -> bytes:
+def rgb_plane(pixels: bytes, palette: Colours) -> bytes:
     return b"".join(bytes(palette[i]) for i in pixels)
 
 
-class IndexMap:
-    """RGBA -> palette index by the rule above, memoised per colour."""
-
-    def __init__(self, palette: Palette):
-        self.palette = palette
-        self.lowest: dict[tuple[int, int, int], int] = {}
-        self.highest: dict[tuple[int, int, int], int] = {}
-        for i, c in enumerate(palette):
-            self.lowest.setdefault(c, i)
-            self.highest[c] = i
-        self.nearest: dict[tuple[int, int, int], int] = {}
-
-    def __call__(self, r: int, g: int, b: int, a: int) -> int:
-        if a == 0:
-            return TRANSPARENT
-        c = (r, g, b)
-        found = (self.lowest if a == OPAQUE else self.highest).get(c)
-        if found is not None:
-            return found
-        near = self.nearest.get(c)
-        if near is None:
-            near = self.nearest[c] = min(range(len(self.palette)), key=lambda i: (
-                (self.palette[i][0] - r) ** 2 + (self.palette[i][1] - g) ** 2 + (self.palette[i][2] - b) ** 2, i))
-        return near
-
-
-def indices(image: dds.Image, palette: Palette) -> bytes:
+def indices(image: dds.Image, palette: Colours) -> bytes:
     index = IndexMap(palette)
     px = image.rgba
     return bytes(index(px[i], px[i + 1], px[i + 2], px[i + 3]) for i in range(0, len(px), 4))
 
 
-def pcx_file(width: int, height: int, pixels: bytes, palette: Palette, header: bytes) -> bytes:
+def pcx_file(width: int, height: int, pixels: bytes, palette: Colours, header: bytes) -> bytes:
     """A PCX as 1.17's files are written: `header` holds their bytes 12–15 and 68–69 (DPI and palette info),
     which differ between files; the RLE is the standard one (pcx.encode)."""
     data = bytearray(pcx.encode(width, height, pixels))
@@ -116,7 +83,7 @@ def fit(image: dds.Image, width: int, height: int) -> tuple[dds.Image, int]:
     return dds.Image(w, h, px), height - h
 
 
-def pcx_from_dds(dds_file: bytes, size: tuple[int, int], palette: Palette, header: bytes) -> bytes:
+def pcx_from_dds(dds_file: bytes, size: tuple[int, int], palette: Colours, header: bytes) -> bytes:
     """The PCX of `size` from Remastered's image of it (rows above a shorter image are transparent)."""
     width, height = size
     image, above = fit(dds.decode(dds_file), width, height)
@@ -441,7 +408,7 @@ def dialog_from_table(table: dict, text_of) -> bytes:
     return dialog_rebuild(skeleton, texts)
 
 
-def remap_grp(image: grp.Grp, source_palette: bytes, palette: Palette) -> bytes:
+def remap_grp(image: grp.Grp, source_palette: bytes, palette: Colours) -> bytes:
     """A row-compressed GRP drawn in another palette: each opaque pixel takes its colour's index in `palette`
     (`source_palette`: 256 entries of R, G, B and a fourth byte, a WPE)."""
     index = IndexMap(palette)

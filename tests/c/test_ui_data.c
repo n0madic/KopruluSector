@@ -16,6 +16,7 @@
 #include "../../native/kp_core/src/core/kp_smk.h"
 #include "../../native/kp_core/src/core/kp_ui.h"
 #include "../../native/kp_core/src/core/kp_ui_text.h"
+#include "kp_webm.h"
 
 #define DIR "tests/fixtures/generated/kpf/"
 
@@ -296,48 +297,59 @@ static void portraits_reject_truncated(KpT *T)
 	kp_t_eq(T, kp_ui_set_portraits(ui, data, size), 0, "the whole file loads again: %s", ui->error);
 }
 
-/* KPV1 (kp_smk.h, converter/formats/kpv.py): a 2 x 2 ring movie of two frames and the extra one plays as an SMK ring
- * movie plays (frames 0, 1, the extra one, then 1 again); a frame record past the file's end and a run past a frame's
- * pixels are rejected. */
-static void kpv_movie_plays_as_an_smk(KpT *T)
+/* A KPW1 fixture (kp_smk.h, converter/formats/kpw.py) plays as an SMK ring movie (frames 0, 1, 2, the ring frame, then 1
+ * again; a rewind back to 0), each stored frame the fixture's indices: `frames` frames and the ring frame. */
+static void kpw_plays(KpT *T, const char *name, uint32_t width, uint32_t height, uint32_t frames)
 {
-	static const uint8_t header[24] = { 'K', 'P', 'V', '1', 2, 0, 0, 0, 2, 0, 0, 0, 2, 0, 0, 0, 100, 0, 0, 0, 1, 0, 0, 0 };
-	static const uint8_t body[24] = {
-		5, 0, 0, 0, 3, 1, 2, 3, 4, /* frame 0: four literal indices */
-		2, 0, 0, 0, 129, 9,        /* frame 1: index 9 four times */
-		5, 0, 0, 0, 3, 5, 6, 7, 8, /* the ring frame */
-	};
-	uint8_t file[24 + 768 + sizeof body];
+	char path[128], indices_path[160], err[256] = "";
+	size_t size, indices_size;
+	KpWebm *webm;
+	const uint8_t *data, *indices;
+	uint32_t f, area = width * height;
 	KpSmk s;
-	memset(file, 0, sizeof file);
-	memcpy(file, header, sizeof header);
-	memcpy(file + 24 + 768, body, sizeof body);
-	kp_t_eq(T, kp_smk_open(&s, file, sizeof file - 1), -1, "a frame record past the file's end is rejected");
-	kp_t_eq(T, kp_smk_open(&s, file, sizeof file), 0, "a KPV1 ring movie opens");
-	kp_t_eq(T, s.width * 10 + s.height, 22, "its size");
-	kp_t_eq(T, kp_smk_frame_time(&s), 10000, "100 ms a frame");
-	kp_t_eq(T, kp_smk_decode(&s), 0, "frame 0");
-	kp_t_ok(T, memcmp(s.pixels, "\1\2\3\4", 4) == 0, "frame 0's literal run");
-	kp_t_eq(T, kp_smk_decode(&s), 0, "frame 1");
-	kp_t_ok(T, memcmp(s.pixels, "\11\11\11\11", 4) == 0, "frame 1's repeated index");
-	kp_t_eq(T, kp_smk_decode(&s), 0, "the ring frame");
-	kp_t_ok(T, memcmp(s.pixels, "\5\6\7\10", 4) == 0, "the ring frame's pixels");
-	kp_t_eq(T, s.frame, 1, "after the ring frame, frame 1");
-	kp_t_eq(T, kp_smk_decode(&s), 0, "frame 1 again");
-	kp_t_ok(T, memcmp(s.pixels, "\11\11\11\11", 4) == 0, "frame 1's pixels again");
-	file[24 + 768 + 9 + 4] = 130; /* frame 1: five repeats for four pixels */
-	kp_smk_rewind(&s);
-	kp_t_eq(T, kp_smk_decode(&s), 0, "frame 0 after the rewind");
-	kp_t_eq(T, kp_smk_decode(&s), -1, "a run past the frame is rejected");
-	kp_smk_close(&s);
-	if (kp_t_has(T, DIR "movie.kpv")) { /* the same movie as the converter writes it */
-		size_t size;
-		const uint8_t *data = kp_t_read(T, DIR "movie.kpv", &size);
-		file[24 + 768 + 9 + 4] = 129;
-		kp_t_eq(T, size, sizeof file, "the converter's KPV1 has the layout above");
-		kp_t_ok(T, size == sizeof file && memcmp(data, file, 24) == 0 && memcmp(data + 24 + 768, body, sizeof body) == 0,
-			"the converter's KPV1 header and frames");
+	snprintf(path, sizeof path, DIR "%s", name);
+	snprintf(indices_path, sizeof indices_path, "%s.indices", path);
+	data = kp_t_read(T, path, &size);
+	indices = kp_t_read(T, indices_path, &indices_size);
+	kp_t_eq(T, (int64_t)indices_size, (int64_t)area * (frames + 1), "%s: the fixture's frames and the ring frame", name);
+	webm = kp_webm_open(data + 24 + 768, size - 24 - 768, err, sizeof err);
+	kp_t_ok(T, webm != NULL, "%s: its WebM opens: %s", name, err);
+	kp_t_eq(T, kp_webm_width(webm) * 1000 + kp_webm_height(webm), width * 1000 + height, "%s: the WebM's size", name);
+	kp_webm_close(webm);
+	kp_t_eq(T, kp_smk_open(&s, data, size), 0, "%s opens", name);
+	kp_t_eq(T, s.width * 1000 + s.height, width * 1000 + height, "%s: its size", name);
+	kp_t_eq(T, s.frames, frames, "%s: its frames", name);
+	kp_t_eq(T, kp_smk_frame_time(&s), 10000, "%s: 100 ms a frame", name);
+	for (f = 0; f <= frames; f++) {
+		kp_t_eq(T, kp_smk_decode(&s), 0, "%s: frame %u", name, (unsigned)f);
+		kp_t_ok(T, memcmp(s.pixels, indices + (size_t)f * area, area) == 0, "%s: frame %u's indices", name, (unsigned)f);
 	}
+	kp_t_eq(T, s.frame, 1, "%s: after the ring frame, frame 1", name);
+	kp_t_eq(T, kp_smk_decode(&s), 0, "%s: frame 1 again", name);
+	kp_t_ok(T, memcmp(s.pixels, indices + area, area) == 0, "%s: frame 1's indices again", name);
+	kp_smk_rewind(&s);
+	kp_t_eq(T, kp_smk_decode(&s), 0, "%s: frame 0 after the rewind", name);
+	kp_t_ok(T, memcmp(s.pixels, indices, area) == 0, "%s: frame 0's indices after the rewind", name);
+	kp_smk_close(&s);
+}
+
+/* The lossless 4:4:4 sRGB movie (as Remastered's SD portraits): three WebM frames, the ring frame past them its last;
+ * the VP8 movie with alpha (as the glue's overlays): white, red with its left half transparent, the green ring frame,
+ * each colour its palette index. A header of another size than the WebM's, and a WebM cut short, are refused. */
+static void kpw_movie_plays_as_an_smk(KpT *T)
+{
+	size_t size;
+	uint8_t *data;
+	KpSmk s;
+	if (!kp_t_has(T, DIR "movie.kpw"))
+		kp_t_skip(T, "no " DIR "movie.kpw (python3 -m converter.kpf.fixtures with FFmpeg's libvpx)");
+	kpw_plays(T, "movie.kpw", 8, 4, 3);
+	kpw_plays(T, "movie-alpha.kpw", 16, 16, 2);
+	data = kp_t_read(T, DIR "movie.kpw", &size);
+	kp_t_eq(T, kp_smk_open(&s, data, 24 + 768 + 16), -1, "a WebM cut short is refused");
+	kp_t_eq(T, kp_smk_open(&s, data, 24 + 767), -1, "a palette cut short is refused");
+	data[4] = 9; /* width 9, the WebM's 8 */
+	kp_t_eq(T, kp_smk_open(&s, data, size), -1, "a header of another width than the WebM's is refused");
 }
 
 /* An SMK keeps one block: the four header trees' entries and the frame's pixels (a portrait opens one at every change).
@@ -448,7 +460,7 @@ static void video_target_is_the_movie_size(KpT *T)
 }
 
 static const KpTest TESTS[] = {
-	{ "kpv_movie_plays_as_an_smk", kpv_movie_plays_as_an_smk, 0 },
+	{ "kpw_movie_plays_as_an_smk", kpw_movie_plays_as_an_smk, 0 },
 	{ "video_target_is_the_movie_size", video_target_is_the_movie_size, 0 },
 	{ "smk_header_opens_in_one_block", smk_header_opens_in_one_block, 0 },
 	{ "table_strings_are_no_formats", table_strings_are_no_formats, 0 },

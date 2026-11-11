@@ -42,6 +42,11 @@ Commands:
   scr-compare --data DIR --scr DIR
                                compare Remastered's DAT tables and scripts with the profile's
                                effective copies (exit status 1 if any differ)
+  scr-digests --scr DIR --out FILE
+                               write each manifest file's normalized name, status and the SHA-256 of
+                               the bytes read from a StarCraft: Remastered install (empty when none), a
+                               tab between, in the manifest's order: the twin of kp_data_probe --digests
+                               (ADR 0018, stage D6; tools/ci.sh compares them)
 """
 from __future__ import annotations
 
@@ -92,9 +97,9 @@ def _open_source(args: argparse.Namespace):
     """The 1.17 install (`--data`) or a StarCraft: Remastered install (`--scr`) as the profile's files."""
     profile = Profile.load(args.profile)
     if args.scr:
-        from .casc.source import CACHE, ScrSource
+        from .casc.source import ScrSource
 
-        return ScrSource(args.scr, profile, cache=Path(args.out) / CACHE)
+        return ScrSource(args.scr, profile)
     return Resolver(args.data, profile)
 
 
@@ -172,10 +177,10 @@ def _scr_manifest(args: argparse.Namespace) -> int:
 
 def _hd(args: argparse.Namespace) -> int:
     """StarCraft: Remastered's HD art for the HD renderer (generated/hd/<variant>/; ADR 0013)."""
-    from .casc.source import CACHE, ScrSource
+    from .casc.source import ScrSource
     from .emit import hd, hd_ui
 
-    with ScrSource(args.scr, Profile.load(args.profile), cache=Path(args.out) / CACHE) as source:
+    with ScrSource(args.scr, Profile.load(args.profile)) as source:
         portraits = None  # written once, linked into the other variant (both take HD2's clips)
         for variant in (hd.VARIANTS if args.variant == "all" else (args.variant,)):
             portraits = hd.generate(source, source.storage, Path(args.out), variant, portraits)["portraits"]
@@ -287,6 +292,29 @@ def _scr_compare(args: argparse.Namespace) -> int:
     return 1 if differ else 0
 
 
+def _scr_digests(args: argparse.Namespace) -> int:
+    import hashlib
+
+    from .casc.source import ScrSource
+    from .source import SourceError
+
+    lines = []
+    with ScrSource(args.scr, Profile.load(args.profile)) as source:
+        # the order kp_res reads them in (the compiled manifest's): a rebuild's palette is kept per group and folder
+        # for those after it, so the same order gives the same files
+        for key in sorted(source.manifest.files):
+            name = source.manifest.files[key].name
+            try:
+                _, data = source.read(name)
+                digest = hashlib.sha256(data).hexdigest()
+            except SourceError:
+                digest = ""
+            lines.append(f"{key}\t{source.status.get(name, ('missing', ''))[0]}\t{digest}\n")
+    Path(args.out).write_text("".join(lines))
+    log.info("%s: %d files", args.out, len(lines))
+    return 0
+
+
 def _source_arguments(p: argparse.ArgumentParser) -> None:
     group = p.add_mutually_exclusive_group(required=True)
     group.add_argument("--data", help="the profile's install (StarCraft.exe and the MPQs)")
@@ -373,6 +401,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--data", required=True)
     p.add_argument("--scr", required=True, help="install directory holding .build.info and Data/")
     p.set_defaults(func=_scr_compare)
+    p = sub.add_parser("scr-digests", help="write the digests of the manifest's files read from Remastered")
+    p.add_argument("--scr", required=True, help="install directory holding .build.info and Data/")
+    p.add_argument("--out", required=True)
+    p.set_defaults(func=_scr_digests)
     args = parser.parse_args(argv)
     try:
         return args.func(args)

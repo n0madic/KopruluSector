@@ -1,12 +1,14 @@
-"""Remastered's own formats and the rebuilds of 1.17 files from them (ADR 0013, stage R1): KPV1, DDS, anim, and
-converter/casc/rebuild.py on synthetic data."""
+"""Remastered's own formats and the rebuilds of 1.17 files from them (ADR 0013, stage R1; ADR 0018, stage D6): KPW1,
+DDS, anim, and converter/casc/rebuild.py on synthetic data."""
 from __future__ import annotations
 
+import shutil
 import struct
 import unittest
 
 from converter.casc import rebuild
-from converter.formats import anim, dds, dialog, grp, kpv, pcx, smk
+from converter.formats import anim, dds, dialog, grp, kpw, palette, pcx, smk
+from converter.kpf import fixtures
 from converter.kpf.fixtures import dialog_bin
 
 PALETTE = tuple((i, i, i) for i in range(256))
@@ -28,32 +30,31 @@ def dds_dxt1(width: int, height: int, blocks: bytes) -> bytes:
     return bytes(header) + blocks
 
 
-class KpvTest(unittest.TestCase):
-    def test_runs_round_trip(self):
-        for pixels in (b"", b"\1", b"\1\2", b"\5" * 3, b"\5" * 200 + bytes(range(256)) + b"\7" * 131):
-            assert kpv.unpack_runs(kpv.pack_runs(pixels), len(pixels)) == pixels
-
-    def test_ring_movie_reads_as_an_smk(self):
-        frames = [bytes([i]) * 6 for i in range(4)]
-        data = kpv.encode(3, 2, -6667, bytes(range(256)) * 3, frames, ring=True)
-        h, decoded = smk.decode(data)
-        assert (h.signature, h.width, h.height, h.frames, h.ring_frame, h.decoded_frames) == (b"KPV1", 3, 2, 3, True, 4)
+class KpwTest(unittest.TestCase):
+    def test_header_reads_as_an_smk(self):
+        data = kpw.encode(3, 2, 3, -6667, True, bytes(range(256)) * 3, b"webm")
+        assert kpw.header(data) == (3, 2, 3, -6667, True) and data[kpw.HEADER.size + 768:] == b"webm"
+        h = smk.header(data)
+        assert (h.signature, h.width, h.height, h.frames, h.ring_frame, h.decoded_frames) == (b"KPW1", 3, 2, 3, True, 4)
         assert abs(h.ms_per_frame - 66.67) < 1e-9
-        assert [f.indices for f in decoded] == frames and decoded[0].palette == bytes(range(256)) * 3
 
-    def test_header_and_completeness(self):
-        data = kpv.encode(3, 2, 100, bytes(768), [bytes(6), bytes([1]) * 6, bytes(6)], ring=True)
-        assert kpv.header(data) == (3, 2, 2, 100, True)
-        assert smk.header(data).frames == 2
-        assert kpv.complete(data) and not kpv.complete(data[:-1]) and not kpv.complete(b"KPV1")
-        with self.assertRaises(kpv.KpvError):
-            kpv.decode(data[:-3])  # a frame past the end: the format's error, not struct's
+    def test_rejects_malformed(self):
+        with self.assertRaises(kpw.KpwError):
+            kpw.encode(2, 2, 1, 100, False, bytes(767), b"")
+        with self.assertRaises(kpw.KpwError):
+            kpw.header(b"KPW1" + bytes(20 + 767))  # its palette cut short
+        with self.assertRaises(kpw.KpwError):
+            kpw.header(b"KPV1" + bytes(20 + 768))
 
-    def test_rejects_overruns(self):
-        with self.assertRaises(kpv.KpvError):
-            kpv.unpack_runs(bytes([130, 1]), 4)
-        with self.assertRaises(kpv.KpvError):
-            kpv.encode(2, 2, 100, bytes(768), [b"\0" * 3])
+    @unittest.skipIf(shutil.which("ffmpeg") is None, "no ffmpeg")
+    def test_fixture_movies_decode_to_their_indices(self):
+        movies = fixtures.kpw_fixture()
+        if not movies:
+            self.skipTest("FFmpeg without libvpx")
+        for name in ("movie.kpw", "movie-alpha.kpw"):
+            h, decoded = smk.decode(movies[name])
+            assert b"".join(f.indices for f in decoded) == movies[name + ".indices"], name
+            assert len(decoded) == h.decoded_frames and decoded[0].palette == movies[name][24:24 + 768], name
 
 
 class DdsTest(unittest.TestCase):
@@ -99,8 +100,8 @@ class AnimTest(unittest.TestCase):
 
 class RebuildTest(unittest.TestCase):
     def test_index_rule(self):
-        palette = ((0, 0, 0), (9, 9, 9), (9, 9, 9), (200, 0, 0)) + ((255, 255, 255),) * 252
-        index = rebuild.IndexMap(palette)
+        colours = ((0, 0, 0), (9, 9, 9), (9, 9, 9), (200, 0, 0)) + ((255, 255, 255),) * 252
+        index = palette.IndexMap(colours)
         assert index(9, 9, 9, 0) == 0  # transparent
         assert index(9, 9, 9, 255) == 1  # opaque: the lowest duplicate
         assert index(9, 9, 9, 170) == 2  # translucent: the highest

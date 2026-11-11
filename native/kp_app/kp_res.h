@@ -10,7 +10,9 @@
  *   - an install: 1.17 (StarCraft.exe and the profile's archives, the first copy of a name in the profile's order;
  *     a copy that differs from the manifest is refused) or StarCraft: Remastered (.build.info, CASC: the converter's
  *     ScrSource rules, converter/casc/source.py: its prefixes, the moved files, the tilesets' 1.17 prefix, .vx4 from
- *     .vx4ex; a copy no rule brings to the manifest's digest is read as it is, "differs").
+ *     .vx4ex; the files only Remastered's own formats hold rebuilt from them, stage D6, kp_res_scr.c: PCX and GRP from
+ *     DDS, TBL and dialog BINs from its XML strings, an SMK as the KPW1 over its WebM, kp_smk.h; a copy no rule brings
+ *     to the manifest's digest is read as it is, "differs").
  *
  * Nothing is cached on disk. A KpRes is used from one thread; a stream opens handles of its own for its thread.
  */
@@ -41,11 +43,15 @@ typedef enum {
 	KP_RES_UNREADABLE, /* the manifest lists it as unreadable in the reference install */
 	KP_RES_REPACKED,   /* from a repack, equal to its listing */
 	KP_RES_EXACT,      /* from an install, equal to the manifest */
-	KP_RES_DERIVED,    /* rebuilt from Remastered's copy to the manifest's digest */
+	KP_RES_DERIVED,    /* rebuilt from Remastered's copy, or its own formats, to the manifest's digest */
 	KP_RES_DIFFERS,    /* Remastered's copy, which no rule brings to the manifest's digest */
 	KP_RES_UNLISTED,   /* a name the manifest does not hold, read unchecked */
 	KP_RES_REFUSED,    /* a 1.17 copy that differs from the manifest */
 	KP_RES_ERROR,      /* a source could not read it */
+	/* rebuilt from Remastered's own formats (kp_res_scr.c: DDS, XML, WebM) to other bytes than the 1.17 file's: */
+	KP_RES_EQUIVALENT,    /* a PCX of the same pixels (another palette's bytes) */
+	KP_RES_COLOUR_EQUAL,  /* a PCX of the same colours */
+	KP_RES_APPROXIMATION, /* neither (lossy art, edited texts, a movie that stands in for its SMK) */
 	KP_RES_STATUS_COUNT
 } KpResStatus;
 
@@ -75,6 +81,8 @@ int kp_res_repacks(const KpRes *r);
 /* A malloc'd copy of a file's bytes (NUL terminated past size) and its status, or NULL: err empty when no source has
  * it (missing, absent, unreadable), the reason otherwise (a refused copy, a failed read). */
 uint8_t *kp_res_read(KpRes *r, const char *name, size_t *size, KpResStatus *status, char *err, size_t err_size);
+/* Whether a source has the file; a Remastered install has every file of the manifest (source.py has: a rebuild stands
+ * in for one it lacks). */
 int kp_res_exists(KpRes *r, const char *name);
 
 /* A file read in pieces on any thread (music, movies), from handles of its own: its size (the manifest's for an
@@ -92,6 +100,10 @@ void kp_res_files(KpRes *r, KpFiles *f);
 /* The files read so far by status; the list of them (--res-log: "name<TAB>status<TAB>source" a line, by name). */
 void kp_res_counts(const KpRes *r, int counts[KP_RES_STATUS_COUNT]);
 int kp_res_write_log(const KpRes *r, const char *path, char *err, size_t err_size);
+
+/* A Remastered install's own file by its CASC name ("HD2/portrait/tadvisor/tadfid00.webm": the HD art), unchecked: a
+ * malloc'd copy, or NULL (err empty when the install is not Remastered's or has no such file). */
+uint8_t *kp_res_casc_file(KpRes *r, const char *casc_name, size_t *size, char *err, size_t err_size);
 
 /* The 1.17 bytes of a tileset file Remastered grew by appending (its prefix, the CV5 groups Remastered filled zeroed),
  * or .vx4 from .vx4ex (converter/casc/source.py _rebuild): a malloc'd copy of want bytes, or NULL when no rule

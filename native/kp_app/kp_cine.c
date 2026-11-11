@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "kp_webm.h"
 #include "vpx/vp8dx.h"
 #include "vpx/vpx_decoder.h"
 
@@ -17,7 +18,6 @@
 #define KEY_BIT 0x80000000u
 #define WINDOW 262144 /* the packets are read from the file a window at a time */
 #define MAX_PACKETS_PER_CALL 8 /* a movie behind the clock catches up over several calls */
-#define FIXED 65536.0 /* the colour matrices' 16.16 fixed point */
 #define NS_PER_MS 1000000u
 #define LOG_LINE 512
 
@@ -453,47 +453,6 @@ void kp_cine_stream_free(KpCineStream *s)
 	for (k = 0; k < KP_CINE_STREAM_SLOTS; k++) slot_clear(s, k);
 }
 
-/* --- the colour --- */
-
-typedef struct {
-	int32_t y_scale, y_low, cr_r, cb_g, cr_g, cb_b;
-} YuvMatrix;
-
-static void yuv_matrix(YuvMatrix *m, int matrix, int full_range)
-{
-	double kr = matrix == 601 ? 0.299 : 0.2126, kb = matrix == 601 ? 0.114 : 0.0722, kg = 1.0 - kr - kb;
-	double ys = full_range ? 1.0 : 255.0 / 219.0, cs = full_range ? 1.0 : 255.0 / 224.0;
-	m->y_scale = (int32_t)(ys * FIXED + 0.5);
-	m->y_low = full_range ? 0 : 16;
-	m->cr_r = (int32_t)(2.0 * (1.0 - kr) * cs * FIXED + 0.5);
-	m->cb_b = (int32_t)(2.0 * (1.0 - kb) * cs * FIXED + 0.5);
-	m->cb_g = (int32_t)(2.0 * kb * (1.0 - kb) / kg * cs * FIXED + 0.5);
-	m->cr_g = (int32_t)(2.0 * kr * (1.0 - kr) / kg * cs * FIXED + 0.5);
-}
-
-/* The matrix of a picture: BT.709 when it says so, else BT.601 (unspecified: FFmpeg's guess too). */
-static void image_matrix(YuvMatrix *m, const vpx_image_t *im)
-{
-	yuv_matrix(m, im->cs == VPX_CS_BT_709 ? 709 : 601, im->range == VPX_CR_FULL_RANGE);
-}
-
-static uint8_t clamp8(int32_t v) { return (uint8_t)(v < 0 ? 0 : v > 255 ? 255 : v); }
-
-static void yuv_pixel(const YuvMatrix *m, int y, int cb, int cr, uint8_t *rgb)
-{
-	int32_t yy = (y - m->y_low) * m->y_scale + 32768, u = cb - 128, v = cr - 128;
-	rgb[0] = clamp8((yy + m->cr_r * v) >> 16);
-	rgb[1] = clamp8((yy - m->cb_g * u - m->cr_g * v) >> 16);
-	rgb[2] = clamp8((yy + m->cb_b * u) >> 16);
-}
-
-void kp_cine_yuv_rgb(int y, int cb, int cr, int matrix, int full_range, uint8_t rgb[3])
-{
-	YuvMatrix m;
-	yuv_matrix(&m, matrix, full_range);
-	yuv_pixel(&m, y, cb, cr, rgb);
-}
-
 /* --- the player --- */
 
 struct KpCinePlayer {
@@ -535,54 +494,12 @@ static int read_packet(KpCinePlayer *p, uint32_t size, const uint8_t **out, KpEr
 	return 0;
 }
 
-static int is_srgb(const vpx_image_t *im) { return im->fmt == VPX_IMG_FMT_I444 && im->cs == VPX_CS_SRGB; }
-
-/* Whether the picture is one the player shows: 8-bit planar of the clip's size. */
+/* Whether the picture is one the player shows (kp_vpx_usable). */
 static int check_image(const KpCinePlayer *p, const vpx_image_t *im, KpError *err)
 {
-	if (im->bit_depth != 8 || (im->fmt & VPX_IMG_FMT_HIGHBITDEPTH) || im->d_w != p->clip->width
-		|| im->d_h != p->clip->height)
-		return fail(err, "a picture is not 8-bit or not the clip's size");
-	if (im->fmt != VPX_IMG_FMT_I420 && im->fmt != VPX_IMG_FMT_I422 && im->fmt != VPX_IMG_FMT_I444
-		&& im->fmt != VPX_IMG_FMT_I440)
-		return fail(err, "a picture is not planar YCbCr");
+	if (!kp_vpx_usable(im, p->clip->width, p->clip->height))
+		return fail(err, "a picture is not 8-bit planar YCbCr of the clip's size");
 	return 0;
-}
-
-/* The picture (check_image's) into p->rgba. */
-static void convert(KpCinePlayer *p, const vpx_image_t *im)
-{
-	const KpCineClip *c = p->clip;
-	uint32_t x, y;
-	uint8_t *out = p->rgba;
-	int xs = (int)im->x_chroma_shift, ys = (int)im->y_chroma_shift;
-	if (is_srgb(im)) { /* planes G, B, R */
-		for (y = 0; y < c->height; y++) {
-			const uint8_t *g = im->planes[0] + (size_t)y * (size_t)im->stride[0];
-			const uint8_t *b = im->planes[1] + (size_t)y * (size_t)im->stride[1];
-			const uint8_t *r = im->planes[2] + (size_t)y * (size_t)im->stride[2];
-			for (x = 0; x < c->width; x++, out += 4) {
-				out[0] = r[x];
-				out[1] = g[x];
-				out[2] = b[x];
-				out[3] = 255;
-			}
-		}
-		return;
-	}
-	{
-		YuvMatrix m;
-		image_matrix(&m, im);
-		for (y = 0; y < c->height; y++) {
-			const uint8_t *yp = im->planes[0] + (size_t)y * (size_t)im->stride[0];
-			const uint8_t *up = im->planes[1] + (size_t)(y >> ys) * (size_t)im->stride[1];
-			const uint8_t *vp = im->planes[2] + (size_t)(y >> ys) * (size_t)im->stride[2];
-			for (x = 0; x < c->width; x++, out += 4) {
-				yuv_pixel(&m, yp[x], up[x >> xs], vp[x >> xs], out);
-				out[3] = 255;
-			}
-		}
-	}
 }
 
 KpCinePlayer *kp_cine_open(const KpCineIndex *ix, int k, KpCineRead read, void *ctx, KpError *err)
@@ -702,27 +619,8 @@ int kp_cine_advance(KpCinePlayer *p, uint64_t time_ms, KpError *err)
 
 int kp_cine_picture(const KpCinePlayer *p, KpVideoPicture *out)
 {
-	const vpx_image_t *im = p->image;
-	YuvMatrix m;
-	int k;
-	if (!im) return -1;
-	memset(out, 0, sizeof *out);
-	for (k = 0; k < 3; k++) {
-		out->planes[k] = im->planes[k];
-		out->strides[k] = im->stride[k];
-	}
-	out->width = (int32_t)im->d_w;
-	out->height = (int32_t)im->d_h;
-	out->chroma_w = (int32_t)((im->d_w + (1u << im->x_chroma_shift) - 1) >> im->x_chroma_shift);
-	out->chroma_h = (int32_t)((im->d_h + (1u << im->y_chroma_shift) - 1) >> im->y_chroma_shift);
-	out->srgb = is_srgb(im);
-	image_matrix(&m, im);
-	out->y_low = (float)m.y_low / 255.0f;
-	out->y_scale = (float)(m.y_scale / FIXED);
-	out->cr_r = (float)(m.cr_r / FIXED);
-	out->cb_g = (float)(m.cb_g / FIXED);
-	out->cr_g = (float)(m.cr_g / FIXED);
-	out->cb_b = (float)(m.cb_b / FIXED);
+	if (!p->image) return -1;
+	kp_vpx_picture(p->image, out);
 	return 0;
 }
 
@@ -730,7 +628,7 @@ const uint8_t *kp_cine_rgba(KpCinePlayer *p)
 {
 	if (!p->image) return NULL;
 	if (!p->rgba && !(p->rgba = (uint8_t *)malloc(4u * p->clip->width * p->clip->height))) return NULL;
-	if (!p->rgba_done) convert(p, p->image);
+	if (!p->rgba_done) kp_vpx_rgba(p->image, p->rgba);
 	p->rgba_done = 1;
 	return p->rgba;
 }

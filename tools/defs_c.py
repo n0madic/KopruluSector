@@ -7,10 +7,12 @@ ones) are compiled in. --check fails when a written file is out of date (tools/c
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import logging
 import struct
 import sys
+import zlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -19,6 +21,7 @@ PROFILE = "bw-1.17.0.1"
 
 log = logging.getLogger("defs_c")
 PER_LINE = 24
+NONE16 = 0xFFFF
 
 
 def tables() -> list[tuple[str, bytes]]:
@@ -40,16 +43,21 @@ def tables() -> list[tuple[str, bytes]]:
     out += [("TABL", campaign.tables_section(m)), ("CHEA", campaign.cheats_section(m))]
     out += [("SLOT", kpd.slots_section(iscript.Table.load(PROFILE).header_animations))]
     out += built_tables()
+    out += scr_tables(PROFILE)
     return sorted(out)
 
 
 def names_table(names: list[str]) -> bytes:
     """A list of names: u16 count; per name u8 length, its bytes (latin-1)."""
-    out = bytearray(struct.pack("<H", len(names)))
-    for n in names:
-        raw = n.encode("latin-1")
-        out += bytes([len(raw)]) + raw
-    return bytes(out)
+    return struct.pack("<H", len(names)) + b"".join(name_bytes(n) for n in names)
+
+
+def name_bytes(name: str) -> bytes:
+    """u8 length, the name's bytes (latin-1)."""
+    raw = name.encode("latin-1")
+    if len(raw) > 255:
+        raise ValueError(f"{name}: longer than 255 bytes")
+    return bytes([len(raw)]) + raw
 
 
 def built_tables() -> list[tuple[str, bytes]]:
@@ -90,6 +98,83 @@ def built_tables() -> list[tuple[str, bytes]]:
     out.append(("MPAK", struct.pack("<H", len(packs)) + b"".join(bytes([len(d)]) + d + kpm.packs_payload(p)
                                                                for d, p in packs)))
     return out
+
+
+def scr_tables(profile_id: str) -> list[tuple[str, bytes]]:
+    """How a StarCraft: Remastered install's own formats are brought back to the profile's files (stage D6; converter/casc
+    source.py _remake and rebuild.py; native/kp_app/kp_res_scr.c reads them), from the manifest's extras and
+    defs/scr/texts-<profile>.json. Names are normalized,
+    each list in the order the converter walks it: by the manifest name in lower case (its '\\' separators).
+    - SPAL: u16 palettes; per palette (by its hash) u16 donors and their names (u8 length, bytes): the PCX files of it;
+    - SPCX: u16 count; per PCX its name, u16 width, u16 height, 6 header bytes (12-15, 68-69), u16 palette (0xFFFF: none),
+      its pixels' and colours' SHA-256 (rebuild.plane_hash);
+    - SGRP: u16 count; per GRP with extras its name, u16 palette, u16 frames (0: not a GRP of plain rows); with frames u16
+      box width, height and per frame u8 x, y, width, height, u32 offset;
+    - SSMK: u16 count; per SMK its name, u16 frames, u8 ring, i32 frame rate (the header's), u16 palette;
+    - STBL: u16 count; per string table its name, the XML's and the base TBL's names (length 0: none), u16 ids (each u8
+      length, 0xFF: none) and u16 entries of NULs inside a string, each u16 string, u16 count, u16 positions;
+    - SBIN: u16 count; per dialog its name, u32 skeleton size, u32 its zlib size and bytes, u16 texts; per text u32
+      offset, u16 length, u8 hotkey, u8 pointers and their u32 fields, u16 source length and bytes ("id:<xml>#<id>",
+      "name:<text>" in latin-1, empty: none)."""
+    raw = json.loads((ROOT / "defs/scr" / f"inputs-{profile_id}.json").read_text())
+    texts = json.loads((ROOT / "defs/scr" / f"texts-{profile_id}.json").read_text())
+    rows = sorted(raw["files"], key=lambda r: r[0].lower())
+    groups = sorted(raw["palettes"])
+    group_of = {h: i for i, h in enumerate(groups)}
+
+    def group(extras: dict) -> int:
+        return group_of.get(extras.get("palette", ""), NONE16)
+
+    spal = bytearray(struct.pack("<H", len(groups)))
+    for h in groups:
+        donors = sorted(raw["palettes"][h], key=str.lower)
+        spal += struct.pack("<H", len(donors)) + b"".join(name_bytes(normalize(d)) for d in donors)
+    spcx, sgrp, ssmk = bytearray(), bytearray(), bytearray()
+    counts = {"pcx": 0, "grp": 0, "smk": 0}
+    for row in rows:
+        if len(row) < 4:
+            continue
+        name, extras = row[0], row[3]
+        ext = name.lower().rsplit(".", 1)[-1]
+        if ext == "pcx" and "pixels" in extras:
+            w, h = extras["size"]
+            spcx += name_bytes(normalize(name)) + struct.pack("<HH", w, h) + bytes.fromhex(extras["header"])
+            spcx += struct.pack("<H", group(extras)) + bytes.fromhex(extras["pixels"]) + bytes.fromhex(extras["rgb"])
+        elif ext == "grp":
+            frames = extras.get("frames", [])
+            sgrp += name_bytes(normalize(name)) + struct.pack("<HH", group(extras), len(frames))
+            if frames:
+                sgrp += struct.pack("<HH", *extras["box"])
+                sgrp += b"".join(struct.pack("<4BI", *f) for f in frames)
+        elif ext == "smk" and "smk" in extras:
+            _, _, frames, ring, rate = extras["smk"]  # its size is its WebM's (converter/formats/kpw.py)
+            ssmk += name_bytes(normalize(name)) + struct.pack("<HBiH", frames, ring, rate, group(extras))
+        else:
+            continue
+        counts[ext] += 1
+    stbl = bytearray(struct.pack("<H", len(texts["tbl"])))
+    for name in sorted(texts["tbl"], key=str.lower):
+        t = texts["tbl"][name]
+        stbl += name_bytes(normalize(name)) + name_bytes(t["xml"]) + name_bytes(t["base"] or "")
+        stbl += struct.pack("<H", len(t["ids"]))
+        stbl += b"".join(b"\xff" if i is None else name_bytes(i) for i in t["ids"])
+        nuls = sorted((int(k), v) for k, v in t["nuls"].items())
+        stbl += struct.pack("<H", len(nuls))
+        for k, positions in nuls:
+            stbl += struct.pack(f"<HH{len(positions)}H", k, len(positions), *positions)
+    sbin = bytearray(struct.pack("<H", len(texts["bin"])))
+    for name in sorted(texts["bin"], key=str.lower):
+        t = texts["bin"][name]
+        packed = base64.b64decode(t["skeleton"])
+        sbin += name_bytes(normalize(name)) + struct.pack("<II", len(zlib.decompress(packed)), len(packed)) + packed
+        sbin += struct.pack("<H", len(t["texts"]))
+        for off, length, pointers, hotkey, source in t["texts"]:
+            src = source.encode("latin-1")
+            sbin += struct.pack(f"<IHBB{len(pointers)}IH", off, length, int(hotkey), len(pointers), *pointers, len(src))
+            sbin += src
+    return [("SPAL", bytes(spal)), ("SPCX", struct.pack("<H", counts["pcx"]) + bytes(spcx)),
+            ("SGRP", struct.pack("<H", counts["grp"]) + bytes(sgrp)),
+            ("SSMK", struct.pack("<H", counts["smk"]) + bytes(ssmk)), ("STBL", bytes(stbl)), ("SBIN", bytes(sbin))]
 
 
 def c_bytes(data: bytes) -> list[str]:

@@ -1,4 +1,4 @@
-"""FFmpeg's command line tools as the converters use them (formats/kpv.py, emit/cinematics.py, emit/speech.py): the
+"""FFmpeg's command line tools as the converters use them (formats/kpw.py, emit/cinematics.py, emit/speech.py): the
 check that they are installed and ffprobe's fields of one stream."""
 from __future__ import annotations
 

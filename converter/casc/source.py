@@ -22,21 +22,19 @@ import re
 import struct
 from pathlib import Path
 
-from ..emit.files import cached, write_if_changed
-from ..formats import dds, grp, kpv, pcx
+from ..emit.files import write_if_changed
+from ..formats import dds, grp, kpw, pcx
+from ..formats.palette import Colours
 from ..inputs import Entry, Manifest
 from ..mpq.profile import Profile
 from ..source import SourceError, SourceUnreadable
 from . import rebuild
-from .rebuild import OPAQUE
 from .storage import CascError, CascStorage, normalize
 
 log = logging.getLogger(__name__)
 
 DIALOG_FRAMES = re.compile(r"^SD/glue/pal[a-z]+/dlg\.dds\.grp$", re.I)
 REPORT = Path("reports") / "scr-import.json"
-CACHE = Path("cache") / "scr"  # under the output directory
-KPV_RULE = b"kpv1 screen palette, lowest index, alpha 128"  # a change of the conversion invalidates the cache
 # Where Remastered keeps the profile's files: its SD copies (sounds, campaign maps, briefing texts) first,
 # since the copies at the root are its own where both exist (16-bit sounds); the enUS locale last.
 PREFIXES = ("SD/", "", "locales/enUS/Assets/SD/", "locales/enUS/Assets/")
@@ -141,8 +139,7 @@ def vx4_from_vx4ex(data: bytes, size: int) -> bytes | None:
 class ScrSource:
     """A StarCraft: Remastered install as a source of profile `profile`'s files."""
 
-    def __init__(self, root: str | Path, profile: Profile | None = None, manifest: Manifest | None = None,
-                 cache: Path | None = None):
+    def __init__(self, root: str | Path, profile: Profile | None = None, manifest: Manifest | None = None):
         self.profile = profile or Profile.load()
         self.manifest = manifest or Manifest.load(self.profile.id)
         if self.manifest.profile != self.profile.id:
@@ -152,10 +149,9 @@ class ScrSource:
         self.status: dict[str, tuple[str, str]] = {}  # name -> (status, CASC name)
         self._rebuilt: dict[str, tuple[str, str, bytes] | None] = {}  # None: cannot be rebuilt
         self._making: set[str] = set()
-        self.cache = cache  # movies converted from WebM, by their inputs' hash (they take FFmpeg and a while)
         self._xml: dict[str, dict[str, bytes]] = {}
         # a palette group's palette (one palette per hash) or a folder's neighbour's, by (palette hash, folder)
-        self._palettes: dict[tuple[str, str], rebuild.Palette] = {}
+        self._palettes: dict[tuple[str, str], Colours] = {}
         self._dialog_frames: list[str] | None = None  # the glue themes' Dlg.dds.grp files in the storage
 
     def close(self) -> None:
@@ -254,7 +250,7 @@ class ScrSource:
                     return n, data
         return None
 
-    def _palette(self, entry: Entry) -> rebuild.Palette | None:
+    def _palette(self, entry: Entry) -> Colours | None:
         """_find_palette's palette, kept per palette group and folder (a group's files share one palette)."""
         key = (entry.extras.get("palette", ""), entry.name.lower().rsplit("\\", 1)[0])
         if key not in self._palettes:
@@ -264,7 +260,7 @@ class ScrSource:
             self._palettes[key] = palette
         return self._palettes[key]
 
-    def _find_palette(self, entry: Entry) -> rebuild.Palette | None:
+    def _find_palette(self, entry: Entry) -> Colours | None:
         """The palette of the first donor Remastered keeps exactly, else of one it rebuilds with the original's
         palette from such a donor (one level: a donor's donors must be exact)."""
         folder = entry.name.lower().rsplit("\\", 1)[0]
@@ -331,19 +327,18 @@ class ScrSource:
             found = self._first([p + stem + ".webm" for p in ("SD/", "")])
             if found is None:
                 return None
-            width, height, frames, ring, rate = entry.extras["smk"]
+            _, _, frames, ring, rate = entry.extras["smk"]
+            # TODO: a movie with a palette of its own (none in profile bw-1.17.0.1: every SMK's palette is a
+            # screen's) would need colours of its own, which KPW1 does not carry
             palette = self._palette(entry) if "palette" in entry.extras else None
-            rgb = b"".join(bytes(c) for c in palette) if palette is not None else b""
-            def make() -> bytes:
-                if palette is None:  # a palette of its own
-                    return kpv.from_webm(found[1], rate, frames, bool(ring))
-                # drawn in its screen's palette: the movie's indices are that palette's
-                index = rebuild.IndexMap(palette)
-                return kpv.from_webm(found[1], rate, frames, bool(ring), rgb,
-                                     lambda r, g, b, a: index(r, g, b, OPAQUE if a >= kpv.ALPHA_CUT else 0))
-
-            key = found[1] + rgb + json.dumps(entry.extras["smk"]).encode() + KPV_RULE
-            return "approximation", found[0], cached(self.cache, key, ".kpv", make, kpv.complete)
+            if palette is None:
+                return None
+            size = kpw.webm_size(found[1])  # the WebM's, which may differ from the SMK's (formats/kpw.py)
+            if size is None:
+                return None
+            # drawn in its screen's palette: the movie's indices are that palette's
+            rgb = b"".join(bytes(c) for c in palette)
+            return "approximation", found[0], kpw.encode(*size, frames, rate, bool(ring), rgb, found[1])
         return None
 
     @staticmethod

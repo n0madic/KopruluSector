@@ -1,7 +1,15 @@
-"""Palettes: WPE (tileset palettes) and palette cycling tables.
+"""Palettes: WPE (tileset palettes), palette cycling tables and a colour's index in a palette.
 
 WPE is 256 entries of (R, G, B, 0) (docs/research/evidence/terrain-assets.json records
 the fourth byte as zero for every stock tileset).
+
+IndexMap is the rule StarCraft: Remastered's RGBA images are brought back to 1.17's palette-indexed files with
+(casc/rebuild.py, formats/kpw.py; the C of it is kp_core's kp_index_map.h):
+- alpha 0 is index 0 (transparent);
+- an opaque pixel takes the lowest index of its colour, a translucent one (the popups' 170) the highest, which
+  is how 1.17's files use their duplicate colours (measured on 173 images: 154 exact);
+- a colour the palette lacks (DXT's rounding) takes the nearest one (the least squared distance, the lowest index of
+  equals).
 """
 from __future__ import annotations
 
@@ -11,6 +19,9 @@ from ..errors import ConverterError
 
 WPE_SIZE = 1024
 COLORS = 256
+TRANSPARENT = 0
+OPAQUE = 255
+Colours = tuple[tuple[int, int, int], ...]  # 256 x (R, G, B)
 
 # Tileset id (ERA) -> resource name, docs/research/native-palette-bootstrap.md.
 TILESETS = ("badlands", "platform", "install", "ashworld", "jungle", "desert", "ice", "twilight")
@@ -56,3 +67,29 @@ def rotate_simple(colors: list, low: int, high: int) -> None:
     last = colors[high]
     colors[low + 1 : high + 1] = colors[low:high]
     colors[low] = last
+
+
+class IndexMap:
+    """RGBA -> palette index by the rule above, memoised per colour."""
+
+    def __init__(self, palette: Colours):
+        self.palette = palette
+        self.lowest: dict[tuple[int, int, int], int] = {}
+        self.highest: dict[tuple[int, int, int], int] = {}
+        for i, c in enumerate(palette):
+            self.lowest.setdefault(c, i)
+            self.highest[c] = i
+        self.nearest: dict[tuple[int, int, int], int] = {}
+
+    def __call__(self, r: int, g: int, b: int, a: int) -> int:
+        if a == 0:
+            return TRANSPARENT
+        c = (r, g, b)
+        found = (self.lowest if a == OPAQUE else self.highest).get(c)
+        if found is not None:
+            return found
+        near = self.nearest.get(c)
+        if near is None:
+            near = self.nearest[c] = min(range(len(self.palette)), key=lambda i: (
+                (self.palette[i][0] - r) ** 2 + (self.palette[i][1] - g) ** 2 + (self.palette[i][2] - b) ** 2, i))
+        return near

@@ -1,18 +1,32 @@
-# libvpx's VP9 decoder as a library of its own (ADR 0015): the sources of the pinned libvpx release fetched by
-# `tools/toolchain/fetch.sh vpx`, without threads, VP8, the encoder or high bit depth (C11, libvpx 1.17 uses
-# static_assert), with the few headers configure generates kept in generated/ (regenerate.sh): on arm64 (macOS,
-# iOS, Android, Linux) its NEON intrinsics (generated/arm64/, NEON is part of every AArch64 CPU; no dotprod, i8mm or SVE,
-# which would need a runtime check); on x86-64 (Windows, Linux, an Intel Mac) with NASM 2.14 or later on the PATH its
-# SSE2..AVX2 chosen at run time by the CPU's cpuid (generated/x86_64/: intrinsics and libvpx's .asm, which part of the
-# functions the headers name are written in only); elsewhere (the web's wasm), and on x86-64 without NASM, its C
-# (generated/generic/, the generic-gnu target). Included (include()d, not a subdirectory) by the top CMakeLists.txt only with
-# -DKP_CINEMATICS=ON. Built without the project's warnings, like kp_stb.
+# libvpx's VP8 and VP9 decoders as a library of their own (ADR 0015, ADR 0018) and nestegg, the WebM demuxer, as
+# another: the sources of the pinned libvpx release and nestegg commit fetched by `tools/toolchain/fetch.sh vpx`. libvpx
+# without threads, the encoders or high bit depth (C11, libvpx 1.17 uses static_assert), with the few headers configure
+# generates kept in generated/ (regenerate.sh): on arm64 (macOS, iOS, Android, Linux) its NEON intrinsics
+# (generated/arm64/, NEON is part of every AArch64 CPU; no dotprod, i8mm or SVE, which would need a runtime check); on
+# x86-64 (Windows, Linux, an Intel Mac) with NASM 2.14 or later on the PATH its MMX..AVX2 chosen at run time by the
+# CPU's cpuid (generated/x86_64/: intrinsics and libvpx's .asm, which part of the functions the headers name are written
+# in only); elsewhere (the web's wasm), and on x86-64 without NASM, its C (generated/generic/, the generic-gnu target).
+# VP9 plays the cinematics' and Remastered's VP9 WebM, VP8 Remastered's portraits and glue animations (kp_webm.c).
+# Included (include()d, not a subdirectory) by the top CMakeLists.txt. Built without the project's warnings, like
+# kp_stb.
 set(KP_VPX_DIR ${CMAKE_CURRENT_SOURCE_DIR}/tools/toolchain/vpx/libvpx-1.17.0)
-if(NOT EXISTS ${KP_VPX_DIR}/vpx/vpx_decoder.h)
-	message(FATAL_ERROR "KP_CINEMATICS needs the libvpx source: run tools/toolchain/fetch.sh vpx")
-endif()
+set(KP_NESTEGG_DIR ${CMAKE_CURRENT_SOURCE_DIR}/tools/toolchain/vpx/nestegg-767aab25013acefbdcc6d68a2a7a2c9081303e3f)
+foreach(probe ${KP_VPX_DIR}/vpx/vpx_decoder.h ${KP_NESTEGG_DIR}/src/nestegg.c)
+	if(NOT EXISTS ${probe})
+		message(FATAL_ERROR "the video decoders need their sources: run tools/toolchain/fetch.sh vpx")
+	endif()
+endforeach()
 
 set(KP_VPX_SOURCES
+	vp8/common/alloccommon.c vp8/common/blockd.c vp8/common/dequantize.c vp8/common/entropy.c vp8/common/entropymode.c
+	vp8/common/entropymv.c vp8/common/extend.c vp8/common/filter.c vp8/common/findnearmv.c
+	vp8/common/generic/systemdependent.c vp8/common/idct_blk.c vp8/common/idctllm.c vp8/common/loopfilter_filters.c
+	vp8/common/mbpitch.c vp8/common/modecont.c vp8/common/quant_common.c vp8/common/reconinter.c vp8/common/reconintra.c
+	vp8/common/reconintra4x4.c vp8/common/rtcd.c vp8/common/setupintrarecon.c vp8/common/swapyv12buffer.c
+	vp8/common/treecoder.c vp8/common/vp8_loopfilter.c
+	vp8/decoder/dboolhuff.c vp8/decoder/decodeframe.c vp8/decoder/decodemv.c vp8/decoder/detokenize.c
+	vp8/decoder/onyxd_if.c
+	vp8/vp8_dx_iface.c
 	vp9/common/vp9_alloccommon.c vp9/common/vp9_blockd.c vp9/common/vp9_common_data.c vp9/common/vp9_entropy.c
 	vp9/common/vp9_entropymode.c vp9/common/vp9_entropymv.c vp9/common/vp9_filter.c vp9/common/vp9_frame_buffers.c
 	vp9/common/vp9_idct.c vp9/common/vp9_loopfilter.c vp9/common/vp9_mvref_common.c vp9/common/vp9_pred_common.c
@@ -69,6 +83,13 @@ endif()
 if(KP_VPX_AARCH64)
 	set(KP_VPX_ARCH arm64)
 	list(APPEND KP_VPX_SOURCES
+		vp8/common/arm/loopfilter_arm.c vp8/common/arm/neon/bilinearpredict_neon.c vp8/common/arm/neon/copymem_neon.c
+		vp8/common/arm/neon/dc_only_idct_add_neon.c vp8/common/arm/neon/dequant_idct_neon.c
+		vp8/common/arm/neon/dequantizeb_neon.c vp8/common/arm/neon/idct_blk_neon.c vp8/common/arm/neon/iwalsh_neon.c
+		vp8/common/arm/neon/loopfiltersimplehorizontaledge_neon.c
+		vp8/common/arm/neon/loopfiltersimpleverticaledge_neon.c vp8/common/arm/neon/mbloopfilter_neon.c
+		vp8/common/arm/neon/shortidct4x4llm_neon.c vp8/common/arm/neon/sixtappredict_neon.c
+		vp8/common/arm/neon/vp8_loopfilter_neon.c
 		vp9/common/arm/neon/vp9_iht16x16_add_neon.c vp9/common/arm/neon/vp9_iht4x4_add_neon.c
 		vp9/common/arm/neon/vp9_iht8x8_add_neon.c
 		vpx_dsp/arm/idct16x16_1_add_neon.c vpx_dsp/arm/idct16x16_add_neon.c vpx_dsp/arm/idct32x32_135_add_neon.c
@@ -83,19 +104,26 @@ elseif(KP_VPX_NASM)
 	set(KP_VPX_ARCH x86_64)
 	# the intrinsics, each file built for its own extension (libvpx's build/make/Makefile), called only when cpuid
 	# reports it (vpx_ports/x86.h)
-	set(KP_VPX_SSE2 vp9/common/x86/vp9_idct_intrin_sse2.c vpx_dsp/x86/inv_txfm_sse2.c vpx_dsp/x86/loopfilter_sse2.c
+	set(KP_VPX_PLAIN vp8/common/x86/loopfilter_x86.c vp8/common/x86/vp8_asm_stubs.c)
+	set(KP_VPX_MMX vp8/common/x86/idct_blk_mmx.c)
+	set(KP_VPX_SSE2 vp8/common/x86/bilinear_filter_sse2.c vp8/common/x86/idct_blk_sse2.c
+		vp9/common/x86/vp9_idct_intrin_sse2.c vpx_dsp/x86/inv_txfm_sse2.c vpx_dsp/x86/loopfilter_sse2.c
 		vpx_dsp/x86/vpx_subpixel_4t_intrin_sse2.c)
 	set(KP_VPX_SSSE3 vpx_dsp/x86/inv_txfm_ssse3.c vpx_dsp/x86/vpx_subpixel_8t_intrin_ssse3.c)
 	set(KP_VPX_AVX2 vpx_dsp/x86/inv_txfm_avx2.c vpx_dsp/x86/loopfilter_avx2.c vpx_dsp/x86/vpx_subpixel_8t_intrin_avx2.c)
 	set(KP_VPX_ASM
+		vp8/common/x86/dequantize_mmx.asm vp8/common/x86/idctllm_mmx.asm vp8/common/x86/idctllm_sse2.asm
+		vp8/common/x86/iwalsh_sse2.asm vp8/common/x86/loopfilter_block_sse2_x86_64.asm vp8/common/x86/loopfilter_sse2.asm
+		vp8/common/x86/recon_mmx.asm vp8/common/x86/recon_sse2.asm vp8/common/x86/subpixel_mmx.asm
+		vp8/common/x86/subpixel_sse2.asm vp8/common/x86/subpixel_ssse3.asm
 		vpx_dsp/x86/intrapred_sse2.asm vpx_dsp/x86/intrapred_ssse3.asm vpx_dsp/x86/inv_wht_sse2.asm
 		vpx_dsp/x86/vpx_convolve_copy_sse2.asm vpx_dsp/x86/vpx_subpixel_8t_sse2.asm vpx_dsp/x86/vpx_subpixel_8t_ssse3.asm
 		vpx_dsp/x86/vpx_subpixel_bilinear_sse2.asm vpx_dsp/x86/vpx_subpixel_bilinear_ssse3.asm vpx_ports/emms_mmx.asm)
-	list(APPEND KP_VPX_SOURCES ${KP_VPX_SSE2} ${KP_VPX_SSSE3} ${KP_VPX_AVX2} ${KP_VPX_ASM})
+	list(APPEND KP_VPX_SOURCES ${KP_VPX_PLAIN} ${KP_VPX_MMX} ${KP_VPX_SSE2} ${KP_VPX_SSSE3} ${KP_VPX_AVX2} ${KP_VPX_ASM})
 	if(MSVC)
-		set(KP_VPX_FLAGS AVX2 /arch:AVX2) # SSE2 and SSSE3 need no flag of MSVC's
+		set(KP_VPX_FLAGS AVX2 /arch:AVX2) # MMX, SSE2 and SSSE3 need no flag of MSVC's
 	else()
-		set(KP_VPX_FLAGS SSE2 -msse2 SSSE3 -mssse3 AVX2 -mavx2)
+		set(KP_VPX_FLAGS MMX -mmmx SSE2 -msse2 SSSE3 -mssse3 AVX2 -mavx2)
 	endif()
 	while(KP_VPX_FLAGS)
 		list(POP_FRONT KP_VPX_FLAGS group flag)
@@ -117,4 +145,12 @@ target_include_directories(kp_vpx PUBLIC ${KP_VPX_DIR})
 set_target_properties(kp_vpx PROPERTIES C_STANDARD 11 C_EXTENSIONS ON POSITION_INDEPENDENT_CODE ON)
 if(NOT MSVC)
 	target_compile_options(kp_vpx PRIVATE $<$<COMPILE_LANGUAGE:C>:-w>)
+endif()
+
+# nestegg (ISC): the WebM demuxer kp_webm.c reads Remastered's and the cinematics' WebM with
+add_library(kp_nestegg STATIC ${KP_NESTEGG_DIR}/src/nestegg.c)
+target_include_directories(kp_nestegg PUBLIC ${KP_NESTEGG_DIR}/include)
+set_target_properties(kp_nestegg PROPERTIES POSITION_INDEPENDENT_CODE ON)
+if(NOT MSVC)
+	target_compile_options(kp_nestegg PRIVATE -w)
 endif()

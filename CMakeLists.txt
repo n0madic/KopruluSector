@@ -15,7 +15,6 @@ option(KP_CXX_CHECK "Check the C sources as C++11 (they stay in the common subse
 option(KP_APP "Build the product: kp_app over SDL 3.4 and SDL3_mixer, kp_gfx (plan phase S, stage S5)" OFF)
 option(KP_TOOLS "Build the tools and the C suites" ON)
 option(KP_ASTC "Build kp_hd_phone's ASTC modes over the Arm ASTC encoder (tools/toolchain/fetch.sh astc; ADR 0013)" OFF)
-option(KP_CINEMATICS "Build the cinematics player over libvpx's VP9 decoder (tools/toolchain/fetch.sh vpx; ADR 0015)" OFF)
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 	set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
@@ -86,9 +85,9 @@ target_include_directories(kp_stb PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/third_party
 if(NOT MSVC)
 	target_compile_options(kp_stb PRIVATE -w)
 endif()
-if(KP_CINEMATICS)
-	include(${CMAKE_CURRENT_SOURCE_DIR}/third_party/vpx/kp_vpx.cmake)
-endif()
+# libvpx's VP8 and VP9 decoders and nestegg (tools/toolchain/fetch.sh vpx): the cinematics (ADR 0015), Remastered's WebM
+# (ADR 0018)
+include(${CMAKE_CURRENT_SOURCE_DIR}/third_party/vpx/kp_vpx.cmake)
 # The readers of the original data (ADR 0018): StormLib, CascLib, zlib, bzip2 (tools/toolchain/fetch.sh data), and
 # kp_casc_c, CascLib for C (native/kp_app/kp_casc.cpp)
 include(${CMAKE_CURRENT_SOURCE_DIR}/third_party/data/kp_data.cmake)
@@ -113,20 +112,11 @@ target_link_libraries(kp_gfx_passes PUBLIC kp_present)
 # --- kp_app_core: the product's headless part (the session, the saves, the profile, the interface's host; S2) ---
 set(KP_APP_DIR ${CMAKE_CURRENT_SOURCE_DIR}/native/kp_app)
 file(GLOB KP_APP_CORE_SOURCES CONFIGURE_DEPENDS ${KP_APP_DIR}/*.c)
-# The cinematics' player (kp_cine.c) needs libvpx: without KP_CINEMATICS it is not built at all
-if(KP_CINEMATICS)
-	set(KP_CXX_VPX_INCLUDE -DKP_CINEMATICS=1 -I${KP_VPX_DIR})
-else()
-	list(FILTER KP_APP_CORE_SOURCES EXCLUDE REGEX "/kp_cine\\.c$")
-endif()
 add_library(kp_app_core STATIC ${KP_APP_CORE_SOURCES})
 kp_target(kp_app_core CXX)
 target_include_directories(kp_app_core PUBLIC ${KP_APP_DIR})
-target_link_libraries(kp_app_core PUBLIC kp_present kp_storm kp_casc_c) # kp_res (ADR 0018)
-if(KP_CINEMATICS)
-	target_link_libraries(kp_app_core PUBLIC kp_vpx)
-	target_compile_definitions(kp_app_core PUBLIC KP_CINEMATICS=1)
-endif()
+# kp_res (ADR 0018); the video decoders (kp_cine.c, kp_webm.c)
+target_link_libraries(kp_app_core PUBLIC kp_present kp_storm kp_casc_c kp_vpx kp_nestegg kp_zlib) # zlib: kp_res_scr's SBIN
 
 if(KP_TOOLS)
 # --- the oracle library: replays, goldens, the native games of the oracles, the campaign chains, the interface's
@@ -175,13 +165,10 @@ set_target_properties(kp_data_probe PROPERTIES LINKER_LANGUAGE CXX)
 
 # --- kp_test: the C suites (tests/c) ---
 file(GLOB KP_TEST_SOURCES CONFIGURE_DEPENDS ${KP_TESTS_DIR}/*.c)
-if(NOT KP_CINEMATICS)
-	list(FILTER KP_TEST_SOURCES EXCLUDE REGEX "/test_cine\\.c$")
-endif()
 add_executable(kp_test ${KP_TEST_SOURCES})
 kp_target(kp_test CXX)
 target_include_directories(kp_test PRIVATE ${KP_TESTS_DIR})
-target_link_libraries(kp_test PRIVATE kp_oracle_lib kp_app_core kp_gfx_passes kp_zlib) # zlib: test_original's PNGs
+target_link_libraries(kp_test PRIVATE kp_oracle_lib kp_app_core kp_gfx_passes) # kp_app_core's zlib: test_original's PNGs too
 
 endif()
 
@@ -199,7 +186,7 @@ if(KP_CXX_CHECK AND KP_TOOLS)
 	add_custom_command(OUTPUT ${KP_CXX_STAMP}
 		COMMAND ${CMAKE_CXX_COMPILER} -std=c++11 -fsyntax-only -x c++ ${KP_WARNINGS} -DKP_CPP_CHECK ${KP_CXX_HOST_DEFS}
 			-I${KP_CORE_DIR}/src/core -I${KP_CORE_DIR}/src/defs -I${KP_PRESENT_DIR} -I${KP_APP_DIR} -I${KP_TOOLS_DIR} -I${KP_TESTS_DIR} -I${KP_GFX_DIR}
-			-I${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb -isystem ${KP_STORM_DIR}/src ${KP_CXX_VPX_INCLUDE} ${KP_CXX_ASTC_INCLUDE} ${KP_CXX_SOURCES}
+			-I${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb -isystem ${KP_STORM_DIR}/src -isystem ${KP_VPX_DIR} -isystem ${KP_NESTEGG_DIR}/include ${KP_CXX_ASTC_INCLUDE} ${KP_CXX_SOURCES}
 		COMMAND ${CMAKE_COMMAND} -E touch ${KP_CXX_STAMP}
 		DEPENDS ${KP_CXX_SOURCES} ${KP_CXX_HEADERS}
 		COMMENT "Checking the C sources as C++11"

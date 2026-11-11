@@ -1,5 +1,5 @@
 /*
- * The cinematics (ADR 0015; KP_CINEMATICS): generated/video/cinematics-<hd2|sd>.kpd chosen by --cinematics, its index
+ * The cinematics (ADR 0015): generated/video/cinematics-<hd2|sd>.kpd chosen by --cinematics, its index
  * read at start, a movie played from the file as the clock of its Ogg Vorbis (the sound's position) asks for the
  * pictures that kp_cine.c decodes, their planes converted and drawn full screen by kp_gfx_video with black bars to
  * keep the shape of the frames. The queue, the movies' order and the skip rule are kp_cine.c's run (KpCineRun); this is
@@ -15,8 +15,6 @@
  * chunk as a movie plays and its sound whole before the movie begins; a movie whose bytes have not come waits (its clock
  * and its sound held, KP_CINE_WAIT).
  *
- * Without KP_CINEMATICS the pack is never there: has and start answer 0 and nothing else is called.
- *
  * Remastered's subtitles (the pack's SUBS, from locales/<locale>/Assets/Smk/<name>.srt) are drawn over the bottom of
  * the picture in ui.kpd's text font (kp_caption_render) when the flow shows them (S toggles them, the profile keeps
  * the choice); laid out again when the subtitle, the movie or the picture's size changes.
@@ -27,65 +25,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#ifndef KP_CINEMATICS
-
-int kp_app_cine_open(KpApp *a)
-{
-	(void)a;
-	return 0;
-}
-
-int kp_app_cine_has(const KpApp *a, int id)
-{
-	(void)a;
-	(void)id;
-	return 0;
-}
-
-int kp_app_cine_start(KpApp *a, const int *ids, int n, int preludes)
-{
-	(void)a;
-	(void)ids;
-	(void)n;
-	(void)preludes;
-	return 0;
-}
-
-int kp_app_cine_active(const KpApp *a)
-{
-	(void)a;
-	return 0;
-}
-
-int kp_app_cine_check(KpApp *a, const char *dir)
-{
-	(void)a;
-	(void)dir;
-	kp_dev_line("cine check: built without KP_CINEMATICS");
-	return -1;
-}
-
-void kp_app_cine_frame(KpApp *a, int visible)
-{
-	(void)a;
-	(void)visible;
-}
-
-void kp_app_cine_skip(KpApp *a, uint64_t when_ns)
-{
-	(void)a;
-	(void)when_ns;
-}
-
-void kp_app_cine_stop(KpApp *a) { (void)a; }
-
-void kp_app_cine_lost(KpApp *a) { (void)a; }
-
-void kp_app_cine_free(KpApp *a) { (void)a; }
-
-void kp_app_cine_language(KpApp *a) { (void)a; }
-
-#else
 
 #define PACK_FORMAT "generated/video/cinematics-%s.kpd"
 #define CAPTION_LINE 18.0      /* a subtitle's line is the picture's height over this */
@@ -799,5 +738,3 @@ void kp_app_cine_free(KpApp *a)
 	a->cine.head = NULL;
 #endif
 }
-
-#endif
