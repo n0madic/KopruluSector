@@ -376,14 +376,12 @@ void kp_audio_commands(KpApp *a, const KpUiSoundCommand *commands, size_t n)
 			io = track_stream(a, c->sound, &loops);
 			au->track = c->sound;
 			au->has_track = 1;
-			au->music_volume = c->volume;
 			/* the stream is the track's from here (closed by it, also when it is refused) */
 			if (io && MIX_SetTrackIOStream(au->music, io, true)) start(au->music, kp_audio_gain(c->volume), 0, loops);
 			else if (io) SDL_Log("audio: music track %d: %s", (int)c->sound, SDL_GetError());
 			break;
 		}
 		case KP_UI_SOUND_MUSIC_VOLUME:
-			au->music_volume = c->volume;
 			MIX_SetTrackGain(au->music, kp_audio_gain(c->volume));
 			break;
 		case KP_UI_SOUND_MUSIC_STOP:
@@ -415,18 +413,6 @@ void kp_audio_commands(KpApp *a, const KpUiSoundCommand *commands, size_t n)
 			break;
 		}
 	}
-}
-
-void kp_audio_music_again(KpApp *a)
-{
-	KpAudio *au = &a->audio;
-	KpUiSoundCommand c;
-	if (!au->mixer || !au->has_track || MIX_TrackPlaying(au->music)) return;
-	memset(&c, 0, sizeof c);
-	c.type = KP_UI_SOUND_MUSIC;
-	c.sound = (uint16_t)au->track;
-	c.volume = au->music_volume;
-	kp_audio_commands(a, &c, 1);
 }
 
 void kp_audio_stop_all(KpAudio *au)

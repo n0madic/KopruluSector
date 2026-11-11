@@ -331,6 +331,7 @@ typedef struct {
 	uint16_t track;                  /* 0x672580 */
 	uint8_t open, playing, quiet;    /* 0x67257c (a stream), 0x67258c, 0x67258d */
 	uint8_t resumed;                 /* 0x6aaa5c: the volume code's music is on (ApplyVolumeOptions 0x49ea60) */
+	uint8_t absent;                  /* not the original's: the track asked for has no file yet (kp_ui_music_again) */
 	int32_t volume, fading;          /* 0x672584 (the target), 0x672588 (the fade's) */
 	uint8_t fade_active;             /* Win32 timer 3 */
 	uint32_t fade_due, poll_due, start;
@@ -1294,6 +1295,9 @@ void kp_ui_music_tables(KpUi *ui, const uint8_t *musi, size_t size);
 void kp_ui_music_lengths(KpUi *ui, const uint8_t *musl, size_t size);
 void kp_ui_music_play(KpUi *ui, uint16_t track);
 void kp_ui_music_stop(KpUi *ui);
+/* Not the original's (its CD has the tracks from the start or never): the tracks' files came after the interface began
+ * (the web's music group; their lengths given again by kp_ui_music_lengths), so the track asked for meanwhile starts. */
+void kp_ui_music_again(KpUi *ui);
 /* The music option's attenuation (hundredths of a decibel, -10000 silent): the volume of a host's own soundtrack (the
  * cinematics'). */
 int32_t kp_ui_music_level(const KpUi *ui);

@@ -43,7 +43,7 @@ typedef struct {
 	int stream_next;
 	MIX_Audio *sfx[KP_APP_SFX];       /* decoded on first play */
 	MIX_Audio *wavs[KP_APP_WAVS];     /* the mission's trigger WAVs by WAVS index */
-	int track, music_volume, has_track;
+	int track, has_track;             /* the music's last track asked for (the scripts' music.track, music.playing) */
 	int64_t started, streamed;
 	/* the chosen speech's voices (generated/speech/<loc>/units.kpd, MSND by sfx id), looked up before the original
 	 * data's files; read on first use, dropped with the decoded sfx when the speech changes (ADR 0016, stage L5) */
@@ -370,8 +370,6 @@ void kp_audio_stop_all(KpAudio *au);
 float kp_audio_gain(int32_t volume);
 /* A world's end: its decoded sounds (the trigger WAVs and the sfx) are released. */
 void kp_audio_mission(KpApp *a);
-/* The music track asked for played again when none plays (its group came: the web's music fetched after it began). */
-void kp_audio_music_again(KpApp *a);
 
 #ifndef __EMSCRIPTEN__
 /* size bytes at start of a file (its full path) as a stream of their own, offset 0 at start (NULL when it cannot be

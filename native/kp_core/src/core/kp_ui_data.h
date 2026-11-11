@@ -107,6 +107,9 @@ int kp_ui_bin_files(const uint8_t *bin, size_t size, int (*add)(void *ctx, const
 int kp_ui_data_from_files(KpUiData *d, const KpFiles *files, const KpDat *dat, const KpUiFile *vector_fonts,
 	int vector_font_count, KpError *err);
 void kp_ui_data_free(KpUiData *d);
+/* The music's lengths (MUSL) read again from files (the old bytes stay d's until kp_ui_data_free): for tracks whose
+ * files came after d was built (the web's music group, fetched after the start; ADR 0018). 0, or -1 with err. */
+int kp_ui_data_music_lengths(KpUiData *d, const KpFiles *files, KpError *err);
 /* A table of the executable's the interface reads (STLY, ESTB, VOLT, MUSI, ACCL, BTNS): the profile's compiled table;
  * NULL without it. */
 const uint8_t *kp_ui_data_table(const KpUiData *d, const char *fourcc, uint32_t *size);

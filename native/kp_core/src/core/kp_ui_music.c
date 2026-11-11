@@ -89,6 +89,7 @@ static void close_stream(KpUi *ui)
 	if (m->open) command(ui, KP_UI_SOUND_MUSIC_STOP, m->track, SILENT);
 	m->open = 0;
 	m->playing = 0;
+	m->absent = 0;
 }
 
 /* StartMusicTrack 0x46f1b0. */
@@ -98,7 +99,11 @@ static void start_track(KpUi *ui, uint16_t track)
 	if (!m->open || track != m->track) {
 		m->track = track;
 		close_stream(ui);
-		if (track == 0 || track >= m->track_count || m->length_ms[track] == 0) return;
+		if (track == 0 || track >= m->track_count) return;
+		if (m->length_ms[track] == 0) { /* its file is not there */
+			m->absent = 1;
+			return;
+		}
 		m->open = 1;
 	}
 	m->quiet = 0;
@@ -135,8 +140,16 @@ int32_t kp_ui_music_level(const KpUi *ui) { return option_volume(ui); }
 
 void kp_ui_music_stop(KpUi *ui)
 {
-	/* StopMusicFadeOut 0x46f040 (its blocking fade is the mixer's) */
-	if (mu(ui)->open) close_stream(ui);
+	/* StopMusicFadeOut 0x46f040 (its blocking fade is the mixer's); a track asked for without its file is forgotten */
+	KpUiMusic *m = mu(ui);
+	if (m->open) close_stream(ui);
+	m->absent = 0;
+}
+
+void kp_ui_music_again(KpUi *ui)
+{
+	KpUiMusic *m = mu(ui);
+	if (m->absent) kp_ui_music_play(ui, m->track);
 }
 
 void kp_ui_music_close(KpUi *ui)

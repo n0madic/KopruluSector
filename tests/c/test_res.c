@@ -15,6 +15,7 @@
 #include "kp_mpq.h"
 #include "kp_res.h"
 #include "kp_sha256.h"
+#include "kp_ui_data.h"
 
 static const char *hex_of(KpT *T, const void *data, size_t size)
 {
@@ -645,6 +646,67 @@ static void res_repack_group_wanted_then_added(KpT *T)
 	kp_t_eq_str(T, s, "a scenario", "the group's file");
 }
 
+/* The music's lengths (MUSL) read before its group is there are none; read again once it is added, the track's WAV
+ * header from the group's listing (the web, whose music comes after the data is built: kp_app_fetch.c music_came). */
+static void res_music_lengths_come_with_their_group(KpT *T)
+{
+	/* MUSI: two tracks, none and music\t.wav (u8 length, the path, kind, fade-in, next) */
+	static const uint8_t MUSI[] = { 2, 0, 0, 0, 0, 11, 'm', 'u', 's', 'i', 'c', '\\', 't', '.', 'w', 'a', 'v', 1, 0, 0 };
+	static const char *const CORE[] = { "a\\one.dat", ONE, NULL };
+	static const char OGG[] = "OggS, the track";
+	static uint8_t wav[44 + 2 * 1000];
+	static KpDefsTable table;
+	char text[1024], hex_head[2 * 44 + 1], path[512], err[512];
+	const char *core[5], *group[5], *dirs[1];
+	size_t wav_size = wav_bytes(wav, 1000), k;
+	Profile p;
+	Dir *pack;
+	KpRes *r;
+	KpFiles files;
+	KpUiData d;
+	KpError e;
+	profile_init(T, &p);
+	memcpy(table.fourcc, "MUSI", 5);
+	table.data = MUSI;
+	table.size = sizeof MUSI;
+	p.profile.tables = &table;
+	p.profile.table_count = 1;
+	p.files[3].name = "music/t.wav"; /* sorted after a/two.dat */
+	p.files[3].size = (uint32_t)wav_size;
+	p.files[3].sha256 = hex_of(T, wav, wav_size);
+	p.profile.file_count = 4;
+	pack = dir_new(T);
+	core[0] = KP_RES_LISTING;
+	core[1] = listing(T, "test-1", "group koprulu-music.mpq music\\\n", CORE);
+	core[2] = CORE[0];
+	core[3] = CORE[1];
+	core[4] = NULL;
+	dir_mpq(T, pack, "koprulu-core.mpq", core);
+	dirs[0] = pack->dir;
+	r = open_res(T, &p, dirs, 1);
+	kp_res_files(r, &files);
+	memset(&d, 0, sizeof d);
+	e.msg[0] = 0;
+	kp_t_eq(T, kp_ui_data_music_lengths(&d, &files, &e), 0, "%s", e.msg);
+	kp_t_eq(T, (int64_t)d.music_lengths.size, 1 + 8 * 2, "MUSL: a count, 8 bytes a track");
+	kp_t_eq(T, kp_le_u32(d.music_lengths.data + 1 + 8), 0, "no group: no length");
+	for (k = 0; k < 44; k++) snprintf(hex_head + 2 * k, 3, "%02x", wav[k]);
+	snprintf(text, sizeof text, "%s\nprofile test-1\n%s %u exact ogg %s %u %s music\\t.wav\n", KP_RES_LISTING_MAGIC,
+		hex_of(T, OGG, strlen(OGG)), (unsigned)strlen(OGG), p.files[3].sha256, (unsigned)wav_size, hex_head);
+	group[0] = KP_RES_LISTING;
+	group[1] = kp_t_strdup(T, text);
+	group[2] = "music\\t.wav";
+	group[3] = OGG;
+	group[4] = NULL;
+	dir_mpq(T, pack, "koprulu-music.mpq", group);
+	snprintf(path, sizeof path, "%s/koprulu-music.mpq", pack->dir);
+	kp_t_eq(T, kp_res_add_repack(r, path, err, sizeof err), 0, "%s", err);
+	kp_t_eq(T, kp_ui_data_music_lengths(&d, &files, &e), 0, "%s", e.msg);
+	kp_t_eq(T, kp_le_u32(d.music_lengths.data + 1 + 8), 2000, "the group's track: its data length");
+	kp_t_eq(T, kp_le_u32(d.music_lengths.data + 5 + 8), 44100, "its bytes a second");
+	kp_ui_data_free(&d);
+}
+
 static void res_streams_read_pieces(KpT *T)
 {
 	static const char *const LISTED[] = { "a\\two.dat", TWO, NULL };
@@ -1000,6 +1062,7 @@ static const KpTest TESTS[] = {
 	{ "res_repack_groups_join_the_core", res_repack_groups_join_the_core, 0 },
 	{ "res_repack_listing_statuses", res_repack_listing_statuses, 0 },
 	{ "res_repack_group_wanted_then_added", res_repack_group_wanted_then_added, 0 },
+	{ "res_music_lengths_come_with_their_group", res_music_lengths_come_with_their_group, 0 },
 	{ "res_streams_read_pieces", res_streams_read_pieces, 0 },
 	{ "res_repack_read_in_place_from_slices", res_repack_read_in_place_from_slices, 0 },
 	{ "res_repack_slice_refused", res_repack_slice_refused, 0 },

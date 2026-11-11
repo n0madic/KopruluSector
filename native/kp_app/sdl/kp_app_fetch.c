@@ -48,7 +48,7 @@ static void finish(emscripten_fetch_t *fetch)
 		f->size = n;
 		f->state = KP_FETCH_DONE;
 	} else {
-		SDL_Log("fetch: %s %s: HTTP %d", fetch->url, f->range, (int)fetch->status);
+		SDL_Log("fetch: %s%s%s: HTTP %d", fetch->url, f->range[0] ? " " : "", f->range, (int)fetch->status);
 	}
 	emscripten_fetch_close(fetch);
 }
@@ -196,6 +196,21 @@ int kp_app_group(KpApp *a, const char *file, char *err, size_t err_size)
 #endif
 }
 
+/* The music's group came (or its files fall back to the install): the tracks' lengths read again, the data's (a later
+ * interface's) and the interface's, whose track asked for meanwhile starts; before, each had no file and no length. */
+static void music_came(KpApp *a)
+{
+	KpError e;
+	e.msg[0] = 0;
+	if (kp_ui_data_music_lengths(&a->data.ui, &a->data.files, &e) != 0) {
+		SDL_Log("data: the music's lengths: %s", e.msg);
+		return;
+	}
+	if (!a->flow.ui) return;
+	kp_ui_music_lengths(a->flow.ui, a->data.ui.music_lengths.data, a->data.ui.music_lengths.size);
+	kp_ui_music_again(a->flow.ui);
+}
+
 void kp_app_groups_frame(KpApp *a)
 {
 	char err[600];
@@ -209,7 +224,7 @@ void kp_app_groups_frame(KpApp *a)
 	if (strcmp(a->music_group, "-") == 0) return;
 	if ((rc = kp_app_group(a, a->music_group, err, sizeof err)) == 0) return;
 	if (rc < 0) SDL_Log("data: %s (the game plays without music)", err);
-	else kp_audio_music_again(a);
+	else music_came(a);
 	snprintf(a->music_group, sizeof a->music_group, "-");
 }
 

@@ -690,16 +690,43 @@ static int sound_pack(const char *path)
 	return 1;
 }
 
+/* MUSL: per MUSI track (u8 count; u8 length, name, kind, fade, next) its data length and nAvgBytesPerSec, zeros for a
+ * track whose file is not there or is one the parser rejects. */
+int kp_ui_data_music_lengths(KpUiData *d, const KpFiles *f, KpError *err)
+{
+	const KpDefsTable *musi = kp_defs_table(f->profile, "MUSI");
+	uint8_t *musl;
+	int tracks, t;
+	if (!musi || musi->size < 1) return fail(err, "no MUSI table compiled for the profile");
+	tracks = musi->data[0];
+	if (!(musl = (uint8_t *)own(d, calloc(1 + 8 * (size_t)tracks, 1)))) return fail(err, "out of memory");
+	musl[0] = (uint8_t)tracks;
+	for (t = 0; t < tracks; t++) {
+		char path[300];
+		KpWavInfo w;
+		int got, kind;
+		if (kp_ui_music_track(musi->data, musi->size, t, path, sizeof path, &kind) != 0)
+			return fail(err, "the compiled MUSI table is malformed");
+		if (!path[0]) continue;
+		if ((got = kp_files_wav(f, path, &w, err)) == -2) return -1;
+		if (got <= 0) continue;
+		kp_le_put32(musl + 1 + 8 * (size_t)t, w.data_length);
+		kp_le_put32(musl + 5 + 8 * (size_t)t, w.avg_bytes_per_sec);
+	}
+	d->music_lengths.data = musl;
+	d->music_lengths.size = 1 + 8 * (size_t)tracks;
+	return 0;
+}
+
 /* sounds.kpd: SFX (a record per sfxdata.dat sound: "sound\" + its sfxdata.tbl entry), PACK, MUSL (MUSI's tracks). */
 static int sounds(KpUiData *d, const KpFiles *f, const KpDat *dat, KpError *err)
 {
 	const KpDatColumn *file = kp_dat_column(dat, "sfxdata", "sound_file");
-	const KpDefsTable *musi;
-	uint8_t *tbl, *sfx, *pack, *musl;
+	uint8_t *tbl, *sfx, *pack;
 	const char **paths;
 	size_t tbl_size;
 	uint32_t n, k;
-	int tracks, t, rc = -1;
+	int rc = -1;
 	if (!file) return fail(err, "the DAT lacks sfxdata.dat's sound_file");
 	n = file->count;
 	if (n > 0xffff) return fail(err, "sfxdata.dat has more sounds than a u16 counts");
@@ -750,33 +777,7 @@ static int sounds(KpUiData *d, const KpFiles *f, const KpDat *dat, KpError *err)
 	d->sound_packs.size = 2 + (size_t)n;
 	d->sound_paths = paths;
 	d->sound_path_count = n;
-	/* MUSL: per MUSI track (u8 count; u8 length, name, kind, fade, next) its data length and nAvgBytesPerSec */
-	if (!(musi = kp_defs_table(f->profile, "MUSI")) || musi->size < 1) {
-		fail(err, "no MUSI table compiled for the profile");
-		goto done;
-	}
-	tracks = musi->data[0];
-	if (!(musl = (uint8_t *)own(d, calloc(1 + 8 * (size_t)tracks, 1)))) {
-		fail(err, "out of memory");
-		goto done;
-	}
-	musl[0] = (uint8_t)tracks;
-	for (t = 0; t < tracks; t++) {
-		char path[300];
-		KpWavInfo w;
-		int got, kind;
-		if (kp_ui_music_track(musi->data, musi->size, t, path, sizeof path, &kind) != 0) {
-			fail(err, "the compiled MUSI table is malformed");
-			goto done;
-		}
-		if (!path[0]) continue;
-		if ((got = kp_files_wav(f, path, &w, err)) == -2) goto done;
-		if (got <= 0) continue; /* no file, or one the parser rejects: zeros */
-		kp_le_put32(musl + 1 + 8 * (size_t)t, w.data_length);
-		kp_le_put32(musl + 5 + 8 * (size_t)t, w.avg_bytes_per_sec);
-	}
-	d->music_lengths.data = musl;
-	d->music_lengths.size = 1 + 8 * (size_t)tracks;
+	if (kp_ui_data_music_lengths(d, f, err) != 0) goto done;
 	rc = 0;
 done:
 	free(tbl);

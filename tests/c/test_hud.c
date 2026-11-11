@@ -1129,6 +1129,49 @@ static void music_stops_with_its_option_and_the_game(KpT *T)
 	kp_t_eq(T, m[0].type, MUSIC_STOP, "stops the music");
 }
 
+/* A track whose file is not there yet (the web's music group, fetched after the interface began) plays nothing and is
+ * remembered: its lengths given again, kp_ui_music_again starts it; a track stopped meanwhile stays stopped. */
+static void music_whose_file_comes_later_starts_then(KpT *T)
+{
+	Hud *H;
+	KpUi *ui;
+	KpUiSoundCommand m[16];
+	uint32_t lengths[KP_UI_MUSIC_TRACKS];
+	uint16_t track;
+	int n;
+	if (!ready(T, "test_hud.music_whose_file_comes_later_starts_then", TERRAN01)) return;
+	H = with_hud(T, terran01(T), 1280, 720);
+	ui = H->ui;
+	ui->sound.device = 1;
+	n = music(ui, m, 16);
+	kp_t_eq(T, n, 1, "the game's track");
+	track = m[0].sound;
+	kp_ui_end_game(ui);
+	(void)music(ui, m, 16);
+	memcpy(lengths, ui->music.length_ms, sizeof lengths);
+	memset(ui->music.length_ms, 0, sizeof ui->music.length_ms);
+	kp_ui_music_play(ui, track);
+	kp_t_eq(T, music(ui, m, 16), 0, "no file: nothing plays");
+	kp_ui_music_again(ui);
+	kp_t_eq(T, music(ui, m, 16), 0, "still no file");
+	memcpy(ui->music.length_ms, lengths, sizeof lengths);
+	kp_ui_music_again(ui);
+	n = music(ui, m, 16);
+	kp_t_ok(T, n >= 1 && m[0].type == MUSIC && m[0].sound == track, "its file came: the track starts");
+	kp_t_ok(T, ui->music.open && !ui->music.absent, NULL);
+	kp_ui_music_again(ui);
+	kp_t_eq(T, music(ui, m, 16), 0, "once");
+	/* stopped while its file was not there */
+	kp_ui_music_stop(ui);
+	(void)music(ui, m, 16);
+	memset(ui->music.length_ms, 0, sizeof ui->music.length_ms);
+	kp_ui_music_play(ui, track);
+	kp_ui_music_stop(ui);
+	memcpy(ui->music.length_ms, lengths, sizeof lengths);
+	kp_ui_music_again(ui);
+	kp_t_eq(T, music(ui, m, 16), 0, "a track stopped meanwhile stays stopped");
+}
+
 /* The Center View trigger's camera pan (StartCameraPan 0x49be10) to a location by the map's bottom right corner: its
  * target, made for the original's 640 x 400 view, lies past a wider view's scroll limits; the pan reaches the view's
  * own target (the location at the view's centre, within the limits), its arrival releases the trigger's wait, and
@@ -4554,6 +4597,7 @@ static const KpTest TESTS[] = {
 	{ "leaderboard_key_folds_its_rows", leaderboard_key_folds_its_rows, 0 },
 	{ "mission_warp_goes_to_the_ready_room", mission_warp_goes_to_the_ready_room, 0 },
 	{ "music_stops_with_its_option_and_the_game", music_stops_with_its_option_and_the_game, 0 },
+	{ "music_whose_file_comes_later_starts_then", music_whose_file_comes_later_starts_then, 0 },
 	{ "paused_minimap_takes_no_press", paused_minimap_takes_no_press, 0 },
 	{ "pending_releases_reach_the_save", pending_releases_reach_the_save, 0 },
 	{ "portrait_click_centres_its_unit", portrait_click_centres_its_unit, 0 },
