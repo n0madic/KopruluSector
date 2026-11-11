@@ -314,8 +314,11 @@ int kp_app_res_open(KpApp *a, char *err, size_t err_size)
 	memset(&config, 0, sizeof config);
 	config.log = res_log;
 	if (!(a->res = kp_res_open(dirs, a->flags.res_dir_count, &config, err, err_size))) return -1;
-	SDL_Log("data: the original data from the %s%s", kp_res_source_name(kp_res_install(a->res)),
-		kp_res_repacks(a->res) ? " and a repack" : "");
+	if (kp_res_install(a->res) == KP_RES_SOURCE_NONE)
+		SDL_Log("data: the original data from a repack");
+	else
+		SDL_Log("data: the original data from the %s%s", kp_res_source_name(kp_res_install(a->res)),
+			kp_res_repacks(a->res) ? " and a repack" : "");
 	return 0;
 }
 

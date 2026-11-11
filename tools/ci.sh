@@ -43,7 +43,9 @@
 #     imported, the HD interface (hd_glue.kps, hd_game.kps on each race: the glue's screens and the game's screens and
 #     menus with no SD pixel where HD art exists; each language's walk on terran01 too, without the HD art its first
 #     screen); with KOPRULU_ORIGINAL or KOPRULU_SCR the cine check over the install's own movies (stage D7: the 1.17
-#     install's Smacker files, Remastered's SD WebM and their subtitles, its HD2 set too when KOPRULU_CINEMATICS asks);
+#     install's Smacker files, Remastered's SD WebM and their subtitles, its HD2 set too when KOPRULU_CINEMATICS asks)
+#     and the install's repack (stage D8, converter repack into build/repack: the 1.17 install's groups, Remastered's
+#     one koprulu.mpq), the scripts over it writing what they write over the install;
 #   KOPRULU_CINEMATICS=sd|hd2|both, with KOPRULU_APP, builds the product with the packs from generated/video and runs
 #     the cine check (every cinematic decoded to its end, the first pictures also drawn by the GPU); unset or none (the
 #     default here, whatever product.sh's auto would take), the products are built without them (the player and its
@@ -522,6 +524,29 @@ if [ -n "${KOPRULU_APP:-}" ]; then
     diff <(grep -E '^SPIKE script play_tail\.kps:[0-9]+: sound:' build/script_play_4.log) \
       <(grep -E '^SPIKE script play_tail\.kps:[0-9]+: sound:' build/script_play_4_original.log)
     grep -qE '^SPIKE script play_tail\.kps:[0-9]+: sound: .*sounds\.streamed [1-9]' build/script_play_4_original.log
+    # the repack (stage D8): the install's files in koprulu-*.mpq groups, the WAVs as Ogg Vorbis where that is smaller;
+    # the same runs over it with no install beside it write the same files and play the same sounds
+    step "product scripts over the 1.17 install's repack (its groups): the install's files, frames and sounds"
+    logged build/repack_original.log 1 "$PYTHON" -m converter repack --data "$KOPRULU_ORIGINAL" --out build/repack/original
+    [ -f build/repack/original/koprulu-core.mpq ] && [ -f build/repack/original/koprulu-music.mpq ]
+    SCRIPT_RUN=determinism_repack app_script determinism 0 "$APP" --data build/repack/original
+    grep -qF 'data: the original data from a repack' build/script_determinism_repack.err
+    diff -r build/script/determinism build/script/determinism_repack
+    SCRIPT_RUN=play_4_repack app_script play_4 0 "$APP" --data build/repack/original
+    diff -r build/script/play_4 build/script/play_4_repack
+    diff <(grep -E '^SPIKE script play_tail\.kps:[0-9]+: sound:' build/script_play_4.log) \
+      <(grep -E '^SPIKE script play_tail\.kps:[0-9]+: sound:' build/script_play_4_repack.log)
+    grep -qF 'res: repack build/repack/original/koprulu-music.mpq' build/script_play_4_repack.err
+  fi
+  if [ -n "${KOPRULU_SCR:-}" ]; then
+    # Remastered's repack in one koprulu.mpq (the desktops'): its copies and rebuilds with their statuses; a run over
+    # it writes what the same run over the install writes
+    step "product script over Remastered and its repack (one koprulu.mpq): the same files"
+    logged build/repack_scr.log 1 "$PYTHON" -m converter repack --scr "$KOPRULU_SCR" --single --out build/repack/scr
+    SCRIPT_RUN=determinism_scr app_script determinism 0 "$APP" --data "$KOPRULU_SCR"
+    SCRIPT_RUN=determinism_scr_repack app_script determinism 0 "$APP" --data build/repack/scr
+    grep -qF 'data: the original data from a repack' build/script_determinism_scr_repack.err
+    diff -r build/script/determinism_scr build/script/determinism_scr_repack
   fi
   # each converted language from the source tree's generated/ (the bundle holds none until stage L4): the menu and
   # terran01's screens (with the HD art hd_game.kps's walk, without it the game's first screen), none of them reaching

@@ -2,11 +2,13 @@
  * The original data read at run time (ADR 0018, stage D1): files by their MPQ path ("arr\\units.dat", any case, '\\'
  * or '/') from the sources the player names, each checked against the profile's input manifest (kp_defs.h):
  *
- *   - a repack (koprulu.mpq, or koprulu-core.mpq and the groups its listing names): the converter's archive of the
- *     files the game reads, in their original formats (Remastered's rebuilt 1.17 files among them, a sound as Ogg
- *     Vorbis where that is smaller); its "(koprulu)" file names the profile and each file's size and SHA-256. It is
- *     read before the install; a file that differs from its listing, or a repack of another profile, falls back to
- *     the install;
+ *   - a repack (koprulu.mpq, or koprulu-core.mpq and the groups its listing names; converter/repack.py): the
+ *     converter's archives of the files the game reads, in their original formats (Remastered's rebuilt 1.17 files
+ *     among them, a WAV as Ogg Vorbis where that is smaller); its "(koprulu)" file names the profile and each file's
+ *     size, SHA-256 and status (the source's: exact, derived, differs, ...; an Ogg's WAV's digest, size and header).
+ *     It is read before the install; an exact or derived file is the manifest's (its listed digest checked against
+ *     the manifest's), a file that differs from its listing, or a repack of another profile, falls back to the
+ *     install;
  *   - an install: 1.17 (StarCraft.exe and the profile's archives, the first copy of a name in the profile's order;
  *     a copy that differs from the manifest is refused) or StarCraft: Remastered (.build.info, CASC: the converter's
  *     ScrSource rules, converter/casc/source.py: its prefixes, the moved files, the tilesets' 1.17 prefix, .vx4 from
@@ -75,6 +77,12 @@ KpRes *kp_res_open(const char *const *dirs, int count, const KpResConfig *config
 void kp_res_close(KpRes *r);
 /* A repack's archive added (the web's groups, fetched before a mission): 0, or -1 with the reason. */
 int kp_res_add_repack(KpRes *r, const char *path, char *err, size_t err_size);
+/* The group of the repack (a file the core's listing names, beside the core) whose prefix a name has, when it is not
+ * open: 1 and its file name in out, else 0 (the name is in no group, or its group is open). The web fetches it and
+ * adds it (kp_res_add_repack) before a mission starts. */
+int kp_res_group_wanted(const KpRes *r, const char *name, char *out, size_t size);
+/* The folder of the repack's core (its groups lie beside it), "" without a repack. */
+const char *kp_res_repack_dir(const KpRes *r);
 KpResSourceKind kp_res_install(const KpRes *r);
 int kp_res_repacks(const KpRes *r);
 /* The profile the sources are read by. */
@@ -93,8 +101,8 @@ KpResStream *kp_res_stream_open(KpRes *r, const char *name, uint64_t *size, char
 int kp_res_stream_read(KpResStream *s, uint64_t offset, void *out, size_t size);
 void kp_res_stream_close(KpResStream *s);
 /* A file's first `want` bytes (fewer when it is shorter) and its size, read on the calling thread through the KpRes's
- * own handles (the sounds' and the music's headers: the size checked as a stream's, not the digest); NULL as
- * kp_res_read. */
+ * own handles (the sounds' and the music's headers: the size checked as a stream's, not the digest); a repack's Ogg
+ * of a WAV answers the WAV's header and size from its listing; NULL as kp_res_read. */
 uint8_t *kp_res_head(KpRes *r, const char *name, size_t want, size_t *got, uint64_t *total, char *err, size_t err_size);
 /* The reader the core builds its structures through (kp_files.h): kp_res_read and kp_res_head over r, its profile. */
 void kp_res_files(KpRes *r, KpFiles *f);
@@ -123,7 +131,7 @@ uint8_t *kp_res_casc_rebuild(const char *key, const char *casc_name, const uint8
 
 /* The repack's listing file and its first line */
 #define KP_RES_LISTING "(koprulu)"
-#define KP_RES_LISTING_MAGIC "koprulu repack 1"
+#define KP_RES_LISTING_MAGIC "koprulu repack 2"
 
 #ifdef __cplusplus
 }

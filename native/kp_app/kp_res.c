@@ -14,7 +14,9 @@
 #define KP_RES_PATH 1024
 #define KP_RES_NAME 512
 #define KP_RES_ARCHIVES 8 /* an install's archives (the profile's) */
-#define KP_RES_REPACK_MAX 32 /* a repack's archives: the core or single file and its groups */
+#define KP_RES_REPACK_MAX 128 /* a repack's archives: the core or single file and its groups */
+#define KP_RES_GROUPS 128     /* the groups the core's listing names */
+#define KP_RES_GROUP_FILE 128
 #define KP_RES_MESSAGE 1400
 
 /* Where StarCraft: Remastered keeps the profile's files: its SD copies first, since the copies at the root are its own
@@ -59,7 +61,9 @@ typedef struct {
 	uint32_t size;    /* the repack table's: the listed size and digest, the archive */
 	uint8_t sha[KP_SHA256_SIZE];
 	int archive;
-	int status;
+	int status;       /* the seen table's: what the read found; the repack table's: the listed status */
+	uint8_t *head;    /* the repack table's Ogg of a WAV: the WAV's header and size */
+	uint32_t head_size, wav_size;
 } Entry;
 
 typedef struct {
@@ -78,6 +82,12 @@ struct KpRes {
 	void *log_ctx;
 	Archive repack[KP_RES_REPACK_MAX];
 	int repack_count;
+	char repack_dir[KP_RES_PATH]; /* the core's folder */
+	struct {
+		char file[KP_RES_GROUP_FILE], prefix[KP_RES_NAME];
+		int open;
+	} groups[KP_RES_GROUPS]; /* the core's listing's */
+	int group_count;
 	Map listed;  /* the repacks' files */
 	KpResSourceKind install;
 	char install_dir[KP_RES_PATH];
@@ -319,6 +329,7 @@ static void map_free(Map *m)
 	for (k = 0; k < m->cap; k++) {
 		free(m->slots[k].name);
 		free(m->slots[k].source);
+		free(m->slots[k].head);
 	}
 	free(m->slots);
 	memset(m, 0, sizeof *m);
@@ -385,23 +396,121 @@ static int hex_digest(const char *hex, uint8_t out[KP_SHA256_SIZE])
 	return 0;
 }
 
-/* A repack's listing: "koprulu repack 1", "profile ID", "group FILE" lines (the core's: its groups), then
- * "SHA256 SIZE NAME" a file. 0, or -1 with the reason (another profile, a broken listing). */
+/* The status a listing names a file by (the source's), or -1. */
+static int listed_status(const char *word)
+{
+	static const KpResStatus LISTED[] = { KP_RES_EXACT, KP_RES_DERIVED, KP_RES_DIFFERS, KP_RES_UNLISTED,
+		KP_RES_EQUIVALENT, KP_RES_COLOUR_EQUAL, KP_RES_APPROXIMATION };
+	size_t k;
+	for (k = 0; k < sizeof LISTED / sizeof LISTED[0]; k++)
+		if (strcmp(word, kp_res_status_name(LISTED[k])) == 0) return (int)LISTED[k];
+	return -1;
+}
+
+/* A group the core's listing names, "FILE PREFIX", kept (its prefix normalized); the index, or -1. */
+static int add_group(KpRes *r, const char *spec)
+{
+	char file[KP_RES_GROUP_FILE], prefix[KP_RES_NAME];
+	int k;
+	prefix[0] = 0;
+	if (sscanf(spec, "%127s %511s", file, prefix) < 1) return -1;
+	for (k = 0; k < r->group_count; k++)
+		if (strcmp(r->groups[k].file, file) == 0) return k;
+	if (r->group_count >= KP_RES_GROUPS) return -1;
+	snprintf(r->groups[k].file, sizeof r->groups[k].file, "%s", file);
+	normalize(prefix, r->groups[k].prefix, sizeof r->groups[k].prefix);
+	r->groups[k].open = 0;
+	r->group_count++;
+	return k;
+}
+
+/* A listing's file line into the repack table: "SHA256 SIZE STATUS NAME", or "SHA256 SIZE STATUS ogg WAV-SHA256
+ * WAV-SIZE WAV-HEADER NAME" (the header in hexadecimal). An exact or derived file is the manifest's: its listed digest
+ * (an Ogg's, its WAV's) is checked against the manifest's here, its bytes against the listing's when read. 0, or -1
+ * for a line that is not a file's or does not hold. */
+static int listed_file(KpRes *r, int archive, const char *line)
+{
+	char hex[2 * KP_SHA256_SIZE + 1], word[32], key[KP_RES_NAME];
+	uint8_t sha[KP_SHA256_SIZE], wav_sha[KP_SHA256_SIZE];
+	unsigned long n, wav_n = 0;
+	uint8_t *head = NULL;
+	size_t head_size = 0;
+	const char *p, *name;
+	const KpDefsInput *in;
+	Entry *e;
+	int used = 0, status, ogg = 0;
+	if (sscanf(line, "%64s %lu %31s %n", hex, &n, word, &used) != 3 || used == 0 || hex_digest(hex, sha) != 0
+		|| (status = listed_status(word)) < 0 || n > UINT32_MAX)
+		return -1;
+	p = line + used;
+	if (strncmp(p, "ogg ", 4) == 0) {
+		const char *h, *h_end;
+		size_t i;
+		used = 0;
+		if (sscanf(p + 4, "%64s %lu %n", hex, &wav_n, &used) != 2 || used == 0 || hex_digest(hex, wav_sha) != 0
+			|| wav_n > UINT32_MAX)
+			return -1;
+		h = p + 4 + used;
+		if (!(h_end = strchr(h, ' ')) || (h_end - h) % 2 != 0 || h_end == h) return -1;
+		head_size = (size_t)(h_end - h) / 2;
+		if (!(head = (uint8_t *)malloc(head_size))) return -1;
+		for (i = 0; i < head_size; i++) {
+			unsigned v;
+			if (!isxdigit((unsigned char)h[2 * i]) || !isxdigit((unsigned char)h[2 * i + 1]) || sscanf(h + 2 * i, "%2x", &v) != 1) {
+				free(head);
+				return -1;
+			}
+			head[i] = (uint8_t)v;
+		}
+		ogg = 1;
+		p = h_end + 1;
+	}
+	name = p;
+	if (!*name) {
+		free(head);
+		return -1;
+	}
+	normalize(name, key, sizeof key);
+	if ((status == KP_RES_EXACT || status == KP_RES_DERIVED) && (in = kp_defs_input(r->profile, key)) != NULL) {
+		uint8_t want[KP_SHA256_SIZE];
+		if (hex_digest(in->sha256, want) != 0 || memcmp(want, ogg ? wav_sha : sha, KP_SHA256_SIZE) != 0
+			|| in->size != (ogg ? wav_n : n)) {
+			say(r, "res: %s's listing names %s as the 1.17 file, which it is not: the install's is read",
+				r->repack[archive].path, name);
+			free(head);
+			return 0;
+		}
+	}
+	if (!(e = map_put(&r->listed, key))) {
+		free(head);
+		return -1;
+	}
+	memcpy(e->sha, sha, sizeof sha);
+	e->size = (uint32_t)n;
+	e->archive = archive;
+	e->status = status;
+	free(e->head);
+	e->head = head;
+	e->head_size = (uint32_t)head_size;
+	e->wav_size = (uint32_t)wav_n;
+	return 0;
+}
+
+/* A repack's listing: "koprulu repack 2", "profile ID", "source WHAT", "group FILE PREFIX" lines (the core's: its
+ * groups, those beside it added), then a file a line (listed_file). 0, or -1 with the reason (another profile, a
+ * broken listing). */
 static int read_listing(KpRes *r, int archive, const char *dir, char *err, size_t err_size)
 {
 	size_t size = 0;
 	char why[KP_RES_MESSAGE];
 	char *text = (char *)kp_mpq_read(r->repack[archive].mpq, KP_RES_LISTING, &size, why, sizeof why);
 	char *line, *next;
-	int lines = 0, profile_ok = 0;
+	int lines = 0, profile_ok = 0, bad = 0;
 	if (!text) {
 		if (err_size) snprintf(err, err_size, "%s: no %s%s%s", r->repack[archive].path, KP_RES_LISTING, why[0] ? ": " : "", why);
 		return -1;
 	}
 	for (line = text; line && *line; line = next) {
-		char name[KP_RES_NAME], key[KP_RES_NAME], hex[2 * KP_SHA256_SIZE + 1];
-		uint8_t sha[KP_SHA256_SIZE];
-		unsigned long n;
 		next = strchr(line, '\n');
 		if (next) *next++ = 0;
 		if (lines++ == 0) {
@@ -415,21 +524,25 @@ static int read_listing(KpRes *r, int archive, const char *dir, char *err, size_
 				free(text);
 				return -1;
 			}
-		} else if (strncmp(line, "group ", 6) == 0 && dir) {
+		} else if (strncmp(line, "source ", 7) == 0) {
+			continue;
+		} else if (strncmp(line, "group ", 6) == 0) {
 			char path[KP_RES_PATH], why2[KP_RES_MESSAGE];
+			int g = add_group(r, line + 6);
 			/* a group not there yet is added when it is (kp_res_add_repack: the web fetches it before a mission) */
-			if (find_file(dir, line + 6, path, sizeof path) && kp_res_add_repack(r, path, why2, sizeof why2) != 0)
+			if (g >= 0 && dir && find_file(dir, r->groups[g].file, path, sizeof path)
+				&& kp_res_add_repack(r, path, why2, sizeof why2) != 0)
 				say(r, "res: %s (its files fall back to the install)", why2, NULL);
-		} else if (sscanf(line, "%64s %lu %511[^\n]", hex, &n, name) == 3 && hex_digest(hex, sha) == 0) {
-			Entry *e;
-			normalize(name, key, sizeof key);
-			if (!(e = map_put(&r->listed, key))) break;
-			memcpy(e->sha, sha, sizeof sha);
-			e->size = (uint32_t)n;
-			e->archive = archive;
+		} else if (listed_file(r, archive, line) != 0) {
+			bad++;
 		}
 	}
 	free(text);
+	if (bad && profile_ok) {
+		char count[32];
+		snprintf(count, sizeof count, "%d", bad);
+		say(r, "res: %s: %s lines of its listing are not a file's (ignored)", r->repack[archive].path, count);
+	}
 	if (lines == 0 || !profile_ok) {
 		if (err_size) snprintf(err, err_size, "%s: its %s is not a repack's listing of profile %s", r->repack[archive].path,
 			KP_RES_LISTING, r->profile->id);
@@ -460,9 +573,28 @@ int kp_res_add_repack(KpRes *r, const char *path, char *err, size_t err_size)
 		r->repack_count--;
 		return -1;
 	}
+	slash = strrchr(path, '/');
+	for (i = 0; i < r->group_count; i++)
+		if (strcmp(r->groups[i].file, slash ? slash + 1 : path) == 0) r->groups[i].open = 1;
 	say(r, "res: repack %s%s", path, NULL);
 	return 0;
 }
+
+int kp_res_group_wanted(const KpRes *r, const char *name, char *out, size_t size)
+{
+	char key[KP_RES_NAME];
+	int k;
+	normalize(name, key, sizeof key);
+	for (k = 0; k < r->group_count; k++) {
+		size_t n = strlen(r->groups[k].prefix);
+		if (r->groups[k].open || n == 0 || strncmp(key, r->groups[k].prefix, n) != 0) continue;
+		snprintf(out, size, "%s", r->groups[k].file);
+		return 1;
+	}
+	return 0;
+}
+
+const char *kp_res_repack_dir(const KpRes *r) { return r->repack_dir; }
 
 static int open_mpq_install(KpRes *r, const char *dir, char *err, size_t err_size)
 {
@@ -508,6 +640,7 @@ KpRes *kp_res_open(const char *const *dirs, int count, const KpResConfig *config
 		if (kind == KP_RES_SOURCE_REPACK) {
 			if (!find_file(dir, "koprulu.mpq", path, sizeof path)) find_file(dir, "koprulu-core.mpq", path, sizeof path);
 			if (kp_res_add_repack(r, path, why, sizeof why) != 0) say(r, "res: %s (ignored: the install is read)", why, NULL);
+			else if (!r->repack_dir[0]) snprintf(r->repack_dir, sizeof r->repack_dir, "%s", dir);
 			continue;
 		}
 		if (r->install != KP_RES_SOURCE_NONE) {
@@ -746,9 +879,6 @@ uint8_t *kp_res_read(KpRes *r, const char *name, size_t *size, KpResStatus *stat
 	} else if (kp_defs_listed(r->profile->absent, r->profile->absent_count, key)) {
 		st = KP_RES_ABSENT;
 	} else if ((b = read_repack(r, key, size, source)) != NULL) {
-		/* TODO: (stage D8, the repack's writer) the listing names each file's status (exact, derived, differs, a
-		 * sound as Ogg Vorbis) and an exact or derived copy is checked against the manifest's digest too: the listing
-		 * alone vouches only for the repack's own bytes, so a repack rewritten with its listing replaces any file. */
 		st = KP_RES_REPACKED;
 	} else if (r->install == KP_RES_SOURCE_MPQ) {
 		b = read_mpq(r, key, size, &st, source, err, err_size);
@@ -900,11 +1030,28 @@ KpResStream *kp_res_stream_open(KpRes *r, const char *name, uint64_t *size, char
 
 uint8_t *kp_res_head(KpRes *r, const char *name, size_t want, size_t *got, uint64_t *total, char *err, size_t err_size)
 {
-	KpResStream *s = open_file(r, name, 0, total, err, err_size);
+	KpResStream *s;
 	uint8_t *b;
 	size_t n;
+	char key[KP_RES_NAME];
+	Entry *e;
 	*got = 0;
-	if (!s) return NULL;
+	normalize(name, key, sizeof key);
+	if ((e = map_find(&r->listed, key)) != NULL && e->head) { /* a repack's Ogg of a WAV: the WAV's header */
+		n = e->head_size < want ? e->head_size : want;
+		if (!(b = (uint8_t *)malloc(n + 1))) {
+			set_err(err, err_size, "out of memory");
+			return NULL;
+		}
+		memcpy(b, e->head, n);
+		b[n] = 0;
+		*got = n;
+		*total = e->wav_size;
+		if (err_size) err[0] = 0;
+		seen(r, key, KP_RES_REPACKED, r->repack[e->archive].path);
+		return b;
+	}
+	if (!(s = open_file(r, name, 0, total, err, err_size))) return NULL;
 	n = *total < want ? (size_t)*total : want;
 	if (!(b = (uint8_t *)malloc(n + 1)) || kp_res_stream_read(s, 0, b, n) != 0) {
 		if (err_size) snprintf(err, err_size, "%s: %s", name, b ? "cannot be read" : "out of memory");

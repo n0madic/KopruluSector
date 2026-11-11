@@ -144,7 +144,7 @@ static const KpDefsArchive ARCHIVES[] = { { "A.mpq", 0, "core" }, { "B.mpq", 0, 
 
 typedef struct {
 	KpDefsProfile profile;
-	KpDefsInput files[3];
+	KpDefsInput files[4]; /* profile_init's three; a test may add a fourth */
 	char log[4096];
 } Profile;
 
@@ -282,7 +282,7 @@ static const char *listing(KpT *T, const char *profile, const char *extra, const
 	int k;
 	n = (size_t)snprintf(text, sizeof text, "%s\nprofile %s\n%s", KP_RES_LISTING_MAGIC, profile, extra);
 	for (k = 0; pairs[k]; k += 2)
-		n += (size_t)snprintf(text + n, sizeof text - n, "%s %u %s\n", hex_of(T, pairs[k + 1], strlen(pairs[k + 1])),
+		n += (size_t)snprintf(text + n, sizeof text - n, "%s %u exact %s\n", hex_of(T, pairs[k + 1], strlen(pairs[k + 1])),
 			(unsigned)strlen(pairs[k + 1]), pairs[k]);
 	return kp_t_strdup(T, text);
 }
@@ -368,7 +368,7 @@ static void res_repack_groups_join_the_core(KpT *T)
 	profile_init(T, &p);
 	pack = dir_new(T);
 	core[0] = KP_RES_LISTING;
-	core[1] = listing(T, "test-1", "group koprulu-g1.mpq\ngroup koprulu-g2.mpq\n", CORE);
+	core[1] = listing(T, "test-1", "group koprulu-g1.mpq a/two\ngroup koprulu-g2.mpq b/\n", CORE);
 	core[2] = "a\\one.dat";
 	core[3] = ONE;
 	core[4] = NULL;
@@ -392,6 +392,143 @@ static void res_repack_groups_join_the_core(KpT *T)
 	kp_res_counts(r, counts);
 	kp_t_eq(T, counts[KP_RES_REPACKED], 2, "repacked");
 	kp_t_eq(T, counts[KP_RES_MISSING], 1, "missing");
+}
+
+static void le16(uint8_t *p, uint32_t v)
+{
+	p[0] = (uint8_t)v;
+	p[1] = (uint8_t)(v >> 8);
+}
+
+static void le32(uint8_t *p, uint32_t v)
+{
+	le16(p, v);
+	le16(p + 2, v >> 16);
+}
+
+/* A 16-bit mono WAV of n samples at 22,050 Hz (zeros) into out (44 + 2n bytes): the header the listing keeps. */
+static size_t wav_bytes(uint8_t *out, uint32_t samples)
+{
+	uint32_t data = 2 * samples;
+	memcpy(out, "RIFF", 4);
+	le32(out + 4, 36 + data);
+	memcpy(out + 8, "WAVEfmt ", 8);
+	le32(out + 16, 16);
+	le16(out + 20, 1);
+	le16(out + 22, 1);
+	le32(out + 24, 22050);
+	le32(out + 28, 44100);
+	le16(out + 32, 2);
+	le16(out + 34, 16);
+	memcpy(out + 36, "data", 4);
+	le32(out + 40, data);
+	memset(out + 44, 0, data);
+	return 44 + (size_t)data;
+}
+
+/* The listing's statuses: an exact file whose digest is not the manifest's is refused for the install's, Remastered's
+ * own copy ("differs") is read, a WAV stored as Ogg Vorbis answers the WAV's header and size and reads as the Ogg. */
+static void res_repack_listing_statuses(KpT *T)
+{
+	static const char ONE_CHANGED[] = "one, changed", TWO_SCR[] = "two, Remastered's", OGG[] = "OggS, the sound";
+	static uint8_t wav[44 + 2 * 1000];
+	char text[2048], hex_head[2 * 44 + 1], err[512];
+	const char *repack[9], *dirs[2], *s;
+	size_t wav_size = wav_bytes(wav, 1000), got = 0, k;
+	uint64_t total = 0;
+	Profile p;
+	Dir *install, *pack;
+	KpRes *r;
+	KpResStatus st;
+	KpFiles files;
+	KpWavInfo info;
+	KpError e;
+	uint8_t *head;
+	profile_init(T, &p);
+	p.files[3].name = "a/x.wav"; /* sorted after a/two.dat */
+	p.files[3].size = (uint32_t)wav_size;
+	p.files[3].sha256 = hex_of(T, wav, wav_size);
+	p.profile.file_count = 4;
+	for (k = 0; k < 44; k++) snprintf(hex_head + 2 * k, 3, "%02x", wav[k]);
+	snprintf(text, sizeof text, "%s\nprofile test-1\nsource remastered\n%s %u exact a\\one.dat\n%s %u differs a\\two.dat\n"
+		"%s %u exact ogg %s %u %s a\\x.wav\nnot a file's line\n", KP_RES_LISTING_MAGIC,
+		hex_of(T, ONE_CHANGED, strlen(ONE_CHANGED)), (unsigned)strlen(ONE_CHANGED), hex_of(T, TWO_SCR, strlen(TWO_SCR)),
+		(unsigned)strlen(TWO_SCR), hex_of(T, OGG, strlen(OGG)), (unsigned)strlen(OGG), p.files[3].sha256,
+		(unsigned)wav_size, hex_head);
+	install = test_install(T);
+	pack = dir_new(T);
+	repack[0] = KP_RES_LISTING;
+	repack[1] = kp_t_strdup(T, text);
+	repack[2] = "a\\one.dat";
+	repack[3] = ONE_CHANGED;
+	repack[4] = "a\\two.dat";
+	repack[5] = TWO_SCR;
+	repack[6] = "a\\x.wav";
+	repack[7] = OGG;
+	repack[8] = NULL;
+	dir_mpq(T, pack, "koprulu.mpq", repack);
+	dirs[0] = install->dir;
+	dirs[1] = pack->dir;
+	r = open_res(T, &p, dirs, 2);
+	kp_t_ok(T, strstr(p.log, "names a\\one.dat as the 1.17 file, which it is not") != NULL, "logged: %s", p.log);
+	kp_t_ok(T, strstr(p.log, "1 lines of its listing are not a file's") != NULL, "logged: %s", p.log);
+	s = read_text(T, r, "a/one.dat", &st, err, sizeof err);
+	kp_t_eq_str(T, s, ONE, "the install's one");
+	kp_t_eq(T, st, KP_RES_EXACT, "one's status");
+	s = read_text(T, r, "a/two.dat", &st, err, sizeof err);
+	kp_t_eq_str(T, s, TWO_SCR, "Remastered's two, as the repack lists it");
+	kp_t_eq(T, st, KP_RES_REPACKED, "two's status");
+	head = kp_res_head(r, "A\\X.WAV", 4096, &got, &total, err, sizeof err);
+	kp_t_ok(T, head != NULL, "%s", err);
+	kp_t_ok(T, got == 44 && memcmp(head, wav, 44) == 0, "the WAV's header: %u bytes", (unsigned)got);
+	kp_t_eq(T, (int64_t)total, (int64_t)wav_size, "the WAV's size");
+	free(head);
+	kp_res_files(r, &files);
+	kp_t_eq(T, kp_files_wav(&files, "a\\x.wav", &info, &e), 1, "%s", e.msg);
+	kp_t_ok(T, info.sample_rate == 22050 && info.data_length == 2000 && info.data_offset == 44, "the WAV's format");
+	s = read_text(T, r, "a\\x.wav", &st, err, sizeof err);
+	kp_t_eq_str(T, s, OGG, "the sound read as the Ogg");
+	kp_t_eq(T, st, KP_RES_REPACKED, NULL);
+}
+
+/* A group the core's listing names by prefix: wanted while it is not there, read once it is added (the web). */
+static void res_repack_group_wanted_then_added(KpT *T)
+{
+	static const char *const CORE[] = { "a\\one.dat", ONE, NULL };
+	static const char *const GROUP[] = { "campaign\\one\\staredit\\scenario.chk", "a scenario", NULL };
+	const char *core[5], *group[5], *dirs[1], *s;
+	char file[128], path[512], err[512];
+	Profile p;
+	Dir *pack;
+	KpRes *r;
+	KpResStatus st;
+	profile_init(T, &p);
+	pack = dir_new(T);
+	core[0] = KP_RES_LISTING;
+	core[1] = listing(T, "test-1", "group koprulu-campaign-one.mpq campaign\\One\\\n", CORE);
+	core[2] = "a\\one.dat";
+	core[3] = ONE;
+	core[4] = NULL;
+	dir_mpq(T, pack, "koprulu-core.mpq", core);
+	dirs[0] = pack->dir;
+	r = open_res(T, &p, dirs, 1);
+	kp_t_eq_str(T, kp_res_repack_dir(r), pack->dir, "the core's folder");
+	kp_t_eq(T, kp_res_group_wanted(r, "Campaign\\one\\staredit\\scenario.chk", file, sizeof file), 1, "the mission's group");
+	kp_t_eq_str(T, file, "koprulu-campaign-one.mpq", NULL);
+	kp_t_eq(T, kp_res_group_wanted(r, "a\\one.dat", file, sizeof file), 0, "the core's file is in no group");
+	kp_t_ok(T, read_text(T, r, "campaign/one/staredit/scenario.chk", &st, err, sizeof err) == NULL && st == KP_RES_MISSING,
+		"missing before the group is there");
+	group[0] = KP_RES_LISTING;
+	group[1] = listing(T, "test-1", "", GROUP);
+	group[2] = GROUP[0];
+	group[3] = GROUP[1];
+	group[4] = NULL;
+	dir_mpq(T, pack, "koprulu-campaign-one.mpq", group);
+	snprintf(path, sizeof path, "%s/koprulu-campaign-one.mpq", pack->dir);
+	kp_t_eq(T, kp_res_add_repack(r, path, err, sizeof err), 0, "%s", err);
+	kp_t_eq(T, kp_res_group_wanted(r, "campaign\\one\\staredit\\scenario.chk", file, sizeof file), 0, "open now");
+	s = read_text(T, r, "campaign\\one\\staredit\\scenario.chk", &st, err, sizeof err);
+	kp_t_eq_str(T, s, "a scenario", "the group's file");
 }
 
 static void res_streams_read_pieces(KpT *T)
@@ -574,6 +711,8 @@ static const KpTest TESTS[] = {
 	{ "res_repack_comes_before_the_install", res_repack_comes_before_the_install, 0 },
 	{ "res_repack_of_another_profile_is_ignored", res_repack_of_another_profile_is_ignored, 0 },
 	{ "res_repack_groups_join_the_core", res_repack_groups_join_the_core, 0 },
+	{ "res_repack_listing_statuses", res_repack_listing_statuses, 0 },
+	{ "res_repack_group_wanted_then_added", res_repack_group_wanted_then_added, 0 },
 	{ "res_streams_read_pieces", res_streams_read_pieces, 0 },
 	{ "res_log_lists_the_reads", res_log_lists_the_reads, 0 },
 	{ "res_casc_rebuilds_the_tilesets", res_casc_rebuilds_the_tilesets, 0 },
