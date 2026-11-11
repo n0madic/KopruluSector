@@ -1,8 +1,10 @@
-/* A Smacker video decoder (plan phase 9B): the portraits and the briefing rooms' SMK files, decoded frame by frame into
- * palette indices the way Smackw32's SmackDoFrame/SmackToBuffer leave them (the video only: the palette records and the
- * audio tracks are skipped). Format: the SMK2/SMK4 header, the four header trees (MMAP, MCLR, FULL, TYPE: two 8-bit
- * Huffman trees recoding a 16-bit big tree with three escape values and the last-three cache), the frames' chunks;
- * libavcodec's smacker decoder and demuxer document the same bit stream.
+/* A Smacker decoder (plan phase 9B): the portraits and the briefing rooms' SMK files, decoded frame by frame into
+ * palette indices the way Smackw32's SmackDoFrame/SmackToBuffer leave them, each frame's palette record applied to the
+ * movie's palette (the screen's palette is the game's own for the portraits; the cinematics show the movie's, ADR 0018
+ * stage D7), and a sound track decoded whole (kp_smk_sound: PCM as stored, or Smacker's Huffman-coded deltas).
+ * Format: the SMK2/SMK4 header, the four header trees (MMAP, MCLR, FULL, TYPE: two 8-bit Huffman trees recoding a 16-bit
+ * big tree with three escape values and the last-three cache), the frames' chunks (a palette record, a chunk per sound
+ * track, the video); libavcodec's smacker decoder and demuxer and its smackaud decoder document the same bit streams.
  *
  * It also plays KPW1, the stand-in for an SMK that only StarCraft: Remastered's WebM copy has (ADR 0018, stage D6;
  * kp_res and converter/formats/kpw.py make it): "KPW1", u32 width, height, frames, i32 frame rate, u32 flags (the SMK
@@ -23,6 +25,7 @@ extern "C" {
 #endif
 
 #define KP_SMK_TREES 4
+#define KP_SMK_TRACKS 7 /* the sound tracks a movie may have */
 
 typedef struct {
 	int32_t *values; /* SMK_NODE | right offset for a node, else the value */
@@ -45,6 +48,7 @@ typedef struct {
 	uint8_t *mem;                     /* the one allocation: the trees' entries, then the pixels */
 	uint8_t *pixels;                  /* width * height indices, kept between frames */
 	uint8_t *target;                  /* kp_smk_set_target: frames decode there instead (SmackToBuffer) */
+	uint8_t palette[768];             /* the frame's palette as 8-bit R, G, B (black before a record; a KPW1's: none) */
 	void *video;                      /* a KPW1's: the codec's movie */
 	KpIndexMap map;
 } KpSmk;
@@ -71,6 +75,19 @@ void kp_smk_set_target(KpSmk *s, uint8_t *target);
 void kp_smk_rewind(KpSmk *s);
 /* The time of a frame in 10 microsecond units (SmackOpen's +0x424). */
 uint32_t kp_smk_frame_time(const KpSmk *s);
+
+/* A sound track's format (the header's AudioRate word): its rate, 1 or 2 channels, 8 (unsigned) or 16 (signed) bits
+ * a sample, whether its chunks are Huffman-coded deltas. */
+typedef struct {
+	uint32_t rate;
+	int channels, bits, packed;
+} KpSmkSoundFormat;
+/* Track k's format: 0, or -1 when the movie has no such track (a rate of 0), it is Bink's sound, or a KPW1. */
+int kp_smk_sound_format(const KpSmk *s, int track, KpSmkSoundFormat *out);
+/* Track k's sound, every frame's chunk in turn (a ring movie's extra frame too), as interleaved PCM in *pcm (malloc'ed,
+ * the caller's; 16-bit samples little endian): 0, or -1 (and none) when the track is not there or a chunk is cut short
+ * or malformed. Reads the file only: the decoder's frame is left where it is. */
+int kp_smk_sound(const KpSmk *s, int track, KpSmkSoundFormat *format, uint8_t **pcm, size_t *size);
 
 #ifdef __cplusplus
 }

@@ -373,3 +373,372 @@ static const uint8_t *smk_frame(void *movie, uint32_t n) { return kp_webm_frame(
 static void smk_close(void *movie) { kp_webm_close((KpWebm *)movie); }
 
 const KpSmkVideo kp_webm_smk_video = { smk_open, smk_frame, smk_close };
+
+/* --- a cinematic's streams (kp_webm_demux) --- */
+
+#define OGG_SEGMENTS 255
+#define NS_PER_S 1000000000u /* Matroska's times */
+
+/* A growing buffer */
+typedef struct {
+	uint8_t *data;
+	size_t size, cap;
+	int failed;
+} Buf;
+
+static uint8_t *buf_grow(Buf *b, size_t n)
+{
+	if (b->failed) return NULL;
+	if (n > b->cap - b->size) {
+		size_t cap = b->cap ? b->cap : 65536;
+		uint8_t *d;
+		while (cap - b->size < n) {
+			if (cap > SIZE_MAX / 2) {
+				b->failed = 1;
+				return NULL;
+			}
+			cap *= 2;
+		}
+		if (!(d = (uint8_t *)realloc(b->data, cap))) {
+			b->failed = 1;
+			return NULL;
+		}
+		b->data = d;
+		b->cap = cap;
+	}
+	b->size += n;
+	return b->data + b->size - n;
+}
+
+static void buf_put(Buf *b, const void *p, size_t n)
+{
+	uint8_t *o = buf_grow(b, n);
+	if (o && n) memcpy(o, p, n);
+}
+
+static void put32(Buf *b, uint32_t v)
+{
+	uint8_t le[4] = { (uint8_t)v, (uint8_t)(v >> 8), (uint8_t)(v >> 16), (uint8_t)(v >> 24) };
+	buf_put(b, le, 4);
+}
+
+/* Ogg's CRC: polynomial 0x04c11db7, most significant bit first, no reflection, starting at 0 */
+static uint32_t ogg_crc(const uint8_t *p, size_t n)
+{
+	static uint32_t table[256];
+	static int ready;
+	uint32_t crc = 0;
+	size_t i;
+	if (!ready) {
+		uint32_t k, j;
+		for (k = 0; k < 256; k++) {
+			uint32_t r = k << 24;
+			for (j = 0; j < 8; j++) r = (r & 0x80000000u) ? (r << 1) ^ 0x04c11db7u : r << 1;
+			table[k] = r;
+		}
+		ready = 1;
+	}
+	for (i = 0; i < n; i++) crc = (crc << 8) ^ table[((crc >> 24) ^ p[i]) & 0xff];
+	return crc;
+}
+
+/* An Ogg stream being written: a page's lacing and data gathered, then written whole. */
+typedef struct {
+	Buf out;
+	uint32_t serial, sequence;
+	uint8_t lacing[OGG_SEGMENTS];
+	int segments;
+	Buf body;
+	int64_t granule;      /* the page's: the samples after its last packet that ends on it, -1 none ends there */
+	int continued;        /* the page begins inside a packet */
+	int first;
+} Ogg;
+
+static void ogg_page(Ogg *o, int last)
+{
+	uint8_t head[27];
+	size_t at = o->out.size;
+	int64_t g = o->granule;
+	int k;
+	memcpy(head, "OggS", 4);
+	head[4] = 0;
+	head[5] = (uint8_t)((o->continued ? 1 : 0) | (o->first ? 2 : 0) | (last ? 4 : 0));
+	for (k = 0; k < 8; k++) head[6 + k] = (uint8_t)((uint64_t)g >> (8 * k));
+	for (k = 0; k < 4; k++) head[14 + k] = (uint8_t)(o->serial >> (8 * k));
+	for (k = 0; k < 4; k++) head[18 + k] = (uint8_t)(o->sequence >> (8 * k));
+	memset(head + 22, 0, 4);
+	head[26] = (uint8_t)o->segments;
+	buf_put(&o->out, head, sizeof head);
+	buf_put(&o->out, o->lacing, (size_t)o->segments);
+	buf_put(&o->out, o->body.data, o->body.size);
+	if (!o->out.failed) {
+		uint32_t crc = ogg_crc(o->out.data + at, o->out.size - at);
+		for (k = 0; k < 4; k++) o->out.data[at + 22 + k] = (uint8_t)(crc >> (8 * k));
+	}
+	o->sequence++;
+	o->segments = 0;
+	o->body.size = 0;
+	o->granule = -1;
+	o->first = 0;
+}
+
+/* A packet laced into the pages (a page that fills goes out, the packet continued on the next); granule: the stream's
+ * samples once it is decoded. */
+static void ogg_packet(Ogg *o, const uint8_t *p, size_t n, int64_t granule)
+{
+	size_t at = 0;
+	for (;;) {
+		size_t seg = n - at < 255 ? n - at : 255;
+		if (o->segments == OGG_SEGMENTS) {
+			ogg_page(o, 0);
+			o->continued = 1;
+		}
+		o->lacing[o->segments++] = (uint8_t)seg;
+		buf_put(&o->body, p + at, seg);
+		at += seg;
+		if (seg < 255) break; /* the packet ends here (a 0 segment after a multiple of 255) */
+	}
+	o->continued = 0;
+	o->granule = granule;
+}
+
+/* --- Vorbis: the samples a packet adds (libavcodec's vorbis_parser documents the reading backwards) --- */
+
+typedef struct {
+	uint32_t rate;
+	uint32_t blocksize[2];
+	int modes;
+	uint8_t mode_long[64];
+	uint32_t mode_mask, prev_mask;
+	uint32_t previous;
+} Vorbis;
+
+/* The identification header's rate and block sizes: 0, -1. */
+static int vorbis_ident(Vorbis *v, const uint8_t *p, size_t n)
+{
+	if (n < 30 || p[0] != 1 || memcmp(p + 1, "vorbis", 6) != 0) return -1;
+	v->rate = (uint32_t)p[12] | (uint32_t)p[13] << 8 | (uint32_t)p[14] << 16 | (uint32_t)p[15] << 24;
+	if (v->rate == 0) return -1;
+	v->blocksize[0] = 1u << (p[28] & 15);
+	v->blocksize[1] = 1u << (p[28] >> 4);
+	if (v->blocksize[0] < 64 || v->blocksize[1] > 8192 || v->blocksize[0] > v->blocksize[1]) return -1;
+	return 0;
+}
+
+/* The setup header's modes, read from its end: the framing bit, then each mode's 6-bit count candidates (40 bits a
+ * mode: the window and transform types of 16 bits 0, the mapping of 8 bits) back to a count that matches. 0, -1. */
+static int vorbis_setup(Vorbis *v, const uint8_t *p, size_t n)
+{
+	size_t total = n * 8, at = 0, framing = 0;
+	int count = 0, found = 0, k;
+#define BACK_BIT(i) ((p[n - 1 - ((i) >> 3)] >> (7 - ((i) & 7))) & 1u)
+	if (n < 7 || p[0] != 5 || memcmp(p + 1, "vorbis", 6) != 0) return -1;
+	while (total - at > 97) {
+		uint32_t b = BACK_BIT(at);
+		at++;
+		if (b) {
+			framing = at;
+			break;
+		}
+	}
+	if (!framing) return -1;
+	while (total - at >= 97) {
+		uint32_t mapping = 0, transform = 0, window = 0, modes = 0;
+		size_t i;
+		for (i = 0; i < 8; i++) mapping = mapping << 1 | BACK_BIT(at + i);
+		for (i = 0; i < 16; i++) transform = transform << 1 | BACK_BIT(at + 8 + i);
+		for (i = 0; i < 16; i++) window = window << 1 | BACK_BIT(at + 24 + i);
+		if (mapping > 63 || transform || window) break;
+		at += 41;
+		if (++count > 64) break;
+		for (i = 0; i < 6; i++) modes = modes << 1 | BACK_BIT(at + i);
+		if ((int)modes + 1 == count) found = count;
+	}
+	if (!found || found > 63) return -1;
+	v->modes = found;
+	at = framing;
+	for (k = found - 1; k >= 0; k--) {
+		v->mode_long[k] = (uint8_t)BACK_BIT(at + 40);
+		at += 41;
+	}
+#undef BACK_BIT
+	{
+		uint32_t bits = 0, m = (uint32_t)found - 1;
+		while (m) {
+			bits++;
+			m >>= 1;
+		}
+		v->mode_mask = ((1u << bits) - 1u) << 1;
+		v->prev_mask = (v->mode_mask | 1u) + 1u;
+	}
+	v->previous = 0;
+	return 0;
+}
+
+/* The samples an audio packet adds to the stream (the first adds none): (the previous block + this one) / 4. */
+static uint32_t vorbis_samples(Vorbis *v, const uint8_t *p, size_t n)
+{
+	uint32_t mode, current, previous, added;
+	if (n == 0 || (p[0] & 1)) return 0;
+	mode = v->modes == 1 ? 0 : (p[0] & v->mode_mask) >> 1;
+	if ((int)mode >= v->modes) return 0;
+	current = v->blocksize[v->mode_long[mode]];
+	previous = v->previous;
+	added = previous ? (previous + current) / 4 : 0;
+	v->previous = current;
+	return added;
+}
+
+
+void kp_webm_streams_free(KpWebmStreams *s)
+{
+	free(s->packets);
+	free(s->sizes);
+	free(s->times);
+	free(s->ogg);
+	memset(s, 0, sizeof *s);
+}
+
+/* The sound's headers (Matroska's CodecPrivate, Xiph-laced: identification, comment, setup) on the first two pages. */
+static int ogg_headers(Ogg *o, Vorbis *v, nestegg *demux, unsigned int track)
+{
+	unsigned int count = 0, k;
+	unsigned char *h[3];
+	size_t n[3];
+	if (nestegg_track_codec_data_count(demux, track, &count) != 0 || count != 3) return -1;
+	for (k = 0; k < 3; k++)
+		if (nestegg_track_codec_data(demux, track, k, &h[k], &n[k]) != 0) return -1;
+	if (vorbis_ident(v, h[0], n[0]) != 0 || vorbis_setup(v, h[2], n[2]) != 0) return -1;
+	o->first = 1;
+	o->granule = -1;
+	ogg_packet(o, h[0], n[0], 0);
+	ogg_page(o, 0);
+	ogg_packet(o, h[1], n[1], 0);
+	ogg_packet(o, h[2], n[2], 0);
+	ogg_page(o, 0); /* the first sound packet begins a page of its own */
+	return 0;
+}
+
+int kp_webm_streams(const uint8_t *data, size_t size, uint32_t serial, KpWebmStreams *s, char *err, size_t err_size)
+{
+	KpWebm w;
+	nestegg_video_params params;
+	Buf packets, sizes, times;
+	Ogg ogg;
+	Vorbis vorbis;
+	nestegg_packet *pkt = NULL;
+	unsigned int tracks = 0, k, audio = (unsigned int)-1;
+	int64_t samples = 0, block_samples = 0, padding_ns = 0;
+	uint64_t frame_ns = 0;
+	const char *bad = NULL;
+	int rc;
+	memset(s, 0, sizeof *s);
+	memset(&w, 0, sizeof w);
+	memset(&packets, 0, sizeof packets);
+	memset(&sizes, 0, sizeof sizes);
+	memset(&times, 0, sizeof times);
+	memset(&ogg, 0, sizeof ogg);
+	memset(&vorbis, 0, sizeof vorbis);
+	w.data = data;
+	w.size = size;
+	if (demux_open(&w, err, err_size) != 0) {
+		if (w.demux) nestegg_destroy(w.demux);
+		return -1;
+	}
+	if (nestegg_track_codec_id(w.demux, w.track) != NESTEGG_CODEC_VP9
+		|| nestegg_track_video_params(w.demux, w.track, &params) != 0 || params.width == 0 || params.height == 0
+		|| params.width > KP_WEBM_MAX_SIDE || params.height > KP_WEBM_MAX_SIDE) {
+		bad = "the video is not VP9 of a size the player takes";
+		goto done;
+	}
+	if (nestegg_track_default_duration(w.demux, w.track, &frame_ns) != 0) frame_ns = 0;
+	if (nestegg_track_count(w.demux, &tracks) != 0) tracks = 0;
+	for (k = 0; k < tracks && audio == (unsigned int)-1; k++)
+		if (nestegg_track_type(w.demux, k) == NESTEGG_TRACK_AUDIO) audio = k;
+	if (audio != (unsigned int)-1) {
+		ogg.serial = serial;
+		if (nestegg_track_codec_id(w.demux, audio) != NESTEGG_CODEC_VORBIS) {
+			bad = "the sound is not Vorbis";
+			goto done;
+		}
+		if (ogg_headers(&ogg, &vorbis, w.demux, audio) != 0) {
+			bad = "the Vorbis headers do not read";
+			goto done;
+		}
+	}
+	while ((rc = nestegg_read_packet(w.demux, &pkt)) > 0) {
+		unsigned int track = 0, count = 0, j;
+		uint64_t ts = 0;
+		int key = nestegg_packet_has_keyframe(pkt) == NESTEGG_PACKET_HAS_KEYFRAME_TRUE;
+		if (nestegg_packet_track(pkt, &track) != 0 || nestegg_packet_count(pkt, &count) != 0
+			|| nestegg_packet_tstamp(pkt, &ts) != 0) {
+			bad = "a block does not read";
+			break;
+		}
+		if (track == audio) { /* the end's DiscardPadding is the last block's */
+			block_samples = 0;
+			if (nestegg_packet_discard_padding(pkt, &padding_ns) != 0) padding_ns = 0;
+		}
+		for (j = 0; j < count && !bad; j++) {
+			unsigned char *p = NULL;
+			size_t n = 0;
+			if (nestegg_packet_data(pkt, j, &p, &n) != 0) {
+				bad = "a block does not read";
+			} else if (track == w.track) { /* each frame of a laced block a packet, as FFmpeg's demuxer gives them */
+				if (n == 0 || n > 0x7fffffffu || packets.size > 0xffffffffu - n) {
+					bad = "a video packet is empty or too large";
+					break;
+				}
+				buf_put(&packets, p, n);
+				put32(&sizes, (uint32_t)n | (key && j == 0 ? KP_WEBM_KEY : 0u));
+				buf_put(&times, &ts, sizeof ts);
+				s->count++;
+			} else if (track == audio) {
+				uint32_t added = vorbis_samples(&vorbis, p, n);
+				samples += added;
+				block_samples += added;
+				if (ogg.body.size >= KP_WEBM_OGG_PAGE) ogg_page(&ogg, 0); /* the last packet ends on the last page */
+				ogg_packet(&ogg, p, n, samples);
+			}
+		}
+		nestegg_free_packet(pkt);
+		pkt = NULL;
+		if (bad) break;
+	}
+	if (!bad && rc < 0) bad = "the stream is cut or malformed";
+	if (!bad && s->count == 0) bad = "the video has no frames";
+	if (!bad && audio != (unsigned int)-1) { /* the last page, with the sound's end */
+		int64_t trim = padding_ns > 0 ? (int64_t)(((uint64_t)padding_ns * vorbis.rate + NS_PER_S / 2) / NS_PER_S) : 0;
+		if (trim > block_samples) trim = block_samples; /* no more than the last block decodes */
+		ogg.granule = samples - trim;
+		ogg_page(&ogg, 1);
+	}
+	if (!bad && (packets.failed || sizes.failed || times.failed || ogg.out.failed || ogg.body.failed)) bad = "out of memory";
+done:
+	nestegg_destroy(w.demux);
+	free(ogg.body.data);
+	if (bad) {
+		free(packets.data);
+		free(sizes.data);
+		free(times.data);
+		free(ogg.out.data);
+		memset(s, 0, sizeof *s);
+		say(err, err_size, bad);
+		return -1;
+	}
+	s->width = params.width;
+	s->height = params.height;
+	s->frame_ns = frame_ns;
+	s->packets = packets.data;
+	s->packets_size = packets.size;
+	s->sizes = sizes.data;
+	s->times = (uint64_t *)(void *)times.data;
+	if (audio != (unsigned int)-1) {
+		s->ogg = ogg.out.data;
+		s->ogg_size = ogg.out.size;
+		s->samples = samples;
+	} else {
+		free(ogg.out.data);
+	}
+	return 0;
+}

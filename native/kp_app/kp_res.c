@@ -85,6 +85,7 @@ struct KpRes {
 	const char *archive_names[KP_RES_ARCHIVES];
 	int archive_count;
 	KpCasc *casc;
+	char text_locale[8]; /* the CASC install's (kp_res_text_locale) */
 	KpResScr *scr; /* the rebuilds from Remastered's own formats (NULL: the profile has no tables for them) */
 	Map seen;    /* the names read: their status and source */
 };
@@ -167,6 +168,105 @@ static int find_file(const char *dir, const char *name, char *out, size_t size)
 		if (file_exists(out)) return 1;
 	}
 	return 0;
+}
+
+#define BUILD_INFO_MAX (1u << 20)
+#define BUILD_INFO_COLUMNS 64
+
+/* Field k of a '|' separated line [p, end): its start, *field_end its end; NULL past the last field. */
+static const char *bar_field(const char *p, const char *end, int k, const char **field_end)
+{
+	for (; k > 0; k--) {
+		while (p < end && *p != '|') p++;
+		if (p == end) return NULL;
+		p++;
+	}
+	*field_end = p;
+	while (*field_end < end && **field_end != '|') (*field_end)++;
+	return p;
+}
+
+static int span_is(const char *p, const char *end, const char *word)
+{
+	size_t n = strlen(word);
+	return (size_t)(end - p) == n && memcmp(p, word, n) == 0;
+}
+
+static int is_locale(const char *w, const char *end) /* converter/emit/cinematics.py LOCALE: ^[a-z]{2}[A-Z]{2}$ */
+{
+	return end - w == 4 && islower((unsigned char)w[0]) && islower((unsigned char)w[1]) && isupper((unsigned char)w[2])
+		&& isupper((unsigned char)w[3]);
+}
+
+void kp_res_build_info_text_locale(const char *text, char *out, size_t size)
+{
+	const char *p, *line_end, *header = NULL, *header_end = NULL, *row = NULL, *row_end = NULL, *f, *f_end, *g;
+	int active = -1, tags = -1, c;
+	if (size) out[0] = 0;
+	if (size < 5) return;
+	for (p = text; *p; p = line_end) {
+		line_end = p + strcspn(p, "\r\n");
+		if (line_end == p) {
+			line_end++;
+			continue;
+		}
+		if (!header) {
+			header = p;
+			header_end = line_end;
+			for (c = 0; c < BUILD_INFO_COLUMNS && (f = bar_field(header, header_end, c, &f_end)) != NULL; c++) {
+				const char *name_end = (const char *)memchr(f, '!', (size_t)(f_end - f));
+				if (!name_end) name_end = f_end;
+				if (span_is(f, name_end, "Active")) active = c;
+				if (span_is(f, name_end, "Tags")) tags = c;
+			}
+			continue;
+		}
+		if (!row) {
+			row = p;
+			row_end = line_end;
+		}
+		if (active >= 0 && (f = bar_field(p, line_end, active, &f_end)) != NULL && span_is(f, f_end, "1")) {
+			row = p;
+			row_end = line_end;
+			break;
+		}
+	}
+	if (!row || tags < 0 || (f = bar_field(row, row_end, tags, &f_end)) == NULL) return;
+	for (g = f; g < f_end;) {
+		const char *g_end = (const char *)memchr(g, ':', (size_t)(f_end - g)), *w, *locale = NULL;
+		int text_tag = 0;
+		if (!g_end) g_end = f_end;
+		for (w = g; w < g_end;) {
+			const char *w_end = w;
+			while (w_end < g_end && !isspace((unsigned char)*w_end)) w_end++;
+			if (span_is(w, w_end, "text?")) text_tag = 1;
+			if (!locale && is_locale(w, w_end)) locale = w;
+			for (w = w_end; w < g_end && isspace((unsigned char)*w); w++) {}
+		}
+		if (text_tag && locale) {
+			memcpy(out, locale, 4);
+			out[4] = 0;
+			return;
+		}
+		g = g_end + (g_end < f_end);
+	}
+}
+
+/* The install's own (kp_res_build_info_text_locale over its .build.info), "" without one. */
+static void build_info_text_locale(const char *dir, char *out, size_t size)
+{
+	char path[KP_RES_PATH];
+	char *text = NULL;
+	size_t n = 0;
+	FILE *file;
+	if (size) out[0] = 0;
+	if (!find_file(dir, ".build.info", path, sizeof path) || !(file = fopen(path, "rb"))) return;
+	if ((text = (char *)malloc(BUILD_INFO_MAX + 1)) != NULL) n = fread(text, 1, BUILD_INFO_MAX, file);
+	fclose(file);
+	if (!text) return;
+	text[n] = 0;
+	kp_res_build_info_text_locale(text, out, size);
+	free(text);
 }
 
 /* --- the name maps (open addressing, FNV-1a) --- */
@@ -420,6 +520,7 @@ KpRes *kp_res_open(const char *const *dirs, int count, const KpResConfig *config
 			kp_res_close(r);
 			return NULL;
 		}
+		if (kind == KP_RES_SOURCE_CASC) build_info_text_locale(dir, r->text_locale, sizeof r->text_locale);
 		if (kind == KP_RES_SOURCE_CASC && !(r->scr = kp_res_scr_new(r->profile)))
 			say(r, "res: profile %s has no rebuilds of Remastered's own formats: its PCX, GRP, TBL, BIN and SMK files only it holds are missing", r->profile->id, NULL);
 		say(r, "res: %s %s", kp_res_source_name(kind), dir);
@@ -447,6 +548,7 @@ void kp_res_close(KpRes *r)
 
 KpResSourceKind kp_res_install(const KpRes *r) { return r->install; }
 int kp_res_repacks(const KpRes *r) { return r->repack_count; }
+const KpDefsProfile *kp_res_profile(const KpRes *r) { return r->profile; }
 
 /* --- reading --- */
 
@@ -689,6 +791,9 @@ uint8_t *kp_res_casc_file(KpRes *r, const char *casc_name, size_t *size, char *e
 	}
 	return kp_casc_read(r->casc, casc_name, size, err, err_size);
 }
+
+int kp_res_casc_held(KpRes *r, const char *casc_name) { return r->casc && kp_casc_held(r->casc, casc_name); }
+const char *kp_res_text_locale(const KpRes *r) { return r->text_locale; }
 
 uint8_t *kp_res_casc_exact(KpRes *r, const char *key, size_t *size)
 {

@@ -51,6 +51,16 @@ int kp_casc_has(KpCasc *c, const char *name)
 	return 1;
 }
 
+int kp_casc_held(KpCasc *c, const char *name)
+{
+	HANDLE f = NULL;
+	ULONGLONG n = 0;
+	if (!CascOpenFile(c->storage, name, CASC_LOCALE_ALL, CASC_OPEN_BY_NAME, &f)) return 0;
+	int held = CascGetFileSize64(f, &n) ? 1 : 0; /* an offline file's size does not read */
+	CascCloseFile(f);
+	return held;
+}
+
 uint8_t *kp_casc_read(KpCasc *c, const char *name, size_t *size, char *err, size_t err_size)
 {
 	HANDLE f = NULL;

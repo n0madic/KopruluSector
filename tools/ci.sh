@@ -22,7 +22,8 @@
 #     skipped without one);
 #   KOPRULU_ORIGINAL=<dir with StarCraft.exe and the profile MPQs> enables the tests that read original data and
 #     kp_data_probe's read of every manifest file through StormLib (ADR 0018; KOPRULU_SCR: through CascLib, each
-#     file's status and SHA-256 equal to converter scr-digests', the Remastered rebuilds included);
+#     file's status and SHA-256 equal to converter scr-digests', the Remastered rebuilds included), and with FFmpeg
+#     checks the golden of its cinematics' decodes (tools/oracle/export_smk_ffmpeg.py --check);
 #   KOPRULU_SCR=<StarCraft: Remastered install dir> classifies the manifest's files on that install
 #     (converter/tests/test_scr_source.py) and, with KOPRULU_ORIGINAL, compares Remastered's DAT tables and
 #     scripts with the profile's (converter/tests/test_casc.py); with generated/data/ui.kpd it also converts the
@@ -41,7 +42,8 @@
 #     trigger wait ending), the touch layer (touch.kps: terran01 played by synthetic fingers) and, with the HD art
 #     imported, the HD interface (hd_glue.kps, hd_game.kps on each race: the glue's screens and the game's screens and
 #     menus with no SD pixel where HD art exists; each language's walk on terran01 too, without the HD art its first
-#     screen);
+#     screen); with KOPRULU_ORIGINAL or KOPRULU_SCR the cine check over the install's own movies (stage D7: the 1.17
+#     install's Smacker files, Remastered's SD WebM and their subtitles, its HD2 set too when KOPRULU_CINEMATICS asks);
 #   KOPRULU_CINEMATICS=sd|hd2|both, with KOPRULU_APP, builds the product with the packs from generated/video and runs
 #     the cine check (every cinematic decoded to its end, the first pictures also drawn by the GPU); unset or none (the
 #     default here, whatever product.sh's auto would take), the products are built without them (the player and its
@@ -243,6 +245,11 @@ fi
 if [ -n "${KOPRULU_ORIGINAL:-}" ]; then
   step "data readers (ADR 0018): every file of the input manifest read from the 1.17 install through kp_res, checked"
   build/cmake/kp_data_probe "$KOPRULU_ORIGINAL" 2>/dev/null | tail -4
+  if [ -z "$PUBLIC" ] && command -v ffmpeg >/dev/null; then
+    # stage D7: test_movies decodes the install's Smacker movies (palette records, sound) as FFmpeg does
+    step "the 1.17 cinematics' FFmpeg decodes are current (tools/oracle/export_smk_ffmpeg.py)"
+    logged build/smk_ffmpeg_check.log 0 "$PYTHON" tools/oracle/export_smk_ffmpeg.py --data "$KOPRULU_ORIGINAL" --check
+  fi
 fi
 if [ -n "${KOPRULU_SCR:-}" ]; then
   step "data readers (ADR 0018): the input manifest's files read from Remastered's CASC through kp_res, by the converter's rules"
@@ -555,6 +562,28 @@ if [ -n "${KOPRULU_APP:-}" ]; then
       app_check cine_check "$APP" --cinematics "$variant" --cine-check "build/cine_check/$variant"
       grep -E "^SPIKE cine check: " build/cine_check.log
       grep -qE "^$CINE_OK" build/cine_check.log
+    done
+  fi
+  # an install's movies played as they are (ADR 0018, stage D7): the 1.17 install's Smacker files (each checked
+  # against the reference copy; kp_smk's palette records and sound), Remastered's WebM with the subtitles of its
+  # language (HD2's too when KOPRULU_CINEMATICS asks for it)
+  if [ -n "${KOPRULU_ORIGINAL:-}" ]; then
+    step "product cine check over the 1.17 install: its 28 Smacker movies decoded to their end"
+    mkdir -p build/cine_check/original
+    app_check cine_check_original "$APP" --data "$KOPRULU_ORIGINAL" --cine-check build/cine_check/original
+    grep -E "^SPIKE cine check: " build/cine_check_original.log
+    grep -qE "^SPIKE cine check: 28 movies, [1-9][0-9]* frames, 0 failures$" build/cine_check_original.log
+  fi
+  if [ -n "${KOPRULU_SCR:-}" ]; then
+    for variant in sd hd2; do
+      [ "$variant" = sd ] || case "$CINEMATICS" in both | hd2) ;; *) continue ;; esac
+      step "product cine check over Remastered ($variant): its WebM played directly, with its language's subtitles"
+      mkdir -p "build/cine_check/scr_$variant"
+      app_check "cine_check_scr_$variant" "$APP" --data "$KOPRULU_SCR" --cinematics "$variant" \
+        --cine-check "build/cine_check/scr_$variant"
+      grep -E "^SPIKE cine check: " "build/cine_check_scr_$variant.log"
+      grep -qE "^SPIKE cine check: 28 movies, [1-9][0-9]* frames, 0 failures$" "build/cine_check_scr_$variant.log"
+      grep -qE "^SPIKE cine check smk.starintr: subtitle 0 at " "build/cine_check_scr_$variant.log"
     done
   fi
   if [ -d "${KOPRULU_GENERATED:-generated}/hd" ]; then

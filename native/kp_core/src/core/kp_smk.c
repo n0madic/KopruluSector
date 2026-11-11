@@ -206,6 +206,50 @@ static uint32_t code(Bits *b, KpSmkTree *t)
 	return (uint32_t)v;
 }
 
+/* --- the palette records (libavformat's smacker demuxer documents them) --- */
+
+/* A 6-bit colour level as 8 bits (Smacker's table: i * 4 + i / 16) */
+static uint8_t level(uint32_t v) { return (uint8_t)((v & 0x3f) << 2 | (v & 0x3f) >> 4); }
+
+/* The frame's palette record (its bytes p[0..n): the first counts 4-byte units) applied to s->palette: a byte with bit
+ * 7 skips (b & 0x7f) + 1 entries, with bit 6 copies (b & 0x3f) + 1 entries of the palette before the record from the
+ * next byte's index, else a new entry of three 6-bit levels (b and the next two bytes). -1 for a record that runs past
+ * its end or copies past the palette's. */
+static int palette_record(KpSmk *s, const uint8_t *p, size_t n)
+{
+	uint8_t old[768];
+	size_t at = 1;
+	uint32_t entry = 0;
+	memcpy(old, s->palette, sizeof old);
+	while (entry < 256) {
+		uint32_t t;
+		if (at >= n) return -1;
+		t = p[at++];
+		if (t & 0x80) {
+			entry += (t & 0x7f) + 1;
+		} else if (t & 0x40) {
+			uint32_t from, count = (t & 0x3f) + 1;
+			if (at >= n) return -1;
+			from = p[at++];
+			if (from + count > 256) return -1;
+			while (count-- && entry < 256) {
+				memcpy(s->palette + 3 * entry, old + 3 * from, 3);
+				entry++;
+				from++;
+			}
+		} else {
+			if (n - at < 2) return -1;
+			s->palette[3 * entry] = level(t);
+			s->palette[3 * entry + 1] = level(p[at]);
+			s->palette[3 * entry + 2] = level(p[at + 1]);
+			at += 2;
+			entry++;
+		}
+	}
+	return 0;
+}
+
+
 static const KpSmkVideo *video_codec;
 
 void kp_smk_set_video(const KpSmkVideo *codec) { video_codec = codec; }
@@ -314,6 +358,7 @@ void kp_smk_rewind(KpSmk *s)
 	s->frame = 0;
 	s->frame_pos = s->frames_at;
 	memset(s->pixels, 0, (size_t)s->width * s->height);
+	memset(s->palette, 0, sizeof s->palette);
 }
 
 uint32_t kp_smk_frame_time(const KpSmk *s)
@@ -460,8 +505,11 @@ int kp_smk_decode(KpSmk *s)
 	if (pos > s->size || frame_size > s->size - pos) return -1;
 	end = pos + frame_size;
 	if (type & TYPE_PALETTE) { /* the palette record: its first byte counts 4-byte units */
-		if (pos >= end) return -1;
-		pos += (size_t)s->data[pos] * 4;
+		size_t n;
+		if (pos >= end || (n = (size_t)s->data[pos] * 4) == 0 || n > end - pos
+			|| palette_record(s, s->data + pos, end - pos) != 0)
+			return -1;
+		pos += n;
 	}
 	for (i = 1; i < 8; i++) { /* the audio tracks: a u32 size (itself included) each */
 		if (type & (1u << i)) {
@@ -484,4 +532,137 @@ int kp_smk_decode(KpSmk *s)
 		s->frame_pos = s->frames_at;
 	}
 	return 0;
+}
+
+/* --- the sound (libavcodec's smackaud decoder documents its bit stream) --- */
+
+#define SOUND_PACKED 0x80000000u
+#define SOUND_16BITS 0x20000000u
+#define SOUND_STEREO 0x10000000u
+#define SOUND_BINK 0x0c000000u /* Bink's RDFT or DCT sound, which Smacker 2 and 4 movies do not use */
+#define SOUND_RATE 0x00ffffffu
+#define SOUND_CHUNK_MAX (1u << 24) /* a packed chunk's unpacked bytes at most */
+
+int kp_smk_sound_format(const KpSmk *s, int track, KpSmkSoundFormat *out)
+{
+	uint32_t v;
+	if (s->kpw || track < 0 || track >= KP_SMK_TRACKS) return -1;
+	v = kp_le_u32(s->data + 72 + 4 * (size_t)track);
+	if (!(v & SOUND_RATE) || (v & SOUND_BINK)) return -1;
+	out->rate = v & SOUND_RATE;
+	out->channels = (v & SOUND_STEREO) ? 2 : 1;
+	out->bits = (v & SOUND_16BITS) ? 16 : 8;
+	out->packed = (v & SOUND_PACKED) != 0;
+	return 0;
+}
+
+/* A packed chunk (u32 unpacked bytes, then the bits) appended to out at *at: a bit for data, stereo and 16 bits as the
+ * header says, a Huffman tree of byte values per channel (two for 16 bits: low, high), the first samples (16 bits big
+ * endian, the right channel's first), then each sample the last one of its channel plus the next delta, wrapping. */
+static int packed_chunk(const KpSmkSoundFormat *f, const uint8_t *p, size_t n, uint8_t *out, size_t *at)
+{
+	Small trees[4];
+	Bits b;
+	uint32_t size, i, count, stereo = f->channels == 2, wide = f->bits == 16, frame_bytes = (uint32_t)f->channels * (wide ? 2u : 1u);
+	if (n < 4) return -1;
+	size = kp_le_u32(p);
+	if (size > SOUND_CHUNK_MAX || size % frame_bytes) return -1;
+	b.p = p + 4;
+	b.bits = (n - 4) * 8;
+	b.at = 0;
+	b.error = 0;
+	if (!bit(&b)) return b.error ? -1 : 0; /* no data in this chunk */
+	if (bit(&b) != stereo || bit(&b) != wide) return -1;
+	count = 1u << (wide + stereo);
+	memset(trees, 0, sizeof trees);
+	for (i = 0; i < count; i++) {
+		(void)bit(&b);
+		if (small_tree(&b, &trees[i], 0) < 0) return -1;
+		trees[i].present = 1;
+		(void)bit(&b);
+	}
+	if (b.error || size == 0) return b.error ? -1 : 0;
+	if (wide) {
+		uint8_t *o = out + *at;
+		uint16_t pred[2];
+		uint32_t samples = size / 2;
+		for (i = stereo + 1; i-- > 0;) {
+			uint32_t v = bits(&b, 16);
+			pred[i] = (uint16_t)((v >> 8) | (v & 0xff) << 8);
+		}
+		for (i = 0; i <= stereo && i < samples; i++) kp_le_put16(o + 2 * (size_t)i, pred[i]);
+		for (; i < samples; i++) {
+			uint32_t c = i & stereo, lo = small_get(&b, &trees[2 * c]), hi = small_get(&b, &trees[2 * c + 1]);
+			pred[c] = (uint16_t)(pred[c] + (lo | hi << 8));
+			kp_le_put16(o + 2 * (size_t)i, pred[c]);
+		}
+	} else {
+		uint8_t *o = out + *at, pred[2];
+		for (i = stereo + 1; i-- > 0;) pred[i] = (uint8_t)bits(&b, 8);
+		for (i = 0; i <= stereo && i < size; i++) o[i] = pred[i];
+		for (; i < size; i++) {
+			uint32_t c = i & stereo;
+			pred[c] = (uint8_t)(pred[c] + small_get(&b, &trees[c]));
+			o[i] = pred[c];
+		}
+	}
+	if (b.error) return -1;
+	*at += size;
+	return 0;
+}
+
+int kp_smk_sound(const KpSmk *s, int track, KpSmkSoundFormat *format, uint8_t **pcm, size_t *size)
+{
+	uint32_t frame, count = s->frames + s->ring, pass;
+	size_t total = 0;
+	uint8_t *out = NULL;
+	*pcm = NULL;
+	*size = 0;
+	if (kp_smk_sound_format(s, track, format) != 0) return -1;
+	for (pass = 0; pass < 2; pass++) { /* the bytes counted, then decoded */
+		size_t pos = s->frames_at, at = 0;
+		for (frame = 0; frame < count; frame++) {
+			uint32_t frame_size = kp_le_u32(s->data + s->sizes_at + 4 * (size_t)frame) & ~3u, type = s->frame_types[frame], i;
+			size_t end;
+			if (pos > s->size || frame_size > s->size - pos) goto fail;
+			end = pos + frame_size;
+			if (type & TYPE_PALETTE) {
+				if (pos >= end) goto fail;
+				pos += (size_t)s->data[pos] * 4;
+			}
+			for (i = 0; i < KP_SMK_TRACKS; i++) {
+				uint32_t n;
+				if (!(type & (2u << i))) continue;
+				if (pos > end || end - pos < 4) goto fail;
+				n = kp_le_u32(s->data + pos);
+				if (n < 4 || n > end - pos) goto fail;
+				if (i == (uint32_t)track) {
+					const uint8_t *chunk = s->data + pos + 4;
+					size_t chunk_size = n - 4;
+					if (!format->packed) {
+						if (pass && chunk_size) memcpy(out + at, chunk, chunk_size);
+						at += chunk_size;
+					} else if (!pass) {
+						if (chunk_size >= 4) at += kp_le_u32(chunk) <= SOUND_CHUNK_MAX ? kp_le_u32(chunk) : 0;
+					} else if (packed_chunk(format, chunk, chunk_size, out, &at) != 0) {
+						goto fail;
+					}
+				}
+				pos += n;
+			}
+			pos = end;
+		}
+		if (!pass) {
+			total = at;
+			if (!(out = (uint8_t *)malloc(total ? total : 1))) return -1;
+		} else {
+			total = at; /* a packed chunk without data adds nothing */
+		}
+	}
+	*pcm = out;
+	*size = total;
+	return 0;
+fail:
+	free(out);
+	return -1;
 }

@@ -1029,11 +1029,11 @@ static void run_begin(void *ctx) { ((RunHost *)ctx)->begins++; }
 
 static void run_end(void *ctx) { ((RunHost *)ctx)->ends++; }
 
-static int run_sound(void *ctx, const KpCineClip *clip)
+static int run_sound(void *ctx, const KpCineClip *clip, const uint8_t *data, size_t size)
 {
 	RunHost *h = (RunHost *)ctx;
-	(void)clip;
-	h->sounds++;
+	(void)clip, (void)size;
+	h->sounds += data == NULL; /* a pack's sound is the host's to read */
 	return h->sound_ok;
 }
 

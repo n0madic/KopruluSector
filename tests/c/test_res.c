@@ -532,6 +532,37 @@ static void res_reads_the_remastered_install(KpT *T)
 	b = kp_res_read(r, "files\\font\\font8.fnt", &size, &st, err, sizeof err);
 	kp_t_ok(T, b != NULL && st == KP_RES_EXACT, "a moved font: %s (%s)", err, kp_res_status_name(st));
 	free(b);
+	kp_t_eq(T, (int64_t)strlen(kp_res_text_locale(r)), 4, "its text locale: %s", kp_res_text_locale(r));
+	snprintf(err, sizeof err, "locales/%s/Assets/Smk/starintr.srt", kp_res_text_locale(r));
+	kp_t_ok(T, kp_res_casc_held(r, err), "it holds that language's files: %s", err);
+	kp_t_ok(T, !kp_res_casc_held(r, "locales/xxXX/Assets/Smk/starintr.srt"), "not a name of the storage");
+}
+
+/* A .build.info's text locale: the active row's first Tags group with "text?" and a locale */
+static void res_build_info_text_locale(KpT *T)
+{
+	static const struct {
+		const char *text, *want;
+	} CASES[] = {
+		{ "Branch!STRING:0|Active!DEC:1|Tags!STRING:0\r\n"
+		  "us|0|Windows enUS text?:Windows enUS speech?\r\n"
+		  "\r\n"
+		  "eu|1|OSX EU? deDE speech?:OSX EU? deDE text?:OSX EU? ruRU text?\r\n", "deDE" },
+		{ "Tags!STRING:0|Active!DEC:1\nOSX text?:OSX frFR text? EU?\n", "frFR" }, /* a group without a locale */
+		{ "Tags!STRING:0|Active!DEC:1\nOSX  ruRU\ttext?:x\nOSX deDE text?|0\n", "ruRU" }, /* no active row: the first */
+		{ "Tags!STRING:0|Active!DEC:1\nOSX deDE speech?|1\n", "" },
+		{ "Tags!STRING:0|Active!DEC:1\nOSX enus text? EnUS ENUS|1\n", "" },
+		{ "Branch!STRING:0|Active!DEC:1\neu|1\n", "" }, /* no Tags */
+		{ "", "" },
+	};
+	size_t k;
+	char out[8];
+	for (k = 0; k < sizeof CASES / sizeof CASES[0]; k++) {
+		kp_res_build_info_text_locale(CASES[k].text, out, sizeof out);
+		kp_t_eq_str(T, out, CASES[k].want, "case %d", (int)k);
+	}
+	kp_res_build_info_text_locale(CASES[0].text, out, 4);
+	kp_t_eq_str(T, out, "", "no room for a locale");
 }
 
 static const KpTest TESTS[] = {
@@ -546,6 +577,7 @@ static const KpTest TESTS[] = {
 	{ "res_streams_read_pieces", res_streams_read_pieces, 0 },
 	{ "res_log_lists_the_reads", res_log_lists_the_reads, 0 },
 	{ "res_casc_rebuilds_the_tilesets", res_casc_rebuilds_the_tilesets, 0 },
+	{ "res_build_info_text_locale", res_build_info_text_locale, 0 },
 	{ "res_reads_the_1_17_install", res_reads_the_1_17_install, 0 },
 	{ "res_reads_the_remastered_install", res_reads_the_remastered_install, 0 },
 };

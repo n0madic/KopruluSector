@@ -68,9 +68,11 @@ def built_tables() -> list[tuple[str, bytes]]:
     the runtime leaves out), the texts we give records that have none (KLAB: u16 count; per text the dialog's label, u16
     record, u16 length, its UTF-8), the fonts' plaintext files (FNTP) and each tileset's colour cycles (CYCn, the
     container's CYCL). Stage D4: the CHK loader tables (CHKL, chk.loader_section) and each campaign mission's packs
-    (MPAK: u16 count; per mission by its lowercased directory u8 length, the directory, its PACK payload).
+    (MPAK: u16 count; per mission by its lowercased directory u8 length, the directory, its PACK payload). Stage D7: the
+    cinematics an install's movies are played as (CINM, cinematics_smk.catalog_section).
     """
     from converter import missions
+    from converter.emit import cinematics_smk
     from converter.formats import chk, dialog, palette
     from converter.kpf import kpd, kpm
 
@@ -97,6 +99,7 @@ def built_tables() -> list[tuple[str, bytes]]:
     packs = sorted((d.lower().encode("latin-1"), p) for d, p in missions.load_packs(PROFILE).items())
     out.append(("MPAK", struct.pack("<H", len(packs)) + b"".join(bytes([len(d)]) + d + kpm.packs_payload(p)
                                                                for d, p in packs)))
+    out.append(("CINM", cinematics_smk.catalog_section()))
     return out
 
 
@@ -236,7 +239,8 @@ def render_header() -> str:
         "} KpDefsArchive;",
         "",
         "/* A table of the executable's, serialized as the converter's container section of the same name (tools/defs_c.py",
-        " * tables): COLS, RQ**, BTNS, STLY, MUSI, VOLT, ACCL, ESTB, TABL, CHEA, SLOT. */",
+        " * tables: COLS, RQ**, BTNS, STLY, MUSI, VOLT, ACCL, ESTB, TABL, CHEA, SLOT), or one the runtime builds its structures",
+        " * from the original files with (built_tables, scr_tables: the interface's lists, CHKL, MPAK, CINM, the SCR rebuilds). */",
         "typedef struct {",
         "\tchar fourcc[5];",
         "\tconst uint8_t *data;",

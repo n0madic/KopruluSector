@@ -77,6 +77,8 @@ void kp_res_close(KpRes *r);
 int kp_res_add_repack(KpRes *r, const char *path, char *err, size_t err_size);
 KpResSourceKind kp_res_install(const KpRes *r);
 int kp_res_repacks(const KpRes *r);
+/* The profile the sources are read by. */
+const KpDefsProfile *kp_res_profile(const KpRes *r);
 
 /* A malloc'd copy of a file's bytes (NUL terminated past size) and its status, or NULL: err empty when no source has
  * it (missing, absent, unreadable), the reason otherwise (a refused copy, a failed read). */
@@ -104,6 +106,15 @@ int kp_res_write_log(const KpRes *r, const char *path, char *err, size_t err_siz
 /* A Remastered install's own file by its CASC name ("HD2/portrait/tadvisor/tadfid00.webm": the HD art), unchecked: a
  * malloc'd copy, or NULL (err empty when the install is not Remastered's or has no such file). */
 uint8_t *kp_res_casc_file(KpRes *r, const char *casc_name, size_t *size, char *err, size_t err_size);
+/* Whether a Remastered install holds that file (named and downloaded: kp_casc_held). */
+int kp_res_casc_held(KpRes *r, const char *casc_name);
+/* A Remastered install's text locale ("deDE"; Remastered downloads that language's files), "" none. */
+const char *kp_res_text_locale(const KpRes *r);
+/* The text locale of a .build.info's text (NUL terminated) into out (5 bytes at least), "" none: of the non-empty lines
+ * the first names the columns ("Name!TYPE:size", '|' apart), the row whose Active is 1 is read (else the first; as
+ * converter/casc/storage.py parse_build_info), and of its Tags, ':' apart groups of words, the first group with "text?"
+ * and a locale gives that locale (converter/emit/cinematics.py text_locale). */
+void kp_res_build_info_text_locale(const char *text, char *out, size_t size);
 
 /* The 1.17 bytes of a tileset file Remastered grew by appending (its prefix, the CV5 groups Remastered filled zeroed),
  * or .vx4 from .vx4ex (converter/casc/source.py _rebuild): a malloc'd copy of want bytes, or NULL when no rule

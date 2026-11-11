@@ -35,6 +35,36 @@ const uint8_t *kp_webm_frame(KpWebm *w, uint32_t n);
 /* kp_smk's codec of a KPW1's WebM (kp_smk_set_video): these movies */
 extern const KpSmkVideo kp_webm_smk_video;
 
+/* --- a cinematic's streams (ADR 0018, stage D7): Remastered's movies split as the converter's packs split them --- */
+
+#define KP_WEBM_KEY 0x80000000u /* a frame size's key frame bit (the packs' frame tables) */
+
+/* A WebM's video packets and its sound as the cinematics' player takes them: */
+typedef struct {
+	uint32_t width, height;   /* the video track's */
+	uint64_t frame_ns;        /* its frames' duration (Matroska's DefaultDuration), 0 when it gives none */
+	uint32_t count;           /* the video frames, each frame of a laced block one (FFmpeg's demuxer splits them so) */
+	uint8_t *packets;         /* their packets one after the other */
+	uint64_t packets_size;
+	uint8_t *sizes;           /* per frame a little-endian u32: its packet's size, KP_WEBM_KEY on a key frame */
+	uint64_t *times;          /* per frame its time in ns */
+	uint8_t *ogg;             /* the first sound track (Vorbis) as an Ogg stream of serial `serial`, NULL with none: its
+	                           * three headers on the first two pages, each page then closed once it holds
+	                           * KP_WEBM_OGG_PAGE bytes, each page's granule the samples once its last packet is decoded
+	                           * (Vorbis's block sizes), the last page marked, its granule the end less the last
+	                           * block's DiscardPadding (Matroska's, rounded to the sound's samples) */
+	size_t ogg_size;
+	int64_t samples;          /* the sound's samples as its blocks decode them, before that padding is trimmed */
+} KpWebmStreams;
+
+#define KP_WEBM_OGG_PAGE 4096
+
+/* The streams of a WebM in memory (its first video track VP9): 0, or -1 with the reason in err (and nothing kept) for
+ * one that does not demux, whose video is not VP9 of a size the player takes, has an empty packet or none, or whose
+ * sound is not Vorbis with headers that read. */
+int kp_webm_streams(const uint8_t *data, size_t size, uint32_t serial, KpWebmStreams *s, char *err, size_t err_size);
+void kp_webm_streams_free(KpWebmStreams *s);
+
 /* --- libvpx's pictures (const vpx_image_t *), the cinematics' (kp_cine.c) and the WebM's --- */
 
 /* Whether a picture is one the players show: 8-bit planar of width x height, 4:4:4 (sRGB or YCbCr), 4:4:0, 4:2:2 or

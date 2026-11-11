@@ -242,6 +242,8 @@ typedef struct {
 	int caption_no_font;
 	uint8_t *locale_subs;   /* --locale's generated/locale/<loc>/cinematics.kpd, read once, or NULL */
 	size_t locale_subs_size;
+	KpCineCatalog catalog;  /* the profile's movies (CINM) when the run's index is an install's (ADR 0018, stage D7) */
+	int casc;               /* that install is Remastered's: its WebM, else 1.17's Smacker files */
 #ifdef __EMSCRIPTEN__
 	/* the web's pack lies beside the page (ADR 0015 item 4): its head preloaded, the rest fetched */
 	uint8_t *head;

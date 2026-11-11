@@ -691,7 +691,9 @@ def scr_fixture() -> dict[str, bytes]:
 def cine_fixture(source_hash: bytes) -> dict[str, bytes]:
     """cine.kpd (cinematic 0: gbrp, 1: yuv420p) and the movies' FFmpeg-decoded frames, cine0.rgba and cine1.rgba, and
     cine1.yuv, the second movie's decoded planes (VP9 decoding is exact: libvpx, in C or with SIMD, gives FFmpeg's);
-    empty where FFmpeg cannot encode them (the C suite then skips)."""
+    the WebM the pack was split from, cine0.webm and cine1.webm, and the second one's subtitles, cine1.srt (stage D7:
+    an install's movies played as they are, against the pack's clips); empty where FFmpeg cannot encode them (the C
+    suite then skips)."""
     srgb, ycc = cine_webm("testsrc", "gbrp"), cine_webm("testsrc2", "yuv420p")  # not gradients: its colours are random
     if srgb is None or ycc is None:
         log.warning("cinematics fixtures: ffmpeg with libvpx-vp9 and vorbis is not available")
@@ -702,7 +704,8 @@ def cine_fixture(source_hash: bytes) -> dict[str, bytes]:
         info = cinematics.generate(cinematics.remastered(storage, "sd"), Path(tmp), "sd", "bw-1.17.0.1", source_hash,
                                    subtitles)
         return {"cine.kpd": Path(info["path"]).read_bytes(), "cine0.rgba": cine_frames(srgb),
-                "cine1.rgba": cine_frames(ycc), "cine1.yuv": cine_frames(ycc, "yuv420p")}
+                "cine1.rgba": cine_frames(ycc), "cine1.yuv": cine_frames(ycc, "yuv420p"), "cine0.webm": srgb,
+                "cine1.webm": ycc, "cine1.srt": CINE_SUBTITLES}
 
 
 def build_fixtures(out: Path = DEFAULT_OUT) -> list[Path]:

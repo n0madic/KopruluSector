@@ -5,6 +5,11 @@
  * callback and plays the movie's Ogg Vorbis (kp_cine_audio) with its own audio; it asks for the picture by the clock
  * (the sound's position). A run (KpCineRun) plays the host's queue of movies one after the other, a press ending the
  * one shown; the host draws its pictures (libvpx, `tools/toolchain/fetch.sh vpx`).
+ *
+ * An install's movies play as they are (ADR 0018, stage D7): a run over an index of the profile's movies the install
+ * has (kp_cine_index_original) asks its host for each movie (KpCineHost.load), a 1.17 Smacker file (its frames through
+ * their palettes, its sound decoded into a WAV) or Remastered's WebM (its VP9 packets and its Vorbis sound as an Ogg
+ * stream, as a pack's clip), with its subtitles from Remastered's .srt.
  */
 #ifndef KP_CINE_H
 #define KP_CINE_H
@@ -56,6 +61,7 @@ typedef struct {
 	uint64_t text_at;       /* and of their text */
 	uint32_t text_size;     /* the text's bytes */
 	const uint8_t *subs_overlay; /* a language's SUBS in memory: cues_at and text_at are offsets in it, else NULL */
+	int original;           /* an install's movies (kp_cine_index_original): the host loads each one */
 } KpCineIndex;
 
 #define KP_CINE_READ_WAIT 1 /* a read's bytes are on their way (the web's fetches): the player asks again later */
@@ -100,6 +106,58 @@ int kp_cine_subs_load(const KpCineIndex *ix, int k, KpCineRead read, void *ctx, 
 int kp_cine_subs_overlay(KpCineIndex *ix, const uint8_t *data, size_t size, KpError *err);
 /* The subtitle shown at ms: the last begun at or before it that has not ended (end_ms excluded), or -1. */
 int kp_cine_subs_at(const KpCineSubs *s, uint64_t ms);
+
+/* --- an install's movies played as they are (ADR 0018, stage D7): 1.17's Smacker files, Remastered's WebM --- */
+
+#define KP_CINE_NAME 32 /* a movie's name in the profile's table ("Terran1") with its NUL */
+
+/* The profile's movies (the compiled CINM: defs/campaign/cinematics.json): each one's name, the size and SHA-256 of its
+ * copy in the reference 1.17 install, and the {cinematic, prelude} pairs. */
+typedef struct {
+	struct {
+		char name[KP_CINE_NAME];
+		uint32_t size;
+		uint8_t sha256[32];
+	} movies[KP_CINE_CLIPS];
+	int count;
+	uint8_t preludes[KP_CINE_PRELUDES][2];
+	int prelude_count;
+} KpCineCatalog;
+
+/* The catalog of a CINM table: 0, or -1 when it is cut short, too long or names a prelude past its movies. */
+int kp_cine_catalog(KpCineCatalog *c, const uint8_t *table, size_t size);
+/* Whether data is movie k's reference copy (its size and SHA-256): 0, or -1. */
+int kp_cine_catalog_check(const KpCineCatalog *c, int k, const uint8_t *data, size_t size);
+/* The index of an install's movies (original set, variant 0 SD or 1 HD2): a clip "smk\<name>" numbered as the catalog
+ * for each movie has(ctx, k) finds, its size, rate and frames those of the movie the host loads (KpCineHost.load); the
+ * catalog's preludes. */
+void kp_cine_index_original(KpCineIndex *ix, int variant, const KpCineCatalog *c, int (*has)(void *ctx, int k), void *ctx);
+
+/* The subtitles of a SubRip file (Remastered's locales/<locale>/Assets/Smk/<name>.srt) as converter/formats/srt.py
+ * reads them: UTF-8 (a BOM dropped), blocks apart by a blank line, each its number, its times (H:MM:SS,mmm --> ...,
+ * '.' too) and its text (its lines right-stripped, a cue without text left out), by their start (equal ones in the
+ * file's order). 0, or -1 with err (and none) for a block that does not read, a cue that ends before it starts, more
+ * than KP_CINE_CUES cues or KP_CINE_CUE_TEXT bytes of text. */
+int kp_cine_subs_srt(const uint8_t *data, size_t size, KpCineSubs *s, KpError *err);
+
+typedef struct KpCineMovie KpCineMovie;
+
+/* A Smacker movie in memory (data malloc'ed, taken: freed with the movie, or at once when NULL is returned) named as
+ * the index's clip: its size, its rate (the header's frame time), its frames (a ring movie's extra frame left out), its
+ * first sound track decoded whole into a WAV file. NULL with err when it is no Smacker 2 or 4 file, is larger than the
+ * player takes, or its sound does not decode. */
+KpCineMovie *kp_cine_movie_smk(uint8_t *data, size_t size, const KpCineClip *named, KpError *err);
+/* A WebM in memory (read, not kept) as a pack's clip (kp_webm_streams): its VP9 packets and frame table, its rate (the
+ * track's frame duration, else its frames' times), its Vorbis sound as an Ogg stream. NULL with err when it does not
+ * demux, or a frame's time strays more than half a frame from the constant rate. */
+KpCineMovie *kp_cine_movie_webm(const uint8_t *data, size_t size, const KpCineClip *named, KpError *err);
+void kp_cine_movie_free(KpCineMovie *m);
+const KpCineClip *kp_cine_movie_clip(const KpCineMovie *m);
+/* The movie's sound as a file in memory (a WAV, an Ogg Vorbis) for the host's mixer, or NULL with none. */
+const uint8_t *kp_cine_movie_sound(const KpCineMovie *m, size_t *size);
+/* The movie's subtitles from a SubRip file (kp_cine_subs_srt): 0, or -1 with err and none. */
+int kp_cine_movie_subtitles(KpCineMovie *m, const uint8_t *srt, size_t size, KpError *err);
+const KpCineSubs *kp_cine_movie_subs(const KpCineMovie *m);
 
 /* The pack's file read over asynchronous requests of its byte ranges (the web, ADR 0015 item 4): the first head_size
  * bytes at hand (the index, the frame tables, the subtitles), the rest fetched chunk by chunk, a few chunks ahead of the
@@ -193,14 +251,23 @@ const uint8_t *kp_cine_rgba(KpCinePlayer *p);
 const KpCineClip *kp_cine_clip(const KpCinePlayer *p);
 uint32_t kp_cine_decoded(const KpCinePlayer *p); /* the packets decoded so far */
 
+/* A player of an install's movie (which must outlive it; one player at a time): an SMK's frames are decoded by kp_smk
+ * from its first, its picture the indices through the frame's palette as 4:4:4 sRGB planes (G, B, R); a WebM's
+ * packets are read from the movie's memory (kp_cine_movie_read). NULL with err as kp_cine_open. */
+KpCinePlayer *kp_cine_open_movie(KpCineMovie *m, KpError *err);
+/* A KpCineRead over a WebM movie's bytes (ctx: the movie), laid out as a pack's clip: its clip's video_offset,
+ * frame_table and audio_offset are offsets there; -1 past them or for an SMK. */
+int kp_cine_movie_read(void *ctx, uint64_t offset, uint8_t *out, size_t size);
+
 /* --- a run of movies: the host's cinematics, one after the other (PlayCinematic 0x47ec60's loop) --- */
 
 /* the movies queued: a mission history's cinematic and the campaign step's rows after it (1 + kp_flow.h's
  * KP_APP_STEP_CINEMATICS), each after its prelude */
 #define KP_CINE_RUN_QUEUE (2 * (1 + 16))
 
-/* What a run asks of its host (every callback set): the pack's file for the packets' reads, open while movies play;
- * the run's begin and end (the music and the input are the host's); each movie's sound; the log. */
+/* What a run asks of its host (every callback set): the pack's file for the packets' reads, open while movies play
+ * (an install's movies: none, each one loaded instead); the run's begin and end (the music and the input are the
+ * host's); each movie's sound; the log. */
 typedef struct {
 	void *ctx;
 	uint64_t (*now_ns)(void *ctx);                   /* the clock of the host's events' timestamps, above 0 (0 is
@@ -210,7 +277,11 @@ typedef struct {
 	void (*close)(void *ctx, void *file);
 	void (*begin)(void *ctx);                        /* a run begins: before its first movie's sound */
 	void (*end)(void *ctx);                          /* the run ended: its last sound stopped, its file closed */
-	int (*sound)(void *ctx, const KpCineClip *clip); /* a movie's sound begun (1), or not (0: the wall clock's movie) */
+	/* an install's movie (index.original) read whole: NULL with err (logged by the run) */
+	KpCineMovie *(*load)(void *ctx, const KpCineClip *clip, KpError *err);
+	/* a movie's sound begun (1), or not (0: the wall clock's movie): a pack's at the clip's audio_offset of the file, an
+	 * install's movie's in memory (data, size: a WAV or an Ogg Vorbis file, the movie's until sound_stop) */
+	int (*sound)(void *ctx, const KpCineClip *clip, const uint8_t *data, size_t size);
 	int (*sound_ms)(void *ctx, int64_t *ms);         /* whether the sound plays, its position in ms (0 or less: none yet) */
 	void (*sound_stop)(void *ctx);                   /* the movie's sound stopped and released (none: nothing) */
 	void (*sound_pause)(void *ctx, int pause);       /* the movie waits for its data (1), or goes on (0) */
@@ -225,6 +296,7 @@ typedef struct {
 	int have;                 /* the index is the pack's (the host read it); the host's 0 later: no more movies */
 	void *file;               /* open while movies play */
 	KpCinePlayer *player;     /* the movie playing (its clip gives the picture's size and shape) */
+	KpCineMovie *movie;       /* an install's movie playing (its sound's bytes), freed after its sound stopped */
 	int queue[KP_CINE_RUN_QUEUE], queue_len, queue_pos;
 	KpCineClock clock;
 	int active;

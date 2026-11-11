@@ -92,6 +92,25 @@ def serial(name: str) -> int:
     return sound.serial_of(name.lower())
 
 
+CATALOG_DIGEST = 32  # CINM's SHA-256 bytes a movie
+
+
+def catalog_section() -> bytes:
+    """CINM, the movies the runtime plays from an install as they are (ADR 0018, stage D7; native kp_cine_catalog, the
+    table compiled by tools/defs_c.py): u16 movies, u16 preludes; per movie of the table in its order u8 length, its
+    name, u32 size and SHA-256 of its copy in the reference install (`smk`); per prelude u8 cinematic, u8 prelude."""
+    names, preludes = table()
+    smk = expected()
+    out = bytearray(struct.pack("<HH", len(names), len(preludes)))
+    for name in names:
+        size, digest = smk[name]
+        raw = name.encode("ascii")
+        out += bytes([len(raw)]) + raw + struct.pack("<I", size) + bytes.fromhex(digest)
+    for cinematic, prelude in preludes:
+        out += struct.pack("<BB", cinematic, prelude)
+    return bytes(out)
+
+
 def _ffmpeg(src: Path, args: tuple[str, ...], out: Path, what: str) -> bytes:
     run = subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(src), *args, *BITEXACT, str(out)],
                          capture_output=True, check=False)

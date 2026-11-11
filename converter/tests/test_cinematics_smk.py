@@ -154,6 +154,23 @@ class HeaderTest(unittest.TestCase):
         assert list(known) == cinematics.table()[0]
         assert all(size > smk.HEADER_SIZE and len(sha) == 64 for size, sha in known.values())
 
+    def test_the_catalog_section_holds_the_table_and_the_reference_copies(self):
+        raw = cinematics_smk.catalog_section()
+        names, preludes = cinematics.table()
+        known = cinematics_smk.expected()
+        assert struct.unpack_from("<HH", raw) == (len(names), len(preludes))
+        at = 4
+        for name in names:
+            n = raw[at]
+            assert raw[at + 1:at + 1 + n].decode("ascii") == name
+            at += 1 + n
+            size, = struct.unpack_from("<I", raw, at)
+            digest = raw[at + 4:at + 4 + cinematics_smk.CATALOG_DIGEST].hex()
+            assert (size, digest) == known[name]
+            at += 4 + cinematics_smk.CATALOG_DIGEST
+        assert [tuple(raw[at + 2 * i:at + 2 * i + 2]) for i in range(len(preludes))] == preludes
+        assert at + 2 * len(preludes) == len(raw)
+
 
 @needs_encoders
 class TranscodeTest(unittest.TestCase):

@@ -17,6 +17,9 @@ KpCasc *kp_casc_open(const char *root, char *err, size_t err_size);
 void kp_casc_close(KpCasc *c);
 /* Whether the storage names a file ('/' separated, any case: "SD/arr/units.dat"). */
 int kp_casc_has(KpCasc *c, const char *name);
+/* Whether it also holds its bytes: an install downloads only some languages' files, the others named but not there
+ * (CascLib's ERROR_FILE_OFFLINE). */
+int kp_casc_held(KpCasc *c, const char *name);
 /* A malloc'd copy of a file's bytes (NUL terminated past size), or NULL: err empty when the storage does not name
  * it, the reason otherwise (named but not installed locally, unreadable). */
 uint8_t *kp_casc_read(KpCasc *c, const char *name, size_t *size, char *err, size_t err_size);

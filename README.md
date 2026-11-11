@@ -7,7 +7,8 @@ mission to the epilog, on your own copy of the original data.
 - **Faithful to 1.17.0.1.** The simulation, triggers, AI scripts, fog of war and interface follow the original
   executable. They are checked against the original game, which runs in an emulator, step by step. See
   [docs/implementation-status.md](docs/implementation-status.md).
-- **The cinematics** from either install: the 1.17 movies converted to the video player's format, or Remastered's.
+- **The cinematics** from either install: played as they are when the game runs from an install (the 1.17 Smacker
+  movies, Remastered's WebM with its subtitles), or converted into the video player's packs for the other builds.
 - **Optional StarCraft: Remastered content.** A Remastered install can be the only data source. It also gives the
   HD and HD2 art, lighting, smooth fog, animated water, the cinematics with subtitles, and the deDE, frFR, plPL and
   ruRU text and speech.
@@ -179,7 +180,7 @@ the settings for one run:
 
 | Option | Meaning |
 |---|---|
-| `--data DIR` | the data folder (default: `generated/` under the current folder, else `data/` beside the executable); any number of times: a folder with a 1.17 install, StarCraft: Remastered's install or a `koprulu.mpq` repack is the original data, read and checked at run time ([ADR 0018](docs/adr/0018-original-data-at-run-time.md)): a 1.17 install or StarCraft: Remastered's runs the game, its interface, sounds and music with no conversion (Remastered's files that only its own formats hold, DDS, XML and WebM, rebuilt when read; its HD portraits read from it too; the rest of the HD art, the cinematics and the languages still come from `generated/` when it is there) |
+| `--data DIR` | the data folder (default: `generated/` under the current folder, else `data/` beside the executable); any number of times: a folder with a 1.17 install, StarCraft: Remastered's install or a `koprulu.mpq` repack is the original data, read and checked at run time ([ADR 0018](docs/adr/0018-original-data-at-run-time.md)): a 1.17 install or StarCraft: Remastered's runs the game, its interface, sounds and music with no conversion (Remastered's files that only its own formats hold, DDS, XML and WebM, rebuilt when read; its HD portraits read from it too; the cinematics played from it as they are, the 1.17 Smacker files or Remastered's WebM with the subtitles of its language; the rest of the HD art and the languages still come from `generated/` when it is there) |
 | `--res-log PATH` | the original files read, their status and source, written when the program ends |
 | `--graphics original\|hd2\|hd` | the art (HD needs `converter hd`) |
 | `--lighting on\|off` | the HD sprites' lighting |
