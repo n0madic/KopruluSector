@@ -39,4 +39,4 @@ An Android bundle carries its groups in the APK's assets, `generated/repack/`, w
 
 ## Checks
 
-`kp_res` refuses another magic or another profile (the install is read instead). A file listed `exact` or `derived` whose digest (an Ogg's: its WAV's) and size are not the manifest's is dropped from the table and logged, and the install's copy is read; any file's bytes are checked against its listed digest when read, a copy that differs read from the install. A line that is not a file's is counted and logged.
+`kp_res` refuses another magic, another profile or no profile line (the install is read instead), before any line of the listing applies: a listing refused adds neither its files nor the groups it names. A blank line is skipped. A file listed `exact` or `derived` whose digest (an Ogg's: its WAV's) and size are not the manifest's is dropped from the table and logged, and the install's copy is read; any file's bytes are checked against its listed digest when read, a copy that differs read from the install. A line that is not a file's is counted and logged.

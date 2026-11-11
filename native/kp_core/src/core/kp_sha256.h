@@ -26,6 +26,9 @@ void kp_sha256_final(KpSha256 *s, uint8_t digest[KP_SHA256_SIZE]);
 void kp_sha256(const void *data, size_t size, uint8_t digest[KP_SHA256_SIZE]);
 /* The digest as 64 lower-case hexadecimal digits and a NUL. */
 void kp_sha256_hex(const uint8_t digest[KP_SHA256_SIZE], char hex[2 * KP_SHA256_SIZE + 1]);
+/* kp_sha256_hex's reverse for any n bytes: out[0..n-1] from 2n hexadecimal digits of either case (more may follow).
+ * 0, or -1 when a digit is not one. kp_hex_decode(hex, d, KP_SHA256_SIZE) reads a manifest's or a listing's digest. */
+int kp_hex_decode(const char *hex, uint8_t *out, size_t n);
 
 #ifdef __cplusplus
 }

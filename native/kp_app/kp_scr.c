@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include "kp_grp.h"
+#include "kp_kpf.h"
 #include "kp_present.h"
 #include "kp_text.h"
 
@@ -28,19 +29,6 @@
 #define TBL_OFFSET_MAX 0xffff
 #define WPE_ENTRY 4
 
-static uint32_t le16(const uint8_t *p) { return (uint32_t)p[0] | (uint32_t)p[1] << 8; }
-static uint32_t le32(const uint8_t *p) { return le16(p) | le16(p + 2) << 16; }
-static void put16(uint8_t *p, uint32_t v)
-{
-	p[0] = (uint8_t)v;
-	p[1] = (uint8_t)(v >> 8);
-}
-static void put32(uint8_t *p, uint32_t v)
-{
-	put16(p, v);
-	put16(p + 2, v >> 16);
-}
-
 static int fail(char *err, size_t err_size, const char *what)
 {
 	if (err_size) snprintf(err, err_size, "%s", what);
@@ -56,9 +44,9 @@ int kp_scr_dds(const uint8_t *data, size_t size, KpScrImage *out, char *err, siz
 	size_t body_size, pixels;
 	memset(out, 0, sizeof *out);
 	if (size < DDS_HEADER || memcmp(data, "DDS ", 4) != 0) return fail(err, err_size, "not a DDS file");
-	h = le32(data + 12);
-	w = le32(data + 16);
-	flags = le32(data + 80);
+	h = kp_le_u32(data + 12);
+	w = kp_le_u32(data + 16);
+	flags = kp_le_u32(data + 80);
 	fourcc = data + 84;
 	if (w == 0 || h == 0 || w > DDS_MAX_SIDE || h > DDS_MAX_SIDE) return fail(err, err_size, "a DDS of no size or too large");
 	body = data + DDS_HEADER;
@@ -76,8 +64,8 @@ int kp_scr_dds(const uint8_t *data, size_t size, KpScrImage *out, char *err, siz
 		kp_bcn_decode(body, (int32_t)w, (int32_t)h, bc3, out->rgba);
 	} else {
 		if (!(flags & DDS_PF_RGB)) return fail(err, err_size, "unsupported DDS pixel format flags");
-		if (le32(data + 88) != 32 || le32(data + 92) != 0xffu || le32(data + 96) != 0xff00u || le32(data + 100) != 0xff0000u
-			|| le32(data + 104) != 0xff000000u)
+		if (kp_le_u32(data + 88) != 32 || kp_le_u32(data + 92) != 0xffu || kp_le_u32(data + 96) != 0xff00u || kp_le_u32(data + 100) != 0xff0000u
+			|| kp_le_u32(data + 104) != 0xff000000u)
 			return fail(err, err_size, "an unsupported uncompressed DDS");
 		if (body_size < pixels * 4) return fail(err, err_size, "pixel data truncated");
 		if (!(out->rgba = (uint8_t *)malloc(pixels * 4))) return fail(err, err_size, "out of memory");
@@ -100,15 +88,15 @@ int kp_scr_dds_container(const uint8_t *data, size_t size, KpScrDdsEntry **entri
 	size_t at = CONTAINER_HEADER;
 	*entries = NULL;
 	*count = 0;
-	if (size < CONTAINER_HEADER || le32(data) != size) return -1;
-	n = le16(data + 4);
+	if (size < CONTAINER_HEADER || kp_le_u32(data) != size) return -1;
+	n = kp_le_u16(data + 4);
 	if (!(*entries = (KpScrDdsEntry *)calloc(n ? n : 1, sizeof **entries))) return -1;
 	for (i = 0; i < n; i++) {
 		uint32_t length;
 		if (size - at < CONTAINER_ENTRY) goto bad;
-		length = le32(data + at + 8);
-		(*entries)[i].width = le16(data + at + 4);
-		(*entries)[i].height = le16(data + at + 6);
+		length = kp_le_u32(data + at + 8);
+		(*entries)[i].width = kp_le_u16(data + at + 4);
+		(*entries)[i].height = kp_le_u16(data + at + 6);
 		at += CONTAINER_ENTRY;
 		if (length > size - at) goto bad;
 		(*entries)[i].dds = data + at;
@@ -191,11 +179,11 @@ uint8_t *kp_scr_pcx(uint32_t width, uint32_t height, const uint8_t *pixels, cons
 	out[1] = 5;
 	out[2] = 1;
 	out[3] = 8;
-	put16(out + 8, width - 1);
-	put16(out + 10, height - 1);
+	kp_le_put16(out + 8, width - 1);
+	kp_le_put16(out + 10, height - 1);
 	memcpy(out + 12, header, 4);
 	out[65] = 1;
-	put16(out + 66, width);
+	kp_le_put16(out + 66, width);
 	memcpy(out + 68, header + 4, 2);
 	for (row = 0; row < height; row++) {
 		const uint8_t *line = pixels + (size_t)row * width;
@@ -230,9 +218,9 @@ uint8_t *kp_scr_plain_grp(uint32_t box_w, uint32_t box_h, const KpScrGrpRecord *
 	uint8_t *out;
 	uint32_t k, j;
 	if ((size_t)KP_GRP_HEADER + (size_t)KP_GRP_RECORD * count > size || !(out = (uint8_t *)calloc(size + 1, 1))) return NULL;
-	put16(out, count);
-	put16(out + 2, box_w);
-	put16(out + 4, box_h);
+	kp_le_put16(out, count);
+	kp_le_put16(out + 2, box_w);
+	kp_le_put16(out + 4, box_h);
 	for (k = 0; k < count; k++) {
 		const KpScrGrpRecord *r = &records[k];
 		size_t n = (size_t)r->w * r->h;
@@ -241,7 +229,7 @@ uint8_t *kp_scr_plain_grp(uint32_t box_w, uint32_t box_h, const KpScrGrpRecord *
 		rec[1] = r->y;
 		rec[2] = r->w;
 		rec[3] = r->h;
-		put32(rec + 4, r->offset);
+		kp_le_put32(rec + 4, r->offset);
 		for (j = 0; j < k && records[j].offset != r->offset; j++) {
 		}
 		if (j < k) continue; /* its rows are an earlier frame's */
@@ -304,9 +292,9 @@ uint8_t *kp_scr_remap_grp(const uint8_t *grp, size_t size, const uint8_t *wpe, s
 	}
 	if (!(out = (uint8_t *)malloc(cap + 1)) || !(idx = (uint8_t *)malloc(256 * 256)) || !(mask = (uint8_t *)malloc(256 * 256)))
 		goto fail;
-	put16(out, frames);
-	put16(out + 2, width);
-	put16(out + 4, height);
+	kp_le_put16(out, frames);
+	kp_le_put16(out + 2, width);
+	kp_le_put16(out + 4, height);
 	at = KP_GRP_HEADER + (size_t)KP_GRP_RECORD * frames;
 	for (f = 0; f < frames; f++) {
 		KpGrpFrame r;
@@ -323,12 +311,12 @@ uint8_t *kp_scr_remap_grp(const uint8_t *grp, size_t size, const uint8_t *wpe, s
 		rec[1] = r.y;
 		rec[2] = r.w;
 		rec[3] = r.h;
-		put32(rec + 4, (uint32_t)start);
+		kp_le_put32(rec + 4, (uint32_t)start);
 		payload_at = out + start;
 		at += 2u * r.h;
 		for (row = 0; row < r.h; row++) {
 			if (at - start > TBL_OFFSET_MAX) goto fail;
-			put16(payload_at + 2 * row, (uint32_t)(at - start));
+			kp_le_put16(payload_at + 2 * row, (uint32_t)(at - start));
 			at += grp_row(idx + (size_t)row * r.w, mask + (size_t)row * r.w, r.w, out + at);
 		}
 	}
@@ -541,11 +529,11 @@ int kp_scr_tbl_spans(const uint8_t *data, size_t size, KpScrSpan **spans, uint32
 	*spans = NULL;
 	*count = 0;
 	if (size < 2) return -1;
-	n = le16(data);
-	if (2 + 2 * (size_t)n > size || (n && le16(data + 2) != 2 + 2 * n)) return -1;
+	n = kp_le_u16(data);
+	if (2 + 2 * (size_t)n > size || (n && kp_le_u16(data + 2) != 2 + 2 * n)) return -1;
 	if (!(*spans = (KpScrSpan *)calloc(n ? n : 1, sizeof **spans))) return -1;
 	for (k = 0; k < n; k++) {
-		size_t a = le16(data + 2 + 2 * k), b = k + 1 < n ? le16(data + 4 + 2 * k) : size;
+		size_t a = kp_le_u16(data + 2 + 2 * k), b = k + 1 < n ? kp_le_u16(data + 4 + 2 * k) : size;
 		if (k + 1 < n && b < a) { /* not in order */
 			free(*spans);
 			*spans = NULL;
@@ -568,14 +556,14 @@ uint8_t *kp_scr_tbl(const KpScrSpan *spans, uint32_t count, size_t *size)
 	uint8_t *out;
 	for (k = 0; k < count; k++) total += spans[k].size + 1;
 	if (count > TBL_OFFSET_MAX || !(out = (uint8_t *)malloc(total + 1))) return NULL;
-	put16(out, count);
+	kp_le_put16(out, count);
 	at = 2 + 2 * (size_t)count;
 	for (k = 0; k < count; k++) {
 		if (at > TBL_OFFSET_MAX) {
 			free(out);
 			return NULL;
 		}
-		put16(out + 2 + 2 * k, (uint32_t)at);
+		kp_le_put16(out + 2 + 2 * k, (uint32_t)at);
 		if (spans[k].size) memcpy(out + at, spans[k].data, spans[k].size);
 		at += spans[k].size;
 		out[at++] = 0;
@@ -607,9 +595,9 @@ uint8_t *kp_scr_dialog(const uint8_t *skeleton, size_t size, const KpScrDialogTe
 		} else {
 			if (at > 0xffffffffu) goto bad;
 			for (k = 0; k < t->pointer_count; k++) {
-				uint32_t p = le32(t->pointers + 4 * k);
+				uint32_t p = kp_le_u32(t->pointers + 4 * k);
 				if (p > size || size - p < 4) goto bad;
-				put32(out + p, (uint32_t)at);
+				kp_le_put32(out + p, (uint32_t)at);
 			}
 			dst = out + at;
 			dst[t->text_size] = 0;

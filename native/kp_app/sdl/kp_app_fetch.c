@@ -132,6 +132,8 @@ int kp_app_group(KpApp *a, const char *file, char *err, size_t err_size)
 	snprintf(path, sizeof path, "%s/%s", kp_res_repack_dir(a->res), file);
 	for (k = 0; k < KP_APP_GROUP_FETCHES && !g; k++)
 		if (a->group_fetches[k].fetch && strcmp(a->group_fetches[k].file, file) == 0) g = &a->group_fetches[k];
+	/* already there (beside the core on a computer or a phone, in memory once fetched on the web): opened in place */
+	if (!g && SDL_GetPathInfo(path, NULL)) return kp_res_add_repack(a->res, path, err, err_size) == 0 ? 1 : -1;
 	for (k = 0; k < KP_APP_GROUP_FETCHES && !g; k++) {
 		if (a->group_fetches[k].fetch) continue;
 		if (!(a->group_fetches[k].fetch = kp_fetch_start(path, 0, 0))) break;
@@ -147,7 +149,7 @@ int kp_app_group(KpApp *a, const char *file, char *err, size_t err_size)
 		snprintf(err, err_size, "%s cannot be read (the repack's group beside %s)", path, "koprulu-core.mpq");
 		return -1;
 	}
-	/* on the web the file joins the preloaded core in memory; elsewhere it was read from there */
+	/* on the web the file joins the preloaded core in memory */
 	if (!SDL_GetPathInfo(path, NULL)) {
 		io = SDL_IOFromFile(path, "wb");
 		if (!io || SDL_WriteIO(io, bytes, size) != size) {

@@ -7,6 +7,7 @@
 
 #include "kp_dat.h"
 #include "kp_grp.h"
+#include "kp_kpf.h"
 #include "kp_text.h"
 #include "kp_wav.h"
 
@@ -629,18 +630,6 @@ done:
 	return rc;
 }
 
-static void put16(uint8_t *p, uint32_t v)
-{
-	p[0] = (uint8_t)v;
-	p[1] = (uint8_t)(v >> 8);
-}
-
-static void put32(uint8_t *p, uint32_t v)
-{
-	put16(p, v);
-	put16(p + 2, v >> 16);
-}
-
 /* fonts.kpd: each font's plaintext and one NUL (FNTP's paths, F8..F16X), TFGM game\tFontGam.pcx's rows. */
 static int fonts(KpUiData *d, const KpFiles *f, KpError *err)
 {
@@ -722,8 +711,8 @@ static int sounds(KpUiData *d, const KpFiles *f, const KpDat *dat, KpError *err)
 		fail(err, "out of memory");
 		goto done;
 	}
-	put16(sfx, n);
-	put16(pack, n);
+	kp_le_put16(sfx, n);
+	kp_le_put16(pack, n);
 	for (k = 0; k < n; k++) {
 		uint32_t ref = col_at(file, k);
 		uint8_t *r = sfx + 2 + (size_t)k * SOUND_RECORD;
@@ -741,19 +730,19 @@ static int sounds(KpUiData *d, const KpFiles *f, const KpDat *dat, KpError *err)
 		if ((got = kp_files_wav(f, path, &w, err)) == -2) goto done;
 		if (got < 0) continue;
 		pack[2 + k] = (uint8_t)sound_pack(path);
-		put16(r, got ? SOUND_PRESENT | SOUND_PARSED : SOUND_PRESENT);
+		kp_le_put16(r, got ? SOUND_PRESENT | SOUND_PARSED : SOUND_PRESENT);
 		if (!got) continue; /* the original keeps the sound and never plays it */
 		if (!(paths[k] = (const char *)own(d, copy_text(path)))) {
 			fail(err, "out of memory");
 			goto done;
 		}
-		put16(r + 2, w.format_tag);
-		put16(r + 4, w.channels);
-		put32(r + 6, w.sample_rate);
-		put32(r + 10, w.avg_bytes_per_sec);
-		put16(r + 14, w.block_align);
-		put16(r + 16, w.bits_per_sample);
-		put32(r + 18, w.data_length);
+		kp_le_put16(r + 2, w.format_tag);
+		kp_le_put16(r + 4, w.channels);
+		kp_le_put32(r + 6, w.sample_rate);
+		kp_le_put32(r + 10, w.avg_bytes_per_sec);
+		kp_le_put16(r + 14, w.block_align);
+		kp_le_put16(r + 16, w.bits_per_sample);
+		kp_le_put32(r + 18, w.data_length);
 	}
 	d->sounds.data = sfx;
 	d->sounds.size = 2 + (size_t)n * SOUND_RECORD;
@@ -783,8 +772,8 @@ static int sounds(KpUiData *d, const KpFiles *f, const KpDat *dat, KpError *err)
 		if (!path[0]) continue;
 		if ((got = kp_files_wav(f, path, &w, err)) == -2) goto done;
 		if (got <= 0) continue; /* no file, or one the parser rejects: zeros */
-		put32(musl + 1 + 8 * (size_t)t, w.data_length);
-		put32(musl + 5 + 8 * (size_t)t, w.avg_bytes_per_sec);
+		kp_le_put32(musl + 1 + 8 * (size_t)t, w.data_length);
+		kp_le_put32(musl + 5 + 8 * (size_t)t, w.avg_bytes_per_sec);
 	}
 	d->music_lengths.data = musl;
 	d->music_lengths.size = 1 + 8 * (size_t)tracks;
@@ -813,7 +802,7 @@ static int portraits(KpUiData *d, const KpFiles *f, const KpDat *dat, KpError *e
 		fail(err, "out of memory");
 		goto done;
 	}
-	put16(rows, n);
+	kp_le_put16(rows, n);
 	for (row = 0; row < n; row++) {
 		for (kind = 0; kind < 2; kind++) {
 			uint32_t ref = col_at(col[kind], row), first = NONE16, mask = 0;
@@ -861,8 +850,8 @@ static int portraits(KpUiData *d, const KpFiles *f, const KpDat *dat, KpError *e
 					mask |= 1u << v;
 				}
 			}
-			put16(rows + 2 + 8 * (size_t)row + 4 * (size_t)kind, first);
-			put16(rows + 4 + 8 * (size_t)row + 4 * (size_t)kind, mask);
+			kp_le_put16(rows + 2 + 8 * (size_t)row + 4 * (size_t)kind, first);
+			kp_le_put16(rows + 4 + 8 * (size_t)row + 4 * (size_t)kind, mask);
 		}
 	}
 	d->portrait_rows.data = rows;

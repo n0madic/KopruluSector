@@ -383,19 +383,6 @@ KpResSourceKind kp_res_detect(const char *dir, const KpDefsProfile *profile)
 	return KP_RES_SOURCE_NONE;
 }
 
-static int hex_digest(const char *hex, uint8_t out[KP_SHA256_SIZE])
-{
-	int i;
-	for (i = 0; i < KP_SHA256_SIZE; i++) {
-		unsigned v;
-		if (!isxdigit((unsigned char)hex[2 * i]) || !isxdigit((unsigned char)hex[2 * i + 1])
-			|| sscanf(hex + 2 * i, "%2x", &v) != 1)
-			return -1;
-		out[i] = (uint8_t)v;
-	}
-	return 0;
-}
-
 /* The status a listing names a file by (the source's), or -1. */
 static int listed_status(const char *word)
 {
@@ -439,28 +426,23 @@ static int listed_file(KpRes *r, int archive, const char *line)
 	const KpDefsInput *in;
 	Entry *e;
 	int used = 0, status, ogg = 0;
-	if (sscanf(line, "%64s %lu %31s %n", hex, &n, word, &used) != 3 || used == 0 || hex_digest(hex, sha) != 0
+	if (sscanf(line, "%64s %lu %31s %n", hex, &n, word, &used) != 3 || used == 0 || kp_hex_decode(hex, sha, KP_SHA256_SIZE) != 0
 		|| (status = listed_status(word)) < 0 || n > UINT32_MAX)
 		return -1;
 	p = line + used;
 	if (strncmp(p, "ogg ", 4) == 0) {
 		const char *h, *h_end;
-		size_t i;
 		used = 0;
-		if (sscanf(p + 4, "%64s %lu %n", hex, &wav_n, &used) != 2 || used == 0 || hex_digest(hex, wav_sha) != 0
+		if (sscanf(p + 4, "%64s %lu %n", hex, &wav_n, &used) != 2 || used == 0 || kp_hex_decode(hex, wav_sha, KP_SHA256_SIZE) != 0
 			|| wav_n > UINT32_MAX)
 			return -1;
 		h = p + 4 + used;
 		if (!(h_end = strchr(h, ' ')) || (h_end - h) % 2 != 0 || h_end == h) return -1;
 		head_size = (size_t)(h_end - h) / 2;
 		if (!(head = (uint8_t *)malloc(head_size))) return -1;
-		for (i = 0; i < head_size; i++) {
-			unsigned v;
-			if (!isxdigit((unsigned char)h[2 * i]) || !isxdigit((unsigned char)h[2 * i + 1]) || sscanf(h + 2 * i, "%2x", &v) != 1) {
-				free(head);
-				return -1;
-			}
-			head[i] = (uint8_t)v;
+		if (kp_hex_decode(h, head, head_size) != 0) {
+			free(head);
+			return -1;
 		}
 		ogg = 1;
 		p = h_end + 1;
@@ -473,7 +455,7 @@ static int listed_file(KpRes *r, int archive, const char *line)
 	normalize(name, key, sizeof key);
 	if ((status == KP_RES_EXACT || status == KP_RES_DERIVED) && (in = kp_defs_input(r->profile, key)) != NULL) {
 		uint8_t want[KP_SHA256_SIZE];
-		if (hex_digest(in->sha256, want) != 0 || memcmp(want, ogg ? wav_sha : sha, KP_SHA256_SIZE) != 0
+		if (kp_hex_decode(in->sha256, want, KP_SHA256_SIZE) != 0 || memcmp(want, ogg ? wav_sha : sha, KP_SHA256_SIZE) != 0
 			|| in->size != (ogg ? wav_n : n)) {
 			say(r, "res: %s's listing names %s as the 1.17 file, which it is not: the install's is read",
 				r->repack[archive].path, name);
@@ -496,36 +478,49 @@ static int listed_file(KpRes *r, int archive, const char *line)
 	return 0;
 }
 
+/* Whether a listing is a repack's of the profile: its first line the magic, its profile line the profile's. Checked
+ * before any of its lines is applied, so a listing refused leaves nothing in the tables. 0, or -1 with the reason. */
+static int listing_check(const KpRes *r, int archive, const char *text, char *err, size_t err_size)
+{
+	size_t magic = strlen(KP_RES_LISTING_MAGIC), id = strlen(r->profile->id);
+	const char *line, *end;
+	if (strncmp(text, KP_RES_LISTING_MAGIC, magic) == 0 && (text[magic] == '\n' || text[magic] == 0))
+		for (line = text; line; line = (end = strchr(line, '\n')) ? end + 1 : NULL) {
+			if (strncmp(line, "profile ", 8) != 0) continue;
+			if (strncmp(line + 8, r->profile->id, id) == 0 && (line[8 + id] == '\n' || line[8 + id] == 0)) return 0;
+			end = strchr(line, '\n');
+			if (err_size) snprintf(err, err_size, "%s: a repack of profile %.*s, not %s", r->repack[archive].path,
+				(int)(end ? (size_t)(end - line) - 8 : strlen(line + 8)), line + 8, r->profile->id);
+			return -1;
+		}
+	if (err_size) snprintf(err, err_size, "%s: its %s is not a repack's listing of profile %s", r->repack[archive].path,
+		KP_RES_LISTING, r->profile->id);
+	return -1;
+}
+
 /* A repack's listing: "koprulu repack 2", "profile ID", "source WHAT", "group FILE PREFIX" lines (the core's: its
  * groups, those beside it added), then a file a line (listed_file). 0, or -1 with the reason (another profile, a
- * broken listing). */
+ * broken listing), its lines then unapplied. */
 static int read_listing(KpRes *r, int archive, const char *dir, char *err, size_t err_size)
 {
 	size_t size = 0;
 	char why[KP_RES_MESSAGE];
 	char *text = (char *)kp_mpq_read(r->repack[archive].mpq, KP_RES_LISTING, &size, why, sizeof why);
 	char *line, *next;
-	int lines = 0, profile_ok = 0, bad = 0;
+	int bad = 0;
 	if (!text) {
 		if (err_size) snprintf(err, err_size, "%s: no %s%s%s", r->repack[archive].path, KP_RES_LISTING, why[0] ? ": " : "", why);
 		return -1;
 	}
-	for (line = text; line && *line; line = next) {
+	if (listing_check(r, archive, text, err, err_size) != 0) {
+		free(text);
+		return -1;
+	}
+	for (line = strchr(text, '\n'); line && *++line; line = next) { /* past the magic */
 		next = strchr(line, '\n');
-		if (next) *next++ = 0;
-		if (lines++ == 0) {
-			if (strcmp(line, KP_RES_LISTING_MAGIC) != 0) break;
-			continue;
-		}
-		if (strncmp(line, "profile ", 8) == 0) {
-			profile_ok = strcmp(line + 8, r->profile->id) == 0;
-			if (!profile_ok) {
-				if (err_size) snprintf(err, err_size, "%s: a repack of profile %s, not %s", r->repack[archive].path, line + 8, r->profile->id);
-				free(text);
-				return -1;
-			}
-		} else if (strncmp(line, "source ", 7) == 0) {
-			continue;
+		if (next) *next = 0;
+		if (!*line || strncmp(line, "profile ", 8) == 0 || strncmp(line, "source ", 7) == 0) {
+			/* the profile's checked */
 		} else if (strncmp(line, "group ", 6) == 0) {
 			char path[KP_RES_PATH], why2[KP_RES_MESSAGE];
 			int g = add_group(r, line + 6);
@@ -538,15 +533,10 @@ static int read_listing(KpRes *r, int archive, const char *dir, char *err, size_
 		}
 	}
 	free(text);
-	if (bad && profile_ok) {
+	if (bad) {
 		char count[32];
 		snprintf(count, sizeof count, "%d", bad);
 		say(r, "res: %s: %s lines of its listing are not a file's (ignored)", r->repack[archive].path, count);
-	}
-	if (lines == 0 || !profile_ok) {
-		if (err_size) snprintf(err, err_size, "%s: its %s is not a repack's listing of profile %s", r->repack[archive].path,
-			KP_RES_LISTING, r->profile->id);
-		return -1;
 	}
 	return 0;
 }
@@ -696,7 +686,7 @@ static int digest_equal(const uint8_t *data, size_t size, uint32_t want_size, co
 static int matches(const uint8_t *data, size_t size, const KpDefsInput *in)
 {
 	uint8_t want[KP_SHA256_SIZE];
-	return hex_digest(in->sha256, want) == 0 && digest_equal(data, size, in->size, want);
+	return kp_hex_decode(in->sha256, want, KP_SHA256_SIZE) == 0 && digest_equal(data, size, in->size, want);
 }
 
 uint8_t *kp_res_casc_rebuild(const char *key, const char *casc_name, const uint8_t *data, size_t size, uint32_t want)
@@ -746,7 +736,9 @@ static int casc_candidates(const char *key, char names[][KP_RES_NAME], int cap)
 	return n;
 }
 
-static uint8_t *read_casc(KpRes *r, const char *key, size_t *size, KpResStatus *status, char *source)
+/* A file from Remastered: an exact copy, else one rebuilt to the 1.17 file, else (unless exact) one remade from
+ * Remastered's own formats, else a copy as it is (KP_RES_DIFFERS). */
+static uint8_t *read_casc(KpRes *r, const char *key, int exact, size_t *size, KpResStatus *status, char *source)
 {
 	char names[CASC_MOVED_COUNT + 2 * CASC_PREFIX_COUNT][KP_RES_NAME];
 	int n = casc_candidates(key, names, (int)(sizeof names / sizeof names[0])), k, fallback = -1;
@@ -777,7 +769,7 @@ static uint8_t *read_casc(KpRes *r, const char *key, size_t *size, KpResStatus *
 			return rebuilt;
 		}
 		free(rebuilt);
-		if (fallback < 0 && !ends_with(names[k], VX4EX)) {
+		if (!exact && fallback < 0 && !ends_with(names[k], VX4EX)) {
 			fallback = k;
 			kept = b;
 			kept_size = got;
@@ -786,7 +778,7 @@ static uint8_t *read_casc(KpRes *r, const char *key, size_t *size, KpResStatus *
 		}
 	}
 	/* a listed file no copy reaches: rebuilt from Remastered's own formats, before its copy is taken as it is */
-	if (in && r->scr) {
+	if (in && r->scr && !exact) {
 		uint8_t *made = kp_res_scr_remake(r, r->scr, r->casc, key, in, size, status, source);
 		if (made) {
 			free(kept);
@@ -883,7 +875,7 @@ uint8_t *kp_res_read(KpRes *r, const char *name, size_t *size, KpResStatus *stat
 	} else if (r->install == KP_RES_SOURCE_MPQ) {
 		b = read_mpq(r, key, size, &st, source, err, err_size);
 	} else if (r->install == KP_RES_SOURCE_CASC) {
-		b = read_casc(r, key, size, &st, source);
+		b = read_casc(r, key, 0, size, &st, source);
 	}
 	if (st == KP_RES_UNLISTED && !map_find(&r->seen, key)) say(r, "res: %s is not in the input manifest: read unchecked from %s", name, source);
 	if (st == KP_RES_DIFFERS && !map_find(&r->seen, key)) say(r, "res: %s differs from the 1.17 file: Remastered's %s is read", name, source);
@@ -927,28 +919,11 @@ const char *kp_res_text_locale(const KpRes *r) { return r->text_locale; }
 
 uint8_t *kp_res_casc_exact(KpRes *r, const char *key, size_t *size)
 {
-	char names[CASC_MOVED_COUNT + 2 * CASC_PREFIX_COUNT][KP_RES_NAME];
-	int n = casc_candidates(key, names, (int)(sizeof names / sizeof names[0])), k;
-	const KpDefsInput *in = kp_defs_input(r->profile, key);
-	if (!in || !r->casc) return NULL;
-	for (k = 0; k < n; k++) {
-		char why[KP_RES_MESSAGE];
-		size_t got = 0;
-		uint8_t *b = kp_casc_read(r->casc, names[k], &got, why, sizeof why), *rebuilt;
-		if (!b) continue;
-		if (matches(b, got, in)) {
-			*size = got;
-			return b;
-		}
-		rebuilt = kp_res_casc_rebuild(key, names[k], b, got, in->size);
-		free(b);
-		if (rebuilt && matches(rebuilt, in->size, in)) {
-			*size = in->size;
-			return rebuilt;
-		}
-		free(rebuilt);
-	}
-	return NULL;
+	char source[KP_RES_NAME];
+	KpResStatus st;
+	*size = 0;
+	if (!r->casc || !kp_defs_input(r->profile, key)) return NULL;
+	return read_casc(r, key, 1, size, &st, source); /* exact: an exact or derived copy only */
 }
 
 /* --- streams --- */
@@ -1001,16 +976,17 @@ static KpResStream *open_file(KpRes *r, const char *name, int own, uint64_t *siz
 		return s;
 	}
 	if (r->casc) {
-		char names[CASC_MOVED_COUNT + 2 * CASC_PREFIX_COUNT][KP_RES_NAME];
+		char names[CASC_MOVED_COUNT + 2 * CASC_PREFIX_COUNT][KP_RES_NAME], why[KP_RES_MESSAGE], source[KP_RES_NAME];
 		int n = casc_candidates(key, names, (int)(sizeof names / sizeof names[0]));
 		for (k = 0; k < n; k++) {
 			if (ends_with(names[k], VX4EX) || !kp_casc_has(r->casc, names[k])) continue;
 			if (!s->casc && !(s->casc = own ? kp_casc_open(r->install_dir, err, err_size) : r->casc)) goto fail;
-			if (!(s->casc_file = kp_casc_file_open(s->casc, names[k], size, err, err_size))) {
-				if (err[0]) goto fail;
+			if (!(s->casc_file = kp_casc_file_open(s->casc, names[k], size, why, sizeof why))) {
+				if (why[0]) say(r, "res: %s%s", why, NULL); /* named but not installed locally: the next copy */
 				continue;
 			}
-			seen(r, key, !in ? KP_RES_UNLISTED : *size == in->size ? KP_RES_EXACT : KP_RES_DIFFERS, names[k]);
+			snprintf(source, sizeof source, "CASC %s", names[k]);
+			seen(r, key, !in ? KP_RES_UNLISTED : *size == in->size ? KP_RES_EXACT : KP_RES_DIFFERS, source);
 			return s;
 		}
 	}

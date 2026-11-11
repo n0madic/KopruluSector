@@ -410,11 +410,6 @@ static int same_folder(Str name, const char *folder)
 	return name.n > n && memcmp(name.s, folder, n) == 0 && name.s[n] == '/' && !memchr(name.s + n + 1, '/', name.n - n - 1);
 }
 
-static int palette_of_pcx(const uint8_t *data, size_t size, uint8_t palette[768])
-{
-	return kp_scr_pcx_palette(data, size, palette);
-}
-
 /* A donor's status and palette read through kp_res (a rebuild inside this one when it has none): 0, -1. */
 static int read_donor(KpRes *r, KpResScr *s, const char *donor, KpResStatus *status, uint8_t palette[768])
 {
@@ -428,7 +423,7 @@ static int read_donor(KpRes *r, KpResScr *s, const char *donor, KpResStatus *sta
 		return 0;
 	}
 	if (!(data = kp_res_read(r, donor, &size, status, err, sizeof err))) return -1;
-	if (palette_of_pcx(data, size, palette) != 0) {
+	if (kp_scr_pcx_palette(data, size, palette) != 0) {
 		free(data);
 		return -1;
 	}
@@ -460,7 +455,7 @@ static int find_palette(KpRes *r, KpResScr *s, const char *key, uint32_t group, 
 			str_copy(d, donor, sizeof donor);
 			if (strcmp(donor, key) == 0) continue;
 			if ((data = kp_res_casc_exact(r, donor, &size)) != NULL) {
-				int rc = palette_of_pcx(data, size, palette);
+				int rc = kp_scr_pcx_palette(data, size, palette);
 				free(data);
 				return rc;
 			}
@@ -562,22 +557,11 @@ static int digest_is(const uint8_t *data, size_t size, const uint8_t *want)
 	return memcmp(d, want, KP_SHA256_SIZE) == 0;
 }
 
-static int hex_digest(const char *hex, uint8_t out[KP_SHA256_SIZE])
-{
-	int k;
-	for (k = 0; k < KP_SHA256_SIZE; k++) {
-		unsigned v;
-		if (sscanf(hex + 2 * k, "%2x", &v) != 1) return -1;
-		out[k] = (uint8_t)v;
-	}
-	return 0;
-}
-
 /* source.py _judged */
 static KpResStatus judged(const KpDefsInput *in, const uint8_t *data, size_t size)
 {
 	uint8_t want[KP_SHA256_SIZE];
-	return hex_digest(in->sha256, want) == 0 && size == in->size && digest_is(data, size, want) ? KP_RES_DERIVED
+	return kp_hex_decode(in->sha256, want, KP_SHA256_SIZE) == 0 && size == in->size && digest_is(data, size, want) ? KP_RES_DERIVED
 		: KP_RES_APPROXIMATION;
 }
 

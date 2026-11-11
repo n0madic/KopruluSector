@@ -73,6 +73,21 @@ static void sha256_padding_edges(KpT *T)
 		kp_t_eq_str(T, hex_of(T, a, CASES[k].size), CASES[k].hex, "%u bytes of a", (unsigned)CASES[k].size);
 }
 
+/* kp_hex_decode: a digest back from kp_sha256_hex, either case, a digit that is not one refused */
+static void sha256_hex_decodes(KpT *T)
+{
+	uint8_t d[KP_SHA256_SIZE], back[KP_SHA256_SIZE], two[2];
+	char hex[2 * KP_SHA256_SIZE + 1];
+	kp_sha256("abc", 3, d);
+	kp_sha256_hex(d, hex);
+	kp_t_eq(T, kp_hex_decode(hex, back, KP_SHA256_SIZE), 0, "decoded");
+	kp_t_ok(T, memcmp(d, back, sizeof d) == 0, "the digest back");
+	kp_t_ok(T, kp_hex_decode("aB0f", two, 2) == 0 && two[0] == 0xab && two[1] == 0x0f, "either case");
+	kp_t_eq(T, kp_hex_decode("a g0", two, 2), -1, "a space");
+	kp_t_eq(T, kp_hex_decode("+1", two, 1), -1, "a sign");
+	kp_t_eq(T, kp_hex_decode("ab", two, 2), -1, "short");
+}
+
 /* --- kp_res over archives of the test's own --- */
 
 #define DIR_FILES 16
@@ -351,6 +366,47 @@ static void res_repack_of_another_profile_is_ignored(KpT *T)
 	kp_t_eq(T, kp_res_repacks(r), 0, "no repack");
 	kp_t_ok(T, strstr(p.log, "a repack of profile other-2, not test-1") != NULL, "logged: %s", p.log);
 	kp_t_ok(T, read_text(T, r, "a/two.dat", &st, err, sizeof err) == NULL && st == KP_RES_REFUSED, "the install's copy");
+}
+
+/* A listing refused (here: no profile line) leaves nothing of it behind: its files and groups unapplied, the install
+ * read in their place */
+static void res_repack_without_its_profile_leaves_nothing(KpT *T)
+{
+	static const char *const GROUP[] = { "a\\two.dat", TWO, NULL };
+	const char *core[5], *group[5];
+	char text[1024];
+	Profile p;
+	Dir *install, *pack;
+	KpRes *r;
+	KpResStatus st;
+	char err[512];
+	const char *dirs[2], *s;
+	profile_init(T, &p);
+	install = test_install(T);
+	pack = dir_new(T);
+	snprintf(text, sizeof text, "%s\nsource test\ngroup koprulu-g1.mpq a/two\n%s %u exact a\\one.dat\n", KP_RES_LISTING_MAGIC,
+		hex_of(T, "one, the repack's", strlen("one, the repack's")), (unsigned)strlen("one, the repack's"));
+	core[0] = KP_RES_LISTING;
+	core[1] = text;
+	core[2] = "a\\one.dat";
+	core[3] = "one, the repack's";
+	core[4] = NULL;
+	group[0] = KP_RES_LISTING;
+	group[1] = listing(T, "test-1", "", GROUP);
+	group[2] = "a\\two.dat";
+	group[3] = TWO;
+	group[4] = NULL;
+	dir_mpq(T, pack, "koprulu-core.mpq", core);
+	dir_mpq(T, pack, "koprulu-g1.mpq", group);
+	dirs[0] = pack->dir;
+	dirs[1] = install->dir;
+	r = open_res(T, &p, dirs, 2);
+	kp_t_eq(T, kp_res_repacks(r), 0, "neither the core nor the group it names");
+	kp_t_ok(T, strstr(p.log, "is not a repack's listing of profile test-1") != NULL, "logged: %s", p.log);
+	s = read_text(T, r, "a/one.dat", &st, err, sizeof err);
+	kp_t_eq_str(T, s, ONE, "the install's copy");
+	kp_t_eq(T, st, KP_RES_EXACT, "one's status");
+	kp_t_ok(T, read_text(T, r, "a/two.dat", &st, err, sizeof err) == NULL && st == KP_RES_REFUSED, "the install's copy of two");
 }
 
 static void res_repack_groups_join_the_core(KpT *T)
@@ -706,10 +762,12 @@ static const KpTest TESTS[] = {
 	{ "sha256_vectors", sha256_vectors, 0 },
 	{ "sha256_pieces", sha256_pieces, 0 },
 	{ "sha256_padding_edges", sha256_padding_edges, 0 },
+	{ "sha256_hex_decodes", sha256_hex_decodes, 0 },
 	{ "res_reads_a_1_17_install_checked", res_reads_a_1_17_install_checked, 0 },
 	{ "res_install_needs_its_core_archives", res_install_needs_its_core_archives, 0 },
 	{ "res_repack_comes_before_the_install", res_repack_comes_before_the_install, 0 },
 	{ "res_repack_of_another_profile_is_ignored", res_repack_of_another_profile_is_ignored, 0 },
+	{ "res_repack_without_its_profile_leaves_nothing", res_repack_without_its_profile_leaves_nothing, 0 },
 	{ "res_repack_groups_join_the_core", res_repack_groups_join_the_core, 0 },
 	{ "res_repack_listing_statuses", res_repack_listing_statuses, 0 },
 	{ "res_repack_group_wanted_then_added", res_repack_group_wanted_then_added, 0 },

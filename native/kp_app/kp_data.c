@@ -85,7 +85,8 @@ void kp_data_catalog(KpData *d, const char *scenarios, size_t scenarios_size)
 	for (index = 1; index < d->campaign.directory_count; index++) {
 		char name[64];
 		KpDataMission *m;
-		if (!kp_campaign_mission_name(&d->campaign, index, name, sizeof name) || !(m = add_mission(d, name, 1))) break;
+		if (!kp_campaign_mission_name(&d->campaign, index, name, sizeof name)) continue; /* a row with no scenario */
+		if (!(m = add_mission(d, name, 1))) break;
 		snprintf(m->directory, sizeof m->directory, "%s", d->campaign.directories[index]);
 		m->index = index;
 	}

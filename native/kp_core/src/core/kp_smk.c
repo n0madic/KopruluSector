@@ -507,7 +507,7 @@ int kp_smk_decode(KpSmk *s)
 	if (type & TYPE_PALETTE) { /* the palette record: its first byte counts 4-byte units */
 		size_t n;
 		if (pos >= end || (n = (size_t)s->data[pos] * 4) == 0 || n > end - pos
-			|| palette_record(s, s->data + pos, end - pos) != 0)
+			|| palette_record(s, s->data + pos, n) != 0)
 			return -1;
 		pos += n;
 	}

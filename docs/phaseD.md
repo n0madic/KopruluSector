@@ -16,6 +16,19 @@ Design: [ADR 0018](adr/0018-original-data-at-run-time.md). The plan was approved
 
 The plan is done: the game, its tools and its suites read the original files (an install or the repack); the converter writes the repack and what a platform needs built (the HD files, the cinematics' packs, the console's pieces, the languages' overlays).
 
+## After the plan: the review (2026-11-11)
+
+A review of the phase's diff (a71f36f..2224d72) fixed:
+
+- **A refused listing leaves nothing behind** (`kp_res.c` `listing_check`): its magic and profile line are checked before any line applies. Before, a listing with no `profile` line had already put its files in the table and added the groups it names when it was refused: the files pointed at the closed archive (a read of one dereferenced it), and the slot dropped was the last group's, not the core's. `test_res.res_repack_without_its_profile_leaves_nothing`. A blank line of a listing is skipped (it ended the listing before).
+- **A stream skips a CASC copy that is not installed** (`open_file`): a copy named but offline (its size does not read) is logged and the next tried, as a whole read does; `kp_res_head` failed there, which failed the interface's sounds. Its source in `--res-log` is `CASC <name>`, as a whole read's.
+- **The catalog skips a mapdata row with no scenario** (`kp_data_catalog`), as `converter/catalog.py` does; it ended at the first such row.
+- **A group already there is opened in place** (`kp_app_group`): beside the core on a computer or a phone, in memory once fetched on the web. Before, it was read whole first (fetched again on the web after a failed add).
+- **A Smacker palette record is bounded by its own length** (`kp_smk.c`), not the frame's end.
+- **Cleanups**: `kp_hex_decode` (`kp_sha256`) for the three hexadecimal parsers of `kp_res.c` and `kp_res_scr.c` (`test_res.sha256_hex_decodes`); `kp_kpf.h`'s little-endian helpers in `kp_scr.c` and `kp_ui_data.c`; `kp_res_casc_exact` is `read_casc`'s exact pass; the unused Vorbis `prev_mask` and `palette_of_pcx` removed.
+
+Left: a movie read from a repack is hashed twice when it loads, against its listing (`read_repack`) and against the catalog (`kp_cine_catalog_check`).
+
 ## D8 design
 
 D8 is four commits, each with the full CI:

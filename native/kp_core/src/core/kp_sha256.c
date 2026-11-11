@@ -94,3 +94,19 @@ void kp_sha256_hex(const uint8_t digest[KP_SHA256_SIZE], char hex[2 * KP_SHA256_
 	}
 	hex[2 * KP_SHA256_SIZE] = 0;
 }
+
+static int hex_digit(char c)
+{
+	return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
+}
+
+int kp_hex_decode(const char *hex, uint8_t *out, size_t n)
+{
+	size_t i;
+	for (i = 0; i < n; i++) {
+		int hi = hex_digit(hex[2 * i]), lo = hi < 0 ? -1 : hex_digit(hex[2 * i + 1]);
+		if (lo < 0) return -1;
+		out[i] = (uint8_t)(hi << 4 | lo);
+	}
+	return 0;
+}

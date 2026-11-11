@@ -509,7 +509,7 @@ typedef struct {
 	uint32_t blocksize[2];
 	int modes;
 	uint8_t mode_long[64];
-	uint32_t mode_mask, prev_mask;
+	uint32_t mode_mask;
 	uint32_t previous;
 } Vorbis;
 
@@ -569,7 +569,6 @@ static int vorbis_setup(Vorbis *v, const uint8_t *p, size_t n)
 			m >>= 1;
 		}
 		v->mode_mask = ((1u << bits) - 1u) << 1;
-		v->prev_mask = (v->mode_mask | 1u) + 1u;
 	}
 	v->previous = 0;
 	return 0;
