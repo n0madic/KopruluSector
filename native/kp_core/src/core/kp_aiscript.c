@@ -95,40 +95,6 @@ void kp_ai_bins_free(KpAiBins *b)
 	memset(b, 0, sizeof *b);
 }
 
-int kp_ai_bins_load(KpAiBins *b, const uint8_t *data, size_t size, const char *name, KpError *err)
-{
-	static const char *const SECTIONS[KP_AI_BINS] = { "AISC", "BWSC" };
-	KpKpf c;
-	KpKpfExpect want;
-	int k;
-	memset(b, 0, sizeof *b);
-	if (!data) return fail(err, "no aiscript.kpd");
-	b->blob = (uint8_t *)malloc(size ? size : 1);
-	if (!b->blob) return fail(err, "out of memory");
-	memcpy(b->blob, data, size);
-	b->size = size;
-	if (kp_kpf_parse(&c, b->blob, size, name, 0, err) != 0) {
-		kp_ai_bins_free(b);
-		return -1;
-	}
-	memset(&want, 0, sizeof want);
-	want.kind = KP_AISCRIPT_KIND;
-	want.schema_version = KP_AISCRIPT_SCHEMA;
-	if (kp_kpf_check(&c, &want, err) != 0) goto failed;
-	for (k = 0; k < KP_AI_BINS; k++) {
-		const KpKpfSection *s = kp_kpf_require(&c, SECTIONS[k], err);
-		if (!s) goto failed;
-		b->bin[k] = s->data;
-		b->bin_size[k] = s->size;
-	}
-	kp_kpf_free(&c);
-	return 0;
-failed:
-	kp_kpf_free(&c);
-	kp_ai_bins_free(b);
-	return -1;
-}
-
 /* scripts.ai_directory's checks: records of `stride` bytes from the DWORD at 0 up to a zero id, each inside the file
  * with its offset inside it. */
 static int directory_valid(const uint8_t *bin, size_t size, uint32_t stride)

@@ -9,7 +9,6 @@ from __future__ import annotations
 import json
 import struct
 from dataclasses import dataclass
-from pathlib import Path
 
 from . import CONVERTER_VERSION
 from .catalog import MAPDATA_DAT, MAPDATA_TBL
@@ -88,8 +87,7 @@ def build(m: Manifest, dirs: list[bytes], *, profile_id: str, data_set_hash: byt
     return c
 
 
-def convert(resolver: Source, out: Path) -> tuple[Path, Container]:
-    profile = resolver.profile
-    dirs = directories(resolver.read(MAPDATA_DAT)[1], resolver.read(MAPDATA_TBL)[1])
-    return out / "data" / "campaign.kpd", build(load(profile.id), dirs, profile_id=profile.id,
-                                                 data_set_hash=resolver.data_set_hash())
+def build_from(source: Source) -> Container:
+    """`campaign.kpd` from the source's `arr\\mapdata` tables."""
+    dirs = directories(source.read(MAPDATA_DAT)[1], source.read(MAPDATA_TBL)[1])
+    return build(load(source.profile.id), dirs, profile_id=source.profile.id, data_set_hash=source.data_set_hash())

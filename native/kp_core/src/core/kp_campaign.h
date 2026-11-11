@@ -1,5 +1,5 @@
 /*
- * The campaign progression of the original (uiSingle.cpp, atlas P41 0x4bb5b0..0x4bbc20; plan phase S): campaign.kpd's
+ * The campaign progression of the original (uiSingle.cpp, atlas P41 0x4bb5b0..0x4bbc20; plan phase S): the
  * six campaign tables and mission directories, the next mission after a game, the SetNextScenario resolver and the
  * profile's progress. Pure state functions over a run and a profile the caller keeps (the oracle's campaign chains now;
  * the product's session from stage S2).
@@ -17,8 +17,6 @@
 extern "C" {
 #endif
 
-#define KP_CAMPAIGN_KIND "CAMP"
-#define KP_CAMPAIGN_SCHEMA 1
 #define KP_CAMPAIGN_TABLES 6         /* Zerg, Terran, Protoss of 0x50e0b8 (group 0) and 0x50e0c4 (group 1) */
 #define KP_CAMPAIGN_TABLES_PER_GROUP 3
 #define KP_CAMPAIGN_MISSIONS 65      /* the directory strings 0x51abb8 */
@@ -38,8 +36,7 @@ typedef struct {
 	const KpCampaignRow *rows; /* with the table's terminator row (mission 0) */
 } KpCampaignTable;
 
-/* campaign.kpd (converter/campaign.py; docs/formats/kpd.md): the tables in the executable's pointer order, the
- * mission directories by mapdata index ("campaign\terran\terran01", "" none) and the cheat bits a new game keeps. */
+/* The campaign: the tables in the executable's pointer order, the mission directories by mapdata index ("campaign\terran\terran01", "" none) and the cheat bits a new game keeps. */
 typedef struct {
 	KpCampaignTable tables[KP_CAMPAIGN_TABLES];
 	int table_count;
@@ -49,7 +46,6 @@ typedef struct {
 	void *owned; /* the rows and the directories' bytes */
 } KpCampaign;
 
-int kp_campaign_load(KpCampaign *c, const uint8_t *data, size_t size, const char *name, KpError *err);
 /* The campaign from its payloads: TABL and CHEA (the executable's tables, kp_defs.h), MAPD (the missions' directories of
  * mapdata.dat and mapdata.tbl, converter/campaign.py). Nothing points into them afterwards. */
 int kp_campaign_from(KpCampaign *c, const uint8_t *tabl, size_t tabl_size, const uint8_t *mapd, size_t mapd_size,

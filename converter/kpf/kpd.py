@@ -1,6 +1,9 @@
 """Game data containers: `dat.kpd` (`DAT `), `strings.kpd` (`STRS`), `iscript.kpd` (`ISCR`),
 `aiscript.kpd` (`AISC`).
 
+The runtime reads the original files and builds these in memory (ADR 0018); the converter builds them only for the
+base of the languages (converter/base.py), the input manifest (`scr-manifest`) and the C fixtures.
+
 Layouts: docs/formats/kpd.md. All keep the original bytes unchanged: a DAT file is
 already column-major (one field = one contiguous array), and a TBL file is the exact
 table the native lookup `0x4c13b0` reads (count, offsets including shared ones, and
@@ -825,7 +828,7 @@ def build_grpmeta(gs: GrpSet, *, profile_id: str, data_set_hash: bytes) -> Conta
 def atlas_frame_offsets(gs: GrpSet) -> list[int]:
     """grpmeta AFRM: per GRPS entry its first frame within its atlas (the frames of the atlas's
     earlier entries, in GRPS order); the pack's FRMS record of frame f of entry e is
-    ATLS.first(atlas of e) + AFRM[e] + f (generated/packs/<pack>.kpd, converter/kpf/resources.py)."""
+    ATLS.first(atlas of e) + AFRM[e] + f (the pack the runtime builds, native/kp_present/kp_pages.c)."""
     used: dict[str, int] = {}
     out = []
     for e in gs.grps:

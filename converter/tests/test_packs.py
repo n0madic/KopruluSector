@@ -1,5 +1,5 @@
-"""Pack sound conversion and naming (converter/emit/packs.py) on synthetic data; stock sound grouping with
-KOPRULU_ORIGINAL."""
+"""Sound conversion (converter/emit/sound.py) and OGG naming (converter/emit/packs.py) on synthetic data; stock sound
+grouping with KOPRULU_ORIGINAL."""
 from __future__ import annotations
 
 import os
@@ -67,12 +67,18 @@ class PacksTest(unittest.TestCase):
                          d + "y.wav": "y.ogg", d + "Y.WAV": "y.ogg"}
 
     @unittest.skipIf(not ORIGINAL, "KOPRULU_ORIGINAL not set")
-    def test_stock_pack_sounds(self):
+    def test_stock_sound_packs(self):
+        from converter import gamedata
+        from converter.kpf.kpd import SOUND_PACKS
         from converter.mpq.profile import Resolver
 
         with Resolver(ORIGINAL) as r:
-            grouped = packs.pack_sounds(r)
-        assert {k: len(v) for k, v in grouped.items()} == {"terran": 378, "protoss": 341, "zerg": 275, "effects": 145}
-        ids = sorted(i for v in grouped.values() for i, _ in v)
+            payload = gamedata.sounds(r).section("PACK").payload
+        count = struct.unpack_from("<H", payload)[0]
+        by_sound = payload[2:]
+        assert len(by_sound) == count
+        assert {p: by_sound.count(k + 1) for k, p in enumerate(SOUND_PACKS)} == {
+            "terran": 378, "protoss": 341, "zerg": 275, "effects": 145}
+        ids = [sid for sid, k in enumerate(by_sound) if k]
         assert len(ids) == 1139 and ids[0] == 1 and ids[-1] == 1143
         assert not {86, 104, 105, 1066} & set(ids)  # sfxdata names files the archives lack

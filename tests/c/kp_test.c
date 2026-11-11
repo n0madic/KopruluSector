@@ -1,6 +1,7 @@
 /* kp_test: the C suites' runner (kp_test.h). */
 #include "kp_test.h"
 
+#include "kp_sha256.h"
 #include "kp_webm.h"
 
 #include <stdarg.h>
@@ -757,4 +758,86 @@ int main(int argc, char **argv)
 	backend(label, sizeof label);
 	printf("%s: %d passed, %d failed\n", label, passed, failed);
 	return failed == 0 ? 0 : 1;
+}
+
+/* --- the converter's fixtures --- */
+
+#define FIXTURE_PATH 512
+
+/* the fixtures' MPAK: one mission, "campaign\fixture", with the packs "effects" and "terran" */
+static const uint8_t FIXTURE_MPAK[] = { 1, 0, 16, 'c', 'a', 'm', 'p', 'a', 'i', 'g', 'n', '\\', 'f', 'i', 'x', 't', 'u', 'r',
+	'e', 2, 7, 'e', 'f', 'f', 'e', 'c', 't', 's', 6, 't', 'e', 'r', 'r', 'a', 'n' };
+static const uint8_t FIXTURE_SLOT[] = { 2, 0, 2, 12, 14 }; /* kpd.slots_section({0: 2, 12: 14}) */
+
+typedef struct {
+	KpDefsProfile profile;
+	KpDefsTable *tables;
+	uint8_t *chkl;
+} FixtureProfile;
+
+static void free_fixture_profile(void *p)
+{
+	FixtureProfile *fp = (FixtureProfile *)p;
+	free(fp->tables);
+	free(fp->chkl);
+	free(fp);
+}
+
+const KpDefsProfile *kp_t_fixture_profile(KpT *T)
+{
+	const KpDefsProfile *real = kp_defs_profile("bw-1.17.0.1");
+	FixtureProfile *fp = (FixtureProfile *)calloc(1, sizeof *fp);
+	int k;
+	kp_t_ok(T, real != NULL && fp != NULL, "the compiled profile");
+	kp_t_defer(T, free_fixture_profile, fp);
+	fp->tables = (KpDefsTable *)malloc((size_t)real->table_count * sizeof *fp->tables);
+	kp_t_ok(T, fp->tables != NULL, "out of memory");
+	memcpy(fp->tables, real->tables, (size_t)real->table_count * sizeof *fp->tables);
+	for (k = 0; k < real->table_count; k++) {
+		KpDefsTable *t = &fp->tables[k];
+		if (strcmp(t->fourcc, "CHKL") == 0) {
+			kp_t_ok(T, t->size > KP_SHA256_SIZE && (fp->chkl = (uint8_t *)malloc(t->size)) != NULL, "the CHKL table");
+			memcpy(fp->chkl, t->data, t->size);
+			kp_sha256("vcod", 4, fp->chkl + t->size - KP_SHA256_SIZE);
+			t->data = fp->chkl;
+		} else if (strcmp(t->fourcc, "MPAK") == 0) {
+			t->data = FIXTURE_MPAK;
+			t->size = (uint32_t)sizeof FIXTURE_MPAK;
+		} else if (strcmp(t->fourcc, "SLOT") == 0) {
+			t->data = FIXTURE_SLOT;
+			t->size = (uint32_t)sizeof FIXTURE_SLOT;
+		}
+	}
+	kp_t_ok(T, fp->chkl != NULL, "the profile's CHKL");
+	fp->profile = *real;
+	fp->profile.id = "fixture";
+	fp->profile.tables = fp->tables;
+	return &fp->profile;
+}
+
+static uint8_t *fixture_read(void *ctx, const char *name, size_t *size, char *err, size_t err_size)
+{
+	char path[FIXTURE_PATH];
+	size_t n = strlen(KP_T_FIXTURE_FILES), i;
+	(void)ctx;
+	(void)err_size;
+	err[0] = '\0';
+	*size = 0;
+	if (n + strlen(name) >= sizeof path) return NULL;
+	memcpy(path, KP_T_FIXTURE_FILES, n);
+	for (i = 0; name[i]; i++) {
+		char c = name[i] == '\\' ? '/' : name[i];
+		path[n + i] = c >= 'A' && c <= 'Z' ? (char)(c - 'A' + 'a') : c;
+	}
+	path[n + i] = '\0';
+	return kp_read_file(path, size);
+}
+
+KpFiles kp_t_fixture_files(KpT *T)
+{
+	KpFiles f;
+	memset(&f, 0, sizeof f);
+	f.read = fixture_read;
+	f.profile = kp_t_fixture_profile(T);
+	return f;
 }

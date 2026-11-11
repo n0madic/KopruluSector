@@ -1172,7 +1172,7 @@ static void images_without_a_row_are_left_out(KpT *T)
 	frames.grp_count = w->grp->grp_count;
 	frames.empty = 99;
 	memset(&lookups, 0, sizeof lookups); /* no selection rows */
-	/* kp_presenter_init without the warp texture's image (a world without dat.kpd) */
+	/* kp_presenter_init without the warp texture's image (a world without its DAT) */
 	pp->w = w;
 	pp->grp = w->grp;
 	pp->frames = &frames;
@@ -1191,46 +1191,6 @@ static void images_without_a_row_are_left_out(KpT *T)
 	kp_t_eq(T, d->slot_of[KP_FAMILY_OVERWRITE][keys[1]], -1, "no slot");
 	kp_t_eq(T, kp_presenter_sync(pp, d, NULL, 0, 0), 3, NULL);
 	kp_t_ok(T, pp->skipped == 1 && pp->skipped_before == 1, "the same as the tick before");
-}
-
-/* A pack container with no frames or sounds whose pages are w x h. */
-static uint8_t *pack_with_pages(KpT *T, int32_t w, int32_t h, size_t *size)
-{
-	static const uint8_t atls[1] = { 0 }, frms[4] = { 0 }, snds[2] = { 0 };
-	uint8_t page[6] = { 0, 0, (uint8_t)w, (uint8_t)(w >> 8), (uint8_t)h, (uint8_t)(h >> 8) }, *out = NULL;
-	KpKpfOut sections[4];
-	memset(sections, 0, sizeof sections);
-	sections[0].fourcc = "ATLS";
-	sections[0].payload = atls;
-	sections[0].size = sizeof atls;
-	sections[1].fourcc = "FRMS";
-	sections[1].payload = frms;
-	sections[1].size = sizeof frms;
-	sections[2].fourcc = "PAGE";
-	sections[2].payload = page;
-	sections[2].size = sizeof page;
-	sections[3].fourcc = "SNDS";
-	sections[3].payload = snds;
-	sections[3].size = sizeof snds;
-	if (kp_kpf_build(KP_PACK_KIND, KP_PACK_SCHEMA, 0, "test", NULL, sections, 4, &out, size) != 0) kp_t_fail(T, "build");
-	kp_t_defer(T, free, out);
-	return out;
-}
-
-/* Every page of every pack has the runtime's size: the loaded pages share one texture array of that size. */
-static void packs_refuse_pages_of_another_size(KpT *T)
-{
-	KpPack p;
-	KpError err;
-	size_t size;
-	uint8_t *ok;
-	memset(&err, 0, sizeof err);
-	ok = pack_with_pages(T, KP_PACK_PAGE_SIZE, KP_PACK_PAGE_SIZE, &size);
-	kp_t_eq(T, kp_pack_load(&p, ok, size, "ok", &err), 0, "%s", err.msg);
-	kp_pack_free(&p);
-	ok = pack_with_pages(T, KP_PACK_PAGE_SIZE / 2, KP_PACK_PAGE_SIZE / 2, &size);
-	kp_t_eq(T, kp_pack_load(&p, ok, size, "small", &err), -1, "smaller pages refused");
-	kp_t_ok(T, strstr(err.msg, "PAGE") != NULL, "%s", err.msg);
 }
 
 /* Only the texel rows a tick changed go up: a run for each family that wrote, not the rows between the families. */
@@ -2494,7 +2454,6 @@ static const KpTest TESTS[] = {
 	{ "images_without_a_row_are_left_out", images_without_a_row_are_left_out, 0 },
 	{ "images_upload_the_changed_rows", images_upload_the_changed_rows, 0 },
 	{ "images_join_the_runs_that_touch", images_join_the_runs_that_touch, 0 },
-	{ "packs_refuse_pages_of_another_size", packs_refuse_pages_of_another_size, 0 },
 	{ "images_slots_stable_released_and_reused", images_slots_stable_released_and_reused, 0 },
 	{ "images_order_follows_the_ranks", images_order_follows_the_ranks, 0 },
 	{ "layouts_fit_every_screen", layouts_fit_every_screen, 0 },

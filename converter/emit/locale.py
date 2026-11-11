@@ -1,6 +1,6 @@
 """A language's overlay packs from a StarCraft: Remastered install (`converter locale`, ADR 0016).
 
-Run after `data` and `missions`: the base's packs under `--out` are what a language is measured against. Writes, under
+What a language is measured against is the base, computed in memory from the install (converter/base.py). Writes, under
 `generated/locale/`:
 - `<locale>/strings.kpd` (`STRS`): the base's TBLs in the language, sections of schema 2: u32 count, u32 offsets from the
   section's start, the texts (`stat_txt` past u16's reach in UTF-8);
@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Callable
 
 from .. import CONVERTER_VERSION
+from ..base import Base, Mission
 from ..casc import rebuild
 from ..casc.storage import CascError
 from ..errors import ConverterError
@@ -620,18 +621,18 @@ def kept_string_ids(sections: dict[str, bytes]) -> set[int]:
     return kept
 
 
-def merge_mission(name: str, base: Container, theirs: bytes, found: Findings,
+def merge_mission(name: str, base: Mission, theirs: bytes, found: Findings,
                   replace: dict[int, bytes] | None = None) -> tuple[bytes, dict]:
     """A mission's STR: the base's count, each row the language's unless the base's is looked up by its text; a row in
     `replace` (string number -> text) takes that text, checked as the language's own. What does not fit is a problem, with
     the base's STR returned."""
     replace = dict(replace or {})
-    strs = base.section("STRS").payload
+    strs = base.strs
     ours, rows = str_rows(strs), str_rows(theirs)
     if len(ours) != len(rows):
         found.problems.append(f"{name}: {len(ours)} map strings became {len(rows)}")
         return strs, {}
-    keep = kept_string_ids({tag: base.section(tag).payload for tag in ("TRIG", "MBRF")})
+    keep = kept_string_ids({"TRIG": base.trig, "MBRF": base.mbrf})
     controls = {c for row in ours if row for c in row if c < CONTROL_END}
     merged: list[bytes | None] = []
     translated = kept = 0
@@ -656,26 +657,13 @@ def merge_mission(name: str, base: Container, theirs: bytes, found: Findings,
     return encoded, {"translated": translated, "kept": kept, "looked_up": len(keep)}
 
 
-def base_file(path: Path, step: str) -> bytes:
-    """A file of the base's, which the converter's `step` writes."""
-    if not path.exists():
-        raise LocaleError(f"no {path}: run `{step}` first")
-    return path.read_bytes()
-
-
-def mission_names(out: Path) -> list[str]:
-    """generated/missions/index.txt's mission names."""
-    lines = base_file(out / "missions" / "index.txt", "missions").decode("ascii").splitlines()
-    return [line.split()[0] for line in lines if line]
-
-
-def convert_missions(install: Install, locale: str, out: Path, profile_id: str, found: Findings,
+def convert_missions(install: Install, locale: str, base: Base, found: Findings,
                      replace: dict[tuple[str, int], bytes] | None = None) -> tuple[dict[str, bytes], dict]:
     """(mission name -> kpm bytes, name -> counts); a mission the language lacks keeps the base's text. `replace` is the
     language's own texts of map strings (mission, string number)."""
-    tables = chk.LoaderTables.load(profile_id)
+    tables = chk.LoaderTables.load(base.profile_id)
     packs, report = {}, {}
-    names = mission_names(out)
+    names = list(base.missions)
     for mission, k in sorted(set(replace or {}) - {(n, k) for n, k in (replace or {}) if n in names}):
         found.problems.append(f"{mission} string {k}: locales.json gives a text to no such mission")
     for name in names:
@@ -683,14 +671,13 @@ def convert_missions(install: Install, locale: str, out: Path, profile_id: str, 
         if not install.has(path):
             report[name] = {"translated": 0}
             continue
-        base = parse(base_file(out / "missions" / f"{name}.kpm", "missions"))
         try:
             scenario = chk.load(install.read(path), tables, vcod_sha256=tables.vcod_sha256)
         except chk.ChkError as e:
             found.problems.append(f"{name}: {e}")
             report[name] = {}
             continue
-        strs, counts = merge_mission(name, base, scenario.sections["STR "], found,
+        strs, counts = merge_mission(name, base.missions[name], scenario.sections["STR "], found,
                                      {k: text for (n, k), text in (replace or {}).items() if n == name})
         c = Container(kpm.KIND, kpm.SCHEMA, CONVERTER_VERSION, base.profile_id, source_hash=base.source_hash)
         c.add("STRS", strs)
@@ -820,10 +807,6 @@ def build_glyphs(install: Install, base_fonts: Container, used: dict[int, str], 
                "bytes": {section.strip(): len(payload) for section, payload in payloads.items()}}
 
 
-def base_pack(out: Path, name: str) -> Container:
-    return parse(base_file(out / "data" / name, "data"))
-
-
 ALL = "all"  # `converter locale --locale all`: every language the install holds
 
 
@@ -846,7 +829,7 @@ def installed(storage) -> list[str]:
     return [row["id"] for row in defs["locales"] if row["id"] != defs["base"] and held(install, row["id"])]
 
 
-def generate_all(storage, out: Path, *, rasterizer: Rasterizer = rasterize) -> list[str]:
+def generate_all(storage, base: Base, out: Path, *, rasterizer: Rasterizer = rasterize) -> list[str]:
     """`generate` for each installed language; the languages converted. A language the install lists but lacks is left out
     with a log line, one that fails a check fails the conversion (after the others' reports are written)."""
     names = installed(storage)
@@ -858,7 +841,7 @@ def generate_all(storage, out: Path, *, rasterizer: Rasterizer = rasterize) -> l
     failed = []
     for name in names:
         try:
-            generate(storage, name, out, rasterizer=rasterizer)
+            generate(storage, base, name, out, rasterizer=rasterizer)
         except LocaleError as e:
             log.error("%s", e)
             failed.append(name)
@@ -867,9 +850,9 @@ def generate_all(storage, out: Path, *, rasterizer: Rasterizer = rasterize) -> l
     return names
 
 
-def generate(storage, locale: str, out: Path, *, rasterizer: Rasterizer = rasterize) -> dict:
-    """The language's packs and generated/locale/glyphs.kpd under `out`; the report. LocaleError when any check fails:
-    then nothing but the report is written."""
+def generate(storage, base: Base, locale: str, out: Path, *, rasterizer: Rasterizer = rasterize) -> dict:
+    """The language's packs and generated/locale/glyphs.kpd under `out`, over `base`; the report. LocaleError when any
+    check fails: then nothing but the report is written."""
     defs = load_locales()
     check_locale(locale, defs)
     install = Install(storage)
@@ -879,21 +862,19 @@ def generate(storage, locale: str, out: Path, *, rasterizer: Rasterizer = raster
     texts = json.loads(TEXTS.read_text(encoding="utf-8"))
     found = Findings(exceptions={(e["table"], e["row"]) for e in defs["exceptions"] if e["locale"] == locale},
                      templates={b"{%s}" % t["name"].encode("ascii"): t["text"].encode("utf-8") for t in defs.get("templates", ())})
-    strings, ui, fonts = (base_pack(out, name) for name in ("strings.kpd", "ui.kpd", "fonts.kpd"))
     try:
-        tables, table_report = convert_tables(install, locale, strings, texts, found, shorter_rows(defs, locale, found))
-        dlgs, pool, dialog_report = convert_dialogs(install, locale, ui, texts, found, layout_fixes(defs, locale, found),
+        tables, table_report = convert_tables(install, locale, base.strings, texts, found, shorter_rows(defs, locale, found))
+        dlgs, pool, dialog_report = convert_dialogs(install, locale, base.ui, texts, found, layout_fixes(defs, locale, found),
                                                    kept_records(defs, locale, found),
                                                    replaced_records(defs, locale, found))
-        scripts, left = convert_scripts(install, locale, ui, found)
-        missions, mission_report = convert_missions(install, locale, out, strings.profile_id, found,
-                                                  replaced_strings(defs, locale, found))
+        scripts, left = convert_scripts(install, locale, base.ui, found)
+        missions, mission_report = convert_missions(install, locale, base, found, replaced_strings(defs, locale, found))
         subs, sub_count = convert_subtitles(install, locale, found)
         root = out / OUT_DIR
         glyphs_path = root / "glyphs.kpd"
         for row in defs["locales"]:  # the language dialog shows every language by its own name
             found.note_text(f"locales.json {row['id']}", row["name"].encode("utf-8"))
-        glyphs, glyph_report = build_glyphs(install, fonts, found.used, glyphs_path.read_bytes() if glyphs_path.exists() else None,
+        glyphs, glyph_report = build_glyphs(install, base.fonts, found.used, glyphs_path.read_bytes() if glyphs_path.exists() else None,
                                             rasterizer, found, defs["locales"])
     except CascError as e:
         raise LocaleError(f"{locale} is not in the local storage: {e}") from e
@@ -907,7 +888,7 @@ def generate(storage, locale: str, out: Path, *, rasterizer: Rasterizer = raster
         listed = "; ".join(found.problems[:MAX_LISTED])
         raise LocaleError(f"{locale}: {len(found.problems)} problems (reports/locale-{locale}.json): {listed}")
 
-    def pack(kind: bytes, schema: int, base: Container) -> Container:
+    def pack(kind: bytes, schema: int) -> Container:
         return Container(kind, schema, CONVERTER_VERSION, base.profile_id, source_hash=base.source_hash)
 
     written: set[Path] = set()
@@ -916,17 +897,17 @@ def generate(storage, locale: str, out: Path, *, rasterizer: Rasterizer = raster
         write_if_changed(path, data)
         written.add(path)
 
-    c = pack(kpd.STRINGS_KIND, kpd.STRINGS_SCHEMA, strings)
+    c = pack(kpd.STRINGS_KIND, kpd.STRINGS_SCHEMA)
     for section, payload in tables.items():
         c.add(section, payload, schema_version=kpd.WIDE_TBL_SCHEMA)
     emit(root / locale / "strings.kpd", c.to_bytes())
-    c = pack(kpd.UI_KIND, kpd.UI_SCHEMA, ui)
+    c = pack(kpd.UI_KIND, kpd.UI_SCHEMA)
     c.add("DLGS", dlgs)
     c.add("POOL", pool)
     c.add("GFIL", kpd.files_section(lambda name: scripts[name], list(scripts)))
     emit(root / locale / "ui.kpd", c.to_bytes())
     if subs is not None:
-        c = pack(cinematics.CINE_KIND, cinematics.SCHEMA, strings)
+        c = pack(cinematics.CINE_KIND, cinematics.SCHEMA)
         c.add("SUBS", subs)
         emit(root / locale / "cinematics.kpd", c.to_bytes())
     for name, data in missions.items():

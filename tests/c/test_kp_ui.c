@@ -8,7 +8,6 @@
 
 #include "../../native/kp_core/src/core/kp_ui_text.h"
 
-#define DATA "generated/data/" /* the fonts' and the strings' containers of the text probes (until D8d) */
 #define TERRAN01 "missions/terran/terran01"
 
 static const char *const UI_FILES[] = { KP_T_DATA, NULL };
@@ -230,25 +229,36 @@ static void timers_replay_the_original(KpT *T)
 /* --- the text engine (tests/golden/oracle/ui/text_cases.json, tools/oracle/export_text_cases.py) --- */
 
 #define SENTINEL 0xa5
+#define TITLE_FONT_ROWS 40 /* the probes' TFNT bank: glue\title\tFont.pcx's first 40 bytes (export_text_cases.py) */
 
-/* A section of a converted file. */
-static const uint8_t *section_of(KpT *T, const uint8_t *data, size_t size, const char *fourcc, size_t *n)
+/* A font of the original data's interface by its name (FNTP's order: the decoded FNT and one NUL). */
+static const uint8_t *font(KpT *T, const char *name, size_t *n)
 {
-	const uint8_t *p = kp_kpf_section(data, size, fourcc, n);
-	kp_t_ok(T, p != NULL, "no section %s", fourcc);
-	return p;
-}
-
-/* The fonts' sections of fonts.kpd by name. */
-static const uint8_t *font(KpT *T, const uint8_t *fonts, size_t size, const char *name, size_t *n)
-{
-	static const char *const NAMES[5][2] = { { "font8", "F8  " }, { "font10", "F10 " }, { "font14", "F14 " },
-		{ "font16", "F16 " }, { "font16x", "F16X" } };
+	static const char *const NAMES[KP_UI_FNT_FONTS] = { "font8", "font10", "font14", "font16", "font16x" };
+	const KpUiData *d = &kp_t_data(T)->ui;
 	int k;
-	for (k = 0; k < 5; k++) {
-		if (strcmp(NAMES[k][0], name) == 0) return section_of(T, fonts, size, NAMES[k][1], n);
+	for (k = 0; k < KP_UI_FNT_FONTS; k++) {
+		if (strcmp(NAMES[k], name) == 0) {
+			*n = d->fonts[k].size;
+			return d->fonts[k].data;
+		}
 	}
 	kp_t_fail(T, "no font %s", name);
+}
+
+/* A TBL of the original data's interface by its file's name (STAT, NETW, GLUA, GHST, TIPS, HELP), in UTF-8. */
+static const uint8_t *table(KpT *T, const char *name, size_t *n)
+{
+	static const char *const NAMES[KP_UI_TBLS] = { "STAT", "NETW", "GLUA", "GHST", "TIPS", "HELP" };
+	const KpUiData *d = &kp_t_data(T)->ui;
+	int k;
+	for (k = 0; k < KP_UI_TBLS; k++) {
+		if (strcmp(NAMES[k], name) == 0) {
+			*n = d->tbl[k].size;
+			return d->tbl[k].data;
+		}
+	}
+	kp_t_fail(T, "no table %s", name);
 }
 
 /* Hex digits into bytes (a NUL after them); the count. */
@@ -307,19 +317,17 @@ static void check_value(KpT *T, int n, const char *kind, const KpJson *c, const 
 static void text_matches_the_original_probes(KpT *T)
 {
 	const KpJson *g, *cases;
-	size_t fonts_size, strings_size, tfgm_n, tfnt_n;
-	uint8_t *fonts, *strings;
-	const uint8_t *tfgm, *tfnt;
+	size_t tfgm_n, tfnt_n = TITLE_FONT_ROWS;
+	const uint8_t *tfgm;
+	uint8_t tfnt[TITLE_FONT_ROWS];
 	int n, packets = 0, tbls = 0;
 	uint8_t *buf;
-	if (!kp_t_has(T, DATA "fonts.kpd")) {
-		kp_t_log(T, "SKIP test_kp_ui.text_matches_the_original_probes: no generated/data");
-		return;
-	}
-	fonts = kp_t_read(T, DATA "fonts.kpd", &fonts_size);
-	strings = kp_t_read(T, DATA "strings.kpd", &strings_size);
-	tfgm = section_of(T, fonts, fonts_size, "TFGM", &tfgm_n);
-	tfnt = section_of(T, fonts, fonts_size, "TFNT", &tfnt_n);
+	KpError err;
+	if (!kp_t_ready(T, "test_kp_ui.text_matches_the_original_probes", UI_FILES)) return;
+	tfgm = kp_t_data(T)->ui.font_rows.data;
+	tfgm_n = kp_t_data(T)->ui.font_rows.size;
+	kp_t_ok(T, kp_files_pcx_prefix(&kp_t_data(T)->files, "glue\\title\\tFont.pcx", tfnt, tfnt_n, &err) == 0, "%s",
+		err.msg);
 	g = kp_t_golden(T, "tests/golden/oracle/ui/text_cases.json");
 	cases = kp_json_get(g, "cases");
 	buf = (uint8_t *)malloc(1 << 16);
@@ -335,16 +343,16 @@ static void text_matches_the_original_probes(KpT *T)
 		size_t fn;
 		const uint8_t *f;
 		if (strcmp(kind, "glyph") == 0) {
-			f = font(T, fonts, fonts_size, S(1), &fn);
+			f = font(T, S(1), &fn);
 			setup(T, &t, f, fn);
 			CHECK("offset", kp_ui_glyph(&t, (int)C(2)), C(3));
 		} else if (strcmp(kind, "width") == 0) {
-			f = font(T, fonts, fonts_size, S(1), &fn);
+			f = font(T, S(1), &fn);
 			setup(T, &t, f, fn);
 			t.spacing = (uint8_t)C(3);
 			CHECK("width", kp_ui_char_width(&t, (int)C(2)), C(4));
 		} else if (strcmp(kind, "span") == 0) {
-			f = font(T, fonts, fonts_size, S(1), &fn);
+			f = font(T, S(1), &fn);
 			setup(T, &t, f, fn);
 			buf[0] = (uint8_t)C(2);
 			buf[1] = 'A';
@@ -353,7 +361,7 @@ static void text_matches_the_original_probes(KpT *T)
 			CHECK("x", t.x, C(3));
 			CHECK("bottom", t.ext_bottom, C(4));
 		} else if (strcmp(kind, "wrap") == 0) {
-			f = font(T, fonts, fonts_size, S(1), &fn);
+			f = font(T, S(1), &fn);
 			setup(T, &t, f, fn);
 			t.clip_right = (int16_t)C(3);
 			unhex(S(2), buf, 1 << 16);
@@ -361,14 +369,14 @@ static void text_matches_the_original_probes(KpT *T)
 			CHECK("x", t.x, C(5));
 		} else if (strcmp(kind, "tbl") == 0) {
 			size_t sn;
-			const uint8_t *sec = section_of(T, strings, strings_size, S(1), &sn), *text = tbl_string(sec, sn, C(2));
-			f = font(T, fonts, fonts_size, "font10", &fn);
+			const uint8_t *sec = table(T, S(1), &sn), *text = tbl_string(sec, sn, C(2));
+			f = font(T, "font10", &fn);
 			setup(T, &t, f, fn);
 			CHECK("consumed", kp_ui_find_line_break(&t, text ? text : (const uint8_t *)"", 0), C(3));
 			CHECK("x", t.x, C(4));
 			tbls++;
 		} else if (strcmp(kind, "tab") == 0) {
-			f = font(T, fonts, fonts_size, S(1), &fn);
+			f = font(T, S(1), &fn);
 			setup(T, &t, f, fn);
 			t.x = (int32_t)C(2);
 			t.clip_left = (int16_t)C(3);
@@ -379,7 +387,7 @@ static void text_matches_the_original_probes(KpT *T)
 		} else if (strcmp(kind, "lines") == 0) {
 			int32_t count = 0;
 			size_t consumed;
-			f = font(T, fonts, fonts_size, S(1), &fn);
+			f = font(T, S(1), &fn);
 			setup(T, &t, f, fn);
 			t.flags = (uint8_t)C(2);
 			unhex(S(3), buf, 1 << 16);
@@ -394,7 +402,7 @@ static void text_matches_the_original_probes(KpT *T)
 			CHECK("bounds bottom", t.ext_bottom, C(11));
 		} else if (strcmp(kind, "highlight") == 0) {
 			size_t len;
-			f = font(T, fonts, fonts_size, S(1), &fn);
+			f = font(T, S(1), &fn);
 			setup(T, &t, f, fn);
 			t.highlight = 65;
 			len = unhex(S(2), buf, 1 << 16);
@@ -403,7 +411,7 @@ static void text_matches_the_original_probes(KpT *T)
 			CHECK("bottom", t.ext_bottom, C(4));
 		} else if (strcmp(kind, "valign") == 0) {
 			int32_t y = (int32_t)C(2);
-			f = font(T, fonts, fonts_size, "font8", &fn);
+			f = font(T, "font8", &fn);
 			setup(T, &t, f, fn);
 			t.flags = (uint8_t)C(1);
 			t.clip_bottom = 31;
@@ -411,13 +419,13 @@ static void text_matches_the_original_probes(KpT *T)
 			kp_ui_align_vertically(&t, &y);
 			CHECK("y", y, C(4));
 		} else if (strcmp(kind, "colour") == 0) {
-			f = font(T, fonts, fonts_size, "font8", &fn);
+			f = font(T, "font8", &fn);
 			setup(T, &t, f, fn);
 			kp_ui_select_color(&t, (int)C(1));
 			CHECK("row", t.row, C(2));
 			CHECK("previous", t.previous_row, C(3));
 		} else if (strcmp(kind, "grey") == 0) {
-			f = font(T, fonts, fonts_size, "font8", &fn);
+			f = font(T, "font8", &fn);
 			setup(T, &t, f, fn);
 			t.measuring = 0;
 			t.row = (int)C(2);
@@ -433,7 +441,7 @@ static void text_matches_the_original_probes(KpT *T)
 			KpUiSurface s;
 			uint8_t *pixels;
 			if (strcmp(kind, "packets") == 0) {
-				const uint8_t *ff = font(T, fonts, fonts_size, S(1), &fn);
+				const uint8_t *ff = font(T, S(1), &fn);
 				int64_t i = 8 + 4 * (C(2) - ff[4]);
 				size_t off = (size_t)ff[i] + 256 * (size_t)ff[i + 1] + 65536 * (size_t)ff[i + 2];
 				w = ff[off];
@@ -456,7 +464,7 @@ static void text_matches_the_original_probes(KpT *T)
 				bank = tfgm;
 				bank_n = tfgm_n;
 			}
-			f = font(T, fonts, fonts_size, "font8", &fn);
+			f = font(T, "font8", &fn);
 			setup(T, &t, f, fn);
 			kp_ui_text_set_rows(&t, bank, bank_n);
 			s.w = w + pad;
@@ -2723,16 +2731,12 @@ static void text_reads_utf8_and_windows_1252_bytes(KpT *T)
 static void text_skips_a_character_with_no_glyph(KpT *T)
 {
 	KpUiText t;
-	uint8_t *fonts, *narrow;
+	uint8_t *narrow;
 	const uint8_t *f;
-	size_t fonts_size, fn;
+	size_t fn;
 	int32_t a, b;
-	if (!kp_t_has(T, DATA "fonts.kpd")) {
-		kp_t_log(T, "SKIP test_kp_ui.text_skips_a_character_with_no_glyph: no generated/data");
-		return;
-	}
-	fonts = kp_t_read(T, DATA "fonts.kpd", &fonts_size);
-	f = font(T, fonts, fonts_size, "font10", &fn);
+	if (!kp_t_ready(T, "test_kp_ui.text_skips_a_character_with_no_glyph", UI_FILES)) return;
+	f = font(T, "font10", &fn);
 	narrow = (uint8_t *)malloc(fn);
 	kp_t_ok(T, narrow != NULL, "out of memory");
 	kp_t_defer(T, free, narrow);
@@ -2820,17 +2824,12 @@ static void vector_text_takes_code_points_past_a_byte(KpT *T)
  * (a byte slot outside the font still ends a drawn text, as the original's). */
 static void text_finds_glyphs_by_code_point(KpT *T)
 {
-	size_t fonts_size, fn;
-	uint8_t *fonts;
+	size_t fn;
 	const uint8_t *f;
 	KpUiText t;
 	int32_t a, b, e_acute, quote;
-	if (!kp_t_has(T, DATA "fonts.kpd")) {
-		kp_t_log(T, "SKIP test_kp_ui.text_finds_glyphs_by_code_point: no generated/data");
-		return;
-	}
-	fonts = kp_t_read(T, DATA "fonts.kpd", &fonts_size);
-	f = font(T, fonts, fonts_size, "font10", &fn);
+	if (!kp_t_ready(T, "test_kp_ui.text_finds_glyphs_by_code_point", UI_FILES)) return;
+	f = font(T, "font10", &fn);
 	setup(T, &t, f, fn);
 	a = kp_ui_char_width(&t, 'A');
 	b = kp_ui_char_width(&t, 'B');

@@ -1,6 +1,6 @@
-/* The native core (ADR 0008) on its own: the x86 integer helpers (kp_int.h), the container reader and the loaders
- * over every converted data file and their errors, the event ring of a native game, the unit sounds, a C failure under
- * a handler, the placement ghosts, the mission loader's bounds and the UTF-8 decoder (kp_utf8.h). */
+/* The native core (ADR 0008) on its own: the x86 integer helpers (kp_int.h), the container reader's errors, every
+ * oracle mission built from the original data, the event ring of a native game, the unit sounds, a C failure under a
+ * handler, the placement ghosts and the UTF-8 decoder (kp_utf8.h). */
 #include "kp_test.h"
 
 #include "../../native/kp_core/src/core/kp_int.h"
@@ -9,7 +9,6 @@
 #include "../../native/kp_core/src/core/kp_utf8.h"
 
 #define DATA KP_T_DATA
-#define DAT_KPD KP_ORACLE_DATA "dat.kpd" /* the converted containers' loaders */
 #define BASIC "tests/fixtures/generated/kpf/basic.kpd"
 
 /* A case's value as an unsigned 32-bit register (mod 2^32). */
@@ -147,51 +146,7 @@ static int golden_missions(KpT *T, char keys[][512], int max)
 	return count;
 }
 
-/* The converted containers of the oracle suites: dat.kpd and the golden missions' .kpm. */
-static int data_files(KpT *T, char paths[][512], int max)
-{
-	int count, k;
-	count = golden_missions(T, paths + 1, max - 1);
-	snprintf(paths[0], 512, "%s", DAT_KPD);
-	for (k = 1; k <= count; k++) { /* a key is its container's path under generated/ */
-		char file[512];
-		snprintf(file, sizeof file, "generated/%s.kpm", paths[k]);
-		snprintf(paths[k], 512, "%s", file);
-	}
-	return count + 1;
-}
-
 #define MAX_FILES 512
-
-/* Every data file's container parses with its checksums verified, its sections inside the file. */
-static void containers_verify(KpT *T)
-{
-	char (*paths)[512];
-	int count, k;
-	if (!kp_t_has(T, DAT_KPD)) return;
-	paths = (char (*)[512])malloc(MAX_FILES * 512);
-	kp_t_ok(T, paths != NULL, "out of memory");
-	kp_t_defer(T, free, paths);
-	count = data_files(T, paths, MAX_FILES);
-	for (k = 0; k < count; k++) {
-		size_t size;
-		uint8_t *data;
-		KpKpf c;
-		KpError err;
-		int s, mark = kp_t_mark(T);
-		if (!kp_t_mine(T, k + 1)) continue;
-		data = kp_t_read(T, paths[k], &size);
-		kp_t_ok(T, kp_kpf_parse(&c, data, size, paths[k], 1, &err) == 0, "%s", err.msg);
-		for (s = 0; s < c.section_count; s++) {
-			const KpKpfSection *sec = &c.sections[s];
-			kp_t_ok(T, (uint64_t)sec->offset + sec->size <= size, "%s section %s inside the file", paths[k], sec->fourcc);
-		}
-		kp_t_ok(T, c.section_count > 0, "%s has sections", paths[k]);
-		kp_kpf_free(&c);
-		kp_t_release(T, mark);
-	}
-	kp_t_ok(T, count > 64, "data files: %d", count);
-}
 
 static void expect_refused(KpT *T, const uint8_t *data, size_t size, int verify, const char *message)
 {
@@ -237,34 +192,6 @@ static void container_errors(KpT *T)
 	expect_refused(T, copy, size, 1, "kpf: x: section WALK checksum mismatch (corrupt file)");
 }
 
-/* dat.kpd, grpmeta.kpd and iscript.kpd load; another kind of file is refused with the kind's message. */
-static void loaders_refuse_other_kinds(KpT *T)
-{
-	size_t size, basic_size;
-	uint8_t *data, *basic;
-	KpError err;
-	KpDat dat;
-	KpGrpMeta grp;
-	KpIScript script;
-	if (!kp_t_has(T, DAT_KPD) || !kp_t_has(T, BASIC)) return;
-	basic = kp_t_read(T, BASIC, &basic_size);
-	data = kp_t_read(T, DAT_KPD, &size);
-	kp_t_ok(T, kp_dat_load(&dat, data, size, DAT_KPD, NULL, &err) == 0, "%s", err.msg);
-	kp_dat_free(&dat);
-	kp_t_ok(T, kp_dat_load(&dat, basic, basic_size, "basic", NULL, &err) != 0, "a DAT of another kind");
-	kp_t_eq_str(T, err.msg, "kpf: basic: file kind \"TEST\", expected \"DAT \"", NULL);
-	data = kp_t_read(T, KP_ORACLE_DATA "grpmeta.kpd", &size);
-	kp_t_ok(T, kp_grpmeta_load(&grp, data, size, "grpmeta", NULL, &err) == 0, "%s", err.msg);
-	kp_grpmeta_free(&grp);
-	kp_t_ok(T, kp_grpmeta_load(&grp, basic, basic_size, "basic", NULL, &err) != 0, "a grpmeta of another kind");
-	kp_t_eq_str(T, err.msg, "kpf: basic: file kind \"TEST\", expected \"GRPM\"", NULL);
-	data = kp_t_read(T, KP_ORACLE_DATA "iscript.kpd", &size);
-	kp_t_ok(T, kp_iscript_load(&script, data, size, "iscript", NULL, &err) == 0, "%s", err.msg);
-	kp_iscript_free(&script);
-	kp_t_ok(T, kp_iscript_load(&script, basic, basic_size, "basic", NULL, &err) != 0, "an iscript of another kind");
-	kp_t_eq_str(T, err.msg, "kpf: basic: file kind \"TEST\", expected \"ISCR\"", NULL);
-}
-
 /* Every mission of the oracle suites builds from the original data. */
 static void missions_load(KpT *T)
 {
@@ -282,40 +209,6 @@ static void missions_load(KpT *T)
 		kp_mission_free(&m);
 	}
 	kp_t_ok(T, count >= 64, "missions checked: %d", count);
-}
-
-/* Lengths and counts read from a file never wrap the bounds checks (32-bit sums in C). */
-static void mission_rejects_wrapping_lengths(KpT *T)
-{
-	static const uint8_t WRAP[4] = { 0xf8, 0xff, 0xff, 0xff }, WIDE[4] = { 0xff, 0xff, 0xff, 0xff };
-	const char *path = "generated/scenarios/marine_walk.kpm";
-	size_t size, rule_at, meta_at;
-	uint8_t *data, *copy;
-	KpKpf c;
-	KpMission m;
-	KpError err;
-	const KpKpfSection *rule, *meta;
-	if (!kp_t_has(T, path)) return;
-	data = kp_t_read(T, path, &size);
-	kp_t_ok(T, kp_kpf_parse(&c, data, size, path, 0, &err) == 0, "%s", err.msg);
-	rule = kp_kpf_find(&c, "RULE");
-	meta = kp_kpf_find(&c, "META");
-	kp_t_ok(T, rule && meta, "RULE and META sections");
-	kp_t_ok(T, rule->size >= 8, "RULE holds an override");
-	rule_at = (size_t)(rule->data - data) + 4; /* the first override's length */
-	meta_at = (size_t)(meta->data - data) + 4;
-	kp_kpf_free(&c);
-	copy = (uint8_t *)malloc(size);
-	kp_t_ok(T, copy != NULL, "out of memory");
-	kp_t_defer(T, free, copy);
-	memcpy(copy, data, size);
-	memcpy(copy + rule_at, WRAP, 4);
-	kp_t_ok(T, kp_mission_load(&m, copy, size, path, NULL, &err) != 0, "a wrapping override length is refused");
-	kp_t_ok(T, strstr(err.msg, "RULE section is malformed") != NULL, "the message: %s", err.msg);
-	memcpy(copy, data, size);
-	memcpy(copy + meta_at, WIDE, 4);
-	kp_t_ok(T, kp_mission_load(&m, copy, size, path, NULL, &err) != 0, "a wrapping map size is refused");
-	kp_t_ok(T, strstr(err.msg, "MTXM size does not match 65535x65535") != NULL, "the message: %s", err.msg);
 }
 
 /* --- games --- */
@@ -782,11 +675,8 @@ static const KpTest TESTS[] = {
 	{ "int_shifts", int_shifts, 0 },
 	{ "int_bitwise", int_bitwise, 0 },
 	{ "int_fixed_point_8", int_fixed_point_8, 0 },
-	{ "containers_verify", containers_verify, 6 },
 	{ "container_errors", container_errors, 0 },
-	{ "loaders_refuse_other_kinds", loaders_refuse_other_kinds, 0 },
 	{ "missions_load", missions_load, 0 },
-	{ "mission_rejects_wrapping_lengths", mission_rejects_wrapping_lengths, 0 },
 	{ "native_events", native_events, 0 },
 	{ "unit_sounds", unit_sounds, 0 },
 	{ "core_failures_leave_the_game_usable", core_failures_leave_the_game_usable, 0 },

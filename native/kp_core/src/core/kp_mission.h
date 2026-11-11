@@ -1,7 +1,8 @@
 /*
- * Mission container (.kpm, kind MISN; docs/formats/kpm.md). The loader copies the file; the raw
- * CHK payloads, the derived terrain data and the override sections stay packed and point into
- * the copy. kp_mission_from_files builds the same mission from its scenario (ADR 0018, stage D4).
+ * A mission built from its scenario (ADR 0018, stage D4): kp_mission_from_files reads the CHK, derives the terrain
+ * data and lays them out in one blob as the parts the game reads (META, RULE, WAVS, WALK, RGNS, CONT, PACK and the raw
+ * CHK payloads, docs/formats/kpm.md); the parts point into the blob. KP_MISSION_KIND is a language's overlay's kind
+ * (kp_host_game_text, kp_host_game_speech).
  */
 #ifndef KP_MISSION_H
 #define KP_MISSION_H
@@ -54,15 +55,14 @@ typedef struct {
 	uint32_t counts[4], capacities[4], at[4];
 } KpMissionContours;
 
-/* The tilesets by a mission's tileset index (its era & 7) and their converted files' path under the data root. */
+/* The tilesets by a mission's tileset index (its era & 7). */
 #define KP_TILESETS 8
 extern const char *const KP_TILESET_NAMES[KP_TILESETS];
-#define KP_TILESET_PATH "generated/data/tilesets/%s.kpd"
 
 #define KP_MISSION_PACKS 32
 
 typedef struct {
-	uint8_t *blob; /* owned copy of the file */
+	uint8_t *blob; /* owned: the scenario and the parts built from it */
 	size_t size;
 	uint32_t chk_version, era, width, height, tileset;
 	uint8_t owners[12], races[12];
@@ -84,17 +84,10 @@ typedef struct {
 	KpBytes packs[KP_MISSION_PACKS]; /* names of the resource packs (ADR 0004), sorted */
 } KpMission;
 
-/* expect may be NULL; it adds profile and source-hash checks. Returns -1 with err set. */
-int kp_mission_load(KpMission *m, const uint8_t *data, size_t size, const char *name, const KpKpfExpect *expect,
-	KpError *err);
-/* kp_mission_load over the file's malloc'd bytes, taken (also on failure) instead of copied. */
-int kp_mission_take(KpMission *m, uint8_t *data, size_t size, const char *name, const KpKpfExpect *expect,
-	KpError *err);
-/* The mission of a campaign directory ("campaign\\terran\\terran01") from its files, as the converter builds its .kpm
- * (converter/missions.py): <directory>\staredit\scenario.chk read by the profile's loader tables (kp_chk), its
- * triggers validated, META, the override sections (RULE), the WAV strings' files (WAVS), the terrain-derived WALK, RGNS
- * and CONT from the tileset of ERA & 7 (kp_derive), the packs of the profile's MPAK. The blob holds the scenario and
- * those parts. Returns -1 with err set. */
+/* The mission of a campaign directory ("campaign\\terran\\terran01") from its files: <directory>\staredit\scenario.chk
+ * read by the profile's loader tables (kp_chk), its triggers validated, META, the override sections (RULE), the WAV
+ * strings' files (WAVS), the terrain-derived WALK, RGNS and CONT from the tileset of ERA & 7 (kp_derive), the packs of
+ * the profile's MPAK. The blob holds the scenario and those parts. Returns -1 with err set. */
 int kp_mission_from_files(KpMission *m, const KpFiles *f, const char *directory, KpError *err);
 /* The same from a scenario's bytes (malloc'd, taken, also on failure) under name (its errors'): directory the folder
  * its WAV strings name files in (NULL: a test scenario, converter/scenarios.py, with no WAVs), packs PACK's payload

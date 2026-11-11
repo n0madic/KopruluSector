@@ -3,7 +3,7 @@
 campaigns (the manifest defs/campaign), its checks filled from the goldens that hold them.
 
 Columns:
-- load: the mission converted (generated/missions/<name>.kpm);
+- load: the mission's scenario read from the install, with its resource packs recorded (defs/campaign/packs-<profile>.json);
 - initial state: tests/golden/oracle/initial_state (the start equal to the original's);
 - run: tests/golden/oracle/runs (2,000 idle steps equal: triggers, AI, economy at every 20th step);
 - chain: tests/golden/oracle/chains (the game won with a cheat in its campaign chain, started from the game before,
@@ -14,8 +14,8 @@ Columns:
 - status: the short status: ✅ a scripted win equal to the original's, 🟡 the mission plays with what the
   other checks show, ❌ not converted. The manual playthrough and the briefings belong to the interface of phase 9.
 
-Usage: python3 tools/compatibility.py [--check]   (the load column and the missions' names need the converter's
-generated/missions: without it --check is skipped and nothing is written)
+Usage: python3 tools/compatibility.py [--check]   (the missions' names come from the 1.17 install's catalog,
+KOPRULU_ORIGINAL: without it --check is skipped and nothing is written)
 """
 from __future__ import annotations
 
@@ -27,10 +27,14 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+import mission_index  # noqa: E402
+from converter.missions import load_packs  # noqa: E402
+
+PROFILE = "bw-1.17.0.1"
 GOLDEN = ROOT / "tests" / "golden" / "oracle"
 OUT = ROOT / "docs" / "compatibility.md"
 MANIFEST = ROOT / "defs" / "campaign" / "bw-1.17.0.1.json"
-MISSIONS = ROOT / "generated" / "missions" / "index.txt"
 RACE_RUN = {("terran", 0): "terran", ("zerg", 0): "zerg", ("protoss", 0): "protoss",
             ("terran", 1): "xterran", ("zerg", 1): "xzerg", ("protoss", 1): "xprotoss"}
 TABLE_RACE = {"zerg": "zerg", "terran": "terran", "protoss": "protoss", "expzerg": "zerg", "expterran": "terran",
@@ -38,7 +42,7 @@ TABLE_RACE = {"zerg": "zerg", "terran": "terran", "protoss": "protoss", "expzerg
 EPISODES = (("terran", "Terran (Episode I)"), ("zerg", "Zerg (Episode II)"), ("protoss", "Protoss (Episode III)"),
             ("expprotoss", "Protoss (Brood War, Episode IV)"), ("expterran", "Terran (Brood War, Episode V)"),
             ("expzerg", "Zerg (Brood War, Episode VI)"))
-PLAY_MISSION = re.compile(r"^missions/(.+)$")  # a play golden's mission (generated/missions/)
+PLAY_MISSION = re.compile(r"^missions/(.+)$")  # a play golden's mission name (`terran/terran01`)
 log = logging.getLogger("compatibility")
 
 
@@ -48,18 +52,10 @@ def index_names(kind: str) -> set[str]:
     return set(json.loads(path.read_text())) if path.exists() else set()
 
 
-def catalog() -> dict[int, str]:
-    out = {}
-    if MISSIONS.exists():
-        for n, line in enumerate(MISSIONS.read_text().splitlines(), 1):
-            if line.strip():
-                out[n] = line.split()[0]
-    return out
-
-
-def build() -> str:
+def build(data: Path) -> str:
     manifest = json.loads(MANIFEST.read_text())
-    names = catalog()
+    names = {m.index: m.name for m in mission_index.catalog(data)}
+    packs = {d.lower() for d in load_packs(PROFILE)}
     initial, runs, chains, plays = (index_names(k) for k in ("initial_state", "runs", "chains", "plays"))
     chain_by_mission: dict[int, str] = {}
     defeat_by_mission: dict[int, str] = {}
@@ -91,7 +87,7 @@ def build() -> str:
             k += 1  # the playable rows in table order
             mname = names.get(mission, "?")
             run = f"{RACE_RUN[(TABLE_RACE[name], t['expansion'])]}-m{mission:02d}"
-            loaded = (ROOT / "generated" / "missions" / f"{mname}.kpm").exists()
+            loaded = "campaign\\" + mname.replace("/", "\\") in packs
             won = bool(play_by_mission.get(mission))
             total["rows"] += 1
             total["won"] += won
@@ -111,13 +107,14 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--check", action="store_true", help="fail if docs/compatibility.md is out of date")
     a = ap.parse_args()
-    if not MISSIONS.exists():
+    data = mission_index.install()
+    if data is None:
         if a.check:
-            log.info("no %s (the converter's missions), skipped", MISSIONS.relative_to(ROOT))
+            log.info("no 1.17 install (KOPRULU_ORIGINAL) to read the catalog from, skipped")
             return 0
-        log.error("no %s: convert the missions first", MISSIONS.relative_to(ROOT))
+        log.error("no 1.17 install: name it with KOPRULU_ORIGINAL")
         return 1
-    text = build()
+    text = build(data)
     if a.check:
         if not OUT.exists() or OUT.read_text() != text:
             log.error("out of date: %s", OUT.relative_to(ROOT))

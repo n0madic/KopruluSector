@@ -56,7 +56,7 @@ int32_t kp_check_sprite(KpImages *w, int32_t s)
 
 uint32_t kp_images_dat(KpImages *w, const KpDatColumn *c, int32_t i)
 {
-	if (!c) kp_images_fail(w, "images: dat.kpd lacks a column the world reads");
+	if (!c) kp_images_fail(w, "images: the DAT lacks a column the world reads");
 	if (i < 0 || !kp_dat_has(c, (uint32_t)i)) kp_images_fail(w, "images: %s.%s has no entry %d", c->table, c->name, (int)i);
 	return kp_dat_value(c, (uint32_t)i);
 }

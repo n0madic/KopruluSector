@@ -1,4 +1,4 @@
-/* Mission container loader and the mission from its scenario (kp_mission.h). */
+/* The mission from its scenario (kp_mission.h). */
 #include "kp_mission.h"
 
 #include <stdio.h>
@@ -8,17 +8,8 @@
 #include "kp_chk.h"
 #include "kp_derive.h"
 
-/* Derived sections and the producer versions this build reads, and WAVS v2. */
 const char *const KP_TILESET_NAMES[KP_TILESETS] = { "badlands", "platform", "install", "ashworld", "jungle", "desert", "ice",
 	"twilight" };
-
-static const KpKpfSectionExpect SECTIONS[] = {
-	{ "WAVS", 2, NULL, 0 },
-	{ "WALK", 0, "WLK1", 1 },
-	{ "RGNS", 0, "RGN1", 2 },
-	{ "CONT", 0, "CNT1", 1 },
-	{ "PACK", 0, "PAK1", 1 },
-};
 
 /* The parts parsed into a KpMission besides the raw CHK payloads and WALK, in this order. */
 enum { PART_META, PART_RULE, PART_WAVS, PART_RGNS, PART_CONT, PART_PACK, PART_COUNT };
@@ -27,15 +18,6 @@ static int fail(KpError *err, const char *name, const char *msg)
 {
 	snprintf(err->msg, sizeof err->msg, "mission: %s: %s", name && name[0] ? name : "<data>", msg);
 	return -1;
-}
-
-static int section(const KpKpf *c, const char *fourcc, KpBytes *out, KpError *err)
-{
-	const KpKpfSection *s = kp_kpf_require(c, fourcc, err);
-	if (!s) return -1;
-	out->data = s->data;
-	out->size = s->size;
-	return 0;
 }
 
 static int parse_meta(KpMission *m, KpBytes meta)
@@ -159,7 +141,7 @@ static int parse_packs(KpMission *m, KpBytes s)
 	return 0;
 }
 
-/* The parsed parts of a mission, from its container's sections or built from its CHK (kp_mission_from_files). */
+/* The parsed parts of a mission built from its CHK (kp_mission_from_chk). */
 static int assemble(KpMission *m, const KpBytes part[], const char *name, KpError *err)
 {
 	if (parse_meta(m, part[PART_META]) != 0) return fail(err, name, "META section is malformed");
@@ -174,59 +156,6 @@ static int assemble(KpMission *m, const KpBytes part[], const char *name, KpErro
 		return fail(err, name, why);
 	}
 	return 0;
-}
-
-int kp_mission_load(KpMission *m, const uint8_t *data, size_t size, const char *name, const KpKpfExpect *expect,
-	KpError *err)
-{
-	uint8_t *copy = (uint8_t *)malloc(size ? size : 1);
-	if (!copy) {
-		memset(m, 0, sizeof *m);
-		return fail(err, name, "out of memory");
-	}
-	memcpy(copy, data, size);
-	return kp_mission_take(m, copy, size, name, expect, err);
-}
-
-int kp_mission_take(KpMission *m, uint8_t *data, size_t size, const char *name, const KpKpfExpect *expect,
-	KpError *err)
-{
-	static const char *const PARTS[PART_COUNT] = { "META", "RULE", "WAVS", "RGNS", "CONT", "PACK" };
-	KpKpf c;
-	KpKpfExpect want;
-	KpBytes part[PART_COUNT];
-	int k;
-	memset(m, 0, sizeof *m);
-	if (!data) return fail(err, name, "no file");
-	m->blob = data;
-	m->size = size;
-	if (kp_kpf_parse(&c, m->blob, size, name, 0, err) != 0) {
-		kp_mission_free(m);
-		return -1;
-	}
-	memset(&want, 0, sizeof want);
-	if (expect) want = *expect;
-	want.kind = KP_MISSION_KIND;
-	want.schema_version = KP_MISSION_SCHEMA;
-	want.sections = SECTIONS;
-	want.section_count = (int)(sizeof SECTIONS / sizeof SECTIONS[0]);
-	if (kp_kpf_check(&c, &want, err) != 0) goto failed;
-	for (k = 0; k < PART_COUNT; k++)
-		if (section(&c, PARTS[k], &part[k], err)) goto failed;
-	if (section(&c, "MTXM", &m->tiles, err) || section(&c, "MASK", &m->mask, err)
-		|| section(&c, "SPRT", &m->sprites, err) || section(&c, "UNIT", &m->units, err)
-		|| section(&c, "LOCS", &m->locations, err) || section(&c, "STRS", &m->strings, err)
-		|| section(&c, "TRIG", &m->triggers, err) || section(&c, "MBRF", &m->briefing, err)
-		|| section(&c, "UPRP", &m->properties, err) || section(&c, "WALK", &m->walk, err)) {
-		goto failed;
-	}
-	if (assemble(m, part, name, err) != 0) goto failed;
-	kp_kpf_free(&c);
-	return 0;
-failed:
-	kp_kpf_free(&c);
-	kp_mission_free(m);
-	return -1;
 }
 
 /* --- the mission from its scenario (ADR 0018, stage D4; converter/missions.py, kpf/kpm.py build) --- */

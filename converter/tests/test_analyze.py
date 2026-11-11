@@ -138,7 +138,6 @@ class AnalyzeTest(unittest.TestCase):
     def test_m1_choice(self):
         from converter.catalog import MAPDATA_DAT, MAPDATA_TBL, decode_catalog
         from converter.formats import chk
-        from converter.missions import summary
         from converter.mpq.profile import Resolver
 
         with Resolver(ORIGINAL) as r:
@@ -147,8 +146,8 @@ class AnalyzeTest(unittest.TestCase):
             tables = chk.LoaderTables.load()
             profiles = [profile.build(e.name, chk.load(read(e.chk_path), tables, vcod_sha256=None), ctx)
                         for e in decode_catalog(read(MAPDATA_DAT), read(MAPDATA_TBL))]
-        s = summary(profiles)
-        assert s["m1"] == "terran/terran01"
-        assert len(s["scope"]["ai_opcodes"]) == 64 and len(s["scope"]["ai_roots"]) == 173
+        assert min(profiles, key=lambda p: (p.size(), p.mission)).mission == "terran/terran01"  # the smallest dependency set
+        assert len(set().union(*(p.ai_opcodes for p in profiles))) == 64
+        assert len(set().union(*(p.ai_roots for p in profiles))) == 173
         t1 = next(p for p in profiles if p.mission == "terran/terran01")
         assert sorted(t1.packs) == ["doodads", "effects", "neutral", "terran", "zerg"]

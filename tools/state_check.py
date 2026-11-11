@@ -46,6 +46,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 sys.path.insert(0, str(ROOT / "tools" / "research"))
 
+import mission_index  # noqa: E402
 import native_state  # noqa: E402
 import oracle_cli  # noqa: E402
 from sc_emulator.state import State  # noqa: E402
@@ -92,7 +93,6 @@ KINDS = {
 SPEECH_KINDS = ("plays",)
 SPEECH_MISSIONS = "generated/speech/{locale}/missions/"
 RUN_KINDS = ("runs", "chains", "plays")  # campaign missions: their goldens name the mission's key, missions/<name>
-MISSION_INDEX = ROOT / "generated" / "missions" / "index.txt"
 SHOW = 6
 
 
@@ -102,11 +102,8 @@ def tool(name: str) -> list[str]:
 
 
 def missions() -> dict[int, str]:
-    """mapdata index -> generated mission path (generated/missions/index.txt, line n = index n)."""
-    out = {}
-    for n, line in enumerate(MISSION_INDEX.read_text().splitlines(), start=1):
-        out[n] = line.split()[0]
-    return out
+    """mapdata index -> mission name, the catalog of the 1.17 install (tools/mission_index.py)."""
+    return {m.index: m.name for m in mission_index.catalog(mission_index.require())}
 
 
 def parse_lines(text: str) -> dict[str, dict[str, dict[str, str]]]:

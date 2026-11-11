@@ -18,13 +18,11 @@ import logging
 import struct
 from pathlib import Path
 
-from .catalog import MAPDATA_DAT, MAPDATA_TBL, decode_catalog
+from .catalog import MAPDATA_DAT, MAPDATA_TBL, CatalogEntry, decode_catalog
 from .emit.files import write_if_changed
 from .formats import chk
 from .analyze import profile
 from .analyze import triggers as trig
-from .formats.palette import TILESETS
-from .kpf import kpm
 from .source import Source
 
 log = logging.getLogger(__name__)
@@ -239,17 +237,20 @@ def scenario_chk(base: bytes, spec: dict) -> bytes:
     return b"".join(out)
 
 
-def base_chk(resolver: Source, spec: dict) -> bytes:
+def base_entry(resolver: Source, spec: dict) -> CatalogEntry:
+    """The catalog entry of the spec's base mission."""
     catalog = decode_catalog(resolver.read(MAPDATA_DAT)[1], resolver.read(MAPDATA_TBL)[1])
-    entry = next(e for e in catalog if e.name == spec["base"])
-    return resolver.read(entry.chk_path)[1]
+    return next(e for e in catalog if e.name == spec["base"])
+
+
+def base_chk(resolver: Source, spec: dict) -> bytes:
+    return resolver.read(base_entry(resolver, spec).chk_path)[1]
 
 
 def convert(resolver: Source, out: Path) -> list[Path]:
-    from .missions import analysis_inputs  # imports the image emitters; the emulator only needs scenario_chk
-
+    """`scenarios/<name>.chk` of each spec and the list `scenarios/index.txt` (the runtime reads them as a campaign
+    mission's scenario, ADR 0018, stage D8c; the container twins went in D8d)."""
     tables = chk.LoaderTables.load(resolver.profile.id)
-    data_set = resolver.data_set_hash()
     written = []
     index = []
     context = profile.Context.load(lambda p: resolver.read(p)[1], resolver.has)
@@ -258,20 +259,14 @@ def convert(resolver: Source, out: Path) -> list[Path]:
         scenario_bytes = scenario_chk(base_chk(resolver, spec), spec)
         scenario = chk.load(scenario_bytes, tables, vcod_sha256=tables.vcod_sha256)
         era = scenario.u16("ERA ") & 7
-        name = TILESETS[era]
-        tileset = (resolver.read(f"tileset\\{name}.cv5")[1], resolver.read(f"tileset\\{name}.vf4")[1])
-        container = kpm.build(scenario, [], profile_id=resolver.profile.id, data_set_hash=data_set, tileset=tileset)
         packs = sorted(profile.build(spec["name"], scenario, context).packs)
-        kpm.add_packs(container, packs, analysis_inputs(container, data_set))
-        for target, data in ((out / "scenarios" / f"{spec['name']}.kpm", container.to_bytes()),
-                             (out / "scenarios" / f"{spec['name']}.chk", scenario_bytes)):
-            changed = write_if_changed(target, data)
-            log.info("%s %s", "wrote" if changed else "same ", target)
-            written.append(target)
+        target = out / "scenarios" / f"{spec['name']}.chk"
+        changed = write_if_changed(target, scenario_bytes)
+        log.info("%s %s", "wrote" if changed else "same ", target)
+        written.append(target)
         index.append(f"{spec['name']} {spec['base']} {era} {scenario.u16('DIM ')} {scenario.u16('DIM ', 1)} "
                      f"{','.join(packs) or '-'}")
     # The scenarios' list (kp_data.c: the app's --mission, the oracle's tools): name, base map, tileset, width, height,
-    # the resource packs ("a,b,c", "-" for none). The game reads <name>.chk as a campaign mission's scenario.chk (ADR
-    # 0018, stage D8c); <name>.kpm is its container's twin until the containers go.
+    # the resource packs ("a,b,c", "-" for none)
     write_if_changed(out / "scenarios" / "index.txt", ("\n".join(index) + "\n").encode())
     return written

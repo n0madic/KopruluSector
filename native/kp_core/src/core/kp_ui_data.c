@@ -1,4 +1,4 @@
-/* The interface's data (kp_ui_data.h): from the converter's containers or built from the original files. */
+/* The interface's data (kp_ui_data.h), built from the original files. */
 #include "kp_ui_data.h"
 
 #include <stdio.h>
@@ -10,7 +10,6 @@
 #include "kp_text.h"
 #include "kp_wav.h"
 
-#define UI_FILES_SECTIONS 5
 #define SOUND_PRESENT 0x01
 #define SOUND_PARSED 0x02
 #define PORTRAIT_VARIANTS 10 /* the variant digits probed per stem (0x4a6b40, 0x4a6c50) */
@@ -52,7 +51,6 @@ static void *own(KpUiData *d, void *p)
 void kp_ui_data_free(KpUiData *d)
 {
 	int k;
-	for (k = 0; k < d->kpf_count; k++) kp_kpf_free(&d->kpf[k]);
 	for (k = 0; k < d->owned_count; k++) free(d->owned[k]);
 	free(d->owned);
 	free(d->grps.files);
@@ -63,8 +61,6 @@ void kp_ui_data_free(KpUiData *d)
 	free(d->portraits.files);
 	memset(d, 0, sizeof *d);
 }
-
-/* --- from the containers --- */
 
 int kp_ui_files_section(const uint8_t *data, size_t size, KpUiFiles *out)
 {
@@ -92,16 +88,10 @@ int kp_ui_files_section(const uint8_t *data, size_t size, KpUiFiles *out)
 	return 0;
 }
 
-static int files_section(const KpKpfSection *s, KpUiFiles *out)
-{
-	return s ? kp_ui_files_section(s->data, s->size, out) : -1;
-}
-
 const uint8_t *kp_ui_data_table(const KpUiData *d, const char *fourcc, uint32_t *size)
 {
 	const KpDefsTable *t;
 	*size = 0;
-	if (d->kpf_count > 0) return kp_kpf_table(&d->kpf[0], fourcc, size, NULL);
 	if (!(t = kp_defs_table(d->profile, fourcc))) return NULL;
 	*size = t->size;
 	return t->data;
@@ -122,71 +112,6 @@ int kp_ui_music_track(const uint8_t *musi, size_t size, int k, char *path, size_
 	memcpy(path, musi + at + 1, len);
 	path[len] = 0;
 	*kind = musi[at + 1 + len];
-	return 0;
-}
-
-static KpUiBytes section(const KpKpf *c, const char *fourcc)
-{
-	KpUiBytes b = { NULL, 0 };
-	const KpKpfSection *s = kp_kpf_find(c, fourcc);
-	if (s) {
-		b.data = s->data;
-		b.size = s->size;
-	}
-	return b;
-}
-
-int kp_ui_data_from_kpf(KpUiData *d, const uint8_t *const kpd[5], const size_t sizes[5], KpError *err)
-{
-	static const char *const NAMES[5] = { "ui.kpd", "fonts.kpd", "strings.kpd", "sounds.kpd", "portraits.kpd" };
-	static const char *const KINDS[5] = { KP_UI_DATA_UI_KIND, KP_UI_DATA_FONTS_KIND, KP_UI_DATA_STRINGS_KIND,
-		KP_UI_DATA_SOUNDS_KIND, KP_UI_DATA_PORTRAITS_KIND };
-	static const uint32_t SCHEMAS[5] = { KP_UI_DATA_UI_SCHEMA, KP_UI_DATA_FONTS_SCHEMA, KP_UI_DATA_STRINGS_SCHEMA,
-		KP_UI_DATA_SOUNDS_SCHEMA, KP_UI_DATA_PORTRAITS_SCHEMA };
-	static const char *const FONTS[KP_UI_FNT_FONTS] = { "F8  ", "F10 ", "F14 ", "F16 ", "F16X" };
-	static const char *const TBLS[KP_UI_TBLS] = { "STAT", "NETW", "GLUA", "GHST", "TIPS", "HELP" };
-	const KpKpf *ui = &d->kpf[0], *fonts = &d->kpf[1], *strings = &d->kpf[2], *sounds = &d->kpf[3],
-		*portraits = &d->kpf[4];
-	int k;
-	memset(d, 0, sizeof *d);
-	for (k = 0; k < 5; k++) {
-		/* the parts of a container not given stay empty (an empty KpKpf has no sections) */
-		if (kpd[k] && kp_kpf_parse(&d->kpf[k], kpd[k], sizes[k], NAMES[k], 0, err) != 0) {
-			kp_ui_data_free(d);
-			return -1;
-		}
-		d->kpf_count = k + 1;
-		if (kpd[k] && (memcmp(d->kpf[k].kind, KINDS[k], 4) != 0 || d->kpf[k].schema_version != SCHEMAS[k])) {
-			snprintf(err->msg, sizeof err->msg, "%s: another kind or schema than the interface reads", NAMES[k]);
-			kp_ui_data_free(d);
-			return -1;
-		}
-		if (!kpd[k] && k < 2) {
-			kp_ui_data_free(d);
-			return fail(err, "no ui.kpd or fonts.kpd");
-		}
-	}
-	d->profile = kp_defs_profile(ui->profile_id);
-	d->dlgs = section(ui, "DLGS");
-	d->pool = section(ui, "POOL");
-	d->theme_fonts = section(ui, "TFNT");
-	d->theme_effects = section(ui, "TEFF");
-	d->font_rows = section(fonts, "TFGM");
-	for (k = 0; k < KP_UI_FNT_FONTS; k++) d->fonts[k] = section(fonts, FONTS[k]);
-	for (k = 0; k < KP_UI_TBLS; k++) d->tbl[k] = section(strings, TBLS[k]);
-	d->sounds = section(sounds, "SFX ");
-	d->sound_packs = section(sounds, "PACK");
-	d->music_lengths = section(sounds, "MUSL");
-	d->portrait_rows = section(portraits, "ROWS");
-	if (files_section(kp_kpf_find(ui, "DGRP"), &d->grps) != 0 || files_section(kp_kpf_find(ui, "PCXS"), &d->pcx) != 0
-		|| files_section(kp_kpf_find(ui, "GFIL"), &d->glue) != 0
-		|| (kp_kpf_find(ui, "GHST") && files_section(kp_kpf_find(ui, "GHST"), &d->ghosts) != 0)
-		|| (kp_kpf_find(ui, "VFNT") && files_section(kp_kpf_find(ui, "VFNT"), &d->vector_fonts) != 0)
-		|| (kpd[4] && files_section(kp_kpf_find(portraits, "FILE"), &d->portraits) != 0) || !d->dlgs.data
-		|| !d->pool.data || !d->font_rows.data || (kpd[3] && !d->sounds.data) || (kpd[4] && !d->portrait_rows.data)) {
-		kp_ui_data_free(d);
-		return fail(err, "a container lacks a section or one is malformed");
-	}
 	return 0;
 }
 
@@ -353,17 +278,13 @@ static int dialogs(KpUiData *d, const KpFiles *f, KpError *err)
 	KpUiDialogLabel *labels = NULL;
 	KpUiFiles ours = { NULL, 0 }, ext = { NULL, 0 };
 	KpUiDialogs out;
-	KpKpfSection s;
 	int n, k, j, count, label_count = 0, rc = -1;
 	char why[KP_ERROR_SIZE];
 	if (!(bins = names_table(f, "UBIN", &n, err))) return -1;
 	if (!kbin || !kext || !klab || klab->size < 2) return fail(err, "no compiled KBIN, KEXT or KLAB");
-	s.data = kbin->data;
-	s.size = kbin->size;
-	if (files_section(&s, &ours) != 0) goto bad;
-	s.data = kext->data;
-	s.size = kext->size;
-	if (files_section(&s, &ext) != 0) goto bad;
+	if (kp_ui_files_section(kbin->data, kbin->size, &ours) != 0 || kp_ui_files_section(kext->data, kext->size, &ext) != 0) {
+		goto bad;
+	}
 	count = n + ours.count;
 	src = (KpUiDialogSource *)calloc((size_t)count, sizeof *src);
 	labels = (KpUiDialogLabel *)calloc((size_t)kp_le_u16(klab->data) + 1, sizeof *labels);

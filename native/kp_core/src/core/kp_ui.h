@@ -221,7 +221,7 @@ typedef struct {
 	uint16_t view_x, view_y;         /* 0x671fa0, 0x671fa4: the screen's tile last drawn */
 	int16_t clip[4];                 /* 0x508bb0 */
 	KpUiPing pings[KP_UI_PINGS];
-	const uint8_t *mmni, *dark;      /* tileset.kpd MMNI; the tileset's dark.pcx (32 x 256) */
+	const uint8_t *mmni, *dark;      /* the tileset's minimap colours (KpTileset mmni); its dark.pcx (32 x 256) */
 	size_t mmni_size;
 	uint8_t player_colours[16];      /* 0x5290b6: game\tminimap.pcx after the map's colour slots */
 	uint8_t colour_table[12];        /* 0x536722: the colour slot a moved row took (SetScoreColorIndex 0x461b70) */
@@ -887,7 +887,7 @@ typedef struct {
 	int save_count;
 	int32_t save_choice;             /* 0x66ad98: the save to load */
 	KpUiLanguages languages;         /* the host's (ours) */
-	const uint8_t *campaign;         /* campaign.kpd TABL (the bytes outlive the interface) */
+	const uint8_t *campaign;         /* the profile's TABL (the bytes outlive the interface) */
 	size_t campaign_size;
 	int hints[3];                    /* 0x668a2c / 0x66a8a4: Zerg, Terran, Protoss */
 	int race;                        /* the episode StartCampaignEpisode started */
@@ -1000,10 +1000,7 @@ typedef void (*KpUiSoundHook)(KpUi *ui, int event);
  * report of a language (localization's stage L3) listens; NULL, nothing is told. */
 typedef void (*KpUiTextCut)(void *ctx, KpUi *ui, int32_t control, const uint8_t *text, size_t at);
 
-struct KpUiData;
-
 struct KpUi {
-	struct KpUiData *own_data;       /* kp_ui_new's data from its containers (kp_ui_new_data borrows the caller's) */
 	const uint8_t *pool;
 	size_t pool_size;
 	KpUiBin *bins;
@@ -1172,17 +1169,15 @@ struct KpUi {
 	const uint32_t *page_deadlines;  /* the oracle's credits deadlines (GetTickCount after a page's fades plus its time) */
 	int page_deadline_count, page_deadline_next;
 	int flc_log_count, flc_orders;
-	KpKpf portraits_kpf;
 	const uint8_t *portrait_rows;    /* portraits.kpd ROWS: per portdata row {idle first, mask, talking first, mask} */
 	int portrait_row_count;
 	KpUiFile *portrait_files;        /* portraits.kpd FILE, in SMKS order */
 	int portrait_file_count;
-	KpKpf sounds_kpf;
 	const uint8_t *sounds;           /* sounds.kpd SFX records (22 bytes each, by sfx id) */
 	int sound_count;
 	const uint8_t *status_layouts;   /* STLY: per unit type {u32 needsRefresh, u32 draw} of 0x50ba50 */
 	int status_layout_count;
-	const uint8_t *cheats;           /* campaign.kpd CHEA (kp_ui_set_cheats) */
+	const uint8_t *cheats;           /* the profile's CHEA (kp_ui_set_cheats) */
 	size_t cheats_size;
 	const uint8_t *button_sets;      /* BTNS (0x50ae98): per set u16 linked set, u16 count, the 20-byte buttons */
 	uint32_t button_set_at[KP_UI_BUTTON_SETS]; /* each set's offset in button_sets */
@@ -1191,8 +1186,7 @@ struct KpUi {
 	                                       * process's life), as offsets in button_sets */
 	int rewritten_count;
 	int button_set_count;
-	KpKpf strings_kpf;
-	const uint8_t *tbl[KP_UI_TBLS];  /* strings.kpd's tables (kp_ui_set_strings) */
+	const uint8_t *tbl[KP_UI_TBLS];  /* strings.kpd's tables (KpUiData.tbl) */
 	size_t tbl_size[KP_UI_TBLS];
 	uint8_t tbl_wide[KP_UI_TBLS];    /* a language's table: u32 count and offsets (section schema KP_UI_TBL_WIDE) */
 	char error[256];
@@ -1212,14 +1206,11 @@ typedef struct {
 
 #define KP_UI_TBL_WIDE 2 /* the section schema of a table with u32 offsets */
 
-/* A KpUi over ui.kpd and fonts.kpd (the bytes must outlive it; kp_ui_new_data over their KpUiData, which the KpUi owns);
- * kp_ui_free releases it. NULL with err on failure. */
-KpUi *kp_ui_new(const uint8_t *ui_kpd, size_t ui_size, const uint8_t *fonts_kpd, size_t fonts_size, char *err,
-	size_t err_size);
+/* kp_ui_new_data (kp_ui_data.h) makes a KpUi; kp_ui_free releases it. */
 void kp_ui_free(KpUi *ui);
-/* The overlays over the interface kp_ui_set_strings loaded, read before the base part by part: a part that is corrupt,
- * of another kind or schema, or with other row counts or dialogs than the base's stays the base's, the first such in
- * ui->locale_problem; the speech's sound records (kp_ui_set_sounds loaded the base's) likewise, in ui->speech_problem. */
+/* The overlays over the interface's base (its KpUiData), read before the base part by part: a part that is corrupt, of
+ * another kind or schema, or with other row counts or dialogs than the base's stays the base's, the first such in
+ * ui->locale_problem; the speech's sound records likewise, in ui->speech_problem. */
 void kp_ui_set_locale(KpUi *ui, const KpUiLocale *locale);
 /* The game's font set (LoadFontSetGame 0x465c40: font8, font10, font16, font16x) or the glue's (0x465ce0: font10,
  * font14, font16, font16x), and the text colour rows of tFontGam.pcx (game) or a theme's tFont bank. */
@@ -1296,7 +1287,7 @@ void kp_ui_sound_start_game(KpUi *ui);
 void kp_ui_sound_event(KpUi *ui, int64_t kind, int64_t a, int64_t b, int64_t c);
 /* 1 (and forgotten) when the interface played this game event already inside its own call to the game. */
 int kp_ui_sound_played(KpUi *ui, int64_t kind, int64_t a, int64_t b, int64_t c);
-/* The music (kp_ui_music.c): ui.kpd MUSI and sounds.kpd MUSL (kp_ui_new and kp_ui_set_sounds load them),
+/* The music (kp_ui_music.c): MUSI and MUSL (kp_ui_new_data loads them),
  * PlayMusicTrack 0x46ef10, StopMusicFadeOut 0x46f040, the quiet mode, SetMusicVolume 0x46f170 (hundredths of a
  * decibel), the fade-in timer and PollMusicEnd (kp_ui_music_tick at ui->now, every frame) and a game's first track. */
 void kp_ui_music_tables(KpUi *ui, const uint8_t *musi, size_t size);
@@ -1352,9 +1343,7 @@ void kp_ui_resolve_colours(KpUi *ui, const uint8_t *rgb, const uint8_t *cycled);
 /* FindNearestStaticColor 0x4666c0: the entry of a palette (768 bytes RGB) nearest (r, g, b), from 1 up (the first of
  * equals), leaving out the cycled entries (256 flags; NULL none). */
 uint8_t kp_ui_nearest_colour(const uint8_t *rgb, const uint8_t *cycled, int32_t r, int32_t g, int32_t b);
-/* The string tables of strings.kpd (the bytes must outlive the interface): 0 or -1. kp_ui_tbl: GetTblString
- * 0x4c13b0, id 0 -> NULL, an id past the count -> "", else the entry (NUL-terminated). */
-int kp_ui_set_strings(KpUi *ui, const uint8_t *kpd, size_t size);
+/* GetTblString 0x4c13b0: id 0 -> NULL, an id past the count -> "", else the entry (NUL-terminated). */
 const uint8_t *kp_ui_tbl(const KpUi *ui, int table, uint32_t id);
 
 /* ShowControl 0x4c2890, HideControl 0x4c22f0, SetControlVisible 0x4c2900, MarkControlDirty 0x4c2840. */
@@ -1448,11 +1437,9 @@ void kp_ui_hud_free(KpUi *ui);
 int kp_ui_is_console_dialog(KpUi *ui, int32_t d);
 /* The console's work after a game frame (UpdateStatusUi 0x4a7ee0 and the selection's refreshes 0x4a7b60). */
 void kp_ui_hud_frame(KpUi *ui);
-/* The portrait (kp_ui_portrait.c): portraits.kpd (the bytes must outlive the interface; 0 or -1), LoadPortraitData
- * 0x4a6a40, UpdatePortraitForSelection 0x4a7420, and RequestUnitTalking 0x4a7200 (duration in ms, 0 with a sound id
+/* The portrait (kp_ui_portrait.c): LoadPortraitData 0x4a6a40, UpdatePortraitForSelection 0x4a7420, and RequestUnitTalking 0x4a7200 (duration in ms, 0 with a sound id
  * below 1144: the sound's own length in whole seconds, TalkingDurationPending 0x4a7190; ping: the last event's screen
  * position, the unit's minimap blink in colour (a tblink row) and a ping at its sprite). */
-int kp_ui_set_portraits(KpUi *ui, const uint8_t *kpd, size_t size);
 int kp_ui_portrait_create(KpUi *ui);
 void kp_ui_portrait_frame(KpUi *ui);
 void kp_ui_portrait_talk(KpUi *ui, int64_t unit, uint32_t duration, int ping, uint8_t colour, uint32_t sound);
@@ -1462,9 +1449,8 @@ void kp_ui_portrait_talk(KpUi *ui, int64_t unit, uint32_t duration, int ping, ui
 void kp_ui_portrait_trigger(KpUi *ui, int64_t type, int32_t x, int32_t y, uint32_t duration);
 void kp_ui_portrait_trigger_stop(KpUi *ui);
 int kp_ui_take_release(KpUi *ui);
-/* sounds.kpd (the bytes must outlive the interface; 0 or -1) and a sound's cached duration in ms (0x49da70:
+/* A sound's cached duration in ms (0x49da70:
  * u32(data length * 1000) / nAvgBytesPerSec; 0 for a sound the native parser rejected). */
-int kp_ui_set_sounds(KpUi *ui, const uint8_t *kpd, size_t size);
 uint32_t kp_ui_sound_duration(const KpUi *ui, uint32_t sound);
 /* SVid over a movie of portraits.kpd (kp_ui_portrait.c): Begin (0, -1 for a missing file or a target, target_w x
  * target_h, that is not the movie's size; NULL: the decoder's own pixels), ContinueSingle at now (ms; returns 0 when
@@ -1691,7 +1677,7 @@ void kp_ui_flc_start_timers(KpUi *ui, int32_t dialog);
 /* AdvanceFlicButton 0x4c89b0: a flic button's clips continued, its glow faded (timer 0x48's callback). */
 void kp_ui_flc_advance(KpUi *ui, int32_t owner);
 void kp_ui_flc_stop_timers(KpUi *ui, int32_t dialog);
-/* The glue (kp_ui_glue.c): its state at kp_ui_new, InitGlueDialog 0x457f00 (procedures by control ID, the theme index
+/* The glue (kp_ui_glue.c): its state at kp_ui_new_data, InitGlueDialog 0x457f00 (procedures by control ID, the theme index
  * of the twelve), ReleaseGlueDialog 0x458380, ActivateGlueScreen 0x4579b0, EndGlueScreen 0x457b50, the slides
  * StartGlueSlideIn 0x458100 ({ID, direction} pairs, the delay in ms) and SlideOutGlueDialog 0x457a40, LoadGlueSounds
  * 0x458740, the 50 ms timer 0x4574f0, the palette on screen (R, G, B, 0 x 256) and the serial of its changes. */
@@ -1814,7 +1800,7 @@ int64_t kp_ui_pick_unit(KpUi *ui, int32_t x, int32_t y);
 void kp_ui_minimap_right_click(KpUi *ui, int32_t x, int32_t y);
 /* SelectControlFont 0x4c3660: the font of the control's flags into ui->text. */
 void kp_ui_select_control_font(KpUi *ui, const KpUiControl *c);
-/* The cheats (campaign.kpd CHEA: the bits a new game keeps, then per cheat its bit of the cheat word 0x5432fc and its
+/* The cheats (the profile's CHEA: the bits a new game keeps, then per cheat its bit of the cheat word 0x5432fc and its
  * lowercase text; the bytes must outlive the interface): 0 or -1. A typed line that is a cheat toggles its bit
  * (ProcessCheatText 0x40dee0 over MatchCheatHash 0x40dc80 and MatchExtraCheatHash 0x40dfa0: the hashed texts are the
  * texts). */
@@ -1822,7 +1808,7 @@ int kp_ui_set_cheats(KpUi *ui, const uint8_t *chea, size_t size);
 /* DispatchUiEvent 0x4c2bb0's step 4: the press slots due at ui->now get user code 3; returns their number. */
 int kp_ui_press_slots(KpUi *ui);
 void kp_ui_input_event(KpUi *ui, KpUiEvent *e);
-/* The window's keyboard (kp_ui_keys.c): ACCL's tables (kp_ui_new loads them), the active one (KP_UI_ACCEL_*), and a
+/* The window's keyboard (kp_ui_keys.c): ACCL's tables (kp_ui_new_data loads them), the active one (KP_UI_ACCEL_*), and a
  * WM_KEYDOWN/WM_KEYUP or WM_CHAR as the message pump and MainWindowProc 0x43f600 take it: an accelerator's command
  * event, else the key bytes and the key or character event (none while a mouse button is held). The modifiers are
  * the key bytes of Shift, Ctrl and Alt, which the keys' own messages keep. kp_ui_window_key returns whether the pump's

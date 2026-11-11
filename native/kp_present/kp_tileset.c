@@ -1,8 +1,8 @@
 /*
- * The tileset container (tilesets/<name>.kpd, kind TSET; docs/formats/kpd.md) for the presentation: the palette (WPE),
- * the colour cycles (CYCL) and the indices they cycle (the interface's cycled colours), the CV5 groups and megatile
- * flags, the minimap's MMNI, the megatile sheet (SHET) the terrain pass reads and creep's edge frames (EDGE); and the
- * native terrain import of a mission's MTXM into megatile ids.
+ * A tileset for the presentation, built from its original files (ADR 0018, stage D3): the palette (WPE), the colour
+ * cycles and the indices they cycle (the interface's cycled colours), the CV5 groups and megatile flags, the minimap's
+ * MMNI, the megatile sheet the terrain pass reads and creep's edge frames; and the native terrain import of a mission's
+ * MTXM into megatile ids.
  */
 #include "kp_present.h"
 
@@ -14,61 +14,7 @@
 #include "kp_grp.h"
 #include "kp_terrain.h"
 
-#define TSET_SCHEMA 1
 #define CV5_RECORD KP_DERIVE_CV5_GROUP
-
-int kp_tileset_load(KpTileset *t, const uint8_t *data, size_t size, const char *name, KpError *err)
-{
-	KpKpf c;
-	KpKpfExpect expect;
-	const KpKpfSection *cv5, *mflg, *wpe, *cycl, *mmni, *shet, *edge;
-	int k, i, rc = -1;
-	memset(t, 0, sizeof *t);
-	if (kp_kpf_parse(&c, data, size, name, 0, err) != 0) return -1;
-	memset(&expect, 0, sizeof expect);
-	expect.kind = KP_TILESET_KIND;
-	expect.schema_version = TSET_SCHEMA;
-	if (kp_kpf_check(&c, &expect, err) != 0) goto done;
-	if (!(cv5 = kp_kpf_require(&c, "CV5 ", err)) || !(mflg = kp_kpf_require(&c, "MFLG", err))
-		|| !(wpe = kp_kpf_require(&c, "WPE ", err)) || !(cycl = kp_kpf_require(&c, "CYCL", err))) {
-		goto done;
-	}
-	if (wpe->size < 1024 || cycl->size < 2 || cycl->size < 2 + 2 * (size_t)cycl->data[0]) {
-		snprintf(err->msg, sizeof err->msg, "%s: WPE or CYCL truncated", name);
-		goto done;
-	}
-	for (k = 0; k < 256; k++) memcpy(&t->rgb[3 * k], wpe->data + 4 * k, 3);
-	t->cycles.count = cycl->data[0] < KP_PALETTE_RECORDS ? cycl->data[0] : KP_PALETTE_RECORDS;
-	t->cycles.speed = cycl->data[1];
-	for (k = 0; k < t->cycles.count; k++) {
-		t->cycles.low[k] = cycl->data[2 + 2 * k];
-		t->cycles.high[k] = cycl->data[3 + 2 * k];
-		for (i = t->cycles.low[k]; i <= t->cycles.high[k]; i++) t->cycled[i] = 1;
-	}
-	t->cv5 = cv5->data;
-	t->groups = cv5->size / CV5_RECORD;
-	t->mflags = mflg->data;
-	t->megatiles = mflg->size / 4;
-	if ((mmni = kp_kpf_find(&c, "MMNI")) != NULL) {
-		t->mmni = mmni->data;
-		t->mmni_size = mmni->size;
-	}
-	if ((shet = kp_kpf_find(&c, "SHET")) != NULL && shet->size >= 4) {
-		t->sheet_count = (uint16_t)kp_le_u16(shet->data);
-		t->sheet_columns = (uint16_t)kp_le_u16(shet->data + 2);
-		t->sheet_png = shet->data + 4;
-		t->sheet_size = shet->size - 4;
-	}
-	if ((edge = kp_kpf_find(&c, "EDGE")) != NULL && edge->size >= 2) {
-		t->edge_count = (uint16_t)kp_le_u16(edge->data);
-		t->edge_png = edge->data + 2;
-		t->edge_size = edge->size - 2;
-	}
-	rc = 0;
-done:
-	kp_kpf_free(&c);
-	return rc;
-}
 
 /* --- a tileset from the original files (ADR 0018, stage D3) --- */
 

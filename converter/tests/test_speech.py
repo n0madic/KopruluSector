@@ -11,9 +11,10 @@ from pathlib import Path
 from unittest import mock
 
 from converter.emit import locale, sound, speech
+from converter.missions import load_packs
 
 RECORD = speech.TRIGGER_RECORD
-ROOT = Path(__file__).resolve().parents[2]
+PROFILE = "bw-1.17.0.1"
 
 
 def action_at(record: int, action: int) -> int:
@@ -85,18 +86,17 @@ class LinesTest(unittest.TestCase):
         self.assertEqual(speech.language_path("ruRU", "sound\\Misc\\x.wav", ".wav"),
                          locale.ASSETS.format(locale="ruRU") + "sound/Misc/x.wav")
 
-    def test_a_missing_or_empty_line_keeps_the_bases_sound(self):
+    def test_a_missing_or_empty_line_is_left_out_and_told(self):
         install = FakeInstall({speech.language_path("ruRU", self.PATHS[0], ".ogg"): b"ogg a",
                                speech.language_path("ruRU", self.PATHS[1], ".ogg"): b""})  # c.wav: none
-        fallback = {1: b"base b", 2: b"base c"}
-        jobs, files, kept = speech.line_sources(install, "ruRU", self.PATHS, Path("out"), fallback, "terran/terran01")
+        jobs, files, kept = speech.line_sources(install, "ruRU", self.PATHS, Path("out"), "terran/terran01")
         self.assertEqual(list(jobs.values()), [(b"ogg a", speech.language_path("ruRU", self.PATHS[0], ".ogg"))])
-        self.assertEqual(files, [(0, Path("out/a.ogg")), (1, b"base b"), (2, b"base c")])
+        self.assertEqual(files, [(0, Path("out/a.ogg"))])
         self.assertEqual(kept, self.PATHS[1:])
 
-    def test_a_line_neither_has_is_left_out(self):
-        jobs, files, kept = speech.line_sources(FakeInstall({}), "ruRU", self.PATHS[:1], Path("out"), {}, "terran/terran01")
-        self.assertEqual((jobs, files, kept), ({}, [], []))
+    def test_no_lines_at_all(self):
+        jobs, files, kept = speech.line_sources(FakeInstall({}), "ruRU", self.PATHS[:1], Path("out"), "terran/terran01")
+        self.assertEqual((jobs, files, kept), ({}, [], self.PATHS[:1]))
 
 
 class ExceptionsTest(unittest.TestCase):
@@ -114,13 +114,11 @@ class ExceptionsTest(unittest.TestCase):
 
     def test_the_repositorys_exceptions_name_missions_and_reasons(self):
         defs = locale.load_locales()
-        index = ROOT / "generated" / "missions" / "index.txt"
-        missions = {line.split()[0] for line in index.read_text().splitlines() if line.strip()} if index.exists() else None
+        missions = {directory.split("\\", 1)[1].replace("\\", "/").lower() for directory in load_packs(PROFILE)}
         for e in defs.get("speech", ()):
             self.assertTrue(e["why"].strip(), e)
             self.assertIn(e["locale"], {loc["id"] for loc in defs["locales"]}, e)
-            if missions is not None:
-                self.assertIn(e["mission"], missions, e)
+            self.assertIn(e["mission"], missions, e)
 
 
 class EncoderTest(unittest.TestCase):

@@ -1,11 +1,15 @@
 """Scenario specs: the CHK UNIT records a spec's units become, and its triggers, texts and locations."""
 from __future__ import annotations
 
+import os
 import struct
+import tempfile
 import unittest
+from pathlib import Path
 
 from converter import scenarios
 from converter.analyze import triggers as trig
+from converter.formats.palette import TILESETS
 
 
 def _records(units: list[dict]) -> list[tuple]:
@@ -158,3 +162,20 @@ class TriggersTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ConvertTest(unittest.TestCase):
+    @unittest.skipIf(not os.environ.get("KOPRULU_ORIGINAL"), "KOPRULU_ORIGINAL not set")
+    def test_a_conversion_writes_each_chk_and_the_list_only(self):
+        from converter.emit import terrain
+        from converter.mpq.profile import Resolver
+
+        specs = [scenarios.load_spec(p)["name"] for p in sorted(scenarios.SPECS.glob("*.json"))]
+        with Resolver(os.environ["KOPRULU_ORIGINAL"]) as r, tempfile.TemporaryDirectory() as tmp:
+            scenarios.convert(r, Path(tmp))
+            terrain.generate(r, Path(tmp))
+            files = sorted(p.relative_to(tmp).as_posix() for p in Path(tmp).rglob("*") if p.is_file())
+            lines = (Path(tmp) / "scenarios" / "index.txt").read_text().splitlines()
+        assert files == sorted(["scenarios/index.txt", *(f"scenarios/{n}.chk" for n in specs),
+                                *(f"viewer/{n}.mcrc" for n in TILESETS)])
+        assert [line.split()[0] for line in lines] == specs and all(len(line.split()) == 6 for line in lines)

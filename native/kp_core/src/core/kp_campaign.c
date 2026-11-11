@@ -15,29 +15,6 @@ static int fail(KpError *err, const char *name, const char *what)
 	return -1;
 }
 
-int kp_campaign_load(KpCampaign *c, const uint8_t *data, size_t size, const char *name, KpError *err)
-{
-	KpKpf k;
-	KpKpfExpect want;
-	const KpKpfSection *d;
-	const uint8_t *t, *ch;
-	uint32_t tn = 0, cn = 0;
-	int rc;
-	memset(c, 0, sizeof *c);
-	if (kp_kpf_parse(&k, data, size, name, 0, err) != 0) return -1;
-	memset(&want, 0, sizeof want);
-	want.kind = KP_CAMPAIGN_KIND;
-	want.schema_version = KP_CAMPAIGN_SCHEMA;
-	if (kp_kpf_check(&k, &want, err) != 0 || !(t = kp_kpf_table(&k, "TABL", &tn, err))
-		|| !(d = kp_kpf_require(&k, "MAPD", err)) || !(ch = kp_kpf_table(&k, "CHEA", &cn, err))) {
-		kp_kpf_free(&k);
-		return -1;
-	}
-	rc = kp_campaign_from(c, t, tn, d->data, d->size, ch, cn, name, err);
-	kp_kpf_free(&k);
-	return rc;
-}
-
 int kp_campaign_from(KpCampaign *c, const uint8_t *tabl, size_t tabl_size, const uint8_t *mapd, size_t mapd_size,
 	const uint8_t *chea, size_t chea_size, const char *name, KpError *err)
 {

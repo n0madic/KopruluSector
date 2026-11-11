@@ -15,9 +15,7 @@ import struct
 import unittest
 from pathlib import Path
 
-from converter.derive import contours, regions, walk
-from converter.kpf import container as kpf
-from converter.kpf import dump, kpm
+from converter.derive import contours, mission, regions, walk
 from converter.tests.private import needs
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -186,32 +184,18 @@ class DeriveTest(unittest.TestCase):
         assert c.capacities == [cap] * 4 and (cap - contours.INITIAL_CAPACITY) % contours.CAPACITY_STEP == 0
         assert cap - contours.CAPACITY_STEP < top <= cap  # all four grow together, only when one is full
 
-    def test_mission_sections_round_trip(self):
-        from converter.kpf.fixtures import V59, build_chk, chk_strings
-        from converter.formats import chk
-
+    def test_mission_terrain(self):
         width, height = 8, 8
         cv5 = bytearray(52 * 2)
         struct.pack_into("<16H", cv5, 52 + 20, *([1] * 16))  # group 1: megatile 1, blocked
         vf4 = _vf4([[1] * 16, [0] * 16])
         mtxm = struct.pack(f"<{width * height}H", *[0x10 if x == 4 else 0 for y in range(height) for x in range(width)])
-        sections = {**V59, "DIM ": struct.pack("<HH", width, height), "MTXM": mtxm, "MASK": bytes(width * height),
-                    "STR ": chk_strings(b"name")}
-        scenario = chk.load(build_chk(sections), chk.LoaderTables.load(), vcod_sha256=hashlib.sha256(b"vcod").hexdigest())
-        data = kpm.build(scenario, [], profile_id="p", data_set_hash=bytes(32), tileset=(bytes(cv5), vf4)).to_bytes()
-        c = kpf.parse(data)
-        inputs = kpm.terrain_inputs_hash(width, height, mtxm, bytes(cv5), vf4)
-        for name, module in (("WALK", walk), ("RGNS", regions), ("CONT", contours)):
-            s = c.section(name)
-            assert s.section_class == kpf.CLASS_DERIVED and s.algorithm_id == module.ALGORITHM
-            assert s.algorithm_version == module.VERSION and s.inputs_hash == inputs
-        assert len(c.section("WALK").payload) == width * height * 16
-        g = regions.decode(c.section("RGNS").payload)
+        t = mission.build(width, height, mtxm, bytes(cv5), vf4)
+        assert len(t.walk) == width * height * 16 and len(t.ids) == len(t.flags) == width * height
+        g = regions.decode(t.rgns)
         assert (g.width, g.height) == (width, height) and g.groups[0] == regions.GROUP_RESERVED
         assert len({g.groups[g.raster[x]] for x in (0, 7)}) == 2  # the wall column separates two groups
-        assert sum(contours.decode(c.section("CONT").payload).counts()) > 0
-        text = dump.dump(data)
-        assert "regions" in text and "contours" in text and "walk" in text
+        assert sum(contours.decode(t.cont).counts()) > 0
 
     @unittest.skipIf(not ORIGINAL, "KOPRULU_ORIGINAL not set")
     def test_native_campaign_outputs(self):
@@ -246,13 +230,11 @@ class DeriveTest(unittest.TestCase):
                 else:  # the four VER=57 maps have no loader descriptor: first MTXM chunk, as the probe
                     mtxm = next(data[c.payload_offset:c.payload_offset + c.size]
                                 for c in chk.enumerate_chunks(data) if c.tag == "MTXM")
-                c = kpf.Container(kpm.KIND, kpm.SCHEMA, 0, "p")
-                kpm.add_terrain_derived(c, width, height, mtxm, *files[inp["tileset"]])
+                t = mission.build(width, height, mtxm, *files[inp["tileset"]])
                 observed = case["observed"]
-                assert _sha(c.section("WALK").payload) == observed["walk_sha256"], path
+                assert _sha(t.walk) == observed["walk_sha256"], path
                 # The graph builder against the probe, which runs it on the imported flags alone.
-                ids, flags = kpm.import_terrain(width, height, mtxm, *files[inp["tileset"]])
-                g = regions.build(width, height, flags, ids, files[inp["tileset"]][1], c.section("WALK").payload)
+                g = regions.build(width, height, t.flags, t.ids, files[inp["tileset"]][1], t.walk)
                 snapshot = json.dumps(_snapshot(g, synthetic=False), separators=(",", ":")).encode()
                 assert _sha(snapshot) == observed["snapshot_sha256"], path
                 assert (g.count, len(g.splits)) == (observed["region_count"], observed["split_count"])
@@ -260,11 +242,11 @@ class DeriveTest(unittest.TestCase):
                 if path.lower() in catalog:
                     name = catalog_names[path.lower()]
                     game = ingame["maps"][name]
-                    section = regions.decode(c.section("RGNS").payload)
+                    section = regions.decode(t.rgns)
                     snapshot = json.dumps(_snapshot(section, synthetic=False), separators=(",", ":")).encode()
                     assert _sha(snapshot) == game["snapshot_sha256"], name
                     matched["ingame"] += 1
-                cont = contours.decode(c.section("CONT").payload)
+                cont = contours.decode(t.cont)
                 native = sorted_contours[path]
                 assert cont.counts() == native["counts"], path
                 assert _sha(b"".join(contours.encode_records(a) for a in cont.arrays)) == \

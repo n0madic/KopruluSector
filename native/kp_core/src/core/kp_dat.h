@@ -1,6 +1,6 @@
 /*
- * dat.kpd (docs/formats/kpd.md): the DAT columns of StarCraft 1.17. The loader copies the
- * file; columns point into the copy.
+ * The DAT columns of StarCraft 1.17, read from the original arr\*.dat files (ADR 0018, stage D3) by the profile's
+ * layouts (COLS); the columns point into one blob of the files.
  *
  * kp_dat_value(column, i) is the raw unsigned value of flat index i (id * per_id + k); a
  * column covering an id subrange (units.infestation from 106) has no values outside it.
@@ -17,9 +17,6 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-#define KP_DAT_KIND "DAT "
-#define KP_DAT_SCHEMA 1
 
 typedef struct {
 	const char *table; /* units, weapons, ... (kp_dat_table_name) */
@@ -53,10 +50,8 @@ typedef struct {
 	KpDatRequirements requirements[KP_DAT_REQUIREMENTS]; /* words NULL when absent */
 } KpDat;
 
-/* expect may be NULL; it adds profile and source-hash checks. Returns -1 with err set. */
-int kp_dat_load(KpDat *dat, const uint8_t *data, size_t size, const char *name, const KpKpfExpect *expect, KpError *err);
-/* The same tables from the original files (ADR 0018, stage D3): each table COLS lays out read as arr\<name>.dat, the
- * requirements the profile's compiled tables (kp_defs_table); one blob as kp_dat_load's. */
+/* The tables from the original files (ADR 0018, stage D3): each table COLS lays out read as arr\<name>.dat, the
+ * requirements the profile's compiled tables (kp_defs_table); -1 with err set. */
 int kp_dat_from_files(KpDat *dat, const KpFiles *files, KpError *err);
 void kp_dat_free(KpDat *dat);
 /* A copy of a DAT with its own blob and columns (a game's copy, which the UMS overrides change: ADR 0018, stage D5). */

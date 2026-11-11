@@ -1,7 +1,7 @@
 """The scripted wins of the Brood War Zerg campaign (Episode VI) with its hidden rows, on the toolkit of
 campaign_plays.py (Kit, begin, finish and the helpers); `python -m sc_emulator play NAME OUT` finds them in PLAYS.
 
-Rows (generated/missions/index.txt): m49 zerg01 .. m51 zerg03, m52 zerg04a and the hidden zerg04b-f (m53-m57,
+Rows (the catalog's mapdata indices): m49 zerg01 .. m51 zerg03, m52 zerg04a and the hidden zerg04b-f (m53-m57,
 started with the mission injection), m58 zerg05 .. m62 zerg09, the hidden Bonus (m63) and m64 zerg10. zerg03 and
 zerg09 choose the next scenario; their branch plays (`xzerg_m51b`..`f`, `xzerg_m62b`) win them the other ways.
 Each play records the name SetNextScenario left (the string at `NEXT_SCENARIO`) in its result.

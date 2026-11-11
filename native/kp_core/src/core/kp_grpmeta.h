@@ -1,7 +1,6 @@
 /*
- * grpmeta.kpd (kind GRPM; docs/formats/kpd.md): GRP frame geometry, the opacity runs of the
- * native hit test and the LO files, keyed by images.tbl index. The loader copies the file;
- * everything points into the copy.
+ * GRP metadata: the frame geometry, the opacity runs of the native hit test and the LO files, keyed by images.tbl
+ * index, built from the original files (kp_grpmeta_from_files); everything points into the owned blob.
  *
  * Entries are numbered from 1 (image records store them, 0 = none), so grps[0] and los[0]
  * are unused. Frames and images.tbl indices keep their native numbering.
@@ -20,8 +19,6 @@
 extern "C" {
 #endif
 
-#define KP_GRPMETA_KIND "GRPM"
-#define KP_GRPMETA_SCHEMA 1
 #define KP_GRPMETA_FRAME_RECORD 8
 
 typedef struct {
@@ -48,7 +45,7 @@ typedef struct {
 } KpAtlas;
 
 typedef struct {
-	uint8_t *blob; /* owned copy of the file */
+	uint8_t *blob; /* owned: FRMS, OPAC and the LO files */
 	size_t size;
 	uint32_t tbl_count;
 	uint16_t *grp_of_tbl, *lo_of_tbl; /* [images.tbl index 1..tbl_count] -> entry, 0 for none */
@@ -60,21 +57,17 @@ typedef struct {
 	uint32_t frms_size, opac_size;
 } KpGrpMeta;
 
-/* expect may be NULL. Checks that every GRP's frame records lie inside FRMS, so
- * kp_grpmeta_frame needs no bounds checks for valid entries and frames. The opacity runs are
- * not checked (the hit test, kp_grpmeta_pixel_opaque, reads them). Returns -1 with err set. */
-int kp_grpmeta_load(KpGrpMeta *g, const uint8_t *data, size_t size, const char *name, const KpKpfExpect *expect,
-	KpError *err);
-/* grpmeta built from the original files (ADR 0018, stage D3) as the converter builds grpmeta.kpd (kpd.grp_set,
- * build_grpmeta): the GRP and LO files images.dat names through images.tbl ("unit\\" + the entry, deduplicated in any
- * case), their frame records and opacity runs, the atlases the packs are cut into (converter/packs.py). */
+/* grpmeta built from the original files (ADR 0018, stage D3) by the converter's rules (kpd.grp_set, build_grpmeta):
+ * the GRP and LO files images.dat names through images.tbl ("unit\\" + the entry, deduplicated in any
+ * case), their frame records and opacity runs, the atlases the packs are cut into (converter/packs.py). Every GRP's
+ * frame records lie inside FRMS (kp_grpmeta_check), so kp_grpmeta_frame needs no bounds checks for valid entries and
+ * frames; the opacity runs are not checked (the hit test, kp_grpmeta_pixel_opaque, reads them). -1 with err set. */
 int kp_grpmeta_from_files(KpGrpMeta *g, const KpFiles *files, const KpDat *dat, KpError *err);
 void kp_grpmeta_free(KpGrpMeta *g);
 
-/* grpmeta built from parts instead of loaded (the C suites build one, tests/c/test_present.c):
- * zeroed tables for the given counts and `bytes` of storage in blob for FRMS and the LO files,
- * which the caller fills; kp_grpmeta_check then validates the frame records as the loader
- * does. Both return -1 with err set. */
+/* grpmeta built from parts (kp_grpmeta_from_files; the C suites build one, tests/c/test_present.c): zeroed tables for
+ * the given counts and `bytes` of storage in blob for FRMS and the LO files, which the caller fills;
+ * kp_grpmeta_check then validates the frame records. Both return -1 with err set. */
 int kp_grpmeta_alloc(KpGrpMeta *g, uint32_t tbl_count, uint32_t grp_count, uint32_t lo_count, size_t bytes,
 	KpError *err);
 int kp_grpmeta_check(const KpGrpMeta *g, KpError *err);

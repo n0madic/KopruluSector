@@ -1,7 +1,6 @@
 /*
- * iscript.kpd (kind ISCR; docs/formats/kpd.md): the unchanged iscript.bin, the script headers
- * by IScript id and the animation slot counts by header type. The loader copies the file;
- * `code` points into it.
+ * The iscript: the unchanged iscript.bin, the script headers by IScript id and the animation slot counts by header
+ * type (the profile's SLOT). `code` points into the owned copy of the file.
  */
 #ifndef KP_ISCRIPT_H
 #define KP_ISCRIPT_H
@@ -16,12 +15,10 @@
 extern "C" {
 #endif
 
-#define KP_ISCRIPT_KIND "ISCR"
-#define KP_ISCRIPT_SCHEMA 2
 #define KP_ISCRIPT_NO_HEADER (-1)
 
 typedef struct {
-	uint8_t *blob; /* owned copy of the file */
+	uint8_t *blob; /* owned copy of iscript.bin */
 	size_t size;
 	const uint8_t *code;
 	uint32_t code_size;
@@ -30,8 +27,6 @@ typedef struct {
 	int16_t slots[256]; /* [header type] -> animation slots, -1 for none */
 } KpIScript;
 
-int kp_iscript_load(KpIScript *s, const uint8_t *data, size_t size, const char *name, const KpKpfExpect *expect,
-	KpError *err);
 void kp_iscript_free(KpIScript *s);
 
 /* A script from a bare iscript.bin (test harnesses' synthetic programs): the code is copied,

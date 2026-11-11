@@ -1,4 +1,4 @@
-/* dat.kpd loader and the DAT files read directly (kp_dat.h). */
+/* The DAT files read directly (kp_dat.h). */
 #include "kp_dat.h"
 
 #include <stdio.h>
@@ -100,53 +100,6 @@ static int columns(KpDat *dat, const uint8_t *cols, uint32_t cols_size, TableByt
 		}
 		dat->table_count = (int)t + 1;
 	}
-	return 0;
-}
-
-static const uint8_t *container_table(void *ctx, const char *fourcc, uint32_t *size, KpError *err)
-{
-	const KpKpfSection *s = kp_kpf_require((const KpKpf *)ctx, fourcc, err);
-	if (!s) return NULL;
-	*size = s->size;
-	return s->data;
-}
-
-int kp_dat_load(KpDat *dat, const uint8_t *data, size_t size, const char *name, const KpKpfExpect *expect, KpError *err)
-{
-	KpKpf c;
-	KpKpfExpect want;
-	const uint8_t *cols;
-	uint32_t cols_size;
-	int k;
-	memset(dat, 0, sizeof *dat);
-	dat->blob = (uint8_t *)malloc(size ? size : 1);
-	if (!dat->blob) return fail(err, "out of memory");
-	memcpy(dat->blob, data, size);
-	dat->size = size;
-	if (kp_kpf_parse(&c, dat->blob, size, name, 0, err) != 0) {
-		kp_dat_free(dat);
-		return -1;
-	}
-	memset(&want, 0, sizeof want);
-	if (expect) want = *expect;
-	want.kind = KP_DAT_KIND;
-	want.schema_version = KP_DAT_SCHEMA;
-	if (kp_kpf_check(&c, &want, err) != 0 || !(cols = kp_kpf_table(&c, "COLS", &cols_size, err))
-		|| columns(dat, cols, cols_size, container_table, &c, err) != 0) {
-		kp_kpf_free(&c);
-		kp_dat_free(dat);
-		return -1;
-	}
-	for (k = 0; k < KP_DAT_REQUIREMENTS; k++) {
-		uint32_t n = 0;
-		const uint8_t *words = kp_kpf_table(&c, REQUIREMENT_NAMES[k].fourcc, &n, NULL);
-		dat->requirements[k].name = REQUIREMENT_NAMES[k].name;
-		if (words) {
-			dat->requirements[k].words = words;
-			dat->requirements[k].count = n / 2;
-		}
-	}
-	kp_kpf_free(&c);
 	return 0;
 }
 

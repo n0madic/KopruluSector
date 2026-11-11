@@ -167,12 +167,9 @@ static int hd_finish(KpApp *a)
 static int load_tileset(KpApp *a, const char *variant)
 {
 	KpAppWorld *w = &a->world;
-	char tileset[256], path[256], full[1200];
-	const char *base;
-	kp_host_tileset_path(&a->flow.session->host, tileset, sizeof tileset);
-	base = strrchr(tileset, '/');
-	snprintf(w->hd_tileset_path, sizeof w->hd_tileset_path, "generated/hd/%s/tilesets/%s", variant,
-		base ? base + 1 : tileset);
+	char path[256], full[1200];
+	snprintf(w->hd_tileset_path, sizeof w->hd_tileset_path, "generated/hd/%s/tilesets/%s.kpd", variant,
+		KP_TILESET_NAMES[a->flow.session->host.data.mission.tileset]);
 	kp_app_path(a, w->hd_tileset_path, full, sizeof full);
 	w->hd_fetches[0] = kp_fetch_start(full, 0, 0);
 	snprintf(path, sizeof path, "generated/hd/%s/water.kpd", variant);
@@ -385,10 +382,8 @@ static int build(KpApp *a, char *err, size_t err_size)
 	kp_world_free(a);
 	memset(w, 0, sizeof *w);
 	w->active = 1;
-	/* the session's mission and tileset file */
+	/* the session's mission; its tileset built from the tileset's files (ADR 0018, stage D5) */
 	w->mission = kp_session_mission(a->flow.session);
-	kp_host_tileset_path(&a->flow.session->host, path, sizeof path);
-	/* built from the tileset's files (ADR 0018, stage D5) */
 	if (kp_tileset_from_files(&w->tileset, &a->data.files, (int)(w->mission->tileset & 7), &e) != 0) {
 		return fail(err, err_size, "%s", e.msg);
 	}
@@ -396,7 +391,7 @@ static int build(KpApp *a, char *err, size_t err_size)
 	if (!w->ids || kp_terrain_import(w->mission, &w->tileset, w->ids, &bad) != 0) {
 		return fail(err, err_size, "mission %s: a tile selects a missing CV5 group", entry->name);
 	}
-	if (!w->tileset.sheet) return fail(err, err_size, "%s: no megatile sheet", path);
+	if (!w->tileset.sheet) return fail(err, err_size, "tileset %s: no megatile sheet", KP_TILESET_NAMES[w->mission->tileset]);
 	{ /* indices already: a copy, which the creep's edges may grow */
 		size_t n = (size_t)w->tileset.sheet_w * (size_t)w->tileset.sheet_h;
 		if (!(w->sheet = (uint8_t *)malloc(n ? n : 1))) return fail(err, err_size, "%s", "out of memory");

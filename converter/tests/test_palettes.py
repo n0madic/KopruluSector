@@ -1,4 +1,4 @@
-"""palettes.kpd: native table shapes and loader buffer sizes; original data when available."""
+"""The palettes' tables (kpd.build_palettes): native table shapes and loader buffer sizes; original data when available."""
 from __future__ import annotations
 
 import json
@@ -10,7 +10,7 @@ from pathlib import Path
 from converter.formats import pcx
 from converter.kpf import container as kpf
 from converter.kpf import kpd
-from converter.kpf.fixtures import palettes_fixture
+from converter.kpf.fixtures import palettes_files
 
 ROOT = Path(__file__).resolve().parents[2]
 ORIGINAL = os.environ.get("KOPRULU_ORIGINAL")
@@ -23,7 +23,8 @@ class PalettesTest(unittest.TestCase):
         assert (p.width, p.height, p.pixels) == (300, 3, pixels)
 
     def test_fixture_layout(self):
-        c = kpf.parse(palettes_fixture(bytes(32)))
+        files = palettes_files()  # the PCXs the C suites read the palettes from
+        c = kpd.build_palettes(files.__getitem__, profile_id="p", data_set_hash=bytes(32))
         pal0 = c.section("PAL0").payload
         rows = struct.unpack_from("<H", pal0, 0)[0]
         assert rows == 64 and pal0[2 : 2 + 256] == bytes(256)

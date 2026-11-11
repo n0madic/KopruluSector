@@ -1,7 +1,8 @@
 /*
  * A small JSON reader and writer for the oracle tools and the C suites (plan phase S, stage S1): the goldens of
  * tests/golden/oracle/ (the .json files of tools/oracle/oracle_common.py golden_json), the emulator's JSON lines (commands.jsonl,
- * ui.jsonl) and the values the suites build to compare with them. Not for the product: the game's data are .kpd/.kpm.
+ * ui.jsonl) and the values the suites build to compare with them. Not for the product: the game reads the original
+ * files and the converter's containers.
  *
  * A document owns every value parsed into it or built in it (an arena, released at once by kp_json_doc_free).
  * Strings are bytes: \u00XX escapes below 0x100 give the byte XX (the goldens keep byte strings that way),

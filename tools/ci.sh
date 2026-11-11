@@ -26,9 +26,9 @@
 #     checks the golden of its cinematics' decodes (tools/oracle/export_smk_ffmpeg.py --check);
 #   KOPRULU_SCR=<StarCraft: Remastered install dir> classifies the manifest's files on that install
 #     (converter/tests/test_scr_source.py) and, with KOPRULU_ORIGINAL, compares Remastered's DAT tables and
-#     scripts with the profile's (converter/tests/test_casc.py); with generated/data/ui.kpd it also converts the
-#     install's languages (every check of converter locale on each it holds) and their speech (FFmpeg, every check
-#     of converter speech), and KOPRULU_APP's product runs each language with its speech;
+#     scripts with the profile's (converter/tests/test_casc.py); it also converts the install's languages (every
+#     check of converter locale on each it holds, their base computed from the install) and their speech (FFmpeg,
+#     every check of converter speech), and KOPRULU_APP's product runs each language with its speech;
 #   KOPRULU_APP=1 builds the product for macOS (tools/product.sh macos debug, needs generated/ and its repack,
 #     generated/repack-single: python3 -m converter repack --single; ADR 0018, stage D8b) and runs its
 #     development checks, with no window on the screen and no sound (--headless, APP_WINDOW's size whatever the
@@ -234,7 +234,7 @@ step "kp_core's defs tables are current (tools/defs_c.py: the profile and its in
 step "native build (CMake): kp_core, its tools and the C suites, checked as C and C++"
 cmake -S . -B build/cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DKP_ASTC=ON >/dev/null
 cmake --build build/cmake >/dev/null
-if [ -n "${KOPRULU_SCR:-}" ] && [ -f generated/data/ui.kpd ] && [ -f generated/missions/index.txt ]; then
+if [ -n "${KOPRULU_SCR:-}" ]; then
   # before the C suites: test_locale reads what this writes, and an unchanged language leaves the files as they are
   step "the languages' packs: every check of converter locale on each language the install holds (ADR 0016)"
   "$PYTHON" -m converter locale --scr "$KOPRULU_SCR" --locale all --out generated 2>&1 | tail -5
@@ -318,9 +318,9 @@ c_suites() {
 RES_ORIGINAL="KP_TEST_ORIGINAL=${KOPRULU_ORIGINAL:-}"
 RES_SCR="KP_TEST_SCR=${KOPRULU_SCR:-}"
 step "C suites (kp_test)"
-if [ -d generated/data ] && [ ! -f generated/data/console.kpd ]; then
+if [ ! -f generated/data/console.kpd ]; then
   # the HUD's tests lay out over the console's pieces, which only a Remastered install has (ADR 0011)
-  echo "ci: no generated/data/console.kpd (python3 -m converter hd --scr DIR): the HUD's tests in test_hud SKIP" >&2
+  echo "ci: no generated/data/console.kpd (python3 -m converter console --scr DIR): the HUD's tests in test_hud SKIP" >&2
 fi
 c_suites native build/cmake/kp_test all "" "" KP_TEST_GLSLANG=1 "$RES_ORIGINAL" "$RES_SCR"
 # A current LLVM clang (17 or later, not Apple's) for what the default compiler's sanitizers lack: -fsanitize=function
@@ -374,12 +374,11 @@ if [ -n "$LLVM_CLANG" ]; then
     KP_TEST_GLSLANG=1 KP_TEST_LOGS=build/c-tests-asan-llvm "$RES_ORIGINAL" "$RES_SCR"
   build/cmake-asan-llvm/kp_hd_phone --selftest build/cmake-asan-llvm | tail -1 # the tool without the ASTC encoder
 fi
-if [ -d generated/data ]; then
-  step "kp_core loaders over all converted data under ASan and UBSan"
-  # a language's packs and speech are partial: test_locale and test_speech read them as the overlays they are
-  find generated \( -path generated/locale -o -path generated/speech \) -prune -o \( -name "*.kpd" -o -name "*.kpm" \) -print \
-    | sort \
-    | xargs build/cmake-asan/kp_load_check | tail -1
+if [ -d generated ]; then
+  step "the converter's containers parsed under ASan and UBSan (console.kpd, the HD files, the cinematics' packs)"
+  # a language's packs and speech: test_locale and test_speech read them as the overlays they are
+  find generated \( -path generated/locale -o -path generated/speech -o -path generated/cache \) -prune -o \
+    -name "*.kpd" -print | sort | xargs build/cmake-asan/kp_load_check | tail -1
 fi
 if command -v emcmake >/dev/null && command -v node >/dev/null; then
   # the jobs are wasm's under node, their dispatch the host's runner
@@ -412,8 +411,7 @@ if [ -n "${KOPRULU_APP:-}" ]; then
   grep -q 'headless: window hidden, sound driver dummy' build/autotest.err
   if [ -n "${KOPRULU_ORIGINAL:-}" ]; then
     step "product composition against the CPU kernels"
-    "$PYTHON" tools/viewer_compose_check.py --data "$KOPRULU_ORIGINAL" --log build/autotest.log \
-      --missions "${KOPRULU_GENERATED:-generated}/missions" | tail -1
+    "$PYTHON" tools/viewer_compose_check.py --data "$KOPRULU_ORIGINAL" --log build/autotest.log | tail -1
   fi
   step "product scripts (ADR 0017): a run that passes, a wait that times out, a misspelt key refused, a hung frame's watchdog"
   # a check's flag beside a script, first: the passing run after it keeps its files in build/script/smoke_pass

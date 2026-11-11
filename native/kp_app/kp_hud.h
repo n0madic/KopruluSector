@@ -15,17 +15,10 @@
 extern "C" {
 #endif
 
-/* The interface's data files (generated/data/<name>.kpd; the interface keeps pointers into them). */
-enum { KP_UI_FILE_UI, KP_UI_FILE_FONTS, KP_UI_FILE_STRINGS, KP_UI_FILE_PORTRAITS, KP_UI_FILE_SOUNDS, KP_UI_FILE_CAMPAIGN,
-	KP_UI_FILES };
-extern const char *const KP_UI_FILE_NAMES[KP_UI_FILES];
-
-/* A new interface: its strings, portraits, sounds, the cheats and the campaign's tables, a language's overlays over
- * them (locale NULL: none; a part refused: ui->locale_problem). files must outlive it. NULL with the error. */
-KpUi *kp_interface_new(uint8_t *const files[KP_UI_FILES], const size_t sizes[KP_UI_FILES], const KpUiLocale *locale,
-	char *err, size_t err_size);
-/* The same over the interface's data built from the original files (ADR 0018, stage D5: kp_ui_data_from_files, which
- * must outlive it), the cheats and the campaign's tables the profile's compiled CHEA and TABL. */
+/* A new interface over its data built from the original files (ADR 0018, stage D5: kp_ui_data_from_files, which must
+ * outlive it): its strings, portraits, sounds, the cheats and the campaign's tables (the profile's compiled CHEA and
+ * TABL), a language's overlays over them (locale NULL: none; a part refused: ui->locale_problem). NULL with the
+ * error. */
 KpUi *kp_interface_new_data(const KpUiData *d, const KpUiLocale *locale, char *err, size_t err_size);
 
 /* The mission's tileset for the console's colours and the minimap. */

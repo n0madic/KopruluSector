@@ -1,14 +1,15 @@
-/* The interface's readers of ui.kpd, fonts.kpd, sounds.kpd and portraits.kpd (kp_ui.h; plan phase S, stage S7) over the
- * converter's fixtures (`python3 -m converter.kpf.fixtures`; skipped without them): an interface over the fixture's
- * ui.kpd and fonts.kpd, its fonts through the text engine, a dialog loaded from its BIN, the themes, files and the
- * executable's tables kp_ui reads, the sounds' durations and the portraits' movies.
+/* The interface over its data's parts (kp_ui_data.h; plan phase S, stage S7) from the converter's fixtures (`python3 -m
+ * converter.kpf.fixtures`; skipped without them): an interface over the fixture's ui.kpd and fonts.kpd sections
+ * (kp_t_fixture_ui), its fonts through the text engine, a dialog loaded from its BIN, the themes and files kp_ui reads,
+ * the sounds' durations over sounds.kpd's SFX and MUSL (kp_ui_set_sound_records) and the portraits' movies over
+ * portraits.kpd's ROWS (kp_ui_set_portrait_parts). The executable's tables are the profile's compiled ones (the
+ * interfaces over the original data read them: test_hud, test_kp_ui).
  *
  * What the containers hold and no C code reads is not checked here: fonts.kpd's TFNT (the glue themes' tFont banks
- * are ui.kpd's TFNT), ui.kpd's FLUF, CURS and RECT and the music tracks' file names (kp_ui keeps the original's own
- * rectangles, cursors and track paths), sounds.kpd's PACK, and portraits.kpd's SMKS and PALS (kp_ui decodes the movies
- * of FILE itself, kp_smk.h); their contents are the converter's, checked by converter/tests (test_ui_tables.py,
- * test_sounds.py, test_portraits.py). */
-#include "kp_test.h"
+ * are ui.kpd's TFNT), ui.kpd's FLUF, CURS and RECT, sounds.kpd's PACK, and portraits.kpd's SMKS and PALS (kp_ui decodes
+ * the movies of FILE itself, kp_smk.h); their contents are the converter's, checked by converter/tests
+ * (test_ui_tables.py, test_sounds.py, test_portraits.py). */
+#include "kp_test_ui.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -18,25 +19,12 @@
 #include "../../native/kp_core/src/core/kp_ui_text.h"
 #include "kp_webm.h"
 
-#define DIR "tests/fixtures/generated/kpf/"
+#define DIR KP_T_FIXTURES
 
 static const char *const FIXTURES[] = { DIR "ui.kpd", DIR "fonts.kpd", DIR "sounds.kpd", DIR "portraits.kpd", NULL };
 
 static int ready(KpT *T) { return kp_t_ready(T, "test_ui_data", FIXTURES); }
 
-static void free_ui(void *p) { kp_ui_free((KpUi *)p); }
-
-/* An interface over the fixture's ui.kpd and fonts.kpd (the bytes live until the test ends). */
-static KpUi *fixture_ui(KpT *T)
-{
-	size_t ui_size, fonts_size;
-	uint8_t *ui_kpd = kp_t_read(T, DIR "ui.kpd", &ui_size), *fonts = kp_t_read(T, DIR "fonts.kpd", &fonts_size);
-	char err[256];
-	KpUi *ui = kp_ui_new(ui_kpd, ui_size, fonts, fonts_size, err, sizeof err);
-	kp_t_ok(T, ui != NULL, "%s", err);
-	kp_t_defer(T, free_ui, ui);
-	return ui;
-}
 
 /* --- fonts.kpd (one tiny font in every slot, codes 32..34, glyph 34 3 x 2) --- */
 
@@ -47,7 +35,7 @@ static void fonts_metrics(KpT *T)
 	const uint8_t *g;
 	int k;
 	if (!ready(T)) return;
-	ui = fixture_ui(T);
+	ui = kp_t_fixture_ui(T);
 	for (k = 0; k < 5; k++) kp_t_ok(T, ui->font_files[k] != NULL && ui->font_file_sizes[k] > 0, "font %d", k);
 	kp_ui_text_init(&t);
 	kp_t_eq(T, kp_ui_text_select_font(&t, ui->font_files[4], ui->font_file_sizes[4]), 0, "font16x is an FNT image");
@@ -75,7 +63,7 @@ static void ui_dialog(KpT *T)
 	const uint8_t *smk;
 	int32_t d;
 	if (!ready(T)) return;
-	ui = fixture_ui(T);
+	ui = kp_t_fixture_ui(T);
 	kp_t_eq(T, ui->bin_count, 1, "BINs");
 	bin = &ui->bins[0];
 	kp_t_ok(T, bin->name_len == 9 && memcmp(bin->name, "rez\\x.bin", 9) == 0, "the BIN's name");
@@ -111,7 +99,7 @@ static void ui_themes_and_grps(KpT *T)
 	KpUi *ui;
 	const KpUiFile *f;
 	if (!ready(T)) return;
-	ui = fixture_ui(T);
+	ui = kp_t_fixture_ui(T);
 	kp_t_ok(T, ui->theme_fonts != NULL, "the themes' colour banks (12 x 48)");
 	kp_t_eq(T, ui->theme_fonts[47], 47, "the first bank's last byte");
 	kp_t_eq(T, ui->theme_effect_size, 2, "tEffect.pcx's size");
@@ -122,53 +110,18 @@ static void ui_themes_and_grps(KpT *T)
 	kp_t_ok(T, f != NULL && f->size == 3 && memcmp(f->data, "abc", 3) == 0, "the glue file glue\\x.pcx");
 }
 
-/* The executable's tables kp_ui takes from ui.kpd: the button sets (BTNS), the status layouts (STLY), the music
- * tracks (MUSI), the volume attenuation (VOLT) and the accelerators (ACCL). */
-static void ui_tables(KpT *T)
-{
-	KpUi *ui;
-	const uint8_t *set, *b;
-	const KpUiAccelTable *game;
-	if (!ready(T)) return;
-	ui = fixture_ui(T);
-	kp_t_eq(T, ui->button_set_count, 2, "button sets");
-	set = ui->button_sets + ui->button_set_at[0];
-	kp_t_eq(T, kp_le_u16(set), 0xffff, "set 0 links no set");
-	set = ui->button_sets + ui->button_set_at[1];
-	kp_t_eq(T, kp_le_u16(set), 0, "set 1 links set 0");
-	kp_t_eq(T, kp_le_u16(set + 2), 2, "set 1's buttons");
-	b = set + 4;
-	kp_t_eq(T, kp_le_u16(b), 7, "the position");
-	kp_t_eq(T, kp_le_u32(b + 4), 0x49f850, "the condition");
-	kp_t_eq(T, kp_le_u32(b + 8), 0x47c420, "the action");
-	kp_t_eq(T, kp_le_u16(b + 12), 10, "the condition's value");
-	kp_t_eq(T, kp_le_u16(b + 18), 355, "the disabled string");
-	kp_t_eq(T, ui->status_layout_count, 1, "status layouts");
-	kp_t_eq(T, kp_le_u32(ui->status_layouts + 4), 0x4a4e40, "the layout's draw procedure");
-	kp_t_eq(T, ui->music.track_count, 2, "music tracks");
-	kp_t_eq(T, ui->music.kind[1], 2, "track 1's kind");
-	kp_t_eq(T, ui->music.next[1], 2, "track 1's next");
-	kp_t_ok(T, ui->attenuation != NULL && ui->attenuation_count == 3, "the attenuation table");
-	kp_t_eq(T, (int32_t)kp_le_u32(ui->attenuation), -4000, "its first entry");
-	game = &ui->keys.tables[KP_UI_ACCEL_GAME];
-	kp_t_eq(T, game->count, 3, "the game's accelerators: Local.dll's 101 then the executable's 113");
-	kp_t_eq(T, game->cmd[0], 40056, "Local.dll's entry");
-	kp_t_eq(T, game->fvirt[2], 19, "the executable's second entry's flags");
-	kp_t_eq(T, game->key[2], 49, "its key");
-	kp_t_eq(T, game->cmd[2], 39921, "its command");
-}
-
 /* --- sounds.kpd --- */
 
 static void sounds_records_and_durations(KpT *T)
 {
 	KpUi *ui;
-	size_t size;
-	uint8_t *data;
+	size_t sfx_size, musl_size;
+	const uint8_t *sfx, *musl;
 	if (!ready(T)) return;
-	ui = fixture_ui(T);
-	data = kp_t_read(T, DIR "sounds.kpd", &size);
-	kp_t_eq(T, kp_ui_set_sounds(ui, data, size), 0, "%s", ui->error);
+	ui = kp_t_fixture_ui(T);
+	sfx = kp_t_fixture_section(T, "sounds.kpd", "SFX ", &sfx_size);
+	musl = kp_t_fixture_section(T, "sounds.kpd", "MUSL", &musl_size);
+	kp_t_eq(T, kp_ui_set_sound_records(ui, sfx, sfx_size, musl, musl_size), 0, "%s", ui->error);
 	kp_t_eq(T, ui->sound_count, 4, "sounds");
 	kp_t_eq(T, kp_le_u16(ui->sounds) & 3, 0, "sound 0 has no file");
 	kp_t_eq(T, kp_le_u16(ui->sounds + 22 * 3) & 3, 1, "sound 3's file is present and not parsed");
@@ -184,55 +137,45 @@ static void sounds_records_and_durations(KpT *T)
 
 /* --- portraits.kpd (row 0's idle variants 0 and 2, its talking variant 1) --- */
 
-/* The fixture's portraits.kpd with its movies' files: ROWS as written, FILE with one byte per SMKS path (the
- * fixture holds no movies). rows_cut and file_cut drop that many bytes from the end of ROWS and of FILE. */
-static void portraits_with_files(KpT *T, uint8_t **out, size_t *out_size, size_t rows_cut, size_t file_cut)
+/* The portraits' parts from the fixture's portraits.kpd: its ROWS, and a FILE list (u16 count; per file u8 path length,
+ * the path, u32 size, the bytes) of one byte per SMKS path (the fixture holds no movies). rows_cut and file_cut drop
+ * that many bytes from the end of ROWS and of FILE: 0, or -1 when the parts are refused (FILE by kp_ui_files_section,
+ * ROWS by kp_ui_set_portrait_parts). The interface borrows FILE's bytes: they live until the test ends. */
+static int set_portraits(KpT *T, KpUi *ui, size_t rows_cut, size_t file_cut)
 {
-	size_t size, at, pos = 2;
-	uint8_t *data = kp_t_read(T, DIR "portraits.kpd", &size), file[512];
-	KpKpf c;
-	KpError err;
-	const KpKpfSection *rows, *smks;
-	KpKpfOut sections[2];
-	int k, n;
-	kp_t_ok(T, kp_kpf_parse(&c, data, size, "portraits.kpd", 1, &err) == 0, "%s", err.msg);
-	rows = kp_kpf_find(&c, "ROWS");
-	smks = kp_kpf_find(&c, "SMKS");
-	if (!rows || !smks || smks->size < 2) {
-		kp_kpf_free(&c);
-		kp_t_fail(T, "portraits.kpd lacks ROWS or SMKS");
-	}
-	n = (int)kp_le_u16(smks->data);
-	memcpy(file, smks->data, 2);
-	at = 2;
+	enum { FILE_ROOM = 512 };
+	size_t rows_size, smks_size, at = 2, pos = 2;
+	const uint8_t *rows = kp_t_fixture_section(T, "portraits.kpd", "ROWS", &rows_size),
+		*smks = kp_t_fixture_section(T, "portraits.kpd", "SMKS", &smks_size);
+	uint8_t *file = (uint8_t *)malloc(FILE_ROOM);
+	KpUiFiles files;
+	int k, n, rc;
+	if (!file) kp_t_fail(T, "out of memory");
+	kp_t_defer(T, free, file);
+	kp_t_ok(T, smks_size >= 2, "portraits.kpd's SMKS");
+	n = (int)kp_le_u16(smks);
+	memcpy(file, smks, 2);
 	for (k = 0; k < n; k++) {
-		size_t len = smks->data[pos];
+		size_t len = smks[pos];
 		uint32_t frames;
-		if (pos + 1 + len + 13 > smks->size || at + 6 + len > sizeof file) break;
-		memcpy(file + at, smks->data + pos, 1 + len);
+		if (pos + 1 + len + 13 > smks_size || at + 6 + len > FILE_ROOM) break;
+		memcpy(file + at, smks + pos, 1 + len);
 		at += 1 + len;
 		file[at] = 1; /* u32 size 1, then the byte */
 		file[at + 1] = file[at + 2] = file[at + 3] = 0;
 		file[at + 4] = (uint8_t)('a' + k);
 		at += 5;
-		frames = kp_le_u16(smks->data + pos + 1 + len + 4);
+		frames = kp_le_u16(smks + pos + 1 + len + 4);
 		pos += 1 + len + 13 + 2 * (size_t)frames;
 	}
-	if (k != n) {
-		kp_kpf_free(&c);
-		kp_t_fail(T, "portraits.kpd's SMKS is malformed");
+	kp_t_eq(T, k, n, "portraits.kpd's SMKS is well formed");
+	if (kp_ui_files_section(file, at - file_cut, &files) != 0) {
+		free(files.files);
+		return -1;
 	}
-	memset(sections, 0, sizeof sections);
-	sections[0].fourcc = "ROWS";
-	sections[0].payload = rows->data;
-	sections[0].size = rows->size - rows_cut;
-	sections[1].fourcc = "FILE";
-	sections[1].payload = file;
-	sections[1].size = at - file_cut;
-	k = kp_kpf_build(c.kind, c.schema_version, c.converter_version, c.profile_id, c.source_hash, sections, 2, out, out_size);
-	kp_kpf_free(&c);
-	kp_t_eq(T, k, 0, "the container builds");
-	kp_t_defer(T, free, *out);
+	rc = kp_ui_set_portrait_parts(ui, rows, rows_size - rows_cut, files.files, files.count);
+	free(files.files);
+	return rc;
 }
 
 static void movie_is(KpT *T, KpUi *ui, uint32_t row, int talking, int variant, const char *path)
@@ -249,13 +192,10 @@ static void movie_is(KpT *T, KpUi *ui, uint32_t row, int talking, int variant, c
 static void portraits_rows_and_variants(KpT *T)
 {
 	KpUi *ui;
-	uint8_t *data;
-	size_t size;
 	char name[64];
 	if (!ready(T)) return;
-	ui = fixture_ui(T);
-	portraits_with_files(T, &data, &size, 0, 0);
-	kp_t_eq(T, kp_ui_set_portraits(ui, data, size), 0, "%s", ui->error);
+	ui = kp_t_fixture_ui(T);
+	kp_t_eq(T, set_portraits(T, ui, 0, 0), 0, "%s", ui->error);
 	kp_t_eq(T, ui->portrait_row_count, 2, "portrait rows");
 	kp_t_eq(T, ui->portrait_file_count, 3, "movies");
 	kp_t_eq(T, kp_le_u16(ui->portrait_rows), 0, "row 0's idle movies start at the first file");
@@ -273,28 +213,23 @@ static void portraits_rows_and_variants(KpT *T)
 	kp_t_eq(T, kp_ui_portrait_movie_name(ui, 1, 0, 0, name, sizeof name), -1, "row 1 has no idle movie");
 }
 
-/* A ROWS or FILE section shorter than its counts say is rejected without a read past it, and leaves no movies (the
- * last record's data, then its size, then its path cut; a row cut off). */
+/* A ROWS or FILE section shorter than its counts say is rejected without a read past it (the last record's data, then
+ * its size, then its path cut; a row cut off), and a rejected ROWS leaves no movies. */
 static void portraits_reject_truncated(KpT *T)
 {
 	KpUi *ui;
-	uint8_t *data;
-	size_t size, cut;
+	size_t cut;
 	if (!ready(T)) return;
-	ui = fixture_ui(T);
-	portraits_with_files(T, &data, &size, 0, 0);
-	kp_t_eq(T, kp_ui_set_portraits(ui, data, size), 0, "the whole file loads: %s", ui->error); /* then rejections */
+	ui = kp_t_fixture_ui(T);
+	kp_t_eq(T, set_portraits(T, ui, 0, 0), 0, "the whole parts load: %s", ui->error); /* then rejections */
 	for (cut = 1; cut <= 20; cut += cut < 8 ? 1 : 6) {
-		portraits_with_files(T, &data, &size, 0, cut);
-		kp_t_eq(T, kp_ui_set_portraits(ui, data, size), -1, "FILE cut by %u bytes is rejected", (unsigned)cut);
-		kp_t_eq(T, ui->portrait_file_count, 0, "no movies after a rejected FILE");
-		kp_t_eq(T, ui->portrait_row_count, 0, "no rows after a rejected FILE");
-		kp_t_ok(T, kp_ui_portrait_movie(ui, 0, 0, 0) == NULL, "no movie after a rejected FILE");
+		kp_t_eq(T, set_portraits(T, ui, 0, cut), -1, "FILE cut by %u bytes is rejected", (unsigned)cut);
 	}
-	portraits_with_files(T, &data, &size, 1, 0);
-	kp_t_eq(T, kp_ui_set_portraits(ui, data, size), -1, "ROWS cut by a byte is rejected");
-	portraits_with_files(T, &data, &size, 0, 0);
-	kp_t_eq(T, kp_ui_set_portraits(ui, data, size), 0, "the whole file loads again: %s", ui->error);
+	kp_t_eq(T, set_portraits(T, ui, 1, 0), -1, "ROWS cut by a byte is rejected");
+	kp_t_eq(T, ui->portrait_file_count, 0, "no movies after a rejected ROWS");
+	kp_t_eq(T, ui->portrait_row_count, 0, "no rows after a rejected ROWS");
+	kp_t_ok(T, kp_ui_portrait_movie(ui, 0, 0, 0) == NULL, "no movie after a rejected ROWS");
+	kp_t_eq(T, set_portraits(T, ui, 0, 0), 0, "the whole parts load again: %s", ui->error);
 }
 
 /* A KPW1 fixture (kp_smk.h, converter/formats/kpw.py) plays as an SMK ring movie (frames 0, 1, 2, the ring frame, then 1
@@ -467,7 +402,6 @@ static const KpTest TESTS[] = {
 	{ "fonts_metrics", fonts_metrics, 0 },
 	{ "ui_dialog", ui_dialog, 0 },
 	{ "ui_themes_and_grps", ui_themes_and_grps, 0 },
-	{ "ui_tables", ui_tables, 0 },
 	{ "sounds_records_and_durations", sounds_records_and_durations, 0 },
 	{ "portraits_rows_and_variants", portraits_rows_and_variants, 0 },
 	{ "portraits_reject_truncated", portraits_reject_truncated, 0 },

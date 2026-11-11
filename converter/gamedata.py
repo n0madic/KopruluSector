@@ -1,68 +1,70 @@
-"""Convert the global game data into `generated/data/`: dat, strings, iscript, aiscript,
-fonts, palettes, portraits, sounds, tilesets, ui, grpmeta, campaign; from a Remastered install also console."""
+"""The game's global data as the runtime builds it from the original files (ADR 0018), in memory: dat, strings,
+iscript, aiscript, fonts, palettes, portraits, sounds, tilesets, ui, grpmeta and campaign containers.
+
+`build` makes every one; `scr-manifest` runs it over the reference install so that the input manifest holds each file they
+read, `converter locale` and `speech` take `strings`, `ui`, `fonts` and `sounds` for their base (converter/base.py). Nothing
+is written: the runtime reads the original files (stage D5), and of the converted containers only `console.kpd` remains
+(`converter console`, converter/emit/hd_ui.py).
+"""
 from __future__ import annotations
 
-import logging
-from pathlib import Path
-
 from . import campaign
-from .emit.files import write_if_changed
 from .analyze import iscript as iscript_table
 from .formats import dat, requirements
 from .formats.palette import TILESETS
 from .kpf import kpd
+from .kpf.container import Container
 from .source import Source
 
-log = logging.getLogger(__name__)
+
+def _read(source: Source):
+    return lambda path: source.read(path)[1]
 
 
-def convert(resolver: Source, out: Path) -> list[Path]:
-    profile = resolver.profile
-    data_set = resolver.data_set_hash()
+def _ident(source: Source) -> dict:
+    return {"profile_id": source.profile.id, "data_set_hash": source.data_set_hash()}
+
+
+def strings(source: Source) -> Container:
+    return kpd.build_strings({p: source.read(p)[1] for p in kpd.TBL_FILES.values()}, **_ident(source))
+
+
+def ui(source: Source) -> Container:
+    return kpd.build_ui(_read(source), has=source.has, **_ident(source))
+
+
+def fonts(source: Source) -> Container:
+    return kpd.build_fonts(_read(source), **_ident(source))
+
+
+def sounds(source: Source) -> Container:
+    return kpd.build_sounds(_read(source), source.has, **_ident(source))
+
+
+def build(source: Source) -> dict[str, Container]:
+    """Every container by its name (a tileset's `tilesets/<name>`)."""
+    profile = source.profile
+    ident = _ident(source)
+    read = _read(source)
     layouts = dat.load_layouts(profile.id)
-    dat_files = {f.path: resolver.read(f.path)[1] for f in layouts}
-    tbl_files = {p: resolver.read(p)[1] for p in kpd.TBL_FILES.values()}
+    dat_files = {f.path: source.read(f.path)[1] for f in layouts}
     reqs = {t.fourcc: requirements.section(list(t.words)) for t in requirements.load_tables(profile.id)}
-    outputs = {
-        out / "data" / "dat.kpd": kpd.build_dat(dat_files, layouts, profile_id=profile.id, data_set_hash=data_set,
-                                                requirements=reqs),
-        out / "data" / "strings.kpd": kpd.build_strings(tbl_files, profile_id=profile.id, data_set_hash=data_set),
-        out / "data" / "iscript.kpd": kpd.build_iscript(resolver.read(kpd.ISCRIPT_FILE)[1],
-                                                        iscript_table.Table.load(profile.id).header_animations,
-                                                        profile_id=profile.id, data_set_hash=data_set),
-        out / "data" / "aiscript.kpd": kpd.build_aiscript(resolver.read(kpd.AISCRIPT_FILE)[1],
-                                                          resolver.read(kpd.BWSCRIPT_FILE)[1],
-                                                          profile_id=profile.id, data_set_hash=data_set),
-        out / "data" / "fonts.kpd": kpd.build_fonts(lambda p: resolver.read(p)[1], profile_id=profile.id,
-                                                    data_set_hash=data_set),
-        out / "data" / "ui.kpd": kpd.build_ui(lambda p: resolver.read(p)[1], profile_id=profile.id,
-                                              data_set_hash=data_set, has=resolver.has),
-        out / "data" / "sounds.kpd": kpd.build_sounds(lambda p: resolver.read(p)[1], resolver.has,
-                                                      profile_id=profile.id, data_set_hash=data_set),
-        out / "data" / "palettes.kpd": kpd.build_palettes(lambda p: resolver.read(p)[1], profile_id=profile.id,
-                                                          data_set_hash=data_set),
+    out = {
+        "dat": kpd.build_dat(dat_files, layouts, requirements=reqs, **ident),
+        "strings": strings(source),
+        "iscript": kpd.build_iscript(read(kpd.ISCRIPT_FILE), iscript_table.Table.load(profile.id).header_animations,
+                                     **ident),
+        "aiscript": kpd.build_aiscript(read(kpd.AISCRIPT_FILE), read(kpd.BWSCRIPT_FILE), **ident),
+        "fonts": fonts(source),
+        "ui": ui(source),
+        "sounds": sounds(source),
+        "palettes": kpd.build_palettes(read, **ident),
     }
     for name in TILESETS:
-        files = {ext: resolver.read(f"tileset\\{name}.{ext}")[1] for ext in kpd.TILESET_EXTENSIONS}
-        outputs[out / "data" / "tilesets" / f"{name}.kpd"] = kpd.build_tileset(
-            name, files, profile_id=profile.id, data_set_hash=data_set)
-    outputs[out / "data" / "portraits.kpd"] = kpd.build_portraits(lambda p: resolver.read(p)[1], resolver.has,
-                                                                  profile_id=profile.id, data_set_hash=data_set)
-    gs = kpd.grp_set(*kpd.grp_references(resolver.read("arr\\images.dat")[1], resolver.read("arr\\images.tbl")[1]),
-                     lambda p: resolver.read(p)[1])
-    outputs[out / "data" / "grpmeta.kpd"] = kpd.build_grpmeta(gs, profile_id=profile.id, data_set_hash=data_set)
-    path, container = campaign.convert(resolver, out)
-    outputs[path] = container
-    for path, container in outputs.items():
-        data = container.to_bytes()
-        changed = write_if_changed(path, data)
-        log.info("%s %s: %d bytes, %d sections", "wrote" if changed else "same ", path, len(data),
-                 len(container.sections))
-    written = list(outputs)
-    storage = getattr(resolver, "storage", None)
-    if storage is not None:  # the console's shape is Remastered's art (a 1.17 install has none: `hd` writes it there)
-        from .emit import hd_ui
-        hd_ui.write_console(lambda p: resolver.read(p)[1], storage, out, profile.id, data_set)
-        written.append(out / "data" / "console.kpd")
-    return written
-
+        files = {ext: read(f"tileset\\{name}.{ext}") for ext in kpd.TILESET_EXTENSIONS}
+        out[f"tilesets/{name}"] = kpd.build_tileset(name, files, **ident)
+    out["portraits"] = kpd.build_portraits(read, source.has, **ident)
+    gs = kpd.grp_set(*kpd.grp_references(read("arr\\images.dat"), read("arr\\images.tbl")), read)
+    out["grpmeta"] = kpd.build_grpmeta(gs, **ident)
+    out["campaign"] = campaign.build_from(source)
+    return out

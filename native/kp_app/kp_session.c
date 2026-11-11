@@ -168,18 +168,6 @@ static void first_turn(void *ud)
 	kp_run_turn(f->g, NULL, 0);
 }
 
-int kp_session_load(KpSession *s, const KpHostShared *sh, const uint8_t *dat, size_t dat_size, uint8_t *mission,
-	size_t mission_size, const char *name)
-{
-	KpError err;
-	memset(s, 0, sizeof *s);
-	if (kp_host_game_load(&s->host, sh, dat, dat_size, mission, mission_size, name, &err) != 0) {
-		fail(s, err.msg);
-		return -1;
-	}
-	return 0;
-}
-
 int kp_session_load_from(KpSession *s, const KpHostShared *sh, const KpDat *dat, KpMission *mission, const char *name,
 	const KpFiles *files)
 {
@@ -194,7 +182,7 @@ int kp_session_load_from(KpSession *s, const KpHostShared *sh, const KpDat *dat,
 	return 0;
 }
 
-int kp_session_start(KpSession *s, uint8_t *tileset, size_t tileset_size, const KpSessionStart *start)
+int kp_session_start(KpSession *s, const KpSessionStart *start)
 {
 	KpHostOpts o;
 	KpError err;
@@ -206,7 +194,7 @@ int kp_session_start(KpSession *s, uint8_t *tileset, size_t tileset_size, const 
 	o.mission_index = start->mission_index;
 	o.cheats = start->cheats;
 	o.carry = start->has_carry ? &start->carry : NULL;
-	if (kp_host_game_start(&s->host, tileset, tileset_size, start->seed, start->expansion, &o, &err) != 0) {
+	if (kp_host_game_start(&s->host, start->seed, start->expansion, &o, &err) != 0) {
 		fail(s, err.msg);
 		return -1;
 	}
@@ -222,12 +210,6 @@ int kp_session_start(KpSession *s, uint8_t *tileset, size_t tileset_size, const 
 const KpMission *kp_session_mission(const KpSession *s) { return s->g ? &s->host.data.mission : NULL; }
 
 const KpGrpMeta *kp_session_grp(const KpSession *s) { return s->g ? &s->host.shared->data.grp : NULL; }
-
-const uint8_t *kp_session_tileset(const KpSession *s, size_t *size)
-{
-	*size = s->g ? s->host.tileset_size : 0;
-	return s->g ? s->host.tileset : NULL;
-}
 
 void kp_session_free(KpSession *s)
 {

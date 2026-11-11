@@ -262,7 +262,7 @@ KpUi *kp_ui_new_data(const KpUiData *d, char *err, size_t err_size)
 	ui->score.dialog = -1;
 	for (i = 0; i < 4; i++) ui->press[i].control = -1;
 	for (i = 0; i < KP_UI_EDITS; i++) ui->edits[i].control = -1;
-	/* the parts the containers give through kp_ui_set_strings, kp_ui_set_sounds and kp_ui_set_portraits */
+	/* the strings, the sound records and the portraits d has */
 	if (d->tbl[0].data != NULL) {
 		for (i = 0; i < KP_UI_TBLS; i++) {
 			ui->tbl[i] = d->tbl[i].data;
@@ -277,32 +277,6 @@ KpUi *kp_ui_new_data(const KpUiData *d, char *err, size_t err_size)
 		kp_ui_free(ui);
 		return NULL;
 	}
-	return ui;
-}
-
-KpUi *kp_ui_new(const uint8_t *ui_kpd, size_t ui_size, const uint8_t *fonts_kpd, size_t fonts_size, char *err,
-	size_t err_size)
-{
-	const uint8_t *kpd[5] = { ui_kpd, fonts_kpd, NULL, NULL, NULL };
-	const size_t sizes[5] = { ui_size, fonts_size, 0, 0, 0 };
-	KpUiData *d = (KpUiData *)calloc(1, sizeof *d);
-	KpError e;
-	KpUi *ui;
-	if (d == NULL) {
-		fail(err, err_size, "out of memory");
-		return NULL;
-	}
-	if (kp_ui_data_from_kpf(d, kpd, sizes, &e) != 0) {
-		fail(err, err_size, e.msg);
-		free(d);
-		return NULL;
-	}
-	if ((ui = kp_ui_new_data(d, err, err_size)) == NULL) {
-		kp_ui_data_free(d);
-		free(d);
-		return NULL;
-	}
-	ui->own_data = d;
 	return ui;
 }
 
@@ -350,13 +324,6 @@ void kp_ui_free(KpUi *ui)
 	free(ui->glue_files);
 	free(ui->locale_files);
 	free(ui->supplement_codes);
-	if (ui->own_data != NULL) {
-		kp_ui_data_free(ui->own_data);
-		free(ui->own_data);
-	}
-	kp_kpf_free(&ui->strings_kpf);
-	kp_kpf_free(&ui->portraits_kpf);
-	kp_kpf_free(&ui->sounds_kpf);
 	free(ui);
 }
 
@@ -631,24 +598,6 @@ uint8_t kp_ui_nearest_colour(const uint8_t *rgb, const uint8_t *cycled, int32_t 
 		}
 	}
 	return index;
-}
-
-int kp_ui_set_strings(KpUi *ui, const uint8_t *kpd, size_t size)
-{
-	KpError e;
-	int i;
-	kp_kpf_free(&ui->strings_kpf); /* the section table of an earlier call */
-	if (kp_kpf_parse(&ui->strings_kpf, kpd, size, "strings.kpd", 0, &e) != 0) {
-		snprintf(ui->error, sizeof ui->error, "%s", e.msg);
-		return -1;
-	}
-	for (i = 0; i < KP_UI_TBLS; i++) {
-		const KpKpfSection *t = kp_kpf_find(&ui->strings_kpf, TBL_SECTIONS[i]);
-		ui->tbl[i] = t ? t->data : NULL;
-		ui->tbl_size[i] = t ? t->size : 0;
-		ui->tbl_wide[i] = 0;
-	}
-	return 0;
 }
 
 /* --- a language's overlays (ADR 0016) --- */

@@ -71,14 +71,14 @@ Each file must match the SHA-256 in [defs/scr/inputs-bw-1.17.0.1.json](defs/scr/
 ```bash
 SC=/path/to/StarCraft
 python3 -m converter verify    --data "$SC"   # checks StarCraft.exe and every file the conversion reads
-python3 -m converter missions  --data "$SC"
-python3 -m converter data      --data "$SC"
-python3 -m converter resources --data "$SC"   # after missions and data
+python3 -m converter scenarios --data "$SC"   # the test scenarios' CHKs: the tests and a debug bundle
+python3 -m converter terrain   --data "$SC"   # the terrain checks' CRCs: koprulu --autotest
 python3 -m converter icon      --data "$SC"   # optional: the game's icon for the bundles
 python3 -m converter cinematics --data "$SC"  # optional: the cinematics
 ```
 
-The cinematics are the original Smacker movies converted to the video player's format: VP9 and Ogg Vorbis, at the
+The game itself reads the original files, from the install or from the repack below. The cinematics are the original
+Smacker movies converted to the video player's format: VP9 and Ogg Vorbis, at the
 size and quality of Remastered's SD set, without subtitles. Each movie is checked against the SHA-256 in
 [defs/campaign/cinematics.json](defs/campaign/cinematics.json). The conversion takes a few minutes; its results are
 kept in `generated/cache/cinematics/`, so a second run is quick. `make convert SC=…` adds `--optional`: without
@@ -88,21 +88,22 @@ already converted into the folder, it is kept: it is the newer copy of the same 
 ### From StarCraft: Remastered
 
 Point `--scr` to the Remastered install, the folder that holds `.build.info` and `Data/`. Each file is checked
-against the 1.17 manifest in `defs/scr/`. The few files Remastered changed are rebuilt or approximated, and
-`reports/scr-import.json` lists them.
+against the 1.17 manifest in `defs/scr/`. The few files Remastered changed are rebuilt or approximated: the game
+logs them when it reads the install, the repack's listing records each file's status, and `scenarios` and `terrain`
+write `reports/scr-import.json`.
 
 ```bash
 SCR="/Applications/StarCraft"   # or C:\Program Files (x86)\StarCraft
-python3 -m converter missions  --scr "$SCR"
-python3 -m converter data      --scr "$SCR"
-python3 -m converter resources --scr "$SCR"
+python3 -m converter console   --scr "$SCR"   # the widescreen console's pieces
+python3 -m converter scenarios --scr "$SCR"
+python3 -m converter terrain   --scr "$SCR"
 ```
 
 These steps are optional. Each needs a Remastered install, and each can follow a conversion from either source
 (Remastered's SD set wins over the 1.17 one in the same folder, whichever was converted first):
 
 ```bash
-# HD art (hd2 = x2, hd = x4, or all). It also gives the widescreen console's pieces.
+# HD art (hd2 = x2, hd = x4, or all). It also writes the widescreen console's pieces.
 python3 -m converter hd --scr "$SCR" --variant hd2
 
 # Cinematics and their subtitles (sd, hd2 or all)
@@ -120,8 +121,9 @@ The game runs from the original files themselves ([ADR 0018](docs/adr/0018-origi
 `--data` can name the install. `converter repack` copies the files the game reads, in their own formats, into
 `koprulu*.mpq` archives, with a listing of each file's SHA-256 that the game checks. A WAV goes in as Ogg Vorbis when
 that is smaller (`oggenc`; `--wav` keeps the WAVs). The repack has priority over an install in `--data`. The bundles
-carry the repack, not the converted SD data: a computer's the one file of `--single`, a phone's and the web's the
-groups (`make repack` writes both).
+carry the repack: a computer's the one file of `--single`, a phone's and the web's the groups (`make repack` writes
+both). No converted SD data remains: the languages' and the speech's packs compute their base from the install they
+are converted from.
 
 ```bash
 python3 -m converter repack --data "$SC"              # generated/repack: koprulu-core.mpq, a group per mission, the music, the cinematics

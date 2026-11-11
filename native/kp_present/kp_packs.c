@@ -1,9 +1,9 @@
 /*
- * The resource packs (docs/formats/packs.md; plan phase S, stage S3): a pack container (kind PACK) holds its atlases'
- * frame tables, their pages (8-bit grayscale PNGs of KP_PACK_PAGE_SIZE squared: the palette index, 0 transparent) and
- * its sounds (OGG); a mission's sounds container (kind MSND) holds the trigger WAVs as OGG by their WAVS index. The
- * frame table puts every loaded atlas's frames behind one another: grpmeta's AFRM gives each GRP entry its first frame
- * within its atlas.
+ * The resource packs (docs/formats/packs.md; plan phase S, stage S3): a pack, packed from its GRPs when a mission
+ * starts (kp_pack_build, kp_pages.c), holds its atlases' frame tables over its pages (the palette indices of
+ * KP_PACK_PAGE_SIZE squared, 0 transparent); a sounds container (kind MSND: a language's speech) holds OGG sounds by
+ * their id. The frame table puts every loaded atlas's frames behind one another: grpmeta's AFRM gives each GRP entry its
+ * first frame within its atlas.
  */
 #include "kp_present_internal.h"
 
@@ -43,110 +43,6 @@ static int load_sounds(KpPack *p, const KpKpfSection *s, const char *name, KpErr
 	return 0;
 }
 
-int kp_pack_load(KpPack *p, const uint8_t *data, size_t size, const char *name, KpError *err)
-{
-	KpKpf c;
-	KpKpfExpect expect;
-	const KpKpfSection *atls, *frms, *page, *snds;
-	size_t pos;
-	int k, rc = -1;
-	memset(p, 0, sizeof *p);
-	if (kp_kpf_parse(&c, data, size, name, 0, err) != 0) return -1;
-	memset(&expect, 0, sizeof expect);
-	expect.kind = KP_PACK_KIND;
-	expect.schema_version = KP_PACK_SCHEMA;
-	if (kp_kpf_check(&c, &expect, err) != 0) goto done;
-	if (!(atls = kp_kpf_require(&c, "ATLS", err)) || !(frms = kp_kpf_require(&c, "FRMS", err))
-		|| !(page = kp_kpf_require(&c, "PAGE", err)) || !(snds = kp_kpf_require(&c, "SNDS", err))) {
-		goto done;
-	}
-	if (atls->size < 1) {
-		kp_present_fail(err, name, "ATLS truncated");
-		goto done;
-	}
-	p->atlas_count = atls->data[0];
-	p->atlases = (KpPackAtlas *)calloc((size_t)(p->atlas_count ? p->atlas_count : 1), sizeof *p->atlases);
-	if (!p->atlases) {
-		kp_present_fail(err, name, "out of memory");
-		goto done;
-	}
-	pos = 1;
-	for (k = 0; k < p->atlas_count; k++) {
-		uint32_t len;
-		if (pos + 1 > atls->size || pos + 1 + atls->data[pos] + 8 > atls->size) {
-			kp_present_fail(err, name, "ATLS truncated");
-			goto done;
-		}
-		len = atls->data[pos];
-		if (len >= sizeof p->atlases[k].name) {
-			kp_present_fail(err, name, "an atlas name too long");
-			goto done;
-		}
-		memcpy(p->atlases[k].name, atls->data + pos + 1, len);
-		p->atlases[k].first = kp_le_u32(atls->data + pos + 1 + len);
-		p->atlases[k].count = kp_le_u32(atls->data + pos + 5 + len);
-		pos += 9 + len;
-	}
-	if (frms->size < 4) {
-		kp_present_fail(err, name, "FRMS truncated");
-		goto done;
-	}
-	p->frame_count = kp_le_u32(frms->data);
-	if ((uint64_t)p->frame_count * FRAME_RECORD > frms->size - 4) {
-		kp_present_fail(err, name, "FRMS truncated");
-		goto done;
-	}
-	p->frames = frms->data + 4;
-	for (k = 0; k < p->atlas_count; k++) {
-		if ((uint64_t)p->atlases[k].first + p->atlases[k].count > p->frame_count) {
-			kp_present_fail(err, name, "an atlas past FRMS");
-			goto done;
-		}
-	}
-	if (page->size < 6) {
-		kp_present_fail(err, name, "PAGE truncated");
-		goto done;
-	}
-	p->page_count = (int)kp_le_u16(page->data);
-	p->page_w = (uint16_t)kp_le_u16(page->data + 2);
-	p->page_h = (uint16_t)kp_le_u16(page->data + 4);
-	/* every page of every pack has one size: the runtime keeps all loaded pages in one texture array */
-	if (p->page_w != KP_PACK_PAGE_SIZE || p->page_h != KP_PACK_PAGE_SIZE) {
-		kp_present_fail(err, name, "PAGE: pages not of the runtime's size");
-		goto done;
-	}
-	p->pages =(KpPackPage *)calloc((size_t)(p->page_count ? p->page_count : 1), sizeof *p->pages);
-	if (!p->pages) {
-		kp_present_fail(err, name, "out of memory");
-		goto done;
-	}
-	pos = 6;
-	for (k = 0; k < p->page_count; k++) {
-		uint32_t n;
-		if (pos + 4 > page->size || (n = kp_le_u32(page->data + pos)) > page->size - (pos + 4)) {
-			kp_present_fail(err, name, "PAGE truncated");
-			goto done;
-		}
-		p->pages[k].png = page->data + pos + 4;
-		p->pages[k].size = n;
-		pos += 4 + n;
-	}
-	for (k = 0; k < (int)p->frame_count; k++) {
-		KpPackFrame f;
-		kp_pack_frame(p, (uint32_t)k, &f);
-		if ((f.w && f.page >= p->page_count) || f.x + f.w > p->page_w || f.y + f.h > p->page_h) {
-			kp_present_fail(err, name, "a frame outside its page");
-			goto done;
-		}
-	}
-	if (load_sounds(p, snds, name, err) != 0) goto done;
-	rc = 0;
-done:
-	kp_kpf_free(&c);
-	if (rc != 0) kp_pack_free(p);
-	return rc;
-}
-
 int kp_mission_sounds_load(KpPack *p, const uint8_t *data, size_t size, const char *name, KpError *err)
 {
 	KpKpf c;
@@ -169,7 +65,6 @@ int kp_mission_sounds_load(KpPack *p, const uint8_t *data, size_t size, const ch
 void kp_pack_free(KpPack *p)
 {
 	free(p->atlases);
-	free(p->pages);
 	free(p->sounds);
 	free(p->owned);
 	memset(p, 0, sizeof *p);

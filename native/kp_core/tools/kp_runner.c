@@ -488,7 +488,7 @@ int kp_oracle_game_start(KpOracleGame *og, const char *root, const char *key, ui
 	}
 	ho = opts->host;
 	if (ho.mission_index == KP_NIL) ho.mission_index = entry->index;
-	return kp_host_game_start(og, NULL, 0, seed, expansion, &ho, err);
+	return kp_host_game_start(og, seed, expansion, &ho, err);
 }
 
 void kp_oracle_game_free(KpOracleGame *og) { kp_host_game_free(og); }

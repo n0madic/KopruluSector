@@ -19,7 +19,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "tools"))
 sys.path.insert(0, str(ROOT / "tools" / "research"))
+import mission_index  # noqa: E402
 from sc_emulator.state import State  # noqa: E402
 
 OUT = ROOT / "docs/research/evidence/native-ingame-regions.json"
@@ -50,12 +52,12 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--root", type=Path, default=(Path(__file__).resolve().parents[2] / "koprulu-private/emu/states"))
     args = ap.parse_args()
-    names = [line.split(" ") for line in (ROOT / "generated/missions/index.txt").read_text().split("\n") if line]
+    names = mission_index.catalog(mission_index.require())
     maps = {}
     for d in sorted(p for p in args.root.iterdir() if (p / "states" / "s00001.state").exists()):
         st = State(d / "states" / "s00001.state")
         mission = names[st.header["mission"] - 1]
-        name, width, height = mission[0], int(mission[2]), int(mission[3])
+        name, width, height = mission.name, mission.width, mission.height
         snap = snapshot(st.blob("regions"), st.blob_base("regions"), width, height)
         encoded = json.dumps(snap, separators=(",", ":")).encode()
         maps[name] = {"snapshot_sha256": hashlib.sha256(encoded).hexdigest(), "region_count": len(snap["regions"]),

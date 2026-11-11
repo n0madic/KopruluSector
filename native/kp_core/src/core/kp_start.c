@@ -108,53 +108,24 @@ static void init_alliances(KpGame *g, const KpMission *m)
 	}
 }
 
-/* The tileset container: CV5, VF4 and the megatile flags (MFLG). */
 #define VF4_RECORD 32 /* a megatile's 16 mini-tile words */
 
-/* The tileset's CV5 and VF4 with its megatile flags: MFLG's u32s (mflg, count of them), else counted from the VF4 as
- * the converter counts MFLG (kp_terrain_megatile_flags: the original files, ADR 0018 stage D5). */
-static int set_tileset(KpGame *g, const uint8_t *cv5, size_t cv5_size, const uint8_t *vf4, size_t vf4_size,
-	const uint8_t *mflg, size_t count, KpError *err)
+/* The tileset's CV5 and VF4 (ADR 0018, stage D5) with its megatile flags counted from the VF4
+ * (kp_terrain_megatile_flags). */
+static int set_tileset(KpGame *g, const uint8_t *cv5, size_t cv5_size, const uint8_t *vf4, size_t vf4_size, KpError *err)
 {
-	size_t n = mflg ? count : vf4_size / VF4_RECORD, i;
+	size_t n = vf4_size / VF4_RECORD, i;
 	int64_t *mflags = (int64_t *)malloc((n ? n : 1) * sizeof *mflags);
-	uint32_t *counted = mflg ? NULL : (uint32_t *)malloc((n ? n : 1) * sizeof *counted);
+	uint32_t *counted = (uint32_t *)malloc((n ? n : 1) * sizeof *counted);
 	int r = -1;
-	if (mflags && (mflg || counted)) {
-		if (!mflg) kp_terrain_megatile_flags(vf4, vf4_size, counted);
-		for (i = 0; i < n; i++) mflags[i] = mflg ? (int64_t)kp_le_u32(mflg + 4 * i) : (int64_t)counted[i];
+	if (mflags && counted) {
+		kp_terrain_megatile_flags(vf4, vf4_size, counted);
+		for (i = 0; i < n; i++) mflags[i] = (int64_t)counted[i];
 		r = kp_terrain_set_tileset(g, cv5, cv5_size, vf4, vf4_size, mflags, (int64_t)n);
 	}
 	free(mflags);
 	free(counted);
 	if (r != 0) snprintf(err->msg, sizeof err->msg, "start: out of memory");
-	return r;
-}
-
-static int load_tileset(KpGame *g, const uint8_t *data, size_t size, KpError *err)
-{
-	KpKpf c;
-	KpKpfSectionExpect sections[1];
-	KpKpfExpect want;
-	const KpKpfSection *cv5, *vf4, *mflg;
-	int r;
-	if (kp_kpf_parse(&c, data, size, "tileset", 0, err) != 0) return -1;
-	memset(sections, 0, sizeof sections);
-	sections[0].fourcc = "MFLG";
-	sections[0].algorithm_id = "MFL1";
-	sections[0].algorithm_version = 1;
-	memset(&want, 0, sizeof want);
-	want.kind = "TSET";
-	want.schema_version = 1;
-	want.sections = sections;
-	want.section_count = 1;
-	if (kp_kpf_check(&c, &want, err) != 0 || !(cv5 = kp_kpf_require(&c, "CV5 ", err)) || !(vf4 = kp_kpf_require(&c, "VF4 ", err))
-		|| !(mflg = kp_kpf_require(&c, "MFLG", err))) {
-		kp_kpf_free(&c);
-		return -1;
-	}
-	r = set_tileset(g, cv5->data, cv5->size, vf4->data, vf4->size, mflg->data, mflg->size / 4, err);
-	kp_kpf_free(&c);
 	return r;
 }
 
@@ -528,11 +499,11 @@ KpGame *kp_start(const KpStartInput *in, KpError *err)
 		snprintf(err->msg, sizeof err->msg, "start: out of memory");
 		goto failed;
 	}
-	if (in->tileset ? load_tileset(g, in->tileset, in->tileset_size, err)
-		: !in->cv5 || !in->vf4 ? (snprintf(err->msg, sizeof err->msg, "start: no tileset"), -1)
-		: set_tileset(g, in->cv5, in->cv5_size, in->vf4, in->vf4_size, NULL, 0, err)) {
+	if (!in->cv5 || !in->vf4) {
+		snprintf(err->msg, sizeof err->msg, "start: no tileset");
 		goto failed;
 	}
+	if (set_tileset(g, in->cv5, in->cv5_size, in->vf4, in->vf4_size, err) != 0) goto failed;
 	if (kp_rules_effects(effects, m, in->dat, in->expansion != 0, err) != 0) goto failed;
 	kp_images_begin(w, &t);
 	if (setjmp(t.buf)) {

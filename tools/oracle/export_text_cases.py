@@ -10,10 +10,10 @@ same inputs through kp_ui's text engine (kp_ui_text.c).
 The probe's context (its `setup`): pen (5, 4), clip left 2, right 120 and bottom 1000, letter spacing 1, gap 3, tab
 2 x max width, flags 0x11, the wrap mode on, the bottom extent at the pen's y, row 0 current and row 1 previous.
 
-The packet cases hold no pixels of the fonts: the exporter rebuilds each expected 128 x 64 probe bitmap from the
-converted fonts (generated/data/fonts.kpd), checks its SHA-256 against the evidence, and keeps the CRC-32 of the
-glyph's rows (stride width + pad) and the packet bytes consumed. The wrapped TBL cases hold the string's resource and
-index; the test reads the text from generated/data/strings.kpd.
+The packet cases hold no pixels of the fonts: the exporter rebuilds each expected 128 x 64 probe bitmap from the fonts
+the runtime builds from the 1.17 install (converter/gamedata.py fonts), checks its SHA-256 against the evidence, and
+keeps the CRC-32 of the glyph's rows (stride width + pad) and the packet bytes consumed. The wrapped TBL cases hold the
+string's resource and index; the test reads the text from the install's TBLs.
 
 Output: tests/golden/oracle/ui/text_cases.json, one case per line, by family:
   {"glyph", font, code, offset (-1 none)}             {"width", font, code, spacing, width}
@@ -24,26 +24,28 @@ Output: tests/golden/oracle/ui/text_cases.json, one case per line, by family:
   {"colour", code, row, previous}                      {"grey", code, row_before, row, previous}
   {"packets", font, code, resource, pad, crc, consumed}  {"zero", width, height, pad, hex, crc, consumed}
 
-Usage: python3 tools/oracle/export_text_cases.py [--check]
+Usage: python3 tools/oracle/export_text_cases.py [--check] [--data DIR]   (DIR: the 1.17 install, KOPRULU_ORIGINAL;
+without one the exporter is skipped)
 """
 from __future__ import annotations
 
 import argparse
 import hashlib
 import logging
+import os
 import sys
 import zlib
 
 from oracle_common import GOLDEN, ROOT, ExportError, cases_module, load_evidence, update_goldens
 
 sys.path.insert(0, str(ROOT))
-from converter.kpf.container import parse  # noqa: E402
+from converter import gamedata  # noqa: E402
+from converter.mpq.profile import Profile, Resolver  # noqa: E402
 
 log = logging.getLogger("export_text_cases")
 GENERATOR = "tools/oracle/export_text_cases.py"
 EVIDENCE = "native-text-probes.json"
 OUTPUT = GOLDEN / "ui" / "text_cases.json"
-FONTS = ROOT / "generated" / "data" / "fonts.kpd"
 SECTIONS = {"font8": "F8  ", "font10": "F10 ", "font14": "F14 ", "font16": "F16 ", "font16x": "F16X"}
 FONT_BASE = 0x810000  # the probe's font image
 ROW_BASE = 0x6D3050   # the colour rows
@@ -89,9 +91,10 @@ def glyph_record(font: bytes, code: int) -> tuple[int, int, int, int, int]:
     return off, font[off], font[off + 1], font[off + 2], font[off + 3]
 
 
-def build() -> dict:
+def build(install: str) -> dict:
     data, digest = load_evidence(EVIDENCE)
-    kpd = parse(FONTS.read_bytes())
+    with Resolver(install, Profile.load()) as source:
+        kpd = gamedata.fonts(source)
     fonts = {name: kpd.section(s).payload for name, s in SECTIONS.items()}
     banks = {res: kpd.section(s).payload for res, s in ROW_RESOURCES.items()}
     cases = []
@@ -145,12 +148,13 @@ def build() -> dict:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--check", action="store_true", help="fail when the golden file is stale")
+    ap.add_argument("--data", default=os.environ.get("KOPRULU_ORIGINAL"), help="the 1.17 install")
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(message)s")
-    if not FONTS.exists():
-        log.info("no generated/data/fonts.kpd, skipped")
+    if not args.data:
+        log.info("no 1.17 install (--data or KOPRULU_ORIGINAL), skipped")
         return 0
-    return update_goldens({OUTPUT: build()}, args.check, GENERATOR)
+    return update_goldens({OUTPUT: build(args.data)}, args.check, GENERATOR)
 
 
 if __name__ == "__main__":

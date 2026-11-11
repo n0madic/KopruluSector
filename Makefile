@@ -30,21 +30,25 @@ export KOPRULU_GENERATED := $(OUT)
 PLATFORMS := macos web android ios ios-sim linux windows
 
 .DEFAULT_GOAL := help
-.PHONY: help convert convert-remastered remastered-extras check-source check-sc check-scr verify missions data \
-	resources repack icon hd cinematics locale speech fnt-tool toolchain app run test serve install-android clean \
+.PHONY: help convert convert-remastered remastered-extras check-source check-sc check-scr verify repack console \
+	scenarios terrain icon hd cinematics locale speech fnt-tool toolchain app run test serve install-android clean \
 	$(PLATFORMS)
 
 help:
 	@echo "Koprulu Sector: convert the original data, then build the game."
 	@echo ""
 	@echo "Convert (SC = a StarCraft: Brood War 1.17.0.1 folder, SCR = a StarCraft: Remastered folder):"
-	@echo "  make convert SC=DIR          verify, missions, data, resources, the repack, icon and cinematics"
-	@echo "                               from 1.17"
+	@echo "  make convert SC=DIR          verify, the repack, the test scenarios, the terrain checks, icon and"
+	@echo "                               cinematics from 1.17"
 	@echo "                               (CINE=none leaves the cinematics out; without FFmpeg's libvpx-vp9"
 	@echo "                               encoder or oggenc they are left out with a warning)"
-	@echo "  make convert SCR=DIR         missions, data, resources and the repack from Remastered"
+	@echo "  make convert SCR=DIR         the repack, the test scenarios, the terrain checks and the console's"
+	@echo "                               pieces from Remastered"
 	@echo "  make repack SC=DIR|SCR=DIR   the original files the game reads: OUT/repack (groups: the phones, the"
 	@echo "                               web) and OUT/repack-single (one koprulu.mpq: the computers)"
+	@echo "  make console SCR=DIR         the console's pieces OUT/data/console.kpd from Remastered's art"
+	@echo "  make scenarios SC=DIR|SCR=DIR  the test scenarios' CHKs OUT/scenarios/ (tests, the oracle's tools)"
+	@echo "  make terrain SC=DIR|SCR=DIR    the terrain checks' CRCs OUT/viewer/ (koprulu --autotest)"
 	@echo "  make convert-remastered SCR=DIR"
 	@echo "                               all of the above from Remastered plus its HD art, cinematics, languages"
 	@echo "                               and SPEECH"
@@ -70,7 +74,7 @@ help:
 
 # --- Conversion ---------------------------------------------------------------------------------------------------
 
-# The source of missions, data and resources: the 1.17 folder if given, else the Remastered one
+# The source of the repack, the scenarios and the terrain: the 1.17 folder if given, else the Remastered one
 ifneq ($(strip $(SC)),)
 SOURCE := --data "$(SC)"
 else ifneq ($(strip $(SCR)),)
@@ -87,15 +91,17 @@ check-sc:
 check-scr:
 	@if [ -z "$(strip $(SCR))" ]; then echo "make: $(MAKECMDGOALS) needs SCR=<StarCraft: Remastered folder>" >&2; exit 2; fi
 
-# One after another: resources reads what missions and data wrote. The icon needs StarCraft.exe, so only from 1.17.
+# The game reads the original files (ADR 0018): the repack, and the console's pieces (Remastered's art) for SCR; the
+# test scenarios and the terrain checks serve the tests and a debug bundle. The icon needs StarCraft.exe, so only from
+# 1.17.
 convert: check-source
 ifneq ($(strip $(SC)),)
 	$(MAKE) verify
 endif
-	$(MAKE) missions
-	$(MAKE) data
-	$(MAKE) resources
-	$(MAKE) repack
+	$(MAKE) repack scenarios terrain
+ifneq ($(strip $(SCR)),)
+	$(MAKE) console
+endif
 ifneq ($(strip $(SC)),)
 	$(MAKE) icon
 ifneq ($(CINE),none)
@@ -120,8 +126,14 @@ endif
 verify: check-sc
 	$(CONVERTER) verify --data "$(SC)"
 
-missions data resources: check-source
-	$(CONVERTER) $@ $(SOURCE) --out "$(OUT)"
+scenarios: check-source
+	$(CONVERTER) scenarios $(SOURCE) --out "$(OUT)"
+
+terrain: check-source
+	$(CONVERTER) terrain $(SOURCE) --out "$(OUT)"
+
+console: check-scr
+	$(CONVERTER) console --scr "$(SCR)" --out "$(OUT)"
 
 # The game's data (ADR 0018): the original files repacked, in groups and in one file (the cinematics apart in both)
 repack: check-source

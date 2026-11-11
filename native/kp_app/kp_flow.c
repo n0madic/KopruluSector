@@ -397,7 +397,7 @@ static int build_scene(KpFlow *f, char *err, size_t err_size)
 		st.carry = f->continue_carry;
 		st.cheats = f->continue_cheats;
 	}
-	if (kp_session_start(f->session, NULL, 0, &st) != 0) { /* the game has its CV5 and VF4 (kp_session_load_from) */
+	if (kp_session_start(f->session, &st) != 0) {
 		snprintf(err, err_size, "play %s: %s", entry->name, f->session->error);
 		return -1;
 	}

@@ -123,8 +123,6 @@ void kp_draw_list_counts(const KpDrawList *l, int32_t *distortions, int32_t *nea
 /* Palettes and lookup rows (kp_lookups.c)                                                                         */
 /* ------------------------------------------------------------------------------------------------------------- */
 
-#define KP_PALETTES_KIND "PALS"
-#define KP_PALETTES_SCHEMA 1
 #define KP_REMAP_TABLES 7 /* ofire, gfire, bfire, bexpl, trans50, red, green (0x508828 records 1..7) */
 #define KP_DARK_ROWS 32
 #define KP_DARK_SIZE (KP_DARK_ROWS * 256)
@@ -140,16 +138,15 @@ typedef struct {
 	const uint8_t *shift; /* 256 */
 } KpTilesetPalettes;
 
-/* palettes.kpd: per tileset its remap tables, dark.pcx rows and shift row; the game tables. Points into the bytes. */
+/* Per tileset its remap tables, dark.pcx rows and shift row; the game tables. */
 typedef struct {
 	KpTilesetPalettes tilesets[8];
 	const uint8_t *tunit, *tminimap, *tselect, *thpbar;
 	size_t tunit_size, tminimap_size, tselect_size, thpbar_size;
-	uint8_t *owned; /* kp_palettes_from_files: what the tables point into */
+	uint8_t *owned; /* what the tables point into */
 } KpPalettes;
 
-int kp_palettes_load(KpPalettes *p, const uint8_t *data, size_t size, KpError *err);
-/* The same tables from the original files (ADR 0018, stage D3; converter/kpf/kpd.py build_palettes): each tileset's
+/* The tables from the original files (ADR 0018, stage D3; converter/kpf/kpd.py build_palettes): each tileset's
  * remap PCXs (256 wide: a zero row, then theirs), dark.pcx's and shift.pcx's first bytes, the game's colour tables. */
 int kp_palettes_from_files(KpPalettes *p, const KpFiles *files, KpError *err);
 void kp_palettes_free(KpPalettes *p);
@@ -228,7 +225,7 @@ typedef struct {
 	int32_t speed, counter, low, high;
 } KpCycleRecord;
 
-/* A tileset's colour cycles (tileset.kpd CYCL): one speed, ranges low..high. */
+/* A tileset's colour cycles (the profile's CYC<n>, kp_defs.h): one speed, ranges low..high. */
 typedef struct {
 	int32_t speed, count;
 	uint8_t low[KP_PALETTE_RECORDS], high[KP_PALETTE_RECORDS];
@@ -341,11 +338,9 @@ int32_t kp_bars_put(KpBars *b, int32_t key, const KpBar *bar, int32_t w, int32_t
 void kp_bars_finish(KpBars *b);
 
 /* ------------------------------------------------------------------------------------------------------------- */
-/* Resource packs (docs/formats/packs.md: kind PACK) and the frame table                                          */
+/* Resource packs (docs/formats/packs.md) and the frame table                                                    */
 /* ------------------------------------------------------------------------------------------------------------- */
 
-#define KP_PACK_KIND "PACK"
-#define KP_PACK_SCHEMA 1
 #define KP_PACK_PAGE_SIZE 2048
 
 typedef struct {
@@ -358,17 +353,13 @@ typedef struct {
 } KpPackFrame;
 
 typedef struct {
-	const uint8_t *png;
-	uint32_t size;
-} KpPackPage;
-
-typedef struct {
 	uint16_t id;
 	const uint8_t *ogg;
 	uint32_t size;
 } KpPackSound;
 
-/* A pack container (points into the caller's bytes, owned arrays). */
+/* A pack (kp_pack_build: its pages apart) or a sounds container (kp_mission_sounds_load: points into the caller's
+ * bytes); owned arrays. */
 typedef struct {
 	int atlas_count;
 	KpPackAtlas *atlases;
@@ -376,13 +367,11 @@ typedef struct {
 	const uint8_t *frames; /* FRMS records, 10 bytes each */
 	int page_count;
 	uint16_t page_w, page_h;
-	KpPackPage *pages;
 	int sound_count;
 	KpPackSound *sounds;
 	uint8_t *owned; /* kp_pack_build: the FRMS records */
 } KpPack;
 
-int kp_pack_load(KpPack *p, const uint8_t *data, size_t size, const char *name, KpError *err);
 void kp_pack_free(KpPack *p);
 void kp_pack_frame(const KpPack *p, uint32_t i, KpPackFrame *out);
 /* A sound of a pack or of a mission's sounds (kind MSND): the OGG of id, or NULL. */
@@ -425,7 +414,7 @@ typedef struct {
 } KpFrameTable;
 
 /* Per GRP entry its first frame within its atlas (the frames of the atlas's earlier entries, in GRPS order), as
- * grpmeta.kpd's AFRM holds it (converter/kpf/kpd.py atlas_frame_offsets); malloc'd, -1 out of memory. */
+ * as converter/kpf/kpd.py atlas_frame_offsets computes it; malloc'd, -1 out of memory. */
 int kp_grpmeta_afrm(const KpGrpMeta *g, uint32_t **out, KpError *err);
 /* Grpmeta's atlas a (from 1) among the loaded packs (packs[k] the pack of name pack_names[k]): 1 with its pack k and
  * the pack's atlas j, 0 when no loaded pack has it. */
@@ -881,9 +870,7 @@ int kp_presenter_needs_replan(const KpImagesPresenter *p, const KpRect *view);
 /* Tilesets and the terrain (kp_tileset.c)                                                                         */
 /* ------------------------------------------------------------------------------------------------------------- */
 
-#define KP_TILESET_KIND "TSET"
-
-/* A tileset container's palette, cycles, CV5 groups and megatile flags, and its megatile sheet (SHET). */
+/* A tileset's palette, cycles, CV5 groups and megatile flags, minimap colours, megatile sheet and creep's edges. */
 typedef struct {
 	uint8_t rgb[768];
 	uint8_t cycled[256]; /* 1 for an index inside a cycle range */
@@ -894,23 +881,18 @@ typedef struct {
 	uint32_t megatiles;
 	const uint8_t *mmni;
 	size_t mmni_size;
-	const uint8_t *sheet_png; /* SHET's PNG: megatile t at ((t % columns) * 32, (t / columns) * 32) */
-	uint32_t sheet_size;
 	uint16_t sheet_count, sheet_columns;
-	const uint8_t *edge_png;  /* EDGE's PNG: creep's edge frame k in the 32x32 cell at (k * 32, 0), 0 transparent */
-	uint32_t edge_size;
 	uint16_t edge_count;      /* 0: none */
-	/* kp_tileset_from_files: the sheet's and the edges' indices instead of the PNGs (the same pixels), what it owns */
-	const uint8_t *sheet;     /* sheet_columns * 32 wide, 32 rows per row of megatiles */
+	/* the sheet's and the edges' indices, and what the tileset owns */
+	const uint8_t *sheet;     /* megatile t at ((t % columns) * 32, (t / columns) * 32): sheet_columns * 32 wide */
 	int32_t sheet_w, sheet_h;
-	const uint8_t *edges;     /* edge_count * 32 wide, 32 high */
+	const uint8_t *edges;     /* creep's edge frame k in the 32x32 cell at (k * 32, 0), 0 transparent: 32 high */
 	uint8_t *owned_cv5, *owned_flags, *owned_mmni, *owned_sheet, *owned_edges;
 } KpTileset;
 
-int kp_tileset_load(KpTileset *t, const uint8_t *data, size_t size, const char *name, KpError *err);
-/* Tileset `index` (KP_TILESET_NAMES) from tileset\<name>.cv5, .vx4, .vr4, .vf4, .wpe and .grp (ADR 0018, stage D3) as
- * the converter builds its container (converter/kpf/kpd.py build_tileset): the same palette, cycles (the profile's
- * compiled CYCn), CV5, megatile flags and MMNI; the sheet and the edges as indices. */
+/* Tileset `index` (KP_TILESET_NAMES) from tileset\<name>.cv5, .vx4, .vr4, .vf4, .wpe and .grp (ADR 0018, stage D3) by
+ * the converter's rules (converter/kpf/kpd.py build_tileset): the palette, cycles (the profile's compiled CYCn), CV5,
+ * megatile flags and MMNI; the sheet and the edges as indices. */
 int kp_tileset_from_files(KpTileset *t, const KpFiles *files, int index, KpError *err);
 void kp_tileset_free(KpTileset *t);
 /* ImportMapTiles 0x445720 over the mission's MTXM: the megatile id of each cell (bit 15 the tile's high bit), w * h;

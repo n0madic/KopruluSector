@@ -1,7 +1,7 @@
 """StarCraft: Remastered's HD art for the HD renderer (ADR 0013, stage R2): `generated/hd/<variant>/`.
 
 `hd2` (×2) and `hd` (×4) are written alike from the user's install, never shipped:
-- `packs/<pack>.kpd` (`HDPK`, schema 3), one per SD pack (`generated/packs/<pack>.kpd`), its frames in the SD pack's
+- `packs/<pack>.kpd` (`HDPK`, schema 3), one per SD pack (the packs the runtime builds from the GRPs, native/kp_present/kp_pages.c), its frames in the SD pack's
   FRMS order, so an SD frame's index is its HD frame's: HEAD (u8 scale, u16 page size, u16 pages, u32 frames, u8
   format of the pages: 0 BC, u16 lit pages), FRMS (per frame u16 page, x, y, width, height of the HD frame in its
   page, i16 dx, dy: its centre less the SD frame's centre times the scale, in half HD pixels, y down; width 0: no HD

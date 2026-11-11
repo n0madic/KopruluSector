@@ -1,8 +1,11 @@
-"""Cross-language fixtures: containers written here are read by the C loaders.
+"""Cross-language fixtures the C suites read, with expect.json, the values their readers must give.
 
-Run `python3 -m converter.kpf.fixtures [out_dir]`; the default output is
-tests/fixtures/generated/kpf (gitignored). The C suites (tests/c: test_data, test_ui_data) read the files and
-expect.json, the values the loaders must give.
+Run `python3 -m converter.kpf.fixtures [out_dir]`; the default output is tests/fixtures/generated/kpf (gitignored).
+files/ holds synthetic original files at their MPQ paths (lowercased, `/` for `\\`), which the runtime's readers take
+as an install's (ADR 0018; tests/c/kp_test.c kp_t_fixture_files): the DAT, the scripts, a tileset, the palettes' PCXs,
+images.tbl with its GRPs and LO file, and a campaign mission's CHK with a sound. The interface's parts the suites set by
+hand (ui.kpd, fonts.kpd, sounds.kpd, portraits.kpd) and the generic containers (basic.kpd, large.kpd) stay containers;
+the movies, KPW1 and the Remastered rebuilds have their own files.
 """
 from __future__ import annotations
 
@@ -19,6 +22,7 @@ from . import container as kpf
 from ..emit import cinematics
 from ..formats import dialog, grp, kpw
 from . import kpd, kpm
+from ..derive import mission as mission_terrain
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_OUT = ROOT / "tests" / "fixtures" / "generated" / "kpf"
@@ -246,8 +250,8 @@ def fonts_fixture(source_hash: bytes) -> bytes:
     return c.to_bytes()
 
 
-def palettes_fixture(source_hash: bytes) -> bytes:
-    """palettes.kpd from synthetic PCXs: pixel value = (row * 7 + column + salt) % 256."""
+def palettes_files() -> dict[str, bytes]:
+    """The PCXs the palettes are read from, synthetic: pixel value = (row * 7 + column + salt) % 256."""
     from ..formats import pcx
 
     sizes = {"ofire": 63, "gfire": 32, "bfire": 40, "bexpl": 63, "trans50": 255, "red": 1, "green": 1,
@@ -263,7 +267,14 @@ def palettes_fixture(source_hash: bytes) -> bytes:
         tileset, name = path.split("\\")[1], path.rsplit("\\", 1)[1][:-4]
         return image(256, sizes[name], len(tileset) + len(name))
 
-    return kpd.build_palettes(read, profile_id="bw-1.17.0.1", data_set_hash=source_hash).to_bytes()
+    files: dict[str, bytes] = {}
+
+    def record(path: str) -> bytes:
+        files[path] = read(path)
+        return files[path]
+
+    kpd.build_palettes(record, profile_id="bw-1.17.0.1", data_set_hash=bytes(32))
+    return files
 
 
 def fixture_tileset() -> tuple[bytes, bytes, bytes, bytes]:
@@ -293,18 +304,21 @@ def creep_edge_grp() -> bytes:
     return grp.encode(32, 32, [full, corner])
 
 
-def tileset_fixture(source_hash: bytes) -> tuple[bytes, list[int], list[int]]:
-    """The synthetic tileset container, plus the Python terrain import of the mission fixture
-    for the C suites."""
-    from ..derive import terrain
+FIXTURE_TILESET = "desert"  # ERA 13 & 7: the mission fixture's
 
+
+def tileset_files() -> dict[str, bytes]:
+    """The synthetic tileset's files (tileset\\desert.*)."""
     cv5, vx4, vr4, vf4 = fixture_tileset()
     wpe = bytes((i * 3) % 256 if i % 4 != 3 else 0 for i in range(1024))
     files = {"cv5": cv5, "vx4": vx4, "vr4": vr4, "vf4": vf4, "wpe": wpe, "grp": creep_edge_grp()}
-    data = kpd.build_tileset("badlands", files, profile_id="bw-1.17.0.1", data_set_hash=source_hash).to_bytes()
-    mtxm = struct.pack("<32H", *MISSION_TILES)
-    ids, flags = terrain.import_terrain(mtxm, 8, 4, cv5, terrain.megatile_flags(vf4))
-    return data, ids, flags
+    return {f"tileset\\{FIXTURE_TILESET}.{ext}": data for ext, data in files.items()}
+
+
+def mission_terrain_fixture() -> mission_terrain.Terrain:
+    """The mission fixture's terrain state as the game builds it (converter/derive/mission.py)."""
+    cv5, _, _, vf4 = fixture_tileset()
+    return mission_terrain.build(8, 4, struct.pack("<32H", *MISSION_TILES), cv5, vf4)
 
 
 MISSION_TILES = (*range(1000, 1031), 1000 | 0x8000)
@@ -378,33 +392,31 @@ def unit_records_fixture() -> tuple[bytes, list[list]]:
     return bytes(payload), rows
 
 
-def dat_fixture(source_hash: bytes) -> tuple[bytes, list[tuple[str, str, int, int, int]]]:
-    """dat.kpd with every native layout filled by a byte counter, plus probes
-    (table, column, id, element, expected value) for the C suites."""
+def dat_fixture() -> tuple[dict[str, bytes], list[tuple[str, str, int, int, int]]]:
+    """The DAT files of every native layout filled by a byte counter, plus probes (table, column, id, element, expected
+    value) for the C suites."""
     from ..formats import dat
 
     layouts = dat.load_layouts()
     files = {f.path: bytes((i * 7 + len(f.path)) % 256 for i in range(f.size)) for f in layouts}
-    data = kpd.build_dat(files, layouts, profile_id="bw-1.17.0.1", data_set_hash=source_hash).to_bytes()
     probes = []
     for f in layouts:
         for c in f.columns:
             last = c.first_id + (c.count - 1) // c.per_id
             for record, element in ((c.first_id, 0), (last, c.per_id - 1)):
                 probes.append((f.table, c.name, record, element, dat.value(f, files[f.path], c.name, record, element)))
-    return data, probes
+    return files, probes
 
 
-def mission_derived(data: bytes) -> dict:
-    """Python decoding of the mission fixture's derived sections, for the suites."""
+def mission_derived(t: mission_terrain.Terrain) -> dict:
+    """The mission fixture's terrain state decoded, for the suites."""
     from ..derive import contours, regions
 
-    c = kpf.parse(data)
-    g = regions.decode(c.section("RGNS").payload)
-    k = contours.decode(c.section("CONT").payload)
+    g = regions.decode(t.rgns)
+    k = contours.decode(t.cont)
     last = g.count - 1
     first_contour = next((list(a[0]) for a in k.arrays if a), [0, 0, 0, 0, 0])
-    return {"walk_size": len(c.section("WALK").payload), "regions": g.count, "splits": len(g.splits),
+    return {"walk_size": len(t.walk), "regions": g.count, "splits": len(g.splits),
             "last_class": g.classes[last], "last_group": g.groups[last], "last_tiles": g.tiles[last],
             "last_neighbors": list(g.neighbors[last]), "last_center_x": g.centers[last][0],
             "cell_3_2": g.raster[2 * g.width + 3], "contour_counts": list(k.counts()), "capacities": list(k.capacities),
@@ -432,17 +444,35 @@ def mission_chk() -> bytes:
     return build_chk(sections)
 
 
-def mission_fixture(source_hash: bytes) -> bytes:
-    """8x4 version 205 mission with colors, forces, overrides and two WAV strings (one missing), in
-    campaign\\fixture."""
-    from ..formats import chk
+FIXTURE_MISSION = "campaign\\fixture"  # tests/c/kp_test.h KP_T_FIXTURE_MISSION
 
-    scenario = chk.load(mission_chk(), chk.LoaderTables.load(), vcod_sha256=hashlib.sha256(b"vcod").hexdigest())
-    sounds = kpm.mission_sounds(scenario, "campaign\\fixture", lambda p: fixture_wav(4410) if p.endswith("a.wav") else None)
-    cv5, _, _, vf4 = fixture_tileset()
-    c = kpm.build(scenario, sounds, profile_id="bw-1.17.0.1", data_set_hash=source_hash, tileset=(cv5, vf4))
-    kpm.add_packs(c, ["terran", "effects"], b"fixture")
-    return c.to_bytes()
+
+def mission_files() -> dict[str, bytes]:
+    """The 8x4 version 205 mission with colors, forces, overrides and two WAV strings, a.wav there and b.wav missing (its
+    packs: tests/c/kp_test.c's MPAK)."""
+    return {f"{FIXTURE_MISSION}\\staredit\\scenario.chk": mission_chk(), f"{FIXTURE_MISSION}\\a.wav": fixture_wav(4410)}
+
+
+def grpmeta_files(files: dict[str, bytes]) -> dict[str, bytes]:
+    """images.tbl over GRPMETA_NAMES (the C suite's images.dat refers to its entries) and the files they name."""
+    from ..casc import rebuild
+
+    return {"arr\\images.tbl": rebuild.tbl_encode([n.encode("ascii") for n in GRPMETA_NAMES]), **files}
+
+
+def original_files() -> tuple[dict[str, bytes], list[tuple[str, str, int, int, int]]]:
+    """The synthetic original files by MPQ path, and the DAT's probes."""
+    dat_files, probes = dat_fixture()
+    files = {**dat_files, **tileset_files(), **palettes_files(), **mission_files(),
+             kpd.ISCRIPT_FILE: iscript_bin([(5, 0), (3, 1), (5, 1)]), kpd.AISCRIPT_FILE: ai_bin(AI_RECORDS, 16),
+             kpd.BWSCRIPT_FILE: ai_bin(BW_RECORDS, 8)}
+    files.update(grpmeta_files(grpmeta_fixture()[1]))
+    return files, probes
+
+
+def files_path(path: str) -> str:
+    """Where an MPQ path's file lies under files/ (tests/c/kp_test.c fixture_read)."""
+    return "files/" + path.lower().replace("\\", "/")
 
 
 def _large_payload() -> bytes:
@@ -724,26 +754,21 @@ def build_fixtures(out: Path = DEFAULT_OUT) -> list[Path]:
     large_payload = _large_payload()
     large.add("BLOB", large_payload)
 
-    dat_kpd, dat_probes = dat_fixture(source_hash)
-    tileset_kpd, terrain_ids, terrain_flags = tileset_fixture(source_hash)
+    originals, dat_probes = original_files()
+    terrain = mission_terrain_fixture()
     rule_payload, rule_assoc, rule_sums = rules_fixture()
     unit_payload, unit_rows = unit_records_fixture()
     (out / "units.bin").write_bytes(unit_payload)
     (out / "rules.bin").write_bytes(rule_payload)
-    files = {"basic.kpd": basic.to_bytes(), "large.kpd": large.to_bytes(), "mission.kpm": mission_fixture(source_hash),
-             "mission.chk": mission_chk(),
-             "dat.kpd": dat_kpd, "tileset.kpd": tileset_kpd, "palettes.kpd": palettes_fixture(source_hash),
+    files = {"basic.kpd": basic.to_bytes(), "large.kpd": large.to_bytes(),
              "fonts.kpd": fonts_fixture(source_hash), "ui.kpd": ui_fixture(source_hash),
-             "sounds.kpd": sounds_fixture(source_hash), "portraits.kpd": portraits_fixture(source_hash),
-             "iscript.kpd": kpd.build_iscript(iscript_bin([(5, 0), (3, 1), (5, 1)]), {0: 2, 12: 14},
-                                              profile_id="bw-1.17.0.1", data_set_hash=source_hash).to_bytes(),
-             "aiscript.kpd": kpd.build_aiscript(ai_bin(AI_RECORDS, 16), ai_bin(BW_RECORDS, 8),
-                                                profile_id="bw-1.17.0.1", data_set_hash=source_hash).to_bytes()}
+             "sounds.kpd": sounds_fixture(source_hash), "portraits.kpd": portraits_fixture(source_hash)}
+    files.update({files_path(p): data for p, data in originals.items()})
     files.update(kpw_fixture())
     files.update(scr_fixture())
     files.update(cine_fixture(source_hash))
     grpmeta_set, _ = grpmeta_fixture()
-    files["grpmeta.kpd"] = kpd.build_grpmeta(grpmeta_set, profile_id="bw-1.17.0.1", data_set_hash=source_hash).to_bytes()
+    shutil.rmtree(out / "files", ignore_errors=True)  # no file of an earlier run's layout stays
     written = []
     for name, data in files.items():
         path = out / name
@@ -757,8 +782,8 @@ def build_fixtures(out: Path = DEFAULT_OUT) -> list[Path]:
         "large_crc32": large.section("BLOB").crc32, "large_tail": large_payload[-16:],
         "dat_probes": [list(p) for p in dat_probes], "unit_rows": unit_rows,
         "rule_associations": [list(a) for a in rule_assoc], "rule_sums": dict(sorted(rule_sums.items())),
-        "terrain_ids": terrain_ids, "terrain_flags": terrain_flags,
-        "mission_derived": mission_derived(files["mission.kpm"]), "mission_strings": list(MISSION_STRINGS),
+        "terrain_ids": terrain.ids, "terrain_flags": terrain.flags,
+        "mission_derived": mission_derived(terrain), "mission_strings": list(MISSION_STRINGS),
         "grpmeta_hits": grpmeta_expect(grpmeta_set),
     }
     sys.path.insert(0, str(ROOT / "tools" / "oracle"))

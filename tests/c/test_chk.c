@@ -1,9 +1,9 @@
 /* A mission read from its scenario (ADR 0018, stage D4: kp_chk, kp_derive, kp_mission_from_files). The converter's
- * fixture scenario (mission.chk, the CHK of mission.kpm) read through the profile's loader tables gives the fixture's
- * mission; variants of it are refused as converter/tests/test_chk.py and the trigger validation refuse them; every
- * campaign mission of the installs of KP_TEST_ORIGINAL (1.17) and KP_TEST_SCR (StarCraft: Remastered) equals the
- * converted .kpm, skipped without them or the converted missions; every test scenario built from its CHK and its index
- * line's packs (stage D8c, kp_data_mission) equals its .kpm. */
+ * fixture scenario (kp_t_fixture_files: campaign\fixture\staredit\scenario.chk) read through the profile's loader
+ * tables gives the fixture's mission (its fields: test_data); variants of it are refused as converter/tests/test_chk.py
+ * and the trigger validation refuse them; every campaign mission of the installs of KP_TEST_ORIGINAL (1.17) and
+ * KP_TEST_SCR (StarCraft: Remastered) is built from its files, and the two installs' missions are equal but their
+ * speech (Remastered's own recordings). */
 #include "kp_test_app.h"
 
 #include <stdio.h>
@@ -16,12 +16,10 @@
 #include "../../native/kp_core/src/core/kp_chk.h"
 #include "../../native/kp_core/src/core/kp_mission.h"
 
-#define DIR "tests/fixtures/generated/kpf/"
-#define MISSIONS "generated/missions/"
-#define FIXTURE_DIRECTORY "campaign\\fixture" /* kpf/fixtures.py mission_chk */
-#define FIXTURE_TILESET "tileset\\desert"     /* its ERA 13: 13 & 7 */
-#define FIXTURE_WAV "campaign\\fixture\\a.wav"
+#define FIXTURE_CHK KP_T_FIXTURE_FILES "campaign/fixture/staredit/scenario.chk"
 #define FIXTURE_WAV_DATA 4410
+
+static const char *const FIXTURES[] = { FIXTURE_CHK, NULL };
 #define CHUNK_HEADER 8
 #define TRIGGER_ACTIONS 320
 #define ACTION_SIZE 32
@@ -50,42 +48,12 @@ static void le32(uint8_t *p, uint32_t v)
 	p[3] = (uint8_t)(v >> 24);
 }
 
-/* --- the fixture's profile and files --- */
+/* --- the fixture's files with a scenario of the test's --- */
 
 typedef struct {
-	KpDefsTable tables[2]; /* sorted: CHKL, MPAK */
-	KpDefsProfile profile;
-} FixtureProfile;
-
-/* The compiled loader tables with the VCOD digest of the fixtures' b"vcod", and the fixture mission's packs (MPAK: one
- * mission, kpf/fixtures.py's "effects" and "terran"). */
-static const KpDefsProfile *fixture_profile(KpT *T)
-{
-	static const uint8_t MPAK[] = { 1, 0, 16, 'c', 'a', 'm', 'p', 'a', 'i', 'g', 'n', '\\', 'f', 'i', 'x', 't', 'u', 'r',
-		'e', 2, 7, 'e', 'f', 'f', 'e', 'c', 't', 's', 6, 't', 'e', 'r', 'r', 'a', 'n' };
-	const KpDefsTable *real = kp_defs_table(kp_defs_profile("bw-1.17.0.1"), "CHKL");
-	FixtureProfile *fp = (FixtureProfile *)owned(T, sizeof *fp);
-	uint8_t *chkl;
-	kp_t_ok(T, real != NULL && real->size > KP_SHA256_SIZE, "the profile's compiled CHKL");
-	chkl = (uint8_t *)owned(T, real->size);
-	memcpy(chkl, real->data, real->size);
-	kp_sha256("vcod", 4, chkl + real->size - KP_SHA256_SIZE);
-	memcpy(fp->tables[0].fourcc, "CHKL", 5);
-	fp->tables[0].data = chkl;
-	fp->tables[0].size = real->size;
-	memcpy(fp->tables[1].fourcc, "MPAK", 5);
-	fp->tables[1].data = MPAK;
-	fp->tables[1].size = (uint32_t)sizeof MPAK;
-	fp->profile.id = "fixture";
-	fp->profile.tables = fp->tables;
-	fp->profile.table_count = 2;
-	return &fp->profile;
-}
-
-typedef struct {
-	const uint8_t *chk, *cv5, *vf4;
-	size_t chk_size, cv5_size, vf4_size;
-	uint8_t wav[44 + FIXTURE_WAV_DATA];
+	KpFiles files;
+	const uint8_t *chk;
+	size_t chk_size;
 } Source;
 
 static int same_name(const char *a, const char *b)
@@ -99,70 +67,31 @@ static int same_name(const char *a, const char *b)
 	return *a == *b;
 }
 
-static uint8_t *copy_bytes(const uint8_t *d, size_t n, size_t *size)
-{
-	uint8_t *b = (uint8_t *)malloc(n + 1);
-	if (!b) return NULL;
-	memcpy(b, d, n);
-	b[n] = 0;
-	*size = n;
-	return b;
-}
-
 static uint8_t *source_read(void *ctx, const char *name, size_t *size, char *err, size_t err_size)
 {
 	const Source *s = (const Source *)ctx;
-	(void)err_size;
+	uint8_t *b;
+	if (!same_name(name, KP_T_FIXTURE_MISSION "\\staredit\\scenario.chk")) {
+		return s->files.read(s->files.ctx, name, size, err, err_size);
+	}
 	err[0] = '\0';
-	if (same_name(name, FIXTURE_DIRECTORY "\\staredit\\scenario.chk")) return copy_bytes(s->chk, s->chk_size, size);
-	if (same_name(name, FIXTURE_TILESET ".cv5")) return copy_bytes(s->cv5, s->cv5_size, size);
-	if (same_name(name, FIXTURE_TILESET ".vf4")) return copy_bytes(s->vf4, s->vf4_size, size);
-	if (same_name(name, FIXTURE_WAV)) return copy_bytes(s->wav, sizeof s->wav, size);
-	return NULL;
+	if (!(b = (uint8_t *)malloc(s->chk_size + 1))) return NULL;
+	memcpy(b, s->chk, s->chk_size);
+	b[s->chk_size] = 0;
+	*size = s->chk_size;
+	return b;
 }
 
-static void kpf_free(void *p) { kp_kpf_free((KpKpf *)p); }
-
-/* kpf/fixtures.py fixture_wav: mono 22,050 Hz PCM16 with 4,410 data bytes */
-static void fixture_wav(uint8_t *w)
-{
-	static const uint8_t FMT[16] = { 1, 0, 1, 0, 0x22, 0x56, 0, 0, 0x44, 0xac, 0, 0, 2, 0, 16, 0 };
-	memset(w, 0, 44 + FIXTURE_WAV_DATA);
-	memcpy(w, "RIFF", 4);
-	le32(w + 4, 36 + FIXTURE_WAV_DATA);
-	memcpy(w + 8, "WAVEfmt ", 8);
-	le32(w + 16, 16);
-	memcpy(w + 20, FMT, 16);
-	memcpy(w + 36, "data", 4);
-	le32(w + 40, FIXTURE_WAV_DATA);
-}
-
-/* The fixture's files with the scenario chk: the CV5 and VF4 of tileset.kpd, a.wav. */
+/* The fixture's files (kp_t_fixture_files) with chk as the fixture scenario's. */
 static KpFiles fixture_files(KpT *T, Source *s, const uint8_t *chk, size_t chk_size)
 {
-	KpKpf *c = (KpKpf *)owned(T, sizeof *c);
-	KpError err;
 	KpFiles f;
-	const KpKpfSection *cv5, *vf4;
-	size_t size;
-	const uint8_t *kpd = kp_t_read(T, DIR "tileset.kpd", &size);
-	kp_t_ok(T, kp_kpf_parse(c, kpd, size, "tileset.kpd", 1, &err) == 0, "%s", err.msg);
-	kp_t_defer(T, kpf_free, c);
-	cv5 = kp_kpf_require(c, "CV5 ", &err);
-	kp_t_ok(T, cv5 != NULL, "%s", err.msg);
-	vf4 = kp_kpf_require(c, "VF4 ", &err);
-	kp_t_ok(T, vf4 != NULL, "%s", err.msg);
+	s->files = kp_t_fixture_files(T);
 	s->chk = chk;
 	s->chk_size = chk_size;
-	s->cv5 = cv5->data;
-	s->cv5_size = cv5->size;
-	s->vf4 = vf4->data;
-	s->vf4_size = vf4->size;
-	fixture_wav(s->wav);
-	memset(&f, 0, sizeof f);
+	f = s->files;
 	f.read = source_read;
 	f.ctx = s;
-	f.profile = fixture_profile(T);
 	return f;
 }
 
@@ -218,18 +147,13 @@ static void mission_eq(KpT *T, const KpMission *a, const KpMission *b, const cha
 
 static void fixture_mission_from_its_chk(KpT *T)
 {
-	Source s;
 	KpFiles f;
-	KpMission *a = (KpMission *)owned(T, sizeof *a), *b = (KpMission *)owned(T, sizeof *b);
+	KpMission *b = (KpMission *)owned(T, sizeof *b);
 	KpError err;
-	size_t chk_size, size;
-	const uint8_t *chk = kp_t_read(T, DIR "mission.chk", &chk_size), *kpm = kp_t_read(T, DIR "mission.kpm", &size);
-	f = fixture_files(T, &s, chk, chk_size);
-	kp_t_ok(T, kp_mission_load(a, kpm, size, "mission.kpm", NULL, &err) == 0, "%s", err.msg);
-	kp_t_defer(T, mission_free, a);
-	kp_t_ok(T, kp_mission_from_files(b, &f, FIXTURE_DIRECTORY, &err) == 0, "%s", err.msg);
+	if (!kp_t_ready(T, "test_chk", FIXTURES)) return;
+	f = kp_t_fixture_files(T);
+	kp_t_ok(T, kp_mission_from_files(b, &f, KP_T_FIXTURE_MISSION, &err) == 0, "%s", err.msg);
 	kp_t_defer(T, mission_free, b);
-	mission_eq(T, a, b, "the fixture", 1);
 	kp_t_eq(T, b->sound_count, 2, "the WAV strings");
 	kp_t_eq(T, b->sounds[0].index, 0, "a.wav found");
 	kp_t_eq(T, b->sounds[0].length, FIXTURE_WAV_DATA, "its data");
@@ -241,7 +165,7 @@ static void fixture_mission_from_its_chk(KpT *T)
 static uint8_t *variant(KpT *T, const char *tag, const void *payload, size_t n, int append, size_t *size)
 {
 	size_t base_size, at = 0, out = 0;
-	const uint8_t *base = kp_t_read(T, DIR "mission.chk", &base_size);
+	const uint8_t *base = kp_t_read(T, FIXTURE_CHK, &base_size);
 	uint8_t *v = (uint8_t *)owned(T, base_size + CHUNK_HEADER + n);
 	while (at + CHUNK_HEADER <= base_size) {
 		size_t len = (size_t)base[at + 4] | (size_t)base[at + 5] << 8 | (size_t)base[at + 6] << 16
@@ -273,7 +197,7 @@ static void refused(KpT *T, const uint8_t *chk, size_t size, int expansion, cons
 {
 	KpChk c;
 	char err[KP_ERROR_SIZE];
-	kp_t_eq(T, kp_chk_read(&c, chk, size, fixture_profile(T), expansion, err, sizeof err), -1, "refused (%s)", want);
+	kp_t_eq(T, kp_chk_read(&c, chk, size, kp_t_fixture_profile(T), expansion, err, sizeof err), -1, "refused (%s)", want);
 	kp_t_ok(T, strstr(err, want) != NULL, "the reason: %s (expected %s)", err, want);
 }
 
@@ -294,10 +218,12 @@ static void chk_variants_are_refused(KpT *T)
 	static const uint8_t VER57[2] = { 57, 0 }, DIM[4] = { 128, 0, 128, 0 };
 	uint8_t *zeros = (uint8_t *)owned(T, 0x20001), *v;
 	size_t size, k, chk_size;
-	const uint8_t *chk = kp_t_read(T, DIR "mission.chk", &chk_size);
+	const uint8_t *chk;
 	KpChk c;
 	char err[KP_ERROR_SIZE];
-	kp_t_eq(T, kp_chk_read(&c, chk, chk_size, fixture_profile(T), 1, err, sizeof err), 0, "the fixture: %s", err);
+	if (!kp_t_ready(T, "test_chk", FIXTURES)) return;
+	chk = kp_t_read(T, FIXTURE_CHK, &chk_size);
+	kp_t_eq(T, kp_chk_read(&c, chk, chk_size, kp_t_fixture_profile(T), 1, err, sizeof err), 0, "the fixture: %s", err);
 	kp_t_eq(T, c.version, 205, "its version");
 	kp_t_ok(T, kp_chk_section(&c, "COLR") && kp_chk_section(&c, "COLR")->size == 8, "COLR read");
 	for (k = 0; k < sizeof RULES / sizeof RULES[0]; k++) {
@@ -317,7 +243,7 @@ static void chk_variants_are_refused(KpT *T)
 	refused(T, chk, chk_size, 0, "CHK version 205 requires Brood War");
 	/* an ignored tag whose payload runs past the end is enumerated, not read; a read one is refused */
 	v = variant(T, "ISOM", NULL, 100, 1, &size);
-	kp_t_eq(T, kp_chk_read(&c, v, size, fixture_profile(T), 1, err, sizeof err), 0, "a truncated ISOM: %s", err);
+	kp_t_eq(T, kp_chk_read(&c, v, size, kp_t_fixture_profile(T), 1, err, sizeof err), 0, "a truncated ISOM: %s", err);
 	v = variant(T, "TRIG", NULL, 0, 0, &size);
 	memcpy(v + size, "TRIG\x60\x09\0\0", CHUNK_HEADER);
 	refused(T, v, size + CHUNK_HEADER, 1, "'TRIG' at");
@@ -330,7 +256,7 @@ static void chk_variants_are_refused(KpT *T)
 static int with_trigger(KpT *T, size_t at, uint8_t value, long at32, uint32_t v32, char *why, size_t why_size)
 {
 	size_t chk_size, size, k;
-	const uint8_t *chk = kp_t_read(T, DIR "mission.chk", &chk_size);
+	const uint8_t *chk = kp_t_read(T, FIXTURE_CHK, &chk_size);
 	uint8_t *v = variant(T, "TRIG", NULL, 0, 0, &size), *trig = NULL;
 	const uint8_t *p = chk;
 	Source s;
@@ -351,7 +277,7 @@ static int with_trigger(KpT *T, size_t at, uint8_t value, long at32, uint32_t v3
 	trig[at] = value;
 	if (at32 >= 0) le32(trig + at32, v32);
 	f = fixture_files(T, &s, v, size);
-	rc = kp_mission_from_files(m, &f, FIXTURE_DIRECTORY, &err);
+	rc = kp_mission_from_files(m, &f, KP_T_FIXTURE_MISSION, &err);
 	if (rc == 0) kp_mission_free(m);
 	snprintf(why, why_size, "%s", err.msg);
 	return rc;
@@ -363,6 +289,7 @@ static void trigger_validation(KpT *T)
 {
 	enum { COND_TYPE = 0x0f, COND_FIELDS = 0x0e, ACT = TRIGGER_ACTIONS, ACT_NUMBER = 0x14, ACT_TYPE = 0x1a };
 	char why[KP_ERROR_SIZE];
+	if (!kp_t_ready(T, "test_chk", FIXTURES)) return;
 	kp_t_eq(T, with_trigger(T, COND_TYPE, 24, -1, 0, why, sizeof why), -1, "condition 24");
 	kp_t_ok(T, strstr(why, "trigger 0 condition 0: type 24 (the table has 24)") != NULL, "%s", why);
 	kp_t_eq(T, with_trigger(T, COND_TYPE, 14, -1, 0, why, sizeof why), -1, "opponents");
@@ -388,79 +315,69 @@ static void trigger_validation(KpT *T)
 
 static void campaign_free(void *p) { kp_campaign_free((KpCampaign *)p); }
 
-static void missions_equal(KpT *T, const char *env, int sounds)
+/* An install's files and its campaign (released when the test ends). */
+static const KpCampaign *install_campaign(KpT *T, const char *env, KpFiles *f)
 {
-	KpFiles f;
 	KpCampaign *c = (KpCampaign *)owned(T, sizeof *c);
 	KpError err;
-	int k, compared = 0;
-	if (!kp_t_has(T, MISSIONS "index.txt")) kp_t_skip(T, "no " MISSIONS "index.txt");
-	kp_res_files(kp_t_install(T, env), &f);
-	kp_t_ok(T, kp_campaign_from_files(c, &f, &err) == 0, "%s", err.msg);
+	kp_res_files(kp_t_install(T, env), f);
+	kp_t_ok(T, kp_campaign_from_files(c, f, &err) == 0, "%s", err.msg);
 	kp_t_defer(T, campaign_free, c);
-	for (k = 0; k < c->directory_count; k++) {
-		char name[96], path[160];
-		KpMission *a, *b;
-		size_t size;
-		const uint8_t *kpm;
+	return c;
+}
+
+/* Mission k of an install's campaign, released when the test ends or at kp_t_release. */
+static KpMission *campaign_mission(KpT *T, const KpFiles *f, const KpCampaign *c, int k)
+{
+	KpMission *m = (KpMission *)owned(T, sizeof *m);
+	KpError err;
+	kp_t_ok(T, kp_mission_from_files(m, f, c->directories[k], &err) == 0, "%s: %s", c->directories[k], err.msg);
+	kp_t_defer(T, mission_free, m);
+	return m;
+}
+
+static void missions_built(KpT *T, const char *env)
+{
+	KpFiles f;
+	const KpCampaign *c = install_campaign(T, env, &f);
+	int k, built = 0;
+	for (k = 1; k < c->directory_count && c->directories[k][0]; k++) { /* kp_data_catalog's rows */
 		int mark = kp_t_mark(T);
-		if (!kp_campaign_mission_name(c, k, name, sizeof name)) continue;
-		snprintf(path, sizeof path, MISSIONS "%s.kpm", name);
-		if (!kp_t_has(T, path)) continue;
-		a = (KpMission *)owned(T, sizeof *a);
-		b = (KpMission *)owned(T, sizeof *b);
-		kpm = kp_t_read(T, path, &size);
-		kp_t_ok(T, kp_mission_load(a, kpm, size, name, NULL, &err) == 0, "%s", err.msg);
-		kp_t_defer(T, mission_free, a);
-		kp_t_ok(T, kp_mission_from_files(b, &f, c->directories[k], &err) == 0, "%s", err.msg);
-		kp_t_defer(T, mission_free, b);
-		mission_eq(T, a, b, name, sounds);
+		campaign_mission(T, &f, c, k);
+		kp_t_release(T, mark);
+		built++;
+	}
+	kp_t_eq(T, built, CAMPAIGN_MISSIONS, "the campaign's missions built");
+}
+
+static void original_missions(KpT *T) { missions_built(T, "KP_TEST_ORIGINAL"); }
+
+static void remastered_missions(KpT *T) { missions_built(T, "KP_TEST_SCR"); }
+
+/* 1.17's missions equal Remastered's but the speech's WAV records (Remastered's own recordings). */
+static void installs_missions_equal(KpT *T)
+{
+	KpFiles fa, fb;
+	const KpCampaign *a = install_campaign(T, "KP_TEST_ORIGINAL", &fa), *b = install_campaign(T, "KP_TEST_SCR", &fb);
+	int k, compared = 0;
+	kp_t_eq(T, b->directory_count, a->directory_count, "the campaign's directories");
+	for (k = 0; k < a->directory_count; k++) {
+		int mark = kp_t_mark(T);
+		kp_t_eq_str(T, b->directories[k], a->directories[k], "mission %d's directory", k);
+		if (k == 0 || !a->directories[k][0]) continue; /* index 0 is no mission */
+		mission_eq(T, campaign_mission(T, &fa, a, k), campaign_mission(T, &fb, b, k), a->directories[k], 0);
 		kp_t_release(T, mark);
 		compared++;
 	}
 	kp_t_eq(T, compared, CAMPAIGN_MISSIONS, "the campaign's missions compared");
 }
 
-/* Every test scenario of the data's catalog from its CHK (converter/scenarios.py writes both) equals its .kpm. */
-static void scenarios_equal_the_converted(KpT *T)
-{
-	const KpData *d = kp_t_data(T);
-	KpError err;
-	int k, compared = 0;
-	for (k = 0; k < d->mission_count; k++) {
-		const KpDataMission *e = &d->missions[k];
-		char path[160];
-		KpMission *a, *b;
-		size_t size;
-		const uint8_t *kpm;
-		int mark = kp_t_mark(T);
-		if (e->catalog) continue;
-		snprintf(path, sizeof path, "generated/%s.kpm", e->key);
-		if (!kp_t_has(T, path)) continue;
-		a = (KpMission *)owned(T, sizeof *a);
-		b = (KpMission *)owned(T, sizeof *b);
-		kpm = kp_t_read(T, path, &size);
-		kp_t_ok(T, kp_mission_load(a, kpm, size, e->name, NULL, &err) == 0, "%s", err.msg);
-		kp_t_defer(T, mission_free, a);
-		kp_t_ok(T, kp_oracle_mission(".", e->key, b, &err) != NULL, "%s", err.msg);
-		kp_t_defer(T, mission_free, b);
-		mission_eq(T, a, b, e->name, 1);
-		kp_t_release(T, mark);
-		compared++;
-	}
-	kp_t_ok(T, compared > 100, "the test scenarios compared: %d", compared);
-}
-
-static void original_missions(KpT *T) { missions_equal(T, "KP_TEST_ORIGINAL", 1); }
-/* Remastered's speech differs from 1.17's (its own recordings): the WAV records are its own */
-static void remastered_missions(KpT *T) { missions_equal(T, "KP_TEST_SCR", 0); }
-
 static const KpTest TESTS[] = {
 	{ "the_fixture_mission_is_built_from_its_chk", fixture_mission_from_its_chk, 0 },
 	{ "chk_variants_are_refused_as_the_native_loader_does", chk_variants_are_refused, 0 },
 	{ "unreachable_or_unsupported_triggers_are_validated", trigger_validation, 0 },
-	{ "the_1_17_missions_equal_the_converted", original_missions, 0 },
-	{ "the_remastered_missions_equal_the_converted", remastered_missions, 0 },
-	{ "the_scenarios_from_their_chk_equal_the_converted", scenarios_equal_the_converted, 0 },
+	{ "the_1_17_missions_are_built_from_its_files", original_missions, 0 },
+	{ "the_remastered_missions_are_built_from_its_files", remastered_missions, 0 },
+	{ "the_1_17_and_remastered_missions_are_equal", installs_missions_equal, 0 },
 };
 KP_SUITE(kp_suite_chk, "test_chk", TESTS);

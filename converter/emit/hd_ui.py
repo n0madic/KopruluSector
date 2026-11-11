@@ -19,7 +19,8 @@ anew for its own layout (their frames would not lie under the SD dialogs), and t
 
 `write_console` makes generated/data/console.kpd (`CONW`) from the same art, for every kind of graphics: the pieces and
 tiles at one texel per logical pixel in the race's console colours, the shape the runtime composes the console from
-(`kp_ui_canvas_piece`). A file of its own: `data --data` (the 1.17 install) has no Remastered art and must not lose it.
+(`kp_ui_canvas_piece`). The only container the converter still writes of the SD data (`converter console --scr`, which `hd`
+runs too): the 1.17 install has no Remastered art.
 """
 from __future__ import annotations
 
@@ -31,6 +32,7 @@ from pathlib import Path
 
 from .. import CONVERTER_VERSION
 from ..casc import rebuild
+from ..casc.source import ScrSource
 from ..casc.storage import CascStorage
 from ..formats import dds, grp, pcx
 from ..kpf import kpd
@@ -386,10 +388,11 @@ def console_section(read: Callable[[str], bytes], storage: CascStorage) -> bytes
     return bytes(out)
 
 
-def write_console(read: Callable[[str], bytes], storage: CascStorage, out: Path, profile_id: str, source_hash: bytes) -> None:
-    """generated/data/console.kpd."""
-    c = Container(CONSOLE_KIND, CONSOLE_SCHEMA, CONVERTER_VERSION, profile_id, source_hash=source_hash)
-    c.add("CONW", console_section(read, storage))
+def write_console(source: ScrSource, out: Path) -> None:
+    """generated/data/console.kpd from a Remastered install (`converter console`, and `hd`)."""
+    c = Container(CONSOLE_KIND, CONSOLE_SCHEMA, CONVERTER_VERSION, source.profile.id,
+                  source_hash=source.data_set_hash())
+    c.add("CONW", console_section(lambda path: source.read(path)[1], source.storage))
     write_if_changed(out / "data" / "console.kpd", c.to_bytes())
 
 

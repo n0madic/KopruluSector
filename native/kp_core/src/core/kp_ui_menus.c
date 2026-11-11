@@ -1029,7 +1029,7 @@ int32_t kp_ui_login_open(KpUi *ui)
 
 /* --- the campaign menus (glue states 6, 22) --- */
 
-/* The campaign.kpd TABL table of race (0 Zerg, 1 Terran, 2 Protoss) and expansion: its rows (8 bytes: label, mission,
+/* The profile's TABL table of race (0 Zerg, 1 Terran, 2 Protoss) and expansion: its rows (8 bytes: label, mission,
  * cinematic, race, hidden) and their count, or NULL. */
 static const uint8_t *campaign_table(KpUi *ui, int expansion, int race, int *count)
 {

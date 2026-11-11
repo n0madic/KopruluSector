@@ -1,5 +1,5 @@
 /* Test scenarios (phase 3, level C) against the original, object step by object step: each scenario of
- * tests/golden/oracle/scenarios/index.json (and each campaign run of runs/index.json) starts from its .kpm with the
+ * tests/golden/oracle/scenarios/index.json (and each campaign run of runs/index.json) starts from its CHK with the
  * original's seed, replays the original's command and interface logs and is compared at every recorded step with the
  * CRCs of the original's state dumps (tools/state_check.py; from step 3 on without the drawn image bounds); a scenario
  * with triggers also compares its trigger trace (plan phase 5 item 8), and one with AI scripts its AI trace (plan phase

@@ -196,35 +196,6 @@ int kp_ui_set_portrait_parts(KpUi *ui, const uint8_t *rows, size_t rows_size, co
 	return 0;
 }
 
-int kp_ui_set_portraits(KpUi *ui, const uint8_t *kpd, size_t size)
-{
-	KpError e;
-	const KpKpfSection *rows, *file;
-	KpUiFiles files;
-	int r;
-	kp_kpf_free(&ui->portraits_kpf); /* the section table of an earlier call */
-	portraits_clear(ui);
-	if (kp_kpf_parse(&ui->portraits_kpf, kpd, size, "portraits.kpd", 0, &e) != 0) {
-		snprintf(ui->error, sizeof ui->error, "%s", e.msg);
-		return -1;
-	}
-	rows = kp_kpf_find(&ui->portraits_kpf, "ROWS");
-	file = kp_kpf_find(&ui->portraits_kpf, "FILE");
-	if (rows == NULL || file == NULL) {
-		snprintf(ui->error, sizeof ui->error, "portraits.kpd lacks ROWS or FILE");
-		return -1;
-	}
-	/* a record is a length byte, the path, a u32 size and the data: each must lie inside the section */
-	if (kp_ui_files_section(file->data, file->size, &files) != 0) {
-		free(files.files);
-		snprintf(ui->error, sizeof ui->error, "portraits.kpd FILE: a record runs past the section");
-		return -1;
-	}
-	r = kp_ui_set_portrait_parts(ui, rows->data, rows->size, files.files, files.count);
-	free(files.files);
-	return r;
-}
-
 /* The movie "portrait\<stem><variant>.smk" of a portdata row (talking or idle), or NULL when the file does not exist
  * (portraits.kpd ROWS: the first SMKS entry and the mask of the existing variant digits). */
 const KpUiFile *kp_ui_portrait_movie(KpUi *ui, uint32_t row, int talking, int variant)
@@ -280,24 +251,6 @@ int kp_ui_set_sound_records(KpUi *ui, const uint8_t *sfx, size_t size, const uin
 	ui->sounds = sfx + 2;
 	if (musl != NULL) kp_ui_music_lengths(ui, musl, musl_size);
 	return 0;
-}
-
-int kp_ui_set_sounds(KpUi *ui, const uint8_t *kpd, size_t size)
-{
-	KpError e;
-	const KpKpfSection *sfx, *musl;
-	kp_kpf_free(&ui->sounds_kpf); /* the section table of an earlier call */
-	if (kp_kpf_parse(&ui->sounds_kpf, kpd, size, "sounds.kpd", 0, &e) != 0) {
-		snprintf(ui->error, sizeof ui->error, "%s", e.msg);
-		return -1;
-	}
-	sfx = kp_kpf_find(&ui->sounds_kpf, "SFX ");
-	musl = kp_kpf_find(&ui->sounds_kpf, "MUSL");
-	if (sfx == NULL) {
-		snprintf(ui->error, sizeof ui->error, "sounds.kpd lacks SFX");
-		return -1;
-	}
-	return kp_ui_set_sound_records(ui, sfx->data, sfx->size, musl ? musl->data : NULL, musl ? musl->size : 0);
 }
 
 uint32_t kp_ui_sound_duration(const KpUi *ui, uint32_t sound)

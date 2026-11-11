@@ -1,5 +1,5 @@
 /*
- * palettes.kpd (kind PALS; docs/formats/kpd.md) and the lookup rows of the world image materials (ADR 0006): the remap
+ * The palettes' tables (kp_palettes_from_files) and the lookup rows of the world image materials (ADR 0006): the remap
  * texture (256 x rows, row k = what each index maps to) and the destination table texture, built for one tileset, and
  * the rows of the images' draw methods (kp_draw_row_of).
  *
@@ -95,62 +95,6 @@ void kp_palettes_free(KpPalettes *p)
 {
 	free(p->owned);
 	memset(p, 0, sizeof *p);
-}
-
-int kp_palettes_load(KpPalettes *p, const uint8_t *data, size_t size, KpError *err)
-{
-	static const char *const GAME[4] = { "TUNI", "TMIN", "TSEL", "THPB" };
-	KpKpf c;
-	KpKpfExpect expect;
-	int t, k, rc = -1;
-	memset(p, 0, sizeof *p);
-	if (kp_kpf_parse(&c, data, size, "palettes.kpd", 0, err) != 0) return -1;
-	memset(&expect, 0, sizeof expect);
-	expect.kind = KP_PALETTES_KIND;
-	expect.schema_version = KP_PALETTES_SCHEMA;
-	if (kp_kpf_check(&c, &expect, err) != 0) goto done;
-	for (t = 0; t < 8; t++) {
-		char fourcc[5];
-		const KpKpfSection *s;
-		size_t pos = 0;
-		snprintf(fourcc, sizeof fourcc, "PAL%d", t);
-		if (!(s = kp_kpf_require(&c, fourcc, err))) goto done;
-		for (k = 0; k < KP_REMAP_TABLES; k++) {
-			uint16_t rows;
-			if (pos + 2 > s->size) {
-				kp_present_fail(err, "palettes", "tileset section truncated");
-				goto done;
-			}
-			rows = (uint16_t)kp_le_u16(s->data + pos);
-			if (pos + 2 + (size_t)rows * 256 > s->size) {
-				kp_present_fail(err, "palettes", "tileset section truncated");
-				goto done;
-			}
-			p->tilesets[t].remap[k].rows = rows;
-			p->tilesets[t].remap[k].data = s->data + pos + 2;
-			pos += 2 + (size_t)rows * 256;
-		}
-		if (pos + KP_DARK_SIZE + 256 > s->size) {
-			kp_present_fail(err, "palettes", "tileset section truncated");
-			goto done;
-		}
-		p->tilesets[t].dark = s->data + pos;
-		p->tilesets[t].shift = s->data + pos + KP_DARK_SIZE;
-	}
-	for (k = 0; k < 4; k++) {
-		const KpKpfSection *s = kp_kpf_require(&c, GAME[k], err);
-		if (!s) goto done;
-		switch (k) {
-		case 0: p->tunit = s->data; p->tunit_size = s->size; break;
-		case 1: p->tminimap = s->data; p->tminimap_size = s->size; break;
-		case 2: p->tselect = s->data; p->tselect_size = s->size; break;
-		default: p->thpbar = s->data; p->thpbar_size = s->size; break;
-		}
-	}
-	rc = 0;
-done:
-	kp_kpf_free(&c);
-	return rc;
 }
 
 static void identity_row(uint8_t *row)

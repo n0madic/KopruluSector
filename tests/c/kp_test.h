@@ -24,6 +24,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "kp_files.h"
 #include "kp_oracle.h"
 
 #ifdef __cplusplus
@@ -138,6 +139,20 @@ KpBuf *kp_t_buf(KpT *T);
 /* The resources registered so far, and the release of those registered after a mark (a loop's games and goldens). */
 int kp_t_mark(const KpT *T);
 void kp_t_release(KpT *T, int mark);
+
+/* --- the converter's fixtures (python3 -m converter.kpf.fixtures; kp_t_ready skips a test without them) --- */
+
+#define KP_T_FIXTURES "tests/fixtures/generated/kpf/"
+#define KP_T_FIXTURE_FILES KP_T_FIXTURES "files/" /* the fixtures' original files, written as kp_t_fixture_files reads them */
+#define KP_T_FIXTURE_MISSION "campaign\\fixture" /* the fixture scenario's directory (fixtures.py mission_chk) */
+
+/* The profile the fixtures' original files are of: the compiled profile's tables with the fixtures' CHKL (the loader
+ * tables with the VCOD digest of b"vcod"), MPAK (campaign\fixture's packs: "effects", "terran") and SLOT (iscript
+ * header types 0 and 12: 2 and 14 animation slots); it lives until the test ends. */
+const KpDefsProfile *kp_t_fixture_profile(KpT *T);
+/* The fixtures' original files (KP_T_FIXTURE_FILES and the MPQ path in lower case, '\\' as '/'; absent: NULL with no
+ * error) of kp_t_fixture_profile. */
+KpFiles kp_t_fixture_files(KpT *T);
 
 /* --- the games' fields by name (kp_test_game.c: the unit arrays, the game's DAT, the scalar fields) --- */
 

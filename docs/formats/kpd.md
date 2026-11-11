@@ -1,24 +1,24 @@
 # Game data files (`.kpd`)
 
-Global data converted once per installation into `generated/data/`, using the [Koprulu container](container.md). Written by `python3 -m converter data --data DIR` (`converter/kpf/kpd.py`). Every file has the data-set source hash shared with the [mission files](kpm.md).
+The game's global data as the [Koprulu container](container.md) lays it out, built by `converter/kpf/kpd.py`. Since [ADR 0018](../adr/0018-original-data-at-run-time.md) (stage D8d) no file of this page is written but `console.kpd` (`python3 -m converter console --scr DIR`, or `hd`): the runtime builds the same structures from the original files in C (`*_from_files`, [phase D](../phaseD.md)), and the converter builds the containers in memory only, to record what the game reads (`converter scr-manifest`) and as the base the languages' and the speech's overlays are measured against (`converter/base.py`). The overlays (`locale/`, `speech/` below) keep these layouts; the C suites' interface fixture is `ui.kpd`, `fonts.kpd`, `sounds.kpd` and `portraits.kpd` of `converter/kpf/fixtures.py`. The sections below are what the runtime's structures hold, whatever they are built from.
 
-The sections that hold the executable's tables rather than the install's files (`COLS`, the requirements `RQ**`, `SLOT`, `ui.kpd`'s `BTNS`, `STLY`, `MUSI`, `VOLT`, `ACCL`, `ESTB`, `campaign.kpd`'s `TABL`, `CHEA`) are also compiled into the runtime ([ADR 0018](../adr/0018-original-data-at-run-time.md), stage D2: `tools/defs_c.py`, the same bytes): the readers take a container's section where it has one, else the compiled table of the container's profile (`kp_kpf_table`). Stage D3 builds the containers' structures from the original files in C (`*_from_files`, [phase D](../phaseD.md#d3-as-built)) and compiles the lists that takes as well (`UBIN`, `UTHM`, `UTHF`, `UDGR`, `UGRP`, `UPCX`, `UGLF`, `UCRD`, `KBIN`, `KEXT`, `KLAB`, `FNTP`, `CYC0`..`CYC7`), stage D4 the CHK loader tables (`CHKL`) and each campaign mission's packs (`MPAK`), stage D7 the cinematics an install's movies are played as (`CINM`: u16 movies, u16 preludes; per movie of `defs/campaign/cinematics.json`'s table u8 length, its name, u32 size and the SHA-256 of its copy in the reference 1.17 install; per prelude u8 cinematic, u8 prelude): no container has sections of those names.
+The sections that hold the executable's tables rather than the install's files (`COLS`, the requirements `RQ**`, `SLOT`, `ui.kpd`'s `BTNS`, `STLY`, `MUSI`, `VOLT`, `ACCL`, `ESTB`, `campaign.kpd`'s `TABL`, `CHEA`) are compiled into the runtime ([ADR 0018](../adr/0018-original-data-at-run-time.md), stage D2: `tools/defs_c.py`, the same bytes; the readers take the profile's table, `kp_defs_table`). Stage D3 builds the containers' structures from the original files in C (`*_from_files`, [phase D](../phaseD.md#d3-as-built)) and compiles the lists that takes as well (`UBIN`, `UTHM`, `UTHF`, `UDGR`, `UGRP`, `UPCX`, `UGLF`, `UCRD`, `KBIN`, `KEXT`, `KLAB`, `FNTP`, `CYC0`..`CYC7`), stage D4 the CHK loader tables (`CHKL`) and each campaign mission's packs (`MPAK`), stage D7 the cinematics an install's movies are played as (`CINM`: u16 movies, u16 preludes; per movie of `defs/campaign/cinematics.json`'s table u8 length, its name, u32 size and the SHA-256 of its copy in the reference 1.17 install; per prelude u8 cinematic, u8 prelude): no container has sections of those names.
 
 | File | Kind | Status |
 |---|---|---|
-| `dat.kpd` | `DAT ` | done |
-| `strings.kpd` | `STRS` | done |
-| `iscript.kpd` | `ISCR` | done |
-| `aiscript.kpd` | `AISC` | done |
-| `tilesets/<name>.kpd` | `TSET` | done |
-| `palettes.kpd` | `PALS` | done |
-| `fonts.kpd` | `FONT` | done |
-| `ui.kpd` | `UI  ` | done |
-| `console.kpd` | `CONW` | done (from a Remastered install: `hd`, `data --scr`; `converter/emit/hd_ui.py`) |
-| `sounds.kpd` | `SNDS` | done |
-| `portraits.kpd` | `PORT` | done |
-| `grpmeta.kpd` | `GRPM` | done |
-| `campaign.kpd` | `CAMP` | done (`converter/campaign.py`) |
+| `dat.kpd` | `DAT ` | in memory (the manifest's reads) |
+| `strings.kpd` | `STRS` | in memory (the languages' base); a language's overlay |
+| `iscript.kpd` | `ISCR` | in memory (the manifest's reads) |
+| `aiscript.kpd` | `AISC` | in memory (the manifest's reads) |
+| `tilesets/<name>.kpd` | `TSET` | in memory (the manifest's reads) |
+| `palettes.kpd` | `PALS` | in memory (the manifest's reads) |
+| `fonts.kpd` | `FONT` | in memory (the languages' base); the C suites' fixture |
+| `ui.kpd` | `UI  ` | in memory (the languages' base); a language's overlay; the C suites' fixture |
+| `console.kpd` | `CONW` | written (from a Remastered install: `console`, `hd`; `converter/emit/hd_ui.py`) |
+| `sounds.kpd` | `SNDS` | in memory (the speech's base); a speech's overlay; the C suites' fixture |
+| `portraits.kpd` | `PORT` | in memory (the manifest's reads); the C suites' fixture |
+| `grpmeta.kpd` | `GRPM` | in memory (the manifest's reads) |
+| `campaign.kpd` | `CAMP` | in memory (the manifest's reads; `converter/campaign.py`) |
 
 ## `dat.kpd` (schema 1)
 
@@ -296,7 +296,7 @@ The console's shape on a screen other than the original's ([ADR 0011](../adr/001
 
 ## `ui.kpd` (schema 4)
 
-- **Reader:** `native/kp_core/src/core/kp_ui_core.c` (`kp_ui_new`).
+- **Reader:** `native/kp_core/src/core/kp_ui_core.c` (`kp_ui_new_data` over a `KpUiData`; a language's overlay).
 - **Parser and fixup model:** `converter/formats/dialog.py`.
 - **Tests:**
   - `converter/tests/test_ui.py`;
@@ -445,7 +445,7 @@ Every GRP and LO file that `images.dat` names, keyed by `images.tbl` index. The 
 | `FRMS` | u32 count (20,598); per frame 8 bytes: u8 x, y, width, height exactly as stored in the GRP, u32 offset of its opacity block in `OPAC` |
 | `OPAC` | opacity blocks, see below |
 | `LOFS` | u16 count (96); per LO file: u8 length + path, u32 size, the file unchanged |
-| `AFRM` | u16 count (= `GRPS` count); per `GRPS` entry, in order: u32 the GRP's first frame within its atlas (the frame count of the atlas's earlier entries). Frame f of entry e is `FRMS[ATLS.first(atlas of e) + AFRM[e] + f]` of the entry's pack file `generated/packs/<pack>.kpd` ([packs](packs.md#pack-schema-1)) |
+| `AFRM` | u16 count (= `GRPS` count); per `GRPS` entry, in order: u32 the GRP's first frame within its atlas (the frame count of the atlas's earlier entries). Frame f of entry e is `FRMS[ATLS.first(atlas of e) + AFRM[e] + f]` of the entry's pack ([packs](packs.md#the-packs-pages)) |
 
 **Files.** The path is `unit\` + `images.tbl` entry. `0x40ff40` loads the GRPs of 999 images with expansion data (755 otherwise) and shares one load between identical paths; LO files are shared between identical table indices. The archives resolve paths case-insensitively, so entries are deduplicated by lower-case path: the 833 `images.tbl` GRP indices name 832 files (`zerg\zlurker.grp` appears in two spellings). Entries are in order of their first `images.tbl` index; the stored path is that first spelling. Dialog GRPs are in `ui.kpd`.
 

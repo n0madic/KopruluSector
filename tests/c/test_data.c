@@ -1,12 +1,13 @@
-/* The data loaders of the native core over the converter's fixtures (plan phase S, stage S7): the container reader
- * (kp_kpf.h), dat.kpd (kp_dat.h), the mission container (kp_mission.h), grpmeta.kpd (kp_grpmeta.h), iscript.kpd and
- * aiscript.kpd (kp_iscript.h, kp_aiscript.h), the UMS override effects (kp_rules.c), the tileset container and the
- * terrain import (kp_present's kp_tileset_load, kp_terrain_import) and palettes.kpd (kp_palettes_load). The fixtures
- * and their expectations are written by `python3 -m converter.kpf.fixtures` (tests/fixtures/generated/kpf, expect.json:
- * the Python twins' values); the tests are skipped without them. The mission strings are read through GetMapString
- * (kp_map_string); the text engine (kp_ui_text.h) interprets their control codes. The ImportMapTiles flags of the
- * game's own import (kp_start.c) are the original's in test_initial_state's "tiles" category; here they are checked
- * from the tileset loader's CV5 and megatile flags. */
+/* The native core's data over the converter's fixtures (plan phase S, stage S7; ADR 0018, stage D8d): the container
+ * reader (kp_kpf.h), and the structures built from the fixtures' original files (kp_t_fixture_files): the DAT
+ * (kp_dat_from_files), the mission from its scenario (kp_mission_from_files), grpmeta (kp_grpmeta_from_files), the
+ * iscript and the AI scripts (kp_iscript_from_files, kp_ai_bins_from_files), the UMS override effects (kp_rules.c), the
+ * tileset and the terrain import (kp_tileset_from_files, kp_terrain_import) and the palettes (kp_palettes_from_files).
+ * The fixtures and their expectations are written by `python3 -m converter.kpf.fixtures` (tests/fixtures/generated/kpf,
+ * expect.json: the Python twins' values); the tests are skipped without them. The mission strings are read through
+ * GetMapString (kp_map_string); the text engine (kp_ui_text.h) interprets their control codes. The ImportMapTiles flags
+ * of the game's own import (kp_start.c) are the original's in test_initial_state's "tiles" category; here they are
+ * checked from the tileset's CV5 and megatile flags. */
 #include "kp_test.h"
 
 #include <string.h>
@@ -16,8 +17,9 @@
 #include "../../native/kp_core/src/core/kp_aiscript.h"
 #include "../../native/kp_core/src/core/kp_start.h"
 
-#define DIR "tests/fixtures/generated/kpf/"
+#define DIR KP_T_FIXTURES
 #define EXPECT DIR "expect.json"
+#define FIXTURE_TILESET 5 /* desert: the fixture scenario's era 13 (13 & 7) */
 
 static const char *const FIXTURES[] = { EXPECT, NULL };
 
@@ -280,7 +282,7 @@ static void kpf_crc32_known(KpT *T)
 		"continued");
 }
 
-/* --- dat.kpd --- */
+/* --- the DAT --- */
 
 static void free_dat(void *p)
 {
@@ -288,12 +290,14 @@ static void free_dat(void *p)
 	free(p);
 }
 
-static KpDat *load_dat(KpT *T, const uint8_t *data, size_t size, const KpKpfExpect *x)
+/* The DAT of the fixtures' arr\*.dat files (every native layout filled by a byte counter). */
+static KpDat *fixture_dat(KpT *T)
 {
+	KpFiles f = kp_t_fixture_files(T);
 	KpDat *d = (KpDat *)calloc(1, sizeof *d);
 	KpError err;
 	kp_t_ok(T, d != NULL, "out of memory");
-	if (kp_dat_load(d, data, size, "dat.kpd", x, &err) != 0) {
+	if (kp_dat_from_files(d, &f, &err) != 0) {
 		free(d);
 		kp_t_fail(T, "%s", err.msg);
 	}
@@ -319,19 +323,12 @@ static int64_t records_of(const KpDat *d, const char *table)
 
 static void dat_columns_match_python(KpT *T)
 {
-	const KpJson *e, *probes, *hash;
-	KpKpfExpect x;
-	size_t size;
-	uint8_t *data;
+	const KpJson *e, *probes;
 	KpDat *d;
 	int k;
 	if (!ready(T, "test_data")) return;
 	e = expect(T);
-	hash = member(T, e, "source_hash");
-	memset(&x, 0, sizeof x);
-	x.source_hash = (const uint8_t *)hash->s;
-	data = fixture(T, "dat.kpd", &size);
-	d = load_dat(T, data, size, &x);
+	d = fixture_dat(T);
 	probes = member(T, e, "dat_probes");
 	kp_t_ok(T, kp_json_len(probes) > 0, "probes");
 	for (k = 0; k < kp_json_len(probes); k++) {
@@ -347,13 +344,10 @@ static void dat_columns_match_python(KpT *T)
 
 static void dat_layout(KpT *T)
 {
-	size_t size;
-	uint8_t *data;
 	KpDat *d;
 	const KpDatColumn *c;
 	if (!ready(T, "test_data")) return;
-	data = fixture(T, "dat.kpd", &size);
-	d = load_dat(T, data, size, NULL);
+	d = fixture_dat(T);
 	kp_t_eq(T, records_of(d, "units"), 228, "units records");
 	kp_t_eq(T, dat_column(T, d, "units", "unit_extents")->per_id, 4, "unit_extents per id");
 	c = dat_column(T, d, "units", "infestation");
@@ -363,21 +357,7 @@ static void dat_layout(KpT *T)
 	kp_t_eq(T, records_of(d, "images"), 999, "images records");
 }
 
-static void dat_rejects_other_kinds(KpT *T)
-{
-	size_t size;
-	uint8_t *data;
-	KpDat d;
-	KpError err;
-	int r;
-	if (!ready(T, "test_data")) return;
-	data = fixture(T, "mission.kpm", &size);
-	r = kp_dat_load(&d, data, size, "mission.kpm", NULL, &err);
-	if (r == 0) kp_dat_free(&d);
-	raised(T, r, &err, "file kind", "a mission as dat.kpd");
-}
-
-/* --- the mission container --- */
+/* --- the mission from its scenario --- */
 
 static void free_mission(void *p)
 {
@@ -385,19 +365,15 @@ static void free_mission(void *p)
 	free(p);
 }
 
+/* The fixture scenario (campaign\fixture: 8 x 4, version 205, colours, forces, overrides, a.wav found and b.wav
+ * missing) with its derived sections over the fixture tileset. */
 static KpMission *load_mission(KpT *T)
 {
-	const KpJson *hash = member(T, expect(T), "source_hash");
+	KpFiles f = kp_t_fixture_files(T);
 	KpMission *m = (KpMission *)calloc(1, sizeof *m);
-	KpKpfExpect x;
 	KpError err;
-	size_t size;
-	uint8_t *data = fixture(T, "mission.kpm", &size);
 	kp_t_ok(T, m != NULL, "out of memory");
-	memset(&x, 0, sizeof x);
-	x.profile_id = "bw-1.17.0.1";
-	x.source_hash = (const uint8_t *)hash->s;
-	if (kp_mission_load(m, data, size, "mission.kpm", &x, &err) != 0) {
+	if (kp_mission_from_files(m, &f, KP_T_FIXTURE_MISSION, &err) != 0) {
 		free(m);
 		kp_t_fail(T, "%s", err.msg);
 	}
@@ -575,29 +551,7 @@ static void mission_packs(KpT *T)
 	kp_t_ok(T, m->packs[1].size == 6 && memcmp(m->packs[1].data, "terran", 6) == 0, "the second pack is terran");
 }
 
-static void mission_rejects_other_kinds(KpT *T)
-{
-	KpMission m;
-	KpKpfExpect x;
-	KpError err;
-	size_t size;
-	uint8_t *data, other[32];
-	int r;
-	if (!ready(T, "test_data")) return;
-	data = fixture(T, "basic.kpd", &size);
-	r = kp_mission_load(&m, data, size, "basic.kpd", NULL, &err);
-	if (r == 0) kp_mission_free(&m);
-	raised(T, r, &err, "file kind", "basic.kpd as a mission");
-	data = fixture(T, "mission.kpm", &size);
-	memset(other, 'x', sizeof other);
-	memset(&x, 0, sizeof x);
-	x.source_hash = other;
-	r = kp_mission_load(&m, data, size, "mission.kpm", &x, &err);
-	if (r == 0) kp_mission_free(&m);
-	raised(T, r, &err, "different data set", "another data set");
-}
-
-/* --- grpmeta.kpd (the hits are the Python twin of 0x40fd50 on the raw GRP bytes) --- */
+/* --- grpmeta (the hits are the Python twin of 0x40fd50 on the raw GRP bytes) --- */
 
 static void free_grp(void *p)
 {
@@ -605,14 +559,46 @@ static void free_grp(void *p)
 	free(p);
 }
 
+/* images.dat's columns grpmeta reads, for three images: grp_file naming images.tbl entries 1, 3 and 4 and
+ * attack_overlay entry 2 (fixtures.py grpmeta_fixture: GRPs {1, 3, 4}, LOs {2}; the other overlays none). */
+static KpDat *grpmeta_dat(KpT *T)
+{
+	static const char *const COLUMNS[] = { "grp_file", "attack_overlay", "damage_overlay", "special_overlay",
+		"landing_dust_overlay", "lift_off_dust_overlay", "shield_overlay" };
+	static const uint32_t VALUES[2][3] = { { 1, 3, 4 }, { 2, 0, 0 } };
+	enum { IMAGES = 3, COLUMN_COUNT = sizeof COLUMNS / sizeof COLUMNS[0] };
+	KpDat *d = (KpDat *)calloc(1, sizeof *d);
+	KpError err;
+	size_t at = 0;
+	int k, i;
+	kp_t_ok(T, d != NULL, "out of memory");
+	if (kp_dat_alloc(d, (size_t)COLUMN_COUNT * IMAGES * 4, COLUMN_COUNT, &err) != 0) {
+		free(d);
+		kp_t_fail(T, "%s", err.msg);
+	}
+	kp_t_defer(T, free_dat, d);
+	for (k = 0; k < COLUMN_COUNT; k++) {
+		KpDatColumn *c = &d->columns[d->column_count++];
+		c->table = kp_dat_table_name("images");
+		snprintf(c->name, sizeof c->name, "%s", COLUMNS[k]);
+		c->size = 4;
+		c->per_id = 1;
+		c->count = IMAGES;
+		c->first_id = 0;
+		c->data = d->blob + at;
+		at += 4 * IMAGES;
+		for (i = 0; i < IMAGES; i++) kp_dat_set(d, c, (uint32_t)i, k < 2 ? VALUES[k][i] : 0);
+	}
+	return d;
+}
+
 static KpGrpMeta *load_grp(KpT *T)
 {
+	KpFiles f = kp_t_fixture_files(T);
 	KpGrpMeta *g = (KpGrpMeta *)calloc(1, sizeof *g);
 	KpError err;
-	size_t size;
-	uint8_t *data = fixture(T, "grpmeta.kpd", &size);
 	kp_t_ok(T, g != NULL, "out of memory");
-	if (kp_grpmeta_load(g, data, size, "grpmeta.kpd", NULL, &err) != 0) {
+	if (kp_grpmeta_from_files(g, &f, grpmeta_dat(T), &err) != 0) {
 		free(g);
 		kp_t_fail(T, "%s", err.msg);
 	}
@@ -744,7 +730,7 @@ static void grpmeta_image_lookup(KpT *T)
 	kp_t_eq(T, kp_grpmeta_grp_of_tbl(g, 6), 0, "an index past the table");
 }
 
-/* --- iscript.kpd and aiscript.kpd --- */
+/* --- the iscript and the AI scripts --- */
 
 static void free_script(void *p)
 {
@@ -756,14 +742,13 @@ static void scripts_iscript_headers(KpT *T)
 {
 	KpIScript *s;
 	KpError err;
-	size_t size;
-	uint8_t *data;
+	KpFiles f;
 	int32_t h;
 	if (!ready(T, "test_data")) return;
-	data = fixture(T, "iscript.kpd", &size);
+	f = kp_t_fixture_files(T);
 	s = (KpIScript *)calloc(1, sizeof *s);
 	kp_t_ok(T, s != NULL, "out of memory");
-	if (kp_iscript_load(s, data, size, "iscript.kpd", NULL, &err) != 0) {
+	if (kp_iscript_from_files(s, &f, &err) != 0) {
 		free(s);
 		kp_t_fail(T, "%s", err.msg);
 	}
@@ -788,12 +773,11 @@ static void scripts_ai_resolution(KpT *T)
 	};
 	KpAiBins b;
 	KpError err;
-	size_t size;
-	uint8_t *data;
+	KpFiles f;
 	int k;
 	if (!ready(T, "test_data")) return;
-	data = fixture(T, "aiscript.kpd", &size);
-	kp_t_ok(T, kp_ai_bins_load(&b, data, size, "aiscript.kpd", &err) == 0, "%s", err.msg);
+	f = kp_t_fixture_files(T);
+	kp_t_ok(T, kp_ai_bins_from_files(&b, &f, &err) == 0, "%s", err.msg);
 	for (k = 0; k < (int)(sizeof CASES / sizeof CASES[0]); k++) {
 		int bin = -1;
 		uint32_t off = kp_ai_bins_find(&b, kp_le_u32((const uint8_t *)CASES[k].id), &bin);
@@ -803,25 +787,6 @@ static void scripts_ai_resolution(KpT *T)
 		}
 	}
 	kp_ai_bins_free(&b);
-}
-
-static void scripts_kinds(KpT *T)
-{
-	KpIScript s;
-	KpAiBins b;
-	KpError err;
-	size_t size;
-	uint8_t *data;
-	int r;
-	if (!ready(T, "test_data")) return;
-	data = fixture(T, "aiscript.kpd", &size);
-	r = kp_iscript_load(&s, data, size, "aiscript.kpd", NULL, &err);
-	if (r == 0) kp_iscript_free(&s);
-	raised(T, r, &err, "file kind", "aiscript.kpd as iscript.kpd");
-	data = fixture(T, "iscript.kpd", &size);
-	r = kp_ai_bins_load(&b, data, size, "iscript.kpd", &err);
-	if (r == 0) kp_ai_bins_free(&b);
-	raised(T, r, &err, "file kind", "iscript.kpd as aiscript.kpd");
 }
 
 /* --- the override effects (the Python twin converter/derive/rules.py) --- */
@@ -920,7 +885,7 @@ static void rules_matches_python(KpT *T)
 	d = association_dat(T, member(T, e, "rule_associations"));
 	raw = fixture(T, "rules.bin", &size);
 	memset(&m, 0, sizeof m);
-	/* the sections as mission.kpm's RULE holds them: tag, u32 size, payload */
+	/* the sections as KpMission.rules hold them: tag, u32 size, payload */
 	while (pos + 8 <= size) {
 		uint32_t n = kp_le_u32(raw + pos + 4);
 		kp_t_ok(T, m.rule_count < 16 && pos + 8 + n <= size, "rules.bin's sections");
@@ -964,32 +929,55 @@ static void rules_matches_python(KpT *T)
 #define CV5_RECORD 52
 #define CV5_FLAG_MASK 0xd8fau
 
-static void load_tileset(KpT *T, KpTileset *ts)
+static void free_tileset(void *p)
 {
+	kp_tileset_free((KpTileset *)p);
+	free(p);
+}
+
+/* The fixture tileset (fixtures.py fixture_tileset, as desert): 70 CV5 groups over 40 megatiles, a WPE of
+ * (i * 3) % 256 but the fourth bytes, creep's two edges. */
+static KpTileset *load_tileset(KpT *T)
+{
+	KpFiles f = kp_t_fixture_files(T);
+	KpTileset *ts = (KpTileset *)calloc(1, sizeof *ts);
 	KpError err;
-	size_t size;
-	uint8_t *data = fixture(T, "tileset.kpd", &size);
-	kp_t_ok(T, kp_tileset_load(ts, data, size, "tileset.kpd", &err) == 0, "%s", err.msg);
+	kp_t_ok(T, ts != NULL, "out of memory");
+	if (kp_tileset_from_files(ts, &f, FIXTURE_TILESET, &err) != 0) {
+		free(ts);
+		kp_t_fail(T, "%s", err.msg);
+	}
+	kp_t_defer(T, free_tileset, ts);
+	return ts;
 }
 
 static void terrain_tileset(KpT *T)
 {
-	KpTileset ts;
+	KpTileset *ts;
+	const KpDefsTable *cyc;
+	int k;
 	if (!ready(T, "test_data")) return;
-	load_tileset(T, &ts);
-	kp_t_eq(T, ts.groups, 70, "CV5 groups");
-	kp_t_eq(T, ts.rgb[3], 4 * 3 % 256, "entry 1's red is WPE byte 4");
-	kp_t_eq(T, ts.cycles.speed, 8, "the cycles' speed");
-	kp_t_eq(T, ts.cycles.count, 3, "cycles");
-	kp_t_eq(T, ts.cycles.high[2], 254, "the third cycle's high index");
-	kp_t_eq(T, ts.megatiles, 40, "megatile flags 0..39");
-	kp_t_ok(T, ts.edge_count == 2 && ts.edge_png && ts.edge_size > 8 && memcmp(ts.edge_png + 1, "PNG", 3) == 0,
-		"creep's two edge frames, a PNG");
+	ts = load_tileset(T);
+	cyc = kp_defs_table(kp_t_fixture_profile(T), "CYC5");
+	kp_t_ok(T, cyc != NULL && cyc->size >= 2, "desert's compiled cycles");
+	kp_t_eq(T, ts->groups, 70, "CV5 groups");
+	kp_t_eq(T, ts->rgb[3], 4 * 3 % 256, "entry 1's red is WPE byte 4");
+	kp_t_eq(T, ts->cycles.count, cyc->data[0], "the cycles");
+	kp_t_eq(T, ts->cycles.speed, cyc->data[1], "the cycles' speed");
+	for (k = 0; k < ts->cycles.count; k++) {
+		kp_t_ok(T, ts->cycles.low[k] == cyc->data[2 + 2 * k] && ts->cycles.high[k] == cyc->data[3 + 2 * k], "cycle %d", k);
+	}
+	kp_t_eq(T, ts->megatiles, 40, "megatile flags 0..39");
+	kp_t_eq(T, ts->edge_count, 2, "creep's two edge frames");
+	kp_t_ok(T, ts->edges != NULL, "the edges' indices");
+	kp_t_eq(T, ts->edges[0], 5, "the full edge's index");
+	kp_t_eq(T, ts->edges[29 * 64 + 32 + 30], 7, "the corner edge's first pixel at (30, 29)");
+	kp_t_eq(T, ts->edges[29 * 64 + 32 + 31], 0, "a transparent pixel");
 }
 
 static void terrain_import_matches_python(KpT *T)
 {
-	KpTileset ts;
+	KpTileset *ts;
 	KpMission *m;
 	const KpJson *e, *ids, *flags;
 	uint16_t got[32];
@@ -997,19 +985,19 @@ static void terrain_import_matches_python(KpT *T)
 	int i;
 	if (!ready(T, "test_data")) return;
 	e = expect(T);
-	load_tileset(T, &ts);
+	ts = load_tileset(T);
 	m = load_mission(T);
 	kp_t_eq(T, (int64_t)m->width * m->height, 32, "the mission's cells");
-	kp_t_eq(T, kp_terrain_import(m, &ts, got, &bad), 0, "the import (bad cell %lld)", (long long)bad);
+	kp_t_eq(T, kp_terrain_import(m, ts, got, &bad), 0, "the import (bad cell %lld)", (long long)bad);
 	ids = member(T, e, "terrain_ids");
 	flags = member(T, e, "terrain_flags");
 	for (i = 0; i < 32; i++) {
 		uint32_t raw = kp_le_u16(m->tiles.data + 2 * i), group = (raw >> 4) & 0x7ff, mega = got[i] & 0x7fffu, f;
 		kp_t_eq(T, got[i], at_int(ids, i), "megatile %d", i);
-		/* ImportMapTiles' flags from the loader's CV5 and megatile flags (the game's own import, kp_start.c, is the
+		/* ImportMapTiles' flags from the tileset's CV5 and megatile flags (the game's own import, kp_start.c, is the
 		 * original's in test_initial_state's "tiles") */
-		kp_t_ok(T, mega < ts.megatiles, "megatile %u has flags", mega);
-		f = 0xffffu | (kp_le_u16(ts.cv5 + group * CV5_RECORD + 2) & CV5_FLAG_MASK) << 16 | kp_le_u32(ts.mflags + 4 * mega);
+		kp_t_ok(T, mega < ts->megatiles, "megatile %u has flags", mega);
+		f = 0xffffu | (kp_le_u16(ts->cv5 + group * CV5_RECORD + 2) & CV5_FLAG_MASK) << 16 | kp_le_u32(ts->mflags + 4 * mega);
 		if (raw >= 0x8000) f |= 0x00400000u;
 		kp_t_eq(T, f, at_int(flags, i), "flags %d", i);
 	}
@@ -1017,41 +1005,53 @@ static void terrain_import_matches_python(KpT *T)
 
 static void terrain_missing_group_stops(KpT *T)
 {
-	KpTileset ts;
+	KpTileset *ts;
 	KpMission *m;
 	uint16_t got[32];
 	int64_t bad = -1;
 	if (!ready(T, "test_data")) return;
-	load_tileset(T, &ts);
+	ts = load_tileset(T);
 	m = load_mission(T);
-	ts.groups = 63; /* tile 1008 (cell 8) selects group 63, now missing */
-	kp_t_eq(T, kp_terrain_import(m, &ts, got, &bad), -1, "the import stops");
+	ts->groups = 63; /* tile 1008 (cell 8) selects group 63, now missing */
+	kp_t_eq(T, kp_terrain_import(m, ts, got, &bad), -1, "the import stops");
 	kp_t_eq(T, bad, 8, "at cell 8");
 }
 
-/* --- palettes.kpd (pixel (row, column) of each synthetic PCX is
- * (row * 7 + column + salt) % 256, salt = len(tileset) + len(name)) --- */
+/* --- the palettes (pixel (row, column) of each synthetic PCX is (row * 7 + column + salt) % 256, salt = len(tileset) +
+ * len(name)) --- */
 
 #define OFIRE 0
 #define TRANS50 4
 
-static void load_palettes(KpT *T, KpPalettes *p)
+static void free_palettes(void *p)
 {
+	kp_palettes_free((KpPalettes *)p);
+	free(p);
+}
+
+static KpPalettes *load_palettes(KpT *T)
+{
+	KpFiles f = kp_t_fixture_files(T);
+	KpPalettes *p = (KpPalettes *)calloc(1, sizeof *p);
 	KpError err;
-	size_t size;
-	uint8_t *data = fixture(T, "palettes.kpd", &size);
-	kp_t_ok(T, kp_palettes_load(p, data, size, &err) == 0, "%s", err.msg);
+	kp_t_ok(T, p != NULL, "out of memory");
+	if (kp_palettes_from_files(p, &f, &err) != 0) {
+		free(p);
+		kp_t_fail(T, "%s", err.msg);
+	}
+	kp_t_defer(T, free_palettes, p);
+	return p;
 }
 
 static void palettes_tables(KpT *T)
 {
-	KpPalettes p;
+	KpPalettes *p;
 	const KpTilesetPalettes *badlands;
 	const KpRemapTable *ofire;
 	int salt;
 	if (!ready(T, "test_data")) return;
-	load_palettes(T, &p);
-	badlands = &p.tilesets[0];
+	p = load_palettes(T);
+	badlands = &p->tilesets[0];
 	ofire = &badlands->remap[OFIRE];
 	salt = (int)(strlen("badlands") + strlen("ofire"));
 	kp_t_eq(T, ofire->rows, 64, "ofire's rows");
@@ -1060,26 +1060,26 @@ static void palettes_tables(KpT *T)
 	kp_t_eq(T, ofire->data[2 * 256 + 3], (7 + 3 + salt) % 256, "PCX row 1 column 3");
 	kp_t_eq(T, badlands->remap[TRANS50].rows, 256, "trans50's rows");
 	kp_t_eq(T, badlands->dark[256], (7 + 8 + 4) % 256, "dark row 1");
-	kp_t_eq(T, p.tilesets[7].shift[0], (8 + 5) % 256, "twilight's shift row");
+	kp_t_eq(T, p->tilesets[7].shift[0], (8 + 5) % 256, "twilight's shift row");
 }
 
 static void palettes_game_tables(KpT *T)
 {
-	KpPalettes p;
+	KpPalettes *p;
 	int salt = (int)strlen("game\\tunit.pcx");
 	if (!ready(T, "test_data")) return;
-	load_palettes(T, &p);
-	kp_t_eq(T, (int64_t)p.tunit_size, 0x60, "tunit");
-	kp_t_eq(T, (int64_t)p.tminimap_size, 12, "tminimap");
-	kp_t_eq(T, (int64_t)p.tselect_size, 24, "tselect");
-	kp_t_eq(T, (int64_t)p.thpbar_size, 19, "thpbar");
-	kp_t_eq(T, p.tunit[2 * 8 + 3], (16 + 3 + salt) % 256, "player 2's colour 3");
+	p = load_palettes(T);
+	kp_t_eq(T, (int64_t)p->tunit_size, 0x60, "tunit");
+	kp_t_eq(T, (int64_t)p->tminimap_size, 12, "tminimap");
+	kp_t_eq(T, (int64_t)p->tselect_size, 24, "tselect");
+	kp_t_eq(T, (int64_t)p->thpbar_size, 19, "thpbar");
+	kp_t_eq(T, p->tunit[2 * 8 + 3], (16 + 3 + salt) % 256, "player 2's colour 3");
 }
 
-/* The executable's tables compiled in (kp_defs.h, ADR 0018 stage D2), each found by its fourcc: the containers' sections
- * of the same name, and the lists the runtime builds its structures from the original files with (stage D3: the
+/* The executable's tables compiled in (kp_defs.h, ADR 0018 stage D2), each found by its fourcc: the converter's tables
+ * (tools/defs_c.py), and the lists the runtime builds its structures from the original files with (stage D3: the
  * tilesets' cycles, the fonts' paths, the interface's dialogs and files; stage D4: the CHK loader tables and the
- * missions' packs), which no container carries. */
+ * missions' packs). */
 static const char *const DEFS_TABLES[] = { "ACCL", "BTNS", "CHEA", "COLS", "ESTB", "MUSI", "RQOR", "RQRS", "RQTU",
 	"RQUN", "RQUP", "SLOT", "STLY", "TABL", "VOLT" };
 static const char *const BUILT_TABLES[] = { "CHKL", "CINM", "CYC0", "CYC1", "CYC2", "CYC3", "CYC4", "CYC5", "CYC6",
@@ -1104,99 +1104,6 @@ static void defs_tables_are_compiled(KpT *T)
 		"no other table");
 }
 
-/* kp_kpf_table: a container's own section first (the fixtures' tables), else the compiled table of its profile, else
- * none with the error. */
-static void kpf_table_falls_back_to_the_compiled(KpT *T)
-{
-	static const uint8_t own[] = { 1, 7, 9 };
-	const KpDefsTable *slot = kp_defs_table(&kp_defs_bw_1_17_0_1, "SLOT");
-	KpKpfOut out;
-	uint8_t *with = NULL, *without = NULL, *other = NULL;
-	size_t with_size = 0, without_size = 0, other_size = 0, n;
-	const uint8_t *p;
-	uint32_t size = 1;
-	KpKpf c;
-	KpError err;
-	memset(&out, 0, sizeof out);
-	out.fourcc = "SLOT";
-	out.payload = own;
-	out.size = sizeof own;
-	kp_t_ok(T, kp_kpf_build("ISCR", 2, 1, "bw-1.17.0.1", NULL, &out, 1, &with, &with_size) == 0
-		&& kp_kpf_build("ISCR", 2, 1, "bw-1.17.0.1", NULL, NULL, 0, &without, &without_size) == 0
-		&& kp_kpf_build("ISCR", 2, 1, "bw-0", NULL, NULL, 0, &other, &other_size) == 0, "the containers built");
-	kp_t_defer(T, free, with);
-	kp_t_defer(T, free, without);
-	kp_t_defer(T, free, other);
-	p = kp_kpf_table_in(with, with_size, "SLOT", &n);
-	kp_t_ok(T, p != NULL && n == sizeof own && memcmp(p, own, n) == 0, "the container's own SLOT");
-	p = kp_kpf_table_in(without, without_size, "SLOT", &n);
-	kp_t_ok(T, slot != NULL && p == slot->data && n == slot->size, "the compiled SLOT");
-	p = kp_kpf_table_in(other, other_size, "SLOT", &n);
-	kp_t_ok(T, p == NULL && n == 0, "none for another profile");
-	kp_t_ok(T, kp_kpf_parse(&c, other, other_size, "other", 0, &err) == 0, "%s", err.msg);
-	p = kp_kpf_table(&c, "SLOT", &size, &err);
-	kp_kpf_free(&c);
-	kp_t_ok(T, p == NULL && size == 0 && strstr(err.msg, "no section SLOT") != NULL, "the error: %s", err.msg);
-}
-
-/* The compiled tables equal the converted data's sections of the same name (the converter writes both with the same
- * functions, tools/defs_c.py). */
-static void defs_tables_equal_the_converted_sections(KpT *T)
-{
-	static const struct {
-		const char *file, *fourccs[7];
-	} FILES[] = {
-		{ "generated/data/dat.kpd", { "COLS", "RQOR", "RQRS", "RQTU", "RQUN", "RQUP", NULL } },
-		{ "generated/data/iscript.kpd", { "SLOT", NULL } },
-		{ "generated/data/campaign.kpd", { "TABL", "CHEA", NULL } },
-		{ "generated/data/ui.kpd", { "ACCL", "BTNS", "ESTB", "MUSI", "STLY", "VOLT" } },
-	};
-	static const char *const NEEDED[] = { "generated/data/dat.kpd", "generated/data/iscript.kpd",
-		"generated/data/campaign.kpd", "generated/data/ui.kpd", NULL };
-	size_t f;
-	int k, compared = 0;
-	if (!kp_t_ready(T, "the converted data", NEEDED)) return;
-	for (f = 0; f < sizeof FILES / sizeof FILES[0]; f++) {
-		size_t size, n;
-		uint8_t *data = kp_t_read(T, FILES[f].file, &size);
-		for (k = 0; k < 7 && FILES[f].fourccs[k]; k++) {
-			const char *fourcc = FILES[f].fourccs[k];
-			const uint8_t *s = kp_kpf_section(data, size, fourcc, &n);
-			const KpDefsTable *t = kp_defs_table(&kp_defs_bw_1_17_0_1, fourcc);
-			kp_t_ok(T, s != NULL && t != NULL && n == t->size && memcmp(s, t->data, n) == 0, "%s's %s", FILES[f].file,
-				fourcc);
-			compared++;
-		}
-	}
-	kp_t_eq(T, compared, (int64_t)DEFS_COUNT, "every section's table compared");
-}
-
-/* The frames' offsets computed from GRPS (kp_grpmeta_afrm) equal the converted grpmeta's AFRM: the original data's
- * grpmeta has no such section (ADR 0018, stage D5). */
-static void grpmeta_afrm_equals_the_converted_section(KpT *T)
-{
-	static const char *const NEEDED[] = { "generated/data/grpmeta.kpd", NULL };
-	KpGrpMeta *g;
-	KpError err;
-	uint32_t *afrm = NULL, k, ok = 1;
-	const uint8_t *s;
-	size_t size, n;
-	uint8_t *data;
-	if (!kp_t_ready(T, "the converted data", NEEDED)) return;
-	data = kp_t_read(T, "generated/data/grpmeta.kpd", &size);
-	g = (KpGrpMeta *)calloc(1, sizeof *g);
-	kp_t_ok(T, g != NULL, "out of memory");
-	kp_t_ok(T, kp_grpmeta_load(g, data, size, "grpmeta.kpd", NULL, &err) == 0, "%s", err.msg);
-	kp_t_defer(T, free_grp, g);
-	kp_t_ok(T, kp_grpmeta_afrm(g, &afrm, &err) == 0, "%s", err.msg);
-	kp_t_defer(T, free, afrm);
-	s = kp_kpf_section(data, size, "AFRM", &n);
-	kp_t_ok(T, s != NULL && n == 2 + 4 * (size_t)g->grp_count && kp_le_u16(s) == g->grp_count, "AFRM's count");
-	for (k = 0; k < g->grp_count && ok; k++) ok = afrm[k] == kp_le_u32(s + 2 + 4 * (size_t)k);
-	kp_t_ok(T, ok, "entry %u's offset", (unsigned)(k - 1));
-	kp_t_ok(T, g->grp_count > 100, "a full data set's GRPs (%u)", (unsigned)g->grp_count);
-}
-
 static const KpTest TESTS[] = {
 	{ "kpf_header", kpf_header, 0 },
 	{ "kpf_section_payloads", kpf_section_payloads, 0 },
@@ -1207,7 +1114,6 @@ static const KpTest TESTS[] = {
 	{ "kpf_crc32_known", kpf_crc32_known, 0 },
 	{ "dat_columns_match_python", dat_columns_match_python, 0 },
 	{ "dat_layout", dat_layout, 0 },
-	{ "dat_rejects_other_kinds", dat_rejects_other_kinds, 0 },
 	{ "mission_meta", mission_meta, 0 },
 	{ "mission_raw_sections", mission_raw_sections, 0 },
 	{ "mission_rules_in_dispatch_order", mission_rules_in_dispatch_order, 0 },
@@ -1215,17 +1121,14 @@ static const KpTest TESTS[] = {
 	{ "mission_map_strings", mission_map_strings, 0 },
 	{ "mission_derived_sections", mission_derived_sections, 0 },
 	{ "mission_packs", mission_packs, 0 },
-	{ "mission_rejects_other_kinds", mission_rejects_other_kinds, 0 },
 	{ "grpmeta_entries_and_atlases", grpmeta_entries_and_atlases, 0 },
 	{ "grpmeta_frames", grpmeta_frames, 0 },
 	{ "grpmeta_pixel_opaque_matches_python_twin", grpmeta_pixel_opaque_matches_python_twin, 0 },
 	{ "grpmeta_run_boundaries", grpmeta_run_boundaries, 0 },
 	{ "grpmeta_lo_points", grpmeta_lo_points, 0 },
-	{ "grpmeta_afrm_equals_the_converted_section", grpmeta_afrm_equals_the_converted_section, 0 },
 	{ "grpmeta_image_lookup", grpmeta_image_lookup, 0 },
 	{ "scripts_iscript_headers", scripts_iscript_headers, 0 },
 	{ "scripts_ai_resolution", scripts_ai_resolution, 0 },
-	{ "scripts_kinds", scripts_kinds, 0 },
 	{ "rules_matches_python", rules_matches_python, 0 },
 	{ "terrain_tileset", terrain_tileset, 0 },
 	{ "terrain_import_matches_python", terrain_import_matches_python, 0 },
@@ -1233,7 +1136,5 @@ static const KpTest TESTS[] = {
 	{ "palettes_tables", palettes_tables, 0 },
 	{ "palettes_game_tables", palettes_game_tables, 0 },
 	{ "defs_tables_are_compiled", defs_tables_are_compiled, 0 },
-	{ "kpf_table_falls_back_to_the_compiled", kpf_table_falls_back_to_the_compiled, 0 },
-	{ "defs_tables_equal_the_converted_sections", defs_tables_equal_the_converted_sections, 0 },
 };
 KP_SUITE(kp_suite_data, "test_data", TESTS);

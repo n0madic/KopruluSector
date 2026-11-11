@@ -27,61 +27,22 @@
 #define RESULT_START 101      /* the ready room's Start once the turn steps confirmed it (kp_ui_briefing.c) */
 #define DEFAULT_NAME "Player"
 
-const char *const KP_UI_FILE_NAMES[KP_UI_FILES] = { "ui.kpd", "fonts.kpd", "strings.kpd", "portraits.kpd", "sounds.kpd",
-	"campaign.kpd" };
-
 static const char *const RACE_GRPS[3] = { "dlgs\\zerg.grp", "dlgs\\terran.grp", "dlgs\\protoss.grp" };
-
-/* campaign.kpd's CHEA and TABL payloads (in its bytes); -1 when one is missing. */
-static int campaign_sections(const uint8_t *data, size_t size, const uint8_t **chea, size_t *cn, const uint8_t **tabl,
-	size_t *tn)
-{
-	*chea = kp_kpf_table_in(data, size, "CHEA", cn);
-	*tabl = kp_kpf_table_in(data, size, "TABL", tn);
-	return *chea && *tabl ? 0 : -1;
-}
-
-/* A new interface's language, cheats and campaign tables (chea, tabl NULL: missing); ui, else NULL (ui freed). */
-static KpUi *interface_end(KpUi *ui, const KpUiLocale *locale, const uint8_t *chea, size_t cn, const uint8_t *tabl,
-	size_t tn, char *err, size_t err_size)
-{
-	if (locale != NULL) kp_ui_set_locale(ui, locale);
-	if (!chea || !tabl || kp_ui_set_cheats(ui, chea, cn) != 0) {
-		snprintf(err, err_size, "ui: no campaign CHEA or TABL table");
-		kp_ui_free(ui);
-		return NULL;
-	}
-	ui->menus.campaign = tabl;
-	ui->menus.campaign_size = tn;
-	return ui;
-}
-
-KpUi *kp_interface_new(uint8_t *const files[KP_UI_FILES], const size_t sizes[KP_UI_FILES], const KpUiLocale *locale,
-	char *err, size_t err_size)
-{
-	KpUi *ui = kp_ui_new(files[KP_UI_FILE_UI], sizes[KP_UI_FILE_UI], files[KP_UI_FILE_FONTS], sizes[KP_UI_FILE_FONTS], err,
-		err_size);
-	const uint8_t *chea = NULL, *tabl = NULL;
-	size_t cn = 0, tn = 0;
-	if (!ui) return NULL;
-	if (kp_ui_set_strings(ui, files[KP_UI_FILE_STRINGS], sizes[KP_UI_FILE_STRINGS]) != 0
-		|| kp_ui_set_portraits(ui, files[KP_UI_FILE_PORTRAITS], sizes[KP_UI_FILE_PORTRAITS]) != 0
-		|| kp_ui_set_sounds(ui, files[KP_UI_FILE_SOUNDS], sizes[KP_UI_FILE_SOUNDS]) != 0) {
-		snprintf(err, err_size, "ui: %s", ui->error);
-		kp_ui_free(ui);
-		return NULL;
-	}
-	(void)campaign_sections(files[KP_UI_FILE_CAMPAIGN], sizes[KP_UI_FILE_CAMPAIGN], &chea, &cn, &tabl, &tn);
-	return interface_end(ui, locale, chea, cn, tabl, tn, err, err_size);
-}
 
 KpUi *kp_interface_new_data(const KpUiData *d, const KpUiLocale *locale, char *err, size_t err_size)
 {
 	KpUi *ui = kp_ui_new_data(d, err, err_size);
 	const KpDefsTable *chea = kp_defs_table(d->profile, "CHEA"), *tabl = kp_defs_table(d->profile, "TABL");
 	if (!ui) return NULL;
-	return interface_end(ui, locale, chea ? chea->data : NULL, chea ? chea->size : 0, tabl ? tabl->data : NULL,
-		tabl ? tabl->size : 0, err, err_size);
+	if (locale != NULL) kp_ui_set_locale(ui, locale);
+	if (!chea || !tabl || kp_ui_set_cheats(ui, chea->data, chea->size) != 0) {
+		snprintf(err, err_size, "ui: no campaign CHEA or TABL table");
+		kp_ui_free(ui);
+		return NULL;
+	}
+	ui->menus.campaign = tabl->data;
+	ui->menus.campaign_size = tabl->size;
+	return ui;
 }
 
 int kp_hud_colours(KpUi *ui, const KpHudMap *map)

@@ -1,8 +1,10 @@
 /* A language over the base (ADR 0016, localization's stage L2): the glyph supplements of the text engine and the vector
  * text, kp_fnt_supplement, the overlays of the interface (kp_ui_set_locale) and of a mission (kp_host_game_text), and
  * what a language must not change: every mission's state under a language's text is the base's. The small cases build
- * their overlays here over the converter's fixtures; the ones over the real data skip without generated/. */
+ * their overlays here over the converter's fixtures; the ones over the real data (the original data's interface,
+ * kp_t_data, and the converter's packs of the languages) skip without them. */
 #include "kp_test_app.h"
+#include "kp_test_ui.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,11 +20,10 @@
 #include "kp_text.h"
 #include "kp_utf8.h"
 
-#define DIR "tests/fixtures/generated/kpf/"
+#define DIR KP_T_FIXTURES
 #define LOCALE_DIR "generated/locale/"
 #define RU LOCALE_DIR "ruRU/"
 #define GLYPHS LOCALE_DIR "glyphs.kpd"
-#define MISSIONS "generated/missions/"
 #define PROFILE "test"
 #define SEED 0x12345678u
 #define NO_STRING 0xffffu
@@ -32,12 +33,11 @@
 #define ERROR_SIZE 256
 
 static const char *const FIXTURES[] = { DIR "ui.kpd", DIR "fonts.kpd", NULL };
-static const char *const REAL_UI[] = { "generated/data/ui.kpd", "generated/data/fonts.kpd", NULL };
-static const char *const REAL_LANGUAGE[] = { "generated/data/ui.kpd", "generated/data/fonts.kpd", "generated/data/strings.kpd",
-	RU "strings.kpd", RU "ui.kpd", GLYPHS, NULL };
+static const char *const REAL_UI[] = { KP_T_DATA, NULL };
+static const char *const REAL_LANGUAGE[] = { KP_T_DATA, RU "strings.kpd", RU "ui.kpd", GLYPHS, NULL };
 /* What every language's test needs besides the language's own packs. */
-static const char *const REAL_BASE[] = { "generated/data/ui.kpd", "generated/data/fonts.kpd", "generated/data/strings.kpd", GLYPHS, NULL };
-static const char *const REAL_MISSION_BASE[] = { KP_T_DATA, MISSIONS "index.txt", NULL };
+static const char *const REAL_BASE[] = { KP_T_DATA, GLYPHS, NULL };
+static const char *const REAL_MISSION_BASE[] = { KP_T_DATA, NULL };
 
 /* The languages the converter writes (defs/l10n/locales.json, but the base): the real-data tests run each one whose packs
  * are in generated/locale (`converter locale --locale all` converts the install's), and skip the others. */
@@ -88,18 +88,15 @@ static void free_vtext(void *p)
 	free(p);
 }
 
-static KpUi *ui_over(KpT *T, const char *ui_path, const char *fonts_path)
+/* An interface over the original data's (kp_t_data: its strings, sounds and portraits the base's). */
+static KpUi *real_ui(KpT *T)
 {
-	size_t ui_size, fonts_size;
-	uint8_t *ui_kpd = kp_t_read(T, ui_path, &ui_size), *fonts = kp_t_read(T, fonts_path, &fonts_size);
 	char err[ERROR_SIZE];
-	KpUi *ui = kp_ui_new(ui_kpd, ui_size, fonts, fonts_size, err, sizeof err);
+	KpUi *ui = kp_ui_new_data(&kp_t_data(T)->ui, err, sizeof err);
 	kp_t_ok(T, ui != NULL, "%s", err);
 	kp_t_defer(T, free_ui, ui);
 	return ui;
 }
-
-static KpUi *fixture_ui(KpT *T) { return ui_over(T, DIR "ui.kpd", DIR "fonts.kpd"); }
 
 /* A container of sections (freed with the test). */
 static uint8_t *pack(KpT *T, const char *kind, uint32_t schema, const KpKpfOut *sections, int count, size_t *size)
@@ -164,7 +161,7 @@ static void supplement_finds_measures_and_draws(KpT *T)
 	KpUi *ui;
 	KpUiText t;
 	if (!kp_t_ready(T, "test_locale", FIXTURES)) return;
-	ui = fixture_ui(T);
+	ui = kp_t_fixture_ui(T);
 	kp_ui_text_init(&t);
 	kp_t_eq(T, kp_ui_text_select_font(&t, ui->font_files[0], ui->font_file_sizes[0]), 0, NULL);
 	kp_t_ok(T, !kp_ui_has_glyph(&t, SUP_FIRST), "no supplement: no glyph");
@@ -203,7 +200,7 @@ static void supplement_comes_before_an_untrue_slot(KpT *T)
 	KpUi *ui;
 	KpUiText t;
 	if (!kp_t_ready(T, "test_locale", FIXTURES)) return;
-	ui = fixture_ui(T);
+	ui = kp_t_fixture_ui(T);
 	kp_ui_text_init(&t);
 	kp_t_eq(T, kp_ui_text_select_font(&t, ui->font_files[0], ui->font_file_sizes[0]), 0, NULL);
 	kp_t_eq(T, kp_ui_text_add_supplement(&t, ui->font_files[0], DASH, sizeof DASH), 0, NULL);
@@ -227,7 +224,7 @@ static void supplement_tells_a_missing_code_once(KpT *T)
 	KpUiText t;
 	static const uint8_t TEXT[] = "\xd0\x97\xd0\x97\xd0\x98";
 	if (!kp_t_ready(T, "test_locale", FIXTURES)) return;
-	ui = fixture_ui(T);
+	ui = kp_t_fixture_ui(T);
 	kp_ui_text_init(&t);
 	kp_t_eq(T, kp_ui_text_select_font(&t, ui->font_files[0], ui->font_file_sizes[0]), 0, NULL);
 	t.measuring = 1;
@@ -247,7 +244,7 @@ static void supplement_malformed_is_not_taken(KpT *T)
 	KpUi *ui;
 	KpUiText t;
 	if (!kp_t_ready(T, "test_locale", FIXTURES)) return;
-	ui = fixture_ui(T);
+	ui = kp_t_fixture_ui(T);
 	kp_ui_text_init(&t);
 	kp_t_eq(T, kp_ui_text_select_font(&t, ui->font_files[0], ui->font_file_sizes[0]), 0, NULL);
 	kp_t_eq(T, kp_ui_supplement_count(NULL, 0), -1, "none");
@@ -299,8 +296,8 @@ static void fnt_supplement_from_a_truetype_font(KpT *T)
 	KpUiText t;
 	int font;
 	if (!kp_t_ready(T, "test_locale.fnt_supplement", REAL_UI) || !kp_t_ready(T, "test_locale", FIXTURES)) return;
-	ui = ui_over(T, "generated/data/ui.kpd", "generated/data/fonts.kpd");
-	fixture = fixture_ui(T);
+	ui = real_ui(T);
+	fixture = kp_t_fixture_ui(T);
 	kp_t_eq(T, kp_ui_vector_fonts(ui, &files, &sizes), 2, "ui.kpd's VFNT");
 	/* the refusals */
 	{
@@ -384,7 +381,7 @@ static void fnt_supplement_keeps_the_fonts_colours(KpT *T)
 	KpUi *ui;
 	int font;
 	if (!kp_t_ready(T, "test_locale.fnt_supplement", REAL_UI)) return;
-	ui = ui_over(T, "generated/data/ui.kpd", "generated/data/fonts.kpd");
+	ui = real_ui(T);
 	kp_t_eq(T, kp_ui_vector_fonts(ui, &files, &sizes), 2, "ui.kpd's VFNT");
 	for (k = 0; k < COUNT; k++) codes[k] = FIRST + k;
 	for (font = 0; font < KP_UI_FNT_FONTS; font++) {
@@ -465,22 +462,22 @@ enum { PAST_U16 = 70000, TABLE_ROOM = 256 };
 static const char *const BASE_ROWS[] = { "first", "second" };
 static const char *const OUR_ROWS[] = { "\xd0\xbf\xd0\xb5\xd1\x80\xd0\xb2\xd0\xb0\xd1\x8f", "\xd0\xb2\xd1\x82\xd0\xbe\xd1\x80\xd0\xb0\xd1\x8f" };
 
+/* An interface over the fixture's data whose STAT and NETW are BASE_ROWS (the other tables empty). */
 static KpUi *strings_ui(KpT *T)
 {
 	static uint8_t base[TABLE_ROOM];
-	KpKpfOut sections[2];
-	size_t size, table = narrow_table(base, BASE_ROWS, 2);
-	const uint8_t *file;
-	KpUi *ui = fixture_ui(T);
-	memset(sections, 0, sizeof sections);
-	sections[0].fourcc = "STAT";
-	sections[0].payload = base;
-	sections[0].size = table;
-	sections[1].fourcc = "NETW";
-	sections[1].payload = base;
-	sections[1].size = table;
-	file = pack(T, "STRS", 1, sections, 2, &size);
-	kp_t_eq(T, kp_ui_set_strings(ui, file, size), 0, "%s", ui->error);
+	size_t table = narrow_table(base, BASE_ROWS, 2);
+	KpUiData *d = kp_t_fixture_ui_data(T);
+	char err[ERROR_SIZE];
+	KpUi *ui;
+	int k;
+	for (k = 0; k < KP_UI_TBLS; k++) {
+		d->tbl[k].data = k < 2 ? base : (const uint8_t *)"\0";
+		d->tbl[k].size = k < 2 ? table : 2;
+	}
+	ui = kp_ui_new_data(d, err, sizeof err);
+	kp_t_ok(T, ui != NULL, "%s", err);
+	kp_t_defer(T, free_ui, ui);
 	return ui;
 }
 
@@ -610,20 +607,11 @@ static void overlay_ui(KpT *T, KpUi *ui, const uint8_t *dlgs, size_t dlgs_size, 
 
 static uint8_t *copy_section(KpT *T, const char *fourcc, size_t *size)
 {
-	KpKpf c;
-	KpError e;
-	size_t file_size;
-	uint8_t *data = kp_t_read(T, DIR "ui.kpd", &file_size), *copy;
-	const KpKpfSection *s;
-	kp_t_eq(T, kp_kpf_parse(&c, data, file_size, "ui", 0, &e), 0, "%s", e.msg);
-	s = kp_kpf_find(&c, fourcc);
-	kp_t_ok(T, s != NULL, "the fixture's %s", fourcc);
-	copy = (uint8_t *)malloc(s->size);
+	const uint8_t *s = kp_t_fixture_section(T, "ui.kpd", fourcc, size);
+	uint8_t *copy = (uint8_t *)malloc(*size ? *size : 1);
 	if (!copy) kp_t_fail(T, "out of memory");
 	kp_t_defer(T, free, copy);
-	memcpy(copy, s->data, s->size);
-	*size = s->size;
-	kp_kpf_free(&c);
+	memcpy(copy, s, *size);
 	return copy;
 }
 
@@ -641,7 +629,7 @@ static void dialogs_take_the_languages_texts(KpT *T)
 	kp_t_ok(T, at != NULL && memcmp(at, "quit", 4) == 0, "the fixture's text");
 	memcpy(at, "q\xd0\x96x", 4);
 	/* the same dialogs */
-	ui = fixture_ui(T);
+	ui = kp_t_fixture_ui(T);
 	overlay_ui(T, ui, dlgs, dlgs_size, pool, pool_size, NULL, 0);
 	kp_t_eq_str(T, ui->locale_problem, "", "accepted");
 	d = kp_ui_load_dialog(ui, "rez\\x.bin");
@@ -649,7 +637,7 @@ static void dialogs_take_the_languages_texts(KpT *T)
 	button = &ui->controls[ui->controls[d].child];
 	kp_t_eq_str(T, (const char *)button->text, "q\xd0\x96x", "the language's text");
 	/* other dialogs: the name of the only one */
-	ui = fixture_ui(T);
+	ui = kp_t_fixture_ui(T);
 	at = (uint8_t *)memchr(dlgs, 'x', dlgs_size);
 	kp_t_ok(T, at != NULL, "the dialog's name");
 	*at = 'y';
@@ -659,12 +647,12 @@ static void dialogs_take_the_languages_texts(KpT *T)
 	kp_t_eq_str(T, (const char *)ui->controls[ui->controls[kp_ui_load_dialog(ui, "rez\\x.bin")].child].text, "quit", "and their text");
 	*at = 'x';
 	/* a cut section */
-	ui = fixture_ui(T);
+	ui = kp_t_fixture_ui(T);
 	overlay_ui(T, ui, dlgs, dlgs_size / 2, pool, pool_size, NULL, 0);
 	kp_t_ok(T, strstr(ui->locale_problem, "malformed") != NULL, "%s", ui->locale_problem);
 	kp_t_ok(T, ui->bin_count == 1 && kp_ui_load_dialog(ui, "rez\\x.bin") >= 0, "the base's stay");
 	/* a POOL whose last text has no NUL */
-	ui = fixture_ui(T);
+	ui = kp_t_fixture_ui(T);
 	kp_t_ok(T, pool_size >= 2 && pool[pool_size - 1] == 0 && pool[pool_size - 2] != 0, "the fixture's last text");
 	overlay_ui(T, ui, dlgs, dlgs_size, pool, pool_size - 1, NULL, 0);
 	kp_t_ok(T, strstr(ui->locale_problem, "malformed") != NULL, "%s", ui->locale_problem);
@@ -678,7 +666,7 @@ static void scripts_are_read_from_the_language_first(KpT *T)
 	KpUi *ui;
 	const KpUiFile *f;
 	if (!kp_t_ready(T, "test_locale", FIXTURES)) return;
-	ui = fixture_ui(T);
+	ui = kp_t_fixture_ui(T);
 	f = kp_ui_glue_file(ui, OURS);
 	kp_t_ok(T, f != NULL && f->size == 3 && memcmp(f->data, "abc", 3) == 0, "the base's file");
 	kp_t_ok(T, kp_ui_glue_file(ui, NEW) == NULL, "a file the base lacks");
@@ -705,7 +693,7 @@ static void scripts_are_read_from_the_language_first(KpT *T)
 	f = kp_ui_glue_file(ui, NEW);
 	kp_t_ok(T, f != NULL && f->size == 2 && memcmp(f->data, "hi", 2) == 0, "and its own");
 	/* a malformed section leaves the base */
-	ui = fixture_ui(T);
+	ui = kp_t_fixture_ui(T);
 	put_u16(gfil, 300);
 	overlay_ui(T, ui, NULL, 0, NULL, 0, gfil, 8);
 	kp_t_ok(T, strstr(ui->locale_problem, "malformed") != NULL, "%s", ui->locale_problem);
@@ -725,7 +713,7 @@ static void glyphs_join_every_font_and_replace_the_vector_fonts(KpT *T)
 	uint8_t bad[sizeof SUPPLEMENT];
 	int k;
 	if (!kp_t_ready(T, "test_locale", FIXTURES)) return;
-	ui = fixture_ui(T);
+	ui = kp_t_fixture_ui(T);
 	memset(out, 0, sizeof out);
 	memset(&locale, 0, sizeof locale);
 	for (k = 0; k < KP_UI_FNT_FONTS; k++) {
@@ -748,7 +736,7 @@ static void glyphs_join_every_font_and_replace_the_vector_fonts(KpT *T)
 	kp_t_eq(T, kp_ui_vector_fonts(ui, &files, &sizes), 2, "the language's vector fonts");
 	kp_t_ok(T, sizes[0] == 2 && memcmp(files[0], "v0", 2) == 0 && sizes[1] == 2 && memcmp(files[1], "v1", 2) == 0, "their bytes");
 	/* one malformed font: refused, the others stay */
-	ui = fixture_ui(T);
+	ui = kp_t_fixture_ui(T);
 	memcpy(bad, SUPPLEMENT, sizeof bad);
 	put_u32(bad, 0xffffu);
 	out[1].payload = bad;
@@ -767,11 +755,8 @@ static KpUi *real_language(KpT *T, const char *name)
 {
 	KpUiLocale locale;
 	char path[96];
-	size_t strings_size;
-	const uint8_t *strings = kp_t_read(T, "generated/data/strings.kpd", &strings_size);
-	KpUi *ui = ui_over(T, "generated/data/ui.kpd", "generated/data/fonts.kpd");
+	KpUi *ui = real_ui(T);
 	memset(&locale, 0, sizeof locale);
-	kp_t_eq(T, kp_ui_set_strings(ui, strings, strings_size), 0, "%s", ui->error);
 	language_file(path, sizeof path, name, "strings.kpd");
 	locale.strings = kp_t_read(T, path, &locale.strings_size);
 	language_file(path, sizeof path, name, "ui.kpd");
@@ -1057,15 +1042,6 @@ static int has_cut(const Cuts *cuts, const Cut *k)
 	return 0;
 }
 
-static KpUi *real_base(KpT *T)
-{
-	size_t strings_size;
-	const uint8_t *strings = kp_t_read(T, "generated/data/strings.kpd", &strings_size);
-	KpUi *ui = ui_over(T, "generated/data/ui.kpd", "generated/data/fonts.kpd");
-	kp_t_eq(T, kp_ui_set_strings(ui, strings, strings_size), 0, "%s", ui->error);
-	return ui;
-}
-
 static void free_cuts(void *p) { free(p); }
 
 /* The cuts of `cuts` that `except` lacks (all of them with NULL) as JSON at `path`; their count. */
@@ -1140,7 +1116,7 @@ static void the_languages_texts_fit(KpT *T)
 	base_cuts = (Cuts *)calloc(1, sizeof *base_cuts);
 	if (base_cuts == NULL) kp_t_fail(T, "out of memory");
 	kp_t_defer(T, free_cuts, base_cuts);
-	cut_texts(T, real_base(T), base_cuts);
+	cut_texts(T, real_ui(T), base_cuts);
 	(void)write_cuts(BASE_WIDTHS_REPORT, "enUS", base_cuts, NULL);
 	memset(&lc, 0, sizeof lc);
 	lc.base = base_cuts;
@@ -1163,7 +1139,7 @@ static void a_text_that_does_not_fit_is_told(KpT *T)
 	cuts = (Cuts *)calloc(1, sizeof *cuts);
 	if (cuts == NULL) kp_t_fail(T, "out of memory");
 	kp_t_defer(T, free_cuts, cuts);
-	ui = fixture_ui(T);
+	ui = kp_t_fixture_ui(T);
 	ui->text_cut = on_cut;
 	ui->text_cut_ctx = cuts;
 	cuts->dialog = "rez\\x.bin";
@@ -1205,17 +1181,17 @@ static void a_text_that_does_not_fit_is_told(KpT *T)
 
 /* --- the widths of the missions' texts --- */
 
-/* generated/missions/index.txt as a NUL-ended copy the test owns: a mission's path and fields per line. */
+/* The campaign's missions of the original data's catalog, a name per line ("terran/terran01"), as a NUL-ended text the
+ * test owns. */
 static char *mission_index(KpT *T)
 {
-	size_t size;
-	uint8_t *raw = kp_t_read(T, MISSIONS "index.txt", &size);
-	char *index = (char *)malloc(size + 1);
-	if (!index) kp_t_fail(T, "out of memory");
-	kp_t_defer(T, free, index);
-	memcpy(index, raw, size);
-	index[size] = 0;
-	return index;
+	const KpData *d = kp_t_data(T);
+	KpBuf *b = kp_t_buf(T);
+	int k;
+	for (k = 0; k < d->mission_count; k++) {
+		if (d->missions[k].catalog) kp_buf_printf(b, "%s\n", d->missions[k].name);
+	}
+	return (char *)kp_buf_text(b);
 }
 
 #define TRIGGER_SIZE 2400
@@ -1416,8 +1392,7 @@ static void mission_cuts(KpT *T, KpUi *ui, Cuts *cuts, const char *language)
 		measured[PLACE_NAME], cuts->n);
 }
 
-static const char *const REAL_MISSION_TEXTS[] = { KP_T_DATA, "generated/data/ui.kpd", "generated/data/fonts.kpd",
-	"generated/data/strings.kpd", GLYPHS, MISSIONS "index.txt", NULL };
+static const char *const REAL_MISSION_TEXTS[] = { KP_T_DATA, GLYPHS, NULL };
 
 static void language_missions_texts_fit(KpT *T, const char *locale, void *ctx)
 {
@@ -1446,7 +1421,7 @@ static void the_missions_texts_fit(KpT *T)
 	base_cuts = (Cuts *)calloc(1, sizeof *base_cuts);
 	if (base_cuts == NULL) kp_t_fail(T, "out of memory");
 	kp_t_defer(T, free_cuts, base_cuts);
-	mission_cuts(T, real_base(T), base_cuts, NULL);
+	mission_cuts(T, real_ui(T), base_cuts, NULL);
 	memset(&lc, 0, sizeof lc);
 	lc.base = base_cuts;
 	for_each_language(T, "test_locale.missions_texts", REAL_MISSION_TEXTS, language_missions_texts_fit, &lc);
@@ -1455,18 +1430,7 @@ static void the_missions_texts_fit(KpT *T)
 
 #define SPEECH_SOUNDS "generated/speech/ruRU/sounds.kpd"
 
-static const char *const REAL_SPEECH_SOUNDS[] = { "generated/data/ui.kpd", "generated/data/fonts.kpd",
-	"generated/data/sounds.kpd", "generated/data/strings.kpd", SPEECH_SOUNDS, NULL };
-
-/* An interface with the base's sound records. */
-static KpUi *ui_with_sounds(KpT *T)
-{
-	size_t size;
-	const uint8_t *sounds = kp_t_read(T, "generated/data/sounds.kpd", &size);
-	KpUi *ui = ui_over(T, "generated/data/ui.kpd", "generated/data/fonts.kpd");
-	kp_t_eq(T, kp_ui_set_sounds(ui, sounds, size), 0, "%s", ui->error);
-	return ui;
-}
+static const char *const REAL_SPEECH_SOUNDS[] = { KP_T_DATA, SPEECH_SOUNDS, NULL };
 
 /* The durations of an interface's sounds that differ from another's. */
 static int durations_apart(const KpUi *a, const KpUi *b)
@@ -1486,24 +1450,27 @@ static void speech_sound_records_replace_the_bases(KpT *T)
 	uint8_t *fewer;
 	size_t sfx_size;
 	KpKpfOut section;
-	char kind[5];
 	if (!kp_t_ready(T, "test_locale.speech_sounds", REAL_SPEECH_SOUNDS)) return;
-	own = ui_with_sounds(T);
-	spoken = ui_with_sounds(T);
+	own = real_ui(T);
+	spoken = real_ui(T);
 	memset(&locale, 0, sizeof locale);
 	locale.speech = kp_t_read(T, SPEECH_SOUNDS, &locale.speech_size);
 	kp_ui_set_locale(spoken, &locale);
 	kp_t_eq_str(T, spoken->speech_problem, "", "accepted");
 	kp_t_ok(T, durations_apart(own, spoken) > 0, "the speech's voices' durations");
-	/* another kind: the base's strings */
-	refused = ui_with_sounds(T);
-	locale.speech = kp_t_read(T, "generated/data/strings.kpd", &locale.speech_size);
+	/* another kind: a strings pack */
+	refused = real_ui(T);
+	memset(&section, 0, sizeof section);
+	section.fourcc = "STAT";
+	section.payload = (const uint8_t *)"\0";
+	section.size = 2;
+	locale.speech = pack(T, KP_UI_DATA_STRINGS_KIND, KP_UI_DATA_STRINGS_SCHEMA, &section, 1, &locale.speech_size);
 	kp_ui_set_locale(refused, &locale);
 	kp_t_ok(T, strstr(refused->speech_problem, "kind") != NULL, "%s", refused->speech_problem);
 	kp_t_eq_str(T, refused->locale_problem, "", "not the language's");
 	kp_t_eq(T, durations_apart(own, refused), 0, "the base's durations");
 	/* one sound fewer */
-	refused = ui_with_sounds(T);
+	refused = real_ui(T);
 	locale.speech = kp_t_read(T, SPEECH_SOUNDS, &locale.speech_size);
 	sfx = kp_kpf_section(locale.speech, locale.speech_size, "SFX ", &sfx_size);
 	kp_t_ok(T, sfx != NULL && sfx_size >= 2, "the speech's SFX");
@@ -1517,9 +1484,7 @@ static void speech_sound_records_replace_the_bases(KpT *T)
 	section.payload = fewer;
 	section.size = sfx_size;
 	section.schema_version = 1;
-	memcpy(kind, own->sounds_kpf.kind, 4);
-	kind[4] = 0;
-	locale.speech = pack(T, kind, own->sounds_kpf.schema_version, &section, 1, &locale.speech_size);
+	locale.speech = pack(T, KP_UI_DATA_SOUNDS_KIND, KP_UI_DATA_SOUNDS_SCHEMA, &section, 1, &locale.speech_size);
 	kp_ui_set_locale(refused, &locale);
 	kp_t_ok(T, strstr(refused->speech_problem, "sound count") != NULL, "%s", refused->speech_problem);
 	kp_t_eq(T, durations_apart(own, refused), 0, "the base's durations");
@@ -1596,7 +1561,7 @@ static void start_game(KpT *T, KpSession *s, const char *key, int expansion)
 	start.seed = SEED;
 	start.expansion = expansion;
 	start.mission_index = kp_oracle_mission_index(".", key);
-	if (kp_session_start(s, NULL, 0, &start) != 0) kp_t_fail(T, "%s does not start: %s", key, s->error);
+	if (kp_session_start(s, &start) != 0) kp_t_fail(T, "%s does not start: %s", key, s->error);
 	kp_t_guard(T, s->g);
 }
 

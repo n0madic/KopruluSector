@@ -15,7 +15,6 @@
 extern "C" {
 #endif
 
-#define KP_ORACLE_DATA "generated/data/"
 /* Fields of the original that its drawing refreshes from object step 3 on (the image bounds of the rows in view,
  * 0x445de0); tools/state_check.py leaves them out there. */
 #define KP_ORACLE_DRAWN_STEP 3
@@ -116,7 +115,7 @@ typedef void (*KpChainRelease)(void *ud, KpOracleGame *game);
 /* A campaign chain's games in order: each played with what the game before
  * left, then the campaign's progression (kp_campaign.h, with the game's own result and next scenario) chooses the
  * next mission, which the next game must be. Returns 0 when the chain holds, else 1 with the failing game's name and
- * why in failed; -1 with the error (campaign.kpd). release frees each game when the chain is done with it. */
+ * why in failed; -1 with the error (the campaign's data). release frees each game when the chain is done with it. */
 int kp_campaign_chain(const char *root, const KpChainGame *games, int count, KpChainPlay play, KpChainAfter after,
 	KpChainRelease release, void *ud, KpBuf *failed, KpError *err);
 

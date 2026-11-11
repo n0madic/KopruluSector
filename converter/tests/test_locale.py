@@ -12,6 +12,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
+from converter.base import Base, Mission
 from converter.casc import rebuild
 from converter.casc.storage import CascError
 from converter.emit import cinematics, locale
@@ -104,7 +105,7 @@ def next_scenario_trigger(string: int) -> bytes:
 
 
 class World:
-    """A base under `out` and an install whose ruRU every check accepts; a test spoils one thing of it."""
+    """A base and an install whose ruRU every check accepts; a test spoils one thing of it. The packs go under `out`."""
 
     def __init__(self, out: Path):
         self.out = out
@@ -143,36 +144,26 @@ class World:
         tables["rez\\network.tbl"]["ids"] = ["n_1"]
         return {"tbl": tables, "bin": {"rez\\x.bin": rebuild.dialog_table(self.dialog_manifest, [("x-1", b"quit")], {})}}
 
-    def write_base(self) -> None:
-        data = self.out / "data"
-        data.mkdir(parents=True, exist_ok=True)
-
+    def base(self) -> Base:
         def pack(kind: bytes, schema: int) -> Container:
             return Container(kind, schema, 1, PROFILE, source_hash=HASH)
 
-        c = pack(kpd.STRINGS_KIND, kpd.STRINGS_SCHEMA)
+        strings = pack(kpd.STRINGS_KIND, kpd.STRINGS_SCHEMA)
         for section in kpd.TBL_FILES:
-            c.add(section, tbl(self.stat if section == "STAT" else [b"Network"]))
-        (data / "strings.kpd").write_bytes(c.to_bytes())
-        c = pack(kpd.UI_KIND, kpd.UI_SCHEMA)
+            strings.add(section, tbl(self.stat if section == "STAT" else [b"Network"]))
+        ui = pack(kpd.UI_KIND, kpd.UI_SCHEMA)
         dlgs, pool = kpd.dialogs_section({"rez\\x.bin": self.dialog_base}, self.extensions())
-        c.add("DLGS", dlgs)
-        c.add("POOL", pool)
+        ui.add("DLGS", dlgs)
+        ui.add("POOL", pool)
         files = {PICTURE: b"abc", SCRIPT: b"</BACKGROUND glue\\x.pcx>Hello"}
-        c.add("GFIL", kpd.files_section(lambda name: files[name], list(files)))
-        (data / "ui.kpd").write_bytes(c.to_bytes())
-        c = pack(kpd.FONTS_KIND, kpd.FONTS_SCHEMA)
+        ui.add("GFIL", kpd.files_section(lambda name: files[name], list(files)))
+        fonts = pack(kpd.FONTS_KIND, kpd.FONTS_SCHEMA)
         for f in kpd.font_defs()["fonts"]:
-            c.add(f["section"], font_image())
-        (data / "fonts.kpd").write_bytes(c.to_bytes())
-        missions = self.out / "missions"
-        (missions / "terran").mkdir(parents=True, exist_ok=True)
-        (missions / "index.txt").write_text(f"{MISSION} 0 64 64\n")
-        c = Container(kpm.KIND, kpm.SCHEMA, 1, PROFILE, source_hash=HASH)
-        c.add("STRS", str_section(MAP_ROWS))
-        c.add("TRIG", chk_trigger([(WAV_ACTION, 2)]) + next_scenario_trigger(3))
-        c.add("MBRF", b"")
-        (missions / f"{MISSION}.kpm").write_bytes(c.to_bytes())
+            fonts.add(f["section"], font_image())
+        sounds = pack(kpd.SOUNDS_KIND, kpd.SOUNDS_SCHEMA)
+        sounds.add("SFX ", struct.pack("<H", 0))
+        mission = Mission(str_section(MAP_ROWS), chk_trigger([(WAV_ACTION, 2)]) + next_scenario_trigger(3), b"", ())
+        return Base(PROFILE, HASH, strings, ui, fonts, sounds, {MISSION: mission})
 
     def extensions(self) -> dict:
         root = {"type": dialog.TYPE_CONTAINER, "id": 0, "flags": 0, "rect": [0, 0, 640, 480]}
@@ -184,7 +175,6 @@ class World:
         return SimpleNamespace(sections={"STR ": data})
 
     def run(self, rasterizer: Rasterizer | None = None) -> tuple[dict, Rasterizer]:
-        self.write_base()
         manifest = self.out / "manifest.json"
         manifest.write_text(json.dumps(self.manifest()))
         raster = rasterizer or Rasterizer(self.lacks)
@@ -196,7 +186,7 @@ class World:
                 mock.patch.object(locale.kpd, "koprulu_extensions", self.extensions), \
                 mock.patch.object(locale.chk, "load", self.load_map), \
                 mock.patch.object(locale.chk.LoaderTables, "load", lambda profile: SimpleNamespace(vcod_sha256=None)):
-            return locale.generate(self.install(), LOCALE, self.out, rasterizer=raster), raster
+            return locale.generate(self.install(), self.base(), LOCALE, self.out, rasterizer=raster), raster
 
     def pack(self, *path: str) -> Container:
         return parse((self.out / "locale" / Path(*path)).read_bytes())
@@ -762,24 +752,25 @@ class AllTest(WorldCase):
 
     def test_an_install_with_no_language(self):
         with self.assertRaisesRegex(locale.LocaleError, "holds no language"):
-            locale.generate_all(Storage({}), self.world.out)
+            locale.generate_all(Storage({}), self.world.base(), self.world.out)
 
     def test_each_language_the_install_holds_is_converted(self):
         done = []
-        with mock.patch.object(locale, "generate", lambda storage, name, out, rasterizer=None: done.append(name)):
-            self.assertEqual(locale.generate_all(self.storage(held=True), self.world.out), ["deDE", LOCALE])
+        with mock.patch.object(locale, "generate", lambda storage, base, name, out, rasterizer=None: done.append(name)):
+            self.assertEqual(locale.generate_all(self.storage(held=True), self.world.base(), self.world.out),
+                             ["deDE", LOCALE])
         self.assertEqual(done, ["deDE", LOCALE])
 
     def test_a_language_that_fails_does_not_stop_the_others(self):
         done = []
 
-        def generate(storage, name, out, rasterizer=None):
+        def generate(storage, base, name, out, rasterizer=None):
             done.append(name)
             if name == "deDE":
                 raise locale.LocaleError("deDE: 1 problems")
 
         with mock.patch.object(locale, "generate", generate), self.assertRaisesRegex(locale.LocaleError, "deDE"):
-            locale.generate_all(self.storage(held=True), self.world.out)
+            locale.generate_all(self.storage(held=True), self.world.base(), self.world.out)
         self.assertEqual(done, ["deDE", LOCALE], "ruRU was converted after deDE failed")
 
 
@@ -865,24 +856,15 @@ class RefusedTest(WorldCase):
             locale.check_locale("xxXX", defs)
         locale.check_locale(LOCALE, defs)
 
-    def test_no_base_packs(self):
-        with self.assertRaisesRegex(locale.LocaleError, "run `data` first"):
-            locale.generate(self.world.install(), LOCALE, self.world.out, rasterizer=Rasterizer())
-
     def test_a_language_the_install_lacks(self):
-        self.world.write_base()
         with self.assertRaisesRegex(locale.LocaleError, "names no"):
-            locale.generate(Storage({}), LOCALE, self.world.out, rasterizer=Rasterizer())
+            locale.generate(Storage({}), self.world.base(), LOCALE, self.world.out, rasterizer=Rasterizer())
 
     def test_a_file_of_the_language_the_install_lacks(self):
         whole = self.world.install
         self.world.install = lambda: Storage({k: v for k, v in whole().files.items() if k != REZ + "network.xml"})
         with self.assertRaisesRegex(locale.LocaleError, "names no .*network.xml"):
             self.world.run()
-
-    def test_no_base_missions(self):
-        with self.assertRaisesRegex(locale.LocaleError, "run `missions` first"):
-            locale.mission_names(self.world.out)
 
     def test_a_language_not_downloaded(self):
         self.world.missing = (REZ + "stat_txt.xml",)

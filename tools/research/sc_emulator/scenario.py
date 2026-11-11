@@ -146,9 +146,14 @@ def build_chk(spec: dict) -> bytes:
 
 
 def mission_spec(spec: dict):
-    """The campaign row whose map is the scenario's base (generated/missions/index.txt order)."""
-    names = (REPO / "generated" / "missions" / "index.txt").read_text().split("\n")
-    index = 1 + next(i for i, line in enumerate(names) if line.split(" ")[0] == spec["base"])
+    """The campaign row whose map is the scenario's base (the catalog's mapdata index)."""
+    if str(REPO) not in sys.path:
+        sys.path.insert(0, str(REPO))
+    from converter import scenarios
+    from converter.mpq.profile import Resolver
+
+    with Resolver(process.DEFAULT_EXE.parent) as resolver:
+        index = scenarios.base_entry(resolver, spec).index
     return next(m for m in campaigns.missions(process.DEFAULT_EXE) if m.mapdata_index == index)
 
 

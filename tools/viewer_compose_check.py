@@ -29,13 +29,13 @@ opaque pixels; 0x40ad1b, 0x4c03b0), then the images in rank order:
      against the original by tests/c/test_present.c health_bars_equal_original).
 It reports, per view, whether the CRCs match.
 
-Usage: python3 tools/viewer_compose_check.py --data RETAIL_DIR [--log build/spikes/viewer/web.log]
+Usage: python3 tools/viewer_compose_check.py --data RETAIL_DIR [--log build/spikes/viewer/web.log]   (a mission's size is its
+CHK's DIM, read from the install)
 """
 from __future__ import annotations
 
 import argparse
 import logging
-import struct
 import sys
 import zlib
 from pathlib import Path
@@ -43,9 +43,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+import mission_index  # noqa: E402
 from converter.formats import grp, pcx, tileset  # noqa: E402
 from converter.formats.palette import TILESETS  # noqa: E402
-from converter.kpf import container  # noqa: E402
 from converter.mpq.profile import Profile, Resolver  # noqa: E402
 
 log = logging.getLogger("viewer_compose_check")
@@ -283,11 +283,9 @@ def draw_terrain(ts, edges: grp.Grp, buf: bytearray, stride: int, view_w: int, v
                     buf[y * stride + x] = row[k]
 
 
-def compose(data: Data, mission: Path, view: dict) -> bytes:
+def compose(data: Data, map_size: tuple[int, int], view: dict) -> bytes:
     ts, _, banks, dark, shift, bright = data.tileset(view["tileset"])
-    c = container.parse(mission.read_bytes())
-    meta = c.section("META").payload
-    width, height = struct.unpack_from("<HH", meta, 4)
+    width, height = map_size
     cam_x, cam_y = view["cam"]
     w, h = view["size"]
     buf = bytearray(w * h)
@@ -331,19 +329,19 @@ def main() -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--data", type=Path, required=True)
     p.add_argument("--log", type=Path, default=ROOT / "build" / "spikes" / "viewer" / "web.log")
-    p.add_argument("--missions", type=Path, default=ROOT / "generated" / "missions")
     a = p.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     views = parse_log(a.log)
     if not views:
         raise CheckError(f"no compose lines in {a.log}")
     bad = 0
+    sizes = {m.name: (m.width, m.height) for m in mission_index.catalog(a.data)}  # the CHKs' DIM
     with Resolver(a.data, Profile.load()) as resolver:
         data = Data(resolver)
         for name, view in sorted(views.items()):
             if len(view["draws"]) != view["count"]:
                 raise CheckError(f"{name}: {len(view['draws'])} draw lines, compose line says {view['count']}")
-            pixels = compose(data, a.missions / f"{name.split('@')[0]}.kpm", view)
+            pixels = compose(data, sizes[name.split("@")[0]], view)
             crc = zlib.crc32(pixels) & 0xFFFFFFFF
             ok = crc == view["crc"]
             if not ok and "pixels" in view:

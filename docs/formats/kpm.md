@@ -1,25 +1,14 @@
-# Mission file (`.kpm`, kind `MISN`)
+# A mission's parts (kind `MISN`)
 
-One file per campaign catalog scenario: `generated/missions/<campaign>/<mission>.kpm`, for example `terran/terran01.kpm`. The file uses the [Koprulu container](container.md).
+The parts of a mission the game reads, built from its scenario's CHK when the mission loads: `kp_mission_from_files` (`native/kp_core/src/core/kp_mission.c`, [ADR 0018](../adr/0018-original-data-at-run-time.md), [phase D](../phaseD.md#d4-as-built)) reads the CHK, derives the terrain state and lays the sections below out in one blob. No mission file is written since stage D8d. The kind `MISN` is a language's and a speech's mission overlay's, a [Koprulu container](container.md) with only the sections it replaces: `generated/locale/<id>/missions/<campaign>/<mission>.kpm` holds `STRS` (`converter/emit/locale.py`), `generated/speech/<id>/missions/<campaign>/<mission>.kpm` holds `TRIG` and `MBRF` (`converter/emit/speech.py`); the overlay's header names the profile and its base's data-set hash.
 
-- **Writer:** `converter/kpf/kpm.py`, run with `python3 -m converter missions --data DIR`.
-- **Runtime reader:** `native/kp_core/src/core/kp_mission.c`; `kp_mission_from_files` builds the same mission from the scenario itself ([phase D](../phaseD.md#d4-as-built)).
-- **Dump:** `python3 -m converter dump FILE`.
 - **Tests:** `converter/tests/test_chk.py`, `converter/tests/test_kpm.py`, `converter/tests/test_derive.py`, `tests/c/test_data.c`, `tests/c/test_chk.c`.
 
-Schema version 1. All integers are little-endian.
-
-## Header
-
-| Field | Value |
-|---|---|
-| kind | `MISN` |
-| source hash | data-set hash: SHA-256 of the profile's file list (name, size, SHA-256 of `StarCraft.exe` and the five MPQs). Every file converted from one installation has the same value. |
-| provenance hash | SHA-256 of the profile tables the conversion reads: `defs/chk/`, and through the PACK analysis `defs/ai/`, `defs/iscript/`, `defs/requirements/` and `defs/dat/` (`converter/provenance.py`, each file keyed by its directory and name) |
+All integers are little-endian.
 
 ## Import rules
 
-The converter reads the CHK with the native 1.17 loader tables in `defs/chk/bw-1.17.0.1.json`: version descriptors `0x4eeb80`, section tables, required flags and handler addresses. A test checks these tables against the bytes of `StarCraft.exe`.
+The runtime (`kp_chk.c`) and the converter (`converter/formats/chk.py`) read the CHK with the native 1.17 loader tables in `defs/chk/bw-1.17.0.1.json`: version descriptors `0x4eeb80`, section tables, required flags and handler addresses. A test checks these tables against the bytes of `StarCraft.exe`.
 
 **Groups.** Campaign scenarios load the header, briefing and use-map-settings groups of the descriptor selected by `VER `.
 
@@ -32,7 +21,7 @@ The converter reads the CHK with the native 1.17 loader tables in `defs/chk/bw-1
 
 **`VCOD`** must equal the executable's `VCOD` resource 202 byte for byte. Equal bytes guarantee the equal hashes that `0x467e50` requires.
 
-**The converter rejects with an error:**
+**The loader rejects with an error:**
 - a version without a descriptor: the four prerelease `VER=57` scenarios outside the catalog, which are listed in the report;
 - a missing required section;
 - a payload rule violation;
@@ -56,7 +45,7 @@ The sections below are canonical. The terrain-derived sections `WALK`, `RGNS` an
 | `UNIT` | CHK `UNIT` records, 36 bytes each, in file order, raw (no field corrections) |
 | `LOCS` | CHK `MRGN`: 64 records (version 59) or 255 (63/205), 20 bytes each |
 | `STRS` | CHK `STR ` unchanged: u16 count, u16 offsets, blob. Look up with `kp_map_string` (`native/kp_core/src/core/kp_mission.c`, `0x4c13b0` rules). A language's `generated/locale/<loc>/missions/<campaign>/<mission>.kpm` (ADR 0016) is a container of kind `MISN` with this section alone: the same count, each row in UTF-8 but for the WAV paths and Set Next Scenario's name, which keep the mission's. `kp_host_game_text` reads it over the mission's between its load and its start; an offset of `0xFFFF` has no text |
-| `TRIG` | CHK `TRIG`, 2,400-byte records in raw order; the converter rejects a reachable condition of a type above 23, a reachable action of a type above 59, an Order to a location past 255 and a Move Unit whose nonzero number has a low byte of 0 (location 256), which the original's tables would index past, and a reachable Opponents condition, Modify Unit Resource Amount or Modify Unit Hangar Count action, which are outside the V1 profile (no campaign map reaches them; `converter/analyze/triggers.py validate`); ignored entries (flag `0x02`) and those after the first type 0 are never reached and stay as the map has them |
+| `TRIG` | CHK `TRIG`, 2,400-byte records in raw order; the loader rejects a reachable condition of a type above 23, a reachable action of a type above 59, an Order to a location past 255 and a Move Unit whose nonzero number has a low byte of 0 (location 256), which the original's tables would index past, and a reachable Opponents condition, Modify Unit Resource Amount or Modify Unit Hangar Count action, which are outside the V1 profile (no campaign map reaches them; `converter/analyze/triggers.py validate`); ignored entries (flag `0x02`) and those after the first type 0 are never reached and stay as the map has them |
 | `MBRF` | CHK `MBRF`, 2,400-byte records in raw order. A language's speech, `generated/speech/<loc>/missions/<campaign>/<mission>.kpm` (ADR 0016), is a container of kind `MISN` with `TRIG` and `MBRF` alone: the mission's records with the language's `TIME`, of the mission's sizes; `kp_host_game_speech` reads it over the mission's between its load and its start, and refuses it when a record differs from the mission's in more than the actions' `TIME`. `WAVS` stays the base's |
 | `UPRP` | CHK `UPRP`, 64 records of 20 bytes |
 | `RULE` | override sections in native dispatch order, see below |
@@ -99,30 +88,22 @@ Disabled actions are included.
 
 **Sound path.** The original builds the path as `<mission directory>\<string>` (`0x4b6240`, `0x44fd10`).
 
-**Sound index.** The sound index is the position among the existing sounds of the mission in string-id order. It is the id of the sound's OGG in `generated/missions/<campaign>/<mission>_sounds.kpd` ([`MSND`](packs.md#msnd-schema-1)). `0xffff` means the file is missing from the archives, unreadable, or rejected by the native WAV parser (`ParseWaveFile` `0x49d830`, which plays nothing then; listed under `unreadable_sounds` too). Of the 1,106 references in the catalog, 1,105 read correctly. The exception is `campaign\protoss\protoss10\staredit\wav\PAB05ura.wav`, the MBRF Transmission (record 0, action 14) of the Protoss 10 briefing. It is a damaged entry of the retail StarCraft.mpq (`tools/research/probe_storm_read.py`):
+**Sound index.** The sound index is the position among the existing sounds of the mission in string-id order. The runtime reads the sound by its path (the WAV, or the repack's Ogg Vorbis of it); a speech's `generated/speech/<id>/missions/<campaign>/<mission>_sounds.kpd` ([`MSND`](packs.md#msnd-schema-1)) holds its lines by this index. `0xffff` means the file is missing from the archives, unreadable, or rejected by the native WAV parser (`ParseWaveFile` `0x49d830`, which plays nothing then; the converter's survey lists it, `converter/missions.py` `survey`). Of the 1,106 references in the catalog, 1,105 read correctly. The exception is `campaign\protoss\protoss10\staredit\wav\PAB05ura.wav`, the MBRF Transmission (record 0, action 14) of the Protoss 10 briefing. It is a damaged entry of the retail StarCraft.mpq (`tools/research/probe_storm_read.py`):
 - the original `storm.dll`, run in the emulator's machine, decodes sectors 0–218;
 - it fails on sector 219 of 244 with Storm error `0x85100083`, shown through `SErrDisplayError`, which terminates the process. The original game on this installation therefore exits when the briefing reaches that line;
 - StormLib already fails on sector 218.
 
-The remake cannot reproduce the termination. The converter treats the line as missing (no sound) and lists it under `unreadable_sounds` in `generated/reports/missions.json`, rather than inventing content.
+The remake cannot reproduce the termination. The game and the converter treat the line as missing (no sound) rather than inventing content.
 
 ## Derived sections
 
-`WALK`, `RGNS` and `CONT` hold the terrain state that the original builds at map load (`0x490d80`), before doodads, units and other mutations. The converter always builds them from the tileset files of `ERA & 7`.
+`WALK`, `RGNS` and `CONT` hold the terrain state that the original builds at map load (`0x490d80`), before doodads, units and other mutations, from the tileset files of `ERA & 7`.
 
-**Producers:** `converter/derive/walk.py`, `regions.py`, `contours.py`. They reproduce the native 1.17 routines; the tests compare their output with native hashes for all 68 campaign CHKs (64 catalog maps and the four `VER=57` maps) and with the synthetic research fixtures, and the `RGNS` sections of the 64 catalog maps with the graphs the game builds at mission start (`docs/research/evidence/native-ingame-regions.json`, from the full-game emulator's state dumps by `tools/research/ingame_regions.py`). Version 1 of `RGNS` was built without the console strips and numbered the regions differently from the game wherever the strips change the classes.
+**Producers:** `native/kp_core/src/core/kp_derive.c`; its reference is `converter/derive/walk.py`, `regions.py` and `contours.py` (`converter/derive/mission.py` runs them as a map's load does). They reproduce the native 1.17 routines; the tests compare their output with native hashes for all 68 campaign CHKs (64 catalog maps and the four `VER=57` maps) and with the synthetic research fixtures, and the `RGNS` sections of the 64 catalog maps with the graphs the game builds at mission start (`docs/research/evidence/native-ingame-regions.json`, from the full-game emulator's state dumps by `tools/research/ingame_regions.py`). Version 1 of `RGNS` was built without the console strips and numbered the regions differently from the game wherever the strips change the classes.
 
 **Inputs:** `MTXM`, the tileset's `CV5` and `VF4`, width and height. Megatile IDs and tile flags come from the native terrain import (`0x445720`, `converter/derive/terrain.py`). The region graph is built from the tile flags after `LoadTileMapSection 0x469170` blocks the console strips (each of the bottom-corner 5×2 rectangles and the bottom row clears `0x20410000` and sets `0x00800000`), as the game does before it calls `0x481d50`; the walk raster and the contours depend on the megatile IDs and `VF4` only.
 
-**Section header:**
-
-| Section | Algorithm | Version | Schema |
-|---|---|---:|---:|
-| `WALK` | `WLK1` | 1 | 1 |
-| `RGNS` | `RGN1` | 2 | 1 |
-| `CONT` | `CNT1` | 1 | 1 |
-
-The inputs hash is the first 16 bytes of SHA-256 over `MTXM ‖ CV5 ‖ VF4 ‖ u16 width ‖ u16 height`. All three sections carry the same value.
+The parts carry no header. `converter/derive` keeps the algorithms' ids and versions the retired mission file named (`WALK` `WLK1` 1, `RGNS` `RGN1` 2, `CONT` `CNT1` 1).
 
 ### `WALK`
 
@@ -189,15 +170,15 @@ The four collision-contour arrays of `0x48a7f0`, in the order top, right, bottom
 - Coordinates are pixels and can be −1 at the map edge.
 - `info` holds the corner and traversal-mode bits ([native contours](../research/native-contours.md)).
 
-**Order.** Each array is sorted by the original CRT `qsort` (`0x4d4490`), comparing signed axis, then signed start (`0x48ad40`). That qsort is not stable. The converter runs the same algorithm, so equal keys get the native order. No campaign map has equal keys.
+**Order.** Each array is sorted by the original CRT `qsort` (`0x4d4490`), comparing signed axis, then signed start (`0x48ad40`). That qsort is not stable. `kp_derive.c` and the converter's reference run the same algorithm, so equal keys get the native order. No campaign map has equal keys.
 
 **Capacity** is the native capacity word after construction. It starts at 5000 per direction. Before each append, if any array is full, all four grow by 2500 (`0x48b040`). Brood War Terran07, Terran08 and Zerg10 end at 7500; every other campaign map ends at 5000. The storage is then shrunk to the counts, but the capacity words keep these values for later growth in the mission.
 
 
-### `PACK` (derived `PAK1` v1)
+### `PACK`
 
 The resource packs the mission loads before it starts (ADR 0004): u8 count, then per pack a u8 name length and the ASCII name, sorted. Pack names come from `converter/packs.py`.
 
-The dependency analyzer produces the list (`converter/analyze/profile.py`, [analyzer](../analyzer.md)); `scr-manifest` records each campaign mission's in `defs/campaign/packs-<profile>.json`, compiled into the runtime for the missions it reads from their CHK. The inputs hash is the SHA-256 of the data set hash and every canonical section of the file.
+The dependency analyzer produces the list (`converter/analyze/profile.py`, [analyzer](../analyzer.md)); `scr-manifest` records each campaign mission's in `defs/campaign/packs-<profile>.json`, compiled into the runtime as the profile's `MPAK`; a test scenario's are on its line of `generated/scenarios/index.txt`.
 
 The runtime reads it as `mission.packs`.

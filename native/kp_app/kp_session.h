@@ -96,25 +96,20 @@ typedef struct {
 } KpSession;
 
 void kp_session_start_defaults(KpSessionStart *s);
-/* Loads the game's data over the shared data (which outlives the session): dat.kpd (read, not taken) and the
- * mission's .kpm (malloc'd, taken, also on failure) under the mission's name (its saves carry it); the loaded mission
- * names the tileset kp_session_start takes (kp_host_tileset_path). -1 with failed set and the reason. */
-int kp_session_load(KpSession *s, const KpHostShared *sh, const uint8_t *dat, size_t dat_size, uint8_t *mission,
-	size_t mission_size, const char *name);
-/* The same over structures built from the original files (ADR 0018, stage D5): a copy of the data set's DAT and the
- * mission (moved into the session; *mission left empty, also on failure); with files the tileset kp_session_start
- * reads is the mission's original CV5 and VF4 (kp_host_game_tileset_files). -1 with failed set and the reason. */
+/* Loads the game's data over the shared data (which outlives the session) under the mission's name (its saves carry
+ * it), built from the original files (ADR 0018, stage D5): a copy of the data set's DAT and the mission (moved into the
+ * session; *mission left empty, also on failure); with files the mission's original CV5 and VF4, which kp_session_start
+ * needs (kp_host_game_tileset_files). -1 with failed set and the reason. */
 int kp_session_load_from(KpSession *s, const KpHostShared *sh, const KpDat *dat, KpMission *mission, const char *name,
 	const KpFiles *files);
-/* Starts the loaded game with its tileset (malloc'd, taken; NULL: none read, or the original files') and primes it (the briefing's objectives,
- * PrimeGameLoop's two object steps and RunGame's first turn). A game that does not start leaves failed set with the
+/* Starts the loaded game over its tileset's CV5 and VF4 and primes it (the briefing's objectives, PrimeGameLoop's two
+ * object steps and RunGame's first turn). A game that does not start leaves failed set with the
  * reason and its data released (one that only fails to prime keeps it); 0 when it stands. */
-int kp_session_start(KpSession *s, uint8_t *tileset, size_t tileset_size, const KpSessionStart *start);
+int kp_session_start(KpSession *s, const KpSessionStart *start);
 /* A presentation's view of the session's game data, which stays while the game does (until kp_session_free): the
- * mission, the shared GRP metadata and the tileset's file (*size its bytes). NULL before a start that stood. */
+ * mission and the shared GRP metadata. NULL before a start that stood. */
 const KpMission *kp_session_mission(const KpSession *s);
 const KpGrpMeta *kp_session_grp(const KpSession *s);
-const uint8_t *kp_session_tileset(const KpSession *s, size_t *size);
 void kp_session_free(KpSession *s);
 /* Queues a command of player (-1: the local player) for the next step; -1 when the queue is full or it is too long. */
 int kp_session_command(KpSession *s, const uint8_t *bytes, size_t size, int64_t player);

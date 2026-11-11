@@ -1,9 +1,10 @@
 # Dependency analyzer
 
-Code: `converter/analyze/`. It runs as part of `python3 -m converter missions` and writes:
-- the `PACK` section of every `.kpm`;
-- `generated/reports/profiles/<mission>.json`, one profile per mission, every item with the reasons it was included;
-- `generated/reports/analysis.json`, the campaign scope, the ranking and the M1 choice.
+Code: `converter/analyze/`. It gives each mission the resource packs it loads before it starts ([`PACK`](formats/kpm.md#pack)):
+- a campaign mission's, through `converter/missions.py` `survey`, which `python3 -m converter scr-manifest` records in `defs/campaign/packs-<profile>.json` (compiled into the runtime as the profile's `MPAK`, `tools/defs_c.py`);
+- a test scenario's, on its line of `generated/scenarios/index.txt` (`python3 -m converter scenarios`).
+
+Since [ADR 0018](adr/0018-original-data-at-run-time.md) (stage D8d) the converter writes no per-mission profile or campaign report (`reports/profiles/`, `reports/analysis.json`); the figures below were taken from them.
 
 ## Inputs and rules
 
@@ -27,7 +28,7 @@ The ranking measure is the number of distinct mechanisms a mission needs: unit t
 
 ## Campaign scope
 
-Union over the 64 catalog missions, from `analysis.json`:
+Union over the 64 catalog missions (the analysis's campaign scope):
 
 | Item | Count |
 |---|---|

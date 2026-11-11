@@ -167,7 +167,7 @@ static KpSession *session(KpT *T, const char *name)
 	kp_session_start_defaults(&start);
 	start.seed = SEED;
 	start.mission_index = kp_oracle_mission_index(".", MAP);
-	if (kp_session_start(s, NULL, 0, &start) != 0) kp_t_fail(T, "the game does not start: %s", s->error);
+	if (kp_session_start(s, &start) != 0) kp_t_fail(T, "the game does not start: %s", s->error);
 	kp_t_guard(T, s->g);
 	return s;
 }
@@ -208,14 +208,13 @@ static void session_a_start_without_its_tileset_fails(KpT *T)
 {
 	KpSession *s;
 	KpSessionStart start;
-	size_t size;
 	if (!ready(T)) return;
 	s = loaded(T, NULL, NULL);
 	kp_t_eq_str(T, s->host.name, "mission", NULL);
 	kp_session_start_defaults(&start);
-	kp_t_eq(T, kp_session_start(s, NULL, 0, &start), -1, NULL);
+	kp_t_eq(T, kp_session_start(s, &start), -1, NULL);
 	kp_t_ok(T, s->failed && strstr(s->error, "no tileset") != NULL, "the reason: %s", s->error);
-	kp_t_ok(T, !s->g && !kp_session_mission(s) && !kp_session_grp(s) && !kp_session_tileset(s, &size) && size == 0,
+	kp_t_ok(T, !s->g && !kp_session_mission(s) && !kp_session_grp(s),
 		"the data released");
 }
 

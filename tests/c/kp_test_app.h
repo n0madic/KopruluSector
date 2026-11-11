@@ -10,9 +10,6 @@
 extern "C" {
 #endif
 
-/* The data every game shares (generated/data/grpmeta.kpd, iscript.kpd, aiscript.kpd), parsed once in the suite's
- * process as the product does; fails without them. */
-const KpHostShared *kp_t_shared(KpT *T);
 /* The install the environment variable env names (KP_TEST_ORIGINAL: 1.17, KP_TEST_SCR: StarCraft: Remastered) opened
  * through kp_res, closed when the test ends; skips the test when env is not set, fails when the install does not
  * open. */
