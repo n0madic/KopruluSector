@@ -71,7 +71,7 @@ void kp_derive_edge_strips(uint32_t w, uint32_t h, uint32_t *flags)
 int kp_derive_walk(uint32_t w, uint32_t h, const uint16_t *ids, const uint8_t *vf4, size_t vf4_size, uint8_t *out)
 {
 	size_t ww = (size_t)w * 4, wh = (size_t)h * 4, records = vf4_size / KP_DERIVE_VF4_RECORD, tx, ty, x, y;
-	uint8_t *blocked = (uint8_t *)malloc(ww * wh ? ww * wh : 1);
+	uint8_t *blocked = (uint8_t *)malloc(ww * wh > 0 ? ww * wh : 1);
 	if (!blocked) return -1;
 	for (ty = 0; ty < h; ty++)
 		for (tx = 0; tx < w; tx++) {

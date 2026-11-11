@@ -14,7 +14,6 @@
 #include "kp_flow.h"
 #include "kp_gfx.h"
 #include "kp_hud.h"
-#include "kp_music.h"
 #include "kp_present.h"
 #include "kp_res.h"
 #include "kp_session.h"
@@ -29,7 +28,6 @@
 #define KP_APP_STREAMS 8
 #define KP_APP_SFX 1200
 #define KP_APP_WAVS 256 /* a mission's trigger WAVs by WAVS index */
-#define KP_APP_SOUND_PACKS 4 /* sounds.kpd PACK's packs: effects, terran, protoss, zerg */
 #define KP_APP_VECTOR_FONTS 2  /* the interface's vector fonts (ADR 0011): the text's, font16x's wide one */
 #define KP_APP_FILE_NAME 260   /* an original file's name (MAX_PATH): the music's, a trigger's WAV */
 #define KP_APP_MUSIC_LOOPS 1   /* the MUSI kind of a track that loops (converter/kpf/resources.py TRACK_LOOPS) */
@@ -48,26 +46,17 @@ typedef struct {
 	MIX_Audio *wavs[KP_APP_WAVS];     /* the mission's trigger WAVs by WAVS index */
 	int track, music_volume, has_track;
 	int64_t started, streamed;
-	/* where the sounds come from */
-	const uint8_t *pack_of;           /* sounds.kpd PACK: the pack (1-based, 0 none) of each sfx id */
-	uint16_t pack_count;
-	/* a sound pack outside a game (the glue's sounds), loaded on its first sound and kept */
-	uint8_t *own_bytes[KP_APP_SOUND_PACKS];
-	KpPack own[KP_APP_SOUND_PACKS];
-	int own_tried[KP_APP_SOUND_PACKS];
-	/* the chosen speech's voices (generated/speech/<loc>/units.kpd, MSND by sfx id), looked up before the packs; read
-	 * on first use, dropped with the decoded sfx when the speech changes (ADR 0016, stage L5) */
+	/* the chosen speech's voices (generated/speech/<loc>/units.kpd, MSND by sfx id), looked up before the original
+	 * data's files; read on first use, dropped with the decoded sfx when the speech changes (ADR 0016, stage L5) */
 	char speech_id[8];
 	uint8_t *speech_bytes;
 	KpPack speech;
 	int speech_tried;
 } KpAudio;
 
-/* A loaded resource pack: its container's bytes and its pages decoded (8-bit indices). */
+/* A mission's resource pack, packed from its GRPs (kp_pack_build): its frames and its pages (8-bit indices). */
 typedef struct {
 	char name[32];
-	uint8_t *bytes;
-	size_t size;
 	KpPack pack;
 	uint8_t **pages;
 } KpAppPack;
@@ -89,6 +78,16 @@ uint8_t *kp_fetch_take(KpFetch *f, size_t *size);
 void kp_fetch_free(KpFetch *f);
 /* Whether a server without Range requests answered a range with the whole file (the range was cut out of it). */
 int kp_fetch_whole_file(const KpFetch *f);
+
+/* The repack's groups not beside its core (ADR 0018, stage D8b: the web's lie beside the page), fetched whole, written
+ * beside the core (the web's /data/, in memory) and added to kp_res: a mission's before it starts, the music's from the
+ * start. */
+#define KP_APP_GROUP_FILE 128
+#define KP_APP_GROUP_FETCHES 4
+typedef struct {
+	char file[KP_APP_GROUP_FILE];
+	KpFetch *fetch;
+} KpAppGroupFetch;
 
 /* The HD pages' loader (kp_app_hd.c, stage R4a): a thread reading the pages asked for from the HD packs' files (without
  * threads, the web's, fetched as byte ranges). */
@@ -267,31 +266,23 @@ struct KpApp {
 	char pref[1024];
 	int quit;
 	int recheck_context;   /* back from the background: the GL context is checked on the next frame */
-	/* the data every game and the interface read */
-	uint8_t *dat, *palettes_bytes, *campaign_bytes, *sounds_bytes;
-	size_t dat_size, palettes_size, campaign_size, sounds_size;
-	KpHostShared shared; /* grpmeta.kpd, iscript.kpd, aiscript.kpd: parsed once for every game */
+	/* the data every game and the interface read, built from the original files (ADR 0018) */
+	KpHostShared shared; /* grpmeta, iscript, the AI scripts: built once for every game */
 	KpPalettes palettes;
 	KpCampaign campaign;
 	KpSaveIdentity identity;
-	uint8_t *ui_files[KP_UI_FILES];
-	size_t ui_sizes[KP_UI_FILES];
 	uint8_t *console_art;  /* generated/data/console.kpd (optional), or NULL */
 	size_t console_art_size;
 	KpAppMission missions[KP_APP_MISSIONS];
 	int mission_count;
-	/* or the original data (ADR 0018, stage D5; res set): what the builders read through, the data set's DAT each game
-	 * copies, the interface's data, the vector fonts it points into (not original data: kp_app_load_data), the
-	 * executable's music table (MUSI: the tracks' files) */
+	/* what the builders read through, the data set's DAT each game copies, the interface's data, the vector fonts it
+	 * points into (not original data: kp_app_load_data), the executable's music table (MUSI: the tracks' files) */
 	KpFiles files;
 	KpDat dat_proto;
 	KpUiData ui_data;
 	void *vector_fonts[KP_APP_VECTOR_FONTS];
 	const uint8_t *musi;
 	uint32_t musi_size;
-	KpMusicIndex music_index;  /* packs/music.kpd's tracks: read from the file when one plays */
-	uint8_t *music_bytes;      /* the whole container: the web only (its files are in memory already), else NULL */
-	size_t music_size;
 	KpProfile profile;
 	KpCursor cursor;
 	/* the flow: the glue, the games, the saves, the video options, the screen's layout and the view (kp_flow.h) */
@@ -299,6 +290,8 @@ struct KpApp {
 	KpAppWorld world;
 	KpAppCine cine;
 	KpAppHdUi hd_ui;         /* the HD interface's art (stage R4d) */
+	KpAppGroupFetch group_fetches[KP_APP_GROUP_FETCHES]; /* the repack's groups on their way */
+	char music_group[KP_APP_GROUP_FILE]; /* the music's group fetched from the start ("" none, or added) */
 	uint8_t *web_sizes;      /* the web: the fetched files' sizes (KP_APP_WEB_SIZES), read when first needed */
 	size_t web_sizes_size;
 	int web_sizes_read;
@@ -341,13 +334,19 @@ uint8_t *kp_app_read(KpApp *a, const char *path, size_t *size);
 int kp_app_exists(KpApp *a, const char *path);
 /* The path under the data root (--data) of a file of the converted data. */
 void kp_app_path(const KpApp *a, const char *path, char *out, size_t size);
+/* A group of the repack (its file, as the core's listing names it): 1 added, 0 on its way (fetched), -1 it cannot be had
+ * (the reason in err); kp_app_groups_frame starts the music's and adds it when it came; kp_app_groups_free drops the
+ * fetches out. */
+int kp_app_group(KpApp *a, const char *file, char *err, size_t err_size);
+void kp_app_groups_frame(KpApp *a);
+void kp_app_groups_free(KpApp *a);
 /* The first `want` bytes of a file (fewer when it is shorter; malloc'd, *size of them) and its size; NULL. */
 uint8_t *kp_app_read_head(KpApp *a, const char *path, size_t want, size_t *size, size_t *file_size);
-int kp_app_read_missions(KpApp *a);
 int kp_app_load_data(KpApp *a, char *err, size_t err_size);
 /* The data kp_app_load_data loaded, freed (the flow, the interface and the world that point into it gone first). */
 void kp_app_data_free(KpApp *a);
-/* The original data of --data's folders (kp_res, ADR 0018; none given: no KpRes), and its end: the --res-log list. */
+/* The original data of --data's folders (kp_res, ADR 0018; none given: no KpRes; Android: its repack copied out of the
+ * APK), and its end: the --res-log list. */
 int kp_app_res_open(KpApp *a, char *err, size_t err_size);
 void kp_app_res_close(KpApp *a);
 /* size bytes at offset of an open stream, malloc'd (NULL when they are not all in it or cannot be read). */
@@ -366,9 +365,7 @@ void kp_app_load_profile(KpApp *a);
 void kp_app_sync_files(KpApp *a);
 
 /* kp_app_audio.c: the mixer of the interface's sound commands */
-/* The music container's track index (the web: the container itself, kept whole); -1 when the file cannot be read. */
-int kp_app_music_open(KpApp *a, char *err, size_t err_size);
-int kp_audio_init(KpAudio *au, const uint8_t *sounds_kpd, size_t size);
+int kp_audio_init(KpAudio *au);
 void kp_audio_free(KpAudio *au);
 void kp_audio_commands(KpApp *a, const KpUiSoundCommand *c, size_t n);
 void kp_audio_stop_all(KpAudio *au);
@@ -376,9 +373,8 @@ void kp_audio_stop_all(KpAudio *au);
 float kp_audio_gain(int32_t volume);
 /* A world's end: its decoded sounds (the trigger WAVs and the sfx) are released. */
 void kp_audio_mission(KpApp *a);
-/* The mixer's own copies of the sound packs dropped: a world holds them now (the glue reads them again when it needs
- * a sound not yet decoded). */
-void kp_audio_drop_packs(KpAudio *au);
+/* The music track asked for played again when none plays (its group came: the web's music fetched after it began). */
+void kp_audio_music_again(KpApp *a);
 
 #ifndef __EMSCRIPTEN__
 /* size bytes at start of a file (its full path) as a stream of their own, offset 0 at start (NULL when it cannot be

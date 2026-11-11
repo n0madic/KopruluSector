@@ -118,3 +118,72 @@ void kp_fetch_free(KpFetch *f)
 	free(f->data);
 	free(f);
 }
+
+/* --- the repack's groups (ADR 0018, stage D8b) --- */
+
+int kp_app_group(KpApp *a, const char *file, char *err, size_t err_size)
+{
+	KpAppGroupFetch *g = NULL;
+	char path[1200];
+	uint8_t *bytes;
+	size_t size = 0;
+	int k;
+	SDL_IOStream *io;
+	snprintf(path, sizeof path, "%s/%s", kp_res_repack_dir(a->res), file);
+	for (k = 0; k < KP_APP_GROUP_FETCHES && !g; k++)
+		if (a->group_fetches[k].fetch && strcmp(a->group_fetches[k].file, file) == 0) g = &a->group_fetches[k];
+	for (k = 0; k < KP_APP_GROUP_FETCHES && !g; k++) {
+		if (a->group_fetches[k].fetch) continue;
+		if (!(a->group_fetches[k].fetch = kp_fetch_start(path, 0, 0))) break;
+		g = &a->group_fetches[k];
+		snprintf(g->file, sizeof g->file, "%s", file);
+		SDL_Log("data: fetching %s", file);
+	}
+	if (!g) return 0; /* every slot out: asked again on the next frame */
+	if (kp_fetch_state(g->fetch) == KP_FETCH_PENDING) return 0;
+	bytes = kp_fetch_take(g->fetch, &size);
+	g->fetch = NULL;
+	if (!bytes) {
+		snprintf(err, err_size, "%s cannot be read (the repack's group beside %s)", path, "koprulu-core.mpq");
+		return -1;
+	}
+	/* on the web the file joins the preloaded core in memory; elsewhere it was read from there */
+	if (!SDL_GetPathInfo(path, NULL)) {
+		io = SDL_IOFromFile(path, "wb");
+		if (!io || SDL_WriteIO(io, bytes, size) != size) {
+			snprintf(err, err_size, "%s cannot be written: %s", path, SDL_GetError());
+			if (io) SDL_CloseIO(io);
+			free(bytes);
+			return -1;
+		}
+		SDL_CloseIO(io);
+	}
+	free(bytes);
+	return kp_res_add_repack(a->res, path, err, err_size) == 0 ? 1 : -1;
+}
+
+void kp_app_groups_frame(KpApp *a)
+{
+	char err[600];
+	int rc;
+	if (!a->res) return;
+	if (!a->music_group[0]) { /* asked once: the music's group, when the core names one that is not open */
+		if (!kp_res_group_wanted(a->res, "music\\", a->music_group, sizeof a->music_group)) {
+			snprintf(a->music_group, sizeof a->music_group, "-");
+		}
+	}
+	if (strcmp(a->music_group, "-") == 0) return;
+	if ((rc = kp_app_group(a, a->music_group, err, sizeof err)) == 0) return;
+	if (rc < 0) SDL_Log("data: %s (the game plays without music)", err);
+	else kp_audio_music_again(a);
+	snprintf(a->music_group, sizeof a->music_group, "-");
+}
+
+void kp_app_groups_free(KpApp *a)
+{
+	int k;
+	for (k = 0; k < KP_APP_GROUP_FETCHES; k++) {
+		kp_fetch_free(a->group_fetches[k].fetch);
+		a->group_fetches[k].fetch = NULL;
+	}
+}

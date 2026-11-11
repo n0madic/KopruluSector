@@ -251,6 +251,18 @@ static void host_language(void *ctx)
 	kp_app_cine_language(a);
 }
 
+/* A mission's files: there unless its repack's group is not open yet (the web's, fetched beside the page: kp_app_group);
+ * a test scenario is the converted data's. */
+static int host_mission_files(void *ctx, const KpAppMission *m, char *err, size_t err_size)
+{
+	KpApp *a = (KpApp *)ctx;
+	char prefix[sizeof m->directory + 1], file[KP_APP_GROUP_FILE];
+	if (!m->directory[0]) return 1;
+	snprintf(prefix, sizeof prefix, "%s\\", m->directory);
+	if (!kp_res_group_wanted(a->res, prefix, file, sizeof file)) return 1;
+	return kp_app_group(a, file, err, err_size);
+}
+
 int kp_app_flow_init(KpApp *a, char *err, size_t err_size)
 {
 	KpFlow *f = &a->flow;
@@ -283,21 +295,16 @@ int kp_app_flow_init(KpApp *a, char *err, size_t err_size)
 	h->cine_active = host_cine_active;
 	h->exists = host_exists;
 	h->language = host_language;
+	h->mission_files = host_mission_files;
 	f->flags = &a->flags;
 	f->missions = a->missions;
 	f->mission_count = a->mission_count;
-	f->dat = a->dat;
-	f->dat_size = a->dat_size;
 	f->shared = &a->shared;
 	f->campaign = &a->campaign;
 	f->identity = &a->identity;
-	f->ui_files = a->ui_files;
-	f->ui_sizes = a->ui_sizes;
-	if (a->res) { /* the original data (ADR 0018, stage D5) */
-		f->files = &a->files;
-		f->dat_proto = &a->dat_proto;
-		f->ui_data = &a->ui_data;
-	}
+	f->files = &a->files; /* the original data (ADR 0018, stage D5) */
+	f->dat_proto = &a->dat_proto;
+	f->ui_data = &a->ui_data;
 	f->console_art = a->console_art;
 	f->console_art_size = a->console_art_size;
 	f->profile = &a->profile;

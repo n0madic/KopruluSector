@@ -97,6 +97,15 @@ class RepackTest(unittest.TestCase):
         assert lines[2] == "source remastered" and not any(line.startswith("group ") for line in lines)
         assert [line.split(" ")[2] for line in lines[3:]] == ["exact", "differs", "approximation"]
 
+    def test_single_file_keeps_the_cinematics_apart(self):
+        source = StandIn({"arr\\units.dat": b"units"})
+        source.files["smk\\extra.smk"] = b"a movie"  # not one of the catalog's: read as an extra name
+        repack.write(source, self.out, kind="1.17", single=True, extra=["smk\\extra.smk"])
+        assert sorted(p.name for p in self.out.glob("*.mpq")) == ["koprulu-cinematics.mpq", "koprulu.mpq"]
+        assert "group koprulu-cinematics.mpq smk/" in listing(self.out / "koprulu.mpq")
+        with Archive(self.out / "koprulu-cinematics.mpq") as a:
+            assert a.read("smk\\extra.smk") == b"a movie"
+
     def test_extra_names_go_in_unlisted(self):
         source = StandIn({"arr\\units.dat": b"units"})
         source.files["rez\\ours.bin"] = b"read by the game"

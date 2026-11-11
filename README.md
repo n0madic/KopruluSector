@@ -44,7 +44,7 @@ Not included: multiplayer, Battle.net, replays and custom (UMS) maps.
 The [Makefile](Makefile) chains the steps below. Run `make` alone to see every target.
 
 ```bash
-make convert SC=/path/to/StarCraft          # from a 1.17.0.1 folder, with its cinematics
+make convert SC=/path/to/StarCraft          # from a 1.17.0.1 folder, with the repack and its cinematics
 make convert-remastered SCR=/path/to/StarCraft SPEECH="ruRU"   # from Remastered, with HD, cinematics and languages
 make macos                                   # or windows, linux, web, android, ios, ios-sim
 make web serve                               # build the web version and serve it on http://localhost:8793/
@@ -116,14 +116,17 @@ python3 -m converter speech --scr "$SCR" --locale ruRU   # the localized voice-o
 
 ### The repack
 
-The game also runs from the original files themselves ([ADR 0018](docs/adr/0018-original-data-at-run-time.md)):
+The game runs from the original files themselves ([ADR 0018](docs/adr/0018-original-data-at-run-time.md)):
 `--data` can name the install. `converter repack` copies the files the game reads, in their own formats, into
 `koprulu*.mpq` archives, with a listing of each file's SHA-256 that the game checks. A WAV goes in as Ogg Vorbis when
-that is smaller (`oggenc`; `--wav` keeps the WAVs). The repack has priority over an install in `--data`.
+that is smaller (`oggenc`; `--wav` keeps the WAVs). The repack has priority over an install in `--data`. The bundles
+carry the repack, not the converted SD data: a computer's the one file of `--single`, a phone's and the web's the
+groups (`make repack` writes both).
 
 ```bash
 python3 -m converter repack --data "$SC"              # generated/repack: koprulu-core.mpq, a group per mission, the music, the cinematics
-python3 -m converter repack --scr "$SCR" --single     # one koprulu.mpq (Remastered's rebuilt 1.17 files; its cinematics stay in the install)
+python3 -m converter repack --data "$SC" --single     # generated/repack-single: one koprulu.mpq, the cinematics apart
+python3 -m converter repack --scr "$SCR" --single     # from Remastered (its rebuilt 1.17 files; its cinematics stay in the install)
 ```
 
 You need to convert only once. Run the steps again after you update the repository, because the formats can change
@@ -131,7 +134,9 @@ between versions and the game refuses data of an older schema.
 
 ## 2. Build and run
 
-`tools/product.sh <platform> [release|debug]` builds a complete bundle with the converted data. The result goes to
+`tools/product.sh <platform> [release|debug]` builds a complete bundle: the repack (`koprulu.mpq` on a computer, the
+groups on a phone and the web, which fetches a mission's group before the mission starts) and what was converted
+beside it (the console's pieces, the HD art, the cinematics, the languages). The result goes to
 `dist/product/<platform>/`.
 
 ```bash
@@ -192,7 +197,7 @@ the settings for one run:
 
 | Option | Meaning |
 |---|---|
-| `--data DIR` | the data folder (default: `generated/` under the current folder, else `data/` beside the executable); any number of times: a folder with a 1.17 install, StarCraft: Remastered's install or a repack (`koprulu.mpq`, or `koprulu-core.mpq` and its groups: `converter repack`) is the original data, read and checked at run time ([ADR 0018](docs/adr/0018-original-data-at-run-time.md)): a 1.17 install or StarCraft: Remastered's runs the game, its interface, sounds and music with no conversion (Remastered's files that only its own formats hold, DDS, XML and WebM, rebuilt when read; its HD portraits read from it too; the cinematics played from it as they are, the 1.17 Smacker files or Remastered's WebM with the subtitles of its language; the rest of the HD art and the languages still come from `generated/` when it is there) |
+| `--data DIR` | the data folder (default: the current folder when it holds `generated/`, else `data/` beside the executable; with no source named, its `generated/repack-single`, else `generated/repack`, is the original data); any number of times: a folder with a 1.17 install, StarCraft: Remastered's install or a repack (`koprulu.mpq`, or `koprulu-core.mpq` and its groups: `converter repack`) is the original data, read and checked at run time ([ADR 0018](docs/adr/0018-original-data-at-run-time.md)): a 1.17 install or StarCraft: Remastered's runs the game, its interface, sounds and music with no conversion (Remastered's files that only its own formats hold, DDS, XML and WebM, rebuilt when read; its HD portraits read from it too; the cinematics played from it as they are, the 1.17 Smacker files or Remastered's WebM with the subtitles of its language; the rest of the HD art and the languages still come from `generated/` when it is there) |
 | `--res-log PATH` | the original files read, their status and source, written when the program ends |
 | `--graphics original\|hd2\|hd` | the art (HD needs `converter hd`) |
 | `--lighting on\|off` | the HD sprites' lighting |

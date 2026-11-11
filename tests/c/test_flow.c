@@ -89,6 +89,9 @@ typedef struct {
 	int languages;           /* the languages' packs are there (else the data are a conversion of the 1.17 data's) */
 	int speech;              /* the speech's packs are there (converter speech) */
 	int language_changes;
+	int files_wait;          /* a mission's files: on their way this many more asks (the web's repack group) */
+	int files_fail;          /* then they cannot be had */
+	int files_asks;
 } Host;
 
 /* --- the host --- */
@@ -131,6 +134,22 @@ static void host_save_profile(void *ctx) { ((Host *)ctx)->profile_saves++; }
 static void host_sync_files(void *ctx) { ((Host *)ctx)->syncs++; }
 
 static void host_quit(void *ctx) { ((Host *)ctx)->quits++; }
+
+static int host_mission_files(void *ctx, const KpAppMission *m, char *err, size_t err_size)
+{
+	Host *H = (Host *)ctx;
+	(void)m;
+	H->files_asks++;
+	if (H->files_wait > 0) {
+		H->files_wait--;
+		return 0;
+	}
+	if (H->files_fail) {
+		snprintf(err, err_size, "its group cannot be fetched");
+		return -1;
+	}
+	return 1;
+}
 
 /* The world of the game started: only its tileset, for the console's map. */
 static int host_world_build(void *ctx, char *err, size_t err_size)
@@ -337,6 +356,7 @@ static Host *new_host(KpT *T)
 	h->save_profile = host_save_profile;
 	h->sync_files = host_sync_files;
 	h->quit = host_quit;
+	h->mission_files = host_mission_files;
 	h->world_build = host_world_build;
 	h->world_free = host_world_free;
 	h->world_frame = host_world_frame;
@@ -2153,6 +2173,50 @@ static void mission_flag_plays_without_the_glue(KpT *T)
 	kp_t_eq_str(T, err, "no mission nowhere/none", NULL);
 }
 
+/* A mission whose files are on their way (the web's repack group, kp_app_group) starts once they came, the frames
+ * before it no game; one whose files cannot be had says why: the glue's main menu, a run of --mission ended. */
+static void mission_waits_for_its_files(KpT *T)
+{
+	Host *H = new_host(T);
+	int k;
+	if (!H) return;
+	snprintf(H->flags.mission, sizeof H->flags.mission, "%s", EXPANSION_PROTOSS01);
+	H->files_wait = 3;
+	init(H);
+	kp_t_ok(T, H->f.waiting && !H->f.playing && H->f.session == NULL, "waiting, no game yet");
+	kp_t_ok(T, strstr(H->last_log, "waiting for its files") != NULL, "%s", H->last_log);
+	for (k = 0; k < 2; k++) {
+		frame(H);
+		kp_t_ok(T, H->f.waiting && !H->f.playing && H->builds == 0, "frame %d: still waiting", k);
+	}
+	frame(H);
+	kp_t_ok(T, !H->f.waiting && H->f.playing && H->f.hud_on && H->builds == 1, "started once they came");
+	kp_t_eq(T, H->files_asks, 4, "asked at the start and on each frame until then");
+	frames(H, 50);
+	kp_t_ok(T, H->ticks > 0, "the game steps");
+	kp_t_eq(T, H->quits, 0, NULL);
+	/* a run of --mission whose files cannot be had ends */
+	if (!(H = new_host(T))) return;
+	snprintf(H->flags.mission, sizeof H->flags.mission, "%s", EXPANSION_PROTOSS01);
+	H->files_wait = 1;
+	H->files_fail = 1;
+	init(H);
+	frame(H);
+	kp_t_ok(T, !H->f.waiting && !H->f.playing && H->f.session == NULL && !H->world, "no game");
+	kp_t_ok(T, strstr(H->last_log, "its group cannot be fetched") != NULL, "%s", H->last_log);
+	kp_t_eq(T, H->quits, 1, "the run ends");
+	/* the glue's: back at the main menu */
+	if (!(H = glue_host(T, 0))) return;
+	H->files_wait = 1;
+	H->files_fail = 1;
+	menus_end(H, KP_UI_MENU_MISSION, PROTOSS_ROOM, mission_row(H, EXPANSION_PROTOSS01), 0, 1);
+	kp_t_ok(T, H->f.waiting, "waiting");
+	frame(H);
+	in_menus(H, KP_GLUE_MAIN, "files that cannot be had");
+	kp_t_ok(T, strstr(H->last_log, "its group cannot be fetched") != NULL, "%s", H->last_log);
+	kp_t_eq(T, H->quits, 0, NULL);
+}
+
 /* A script's name resolved as the parse does it, with its argument. */
 static KpScriptRef script_ref(KpT *T, KpScriptKind kind, const char *word, int64_t arg)
 {
@@ -2807,6 +2871,7 @@ static const KpTest TESTS[] = {
 	{ "camera_keeps_to_the_view_and_its_centre", camera_keeps_to_the_view_and_its_centre, 0 },
 	{ "free_before_the_host_asks_it_nothing", free_before_the_host_asks_it_nothing, 0 },
 	{ "mission_flag_plays_without_the_glue", mission_flag_plays_without_the_glue, 0 },
+	{ "mission_waits_for_its_files", mission_waits_for_its_files, 0 },
 	{ "script_names_hold_over_the_flow", script_names_hold_over_the_flow, 0 },
 	{ "a_script_walks_the_glues_menus", a_script_walks_the_glues_menus, 0 },
 	{ "a_script_observes_a_game", a_script_observes_a_game, 0 },

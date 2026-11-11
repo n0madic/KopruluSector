@@ -1,10 +1,10 @@
 /*
  * The sound mixer of the interface (plan phase 9D, phase S stage S5): kp_ui decides what plays on which of the
  * original's eight channels (kp_ui_sound.c); this plays its commands through SDL3_mixer. A channel's new sound stops
- * the one it held. The music plays the music container's track, a trigger's WAV the mission's sounds container (by the
- * WAVS index of its string id), a streamed sfxdata file (the result dialogs' sounds) its pack's sound as a stream. The
- * original data (ADR 0018, stage D5) plays its files: sfxdata's WAVs, the scenario's WAVs by their strings, the music
- * MUSI names streamed from its archive; the languages' speech is the converted data's only.
+ * the one it held. The original data's files play (ADR 0018, stage D5): sfxdata's WAVs (a repack's as Ogg Vorbis where
+ * that was smaller), a trigger's WAV the scenario's by its string, the music MUSI names streamed from its archive; a
+ * language's speech (the converted data's, ADR 0016) before them: its voices by sfx id, its mission's lines by the
+ * WAVS index.
  * DirectSound's volume (hundredths of a decibel) and pan become exact gains: a pan of +2000 attenuates the left side by
  * 20 dB.
  */
@@ -15,30 +15,16 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* sounds.kpd PACK's packs in their 1-based order */
-static const char *const PACKS[KP_APP_SOUND_PACKS] = { "effects", "terran", "protoss", "zerg" };
-
 float kp_audio_gain(int32_t volume)
 {
 	if (volume < -10000) volume = -10000;
 	return powf(10.0f, (float)volume / 2000.0f);
 }
 
-int kp_audio_init(KpAudio *au, const uint8_t *sounds_kpd, size_t size)
+int kp_audio_init(KpAudio *au)
 {
-	KpKpf c;
-	KpError err;
-	const KpKpfSection *s;
 	int k;
 	memset(au, 0, sizeof *au);
-	if (kp_kpf_parse(&c, sounds_kpd, size, "sounds.kpd", 0, &err) == 0) {
-		if ((s = kp_kpf_find(&c, "PACK")) != NULL && s->size >= 2) {
-			au->pack_count = (uint16_t)kp_le_u16(s->data);
-			if (au->pack_count > s->size - 2) au->pack_count = (uint16_t)(s->size - 2);
-			au->pack_of = s->data + 2;
-		}
-		kp_kpf_free(&c);
-	}
 	if (!MIX_Init()) {
 		SDL_Log("audio: %s (the game plays without sound)", SDL_GetError());
 		return -1;
@@ -72,15 +58,8 @@ static void drop_music(KpAudio *au)
 	MIX_SetTrackAudio(au->music, NULL);
 }
 
-void kp_audio_drop_packs(KpAudio *au)
+static void drop_speech(KpAudio *au)
 {
-	int k;
-	for (k = 0; k < KP_APP_SOUND_PACKS; k++) {
-		kp_pack_free(&au->own[k]);
-		free(au->own_bytes[k]);
-		au->own_bytes[k] = NULL;
-		au->own_tried[k] = 0;
-	}
 	kp_pack_free(&au->speech);
 	free(au->speech_bytes);
 	au->speech_bytes = NULL;
@@ -92,7 +71,7 @@ void kp_audio_free(KpAudio *au)
 	if (au->mixer) MIX_DestroyMixer(au->mixer); /* its tracks with it, the music's stream too */
 	free_audio(au->sfx, KP_APP_SFX);
 	free_audio(au->wavs, KP_APP_WAVS);
-	kp_audio_drop_packs(au);
+	drop_speech(au);
 	MIX_Quit();
 	memset(au, 0, sizeof *au);
 }
@@ -103,29 +82,6 @@ static MIX_Audio *load(KpAudio *au, const uint8_t *ogg, uint32_t size, int prede
 	return MIX_LoadAudio_IO(au->mixer, SDL_IOFromConstMem(ogg, size), predecode, true);
 }
 
-/* Sound pack p (from 0): the playing world's, else the mixer's own copy (the glue has no world), read on first use. */
-static const KpPack *sound_pack(KpApp *a, int p)
-{
-	KpAudio *au = &a->audio;
-	int k;
-	for (k = 0; k < a->world.pack_count; k++) {
-		if (strcmp(a->world.packs[k].name, PACKS[p]) == 0) return &a->world.packs[k].pack;
-	}
-	if (!au->own_bytes[p] && !au->own_tried[p]) {
-		char path[64];
-		size_t n = 0;
-		KpError e;
-		au->own_tried[p] = 1;
-		snprintf(path, sizeof path, "generated/packs/%s.kpd", PACKS[p]);
-		if ((au->own_bytes[p] = kp_app_read(a, path, &n)) != NULL && kp_pack_load(&au->own[p], au->own_bytes[p], n, path, &e) != 0) {
-			SDL_Log("audio: %s", e.msg);
-			free(au->own_bytes[p]);
-			au->own_bytes[p] = NULL;
-		}
-	}
-	return au->own_bytes[p] ? &au->own[p] : NULL;
-}
-
 /* The chosen speech's voices, none for the base's or when its file is missing (one line). A change of the speech drops
  * the voices read and the sfx decoded from them. */
 static const KpPack *speech_pack(KpApp *a)
@@ -134,10 +90,7 @@ static const KpPack *speech_pack(KpApp *a)
 	const char *id = a->flags.speech;
 	if (strcmp(au->speech_id, id) != 0) {
 		free_audio(au->sfx, KP_APP_SFX);
-		kp_pack_free(&au->speech);
-		free(au->speech_bytes);
-		au->speech_bytes = NULL;
-		au->speech_tried = 0;
+		drop_speech(au);
 		snprintf(au->speech_id, sizeof au->speech_id, "%s", id);
 	}
 	if (id[0] == 0 || strcmp(id, KP_LOCALE_BASE) == 0) return NULL;
@@ -176,76 +129,19 @@ static MIX_Audio *load_file(KpApp *a, const char *path)
 	return audio;
 }
 
-/* The sound of an sfx id: the original data's file (sfxdata's path), else the speech's voice, else its pack's (decoded
- * on first play and kept until the world ends). */
+/* The sound of an sfx id: the speech's voice, else the original data's file (sfxdata's path), decoded on first play and
+ * kept until the world ends. */
 static MIX_Audio *sfx(KpApp *a, uint32_t id)
 {
 	KpAudio *au = &a->audio;
-	const KpPack *pack, *speech;
-	const KpPackSound *s = NULL;
-	int p;
-	if (a->res) {
-		if (id >= KP_APP_SFX || id >= a->ui_data.sound_path_count || !a->ui_data.sound_paths[id]) return NULL;
-		if (!au->sfx[id]) au->sfx[id] = load_file(a, a->ui_data.sound_paths[id]);
-		return au->sfx[id];
-	}
-	if (id >= KP_APP_SFX || id >= au->pack_count) return NULL;
-	speech = speech_pack(a);
+	const KpPack *speech;
+	const KpPackSound *s;
+	if (id >= KP_APP_SFX || id >= a->ui_data.sound_path_count) return NULL;
+	speech = speech_pack(a); /* a change of the speech drops the decoded sfx first */
 	if (au->sfx[id]) return au->sfx[id];
-	if (speech) s = kp_pack_sound(speech, id);
-	if (!s) {
-		p = au->pack_of[id];
-		if (p < 1 || p > KP_APP_SOUND_PACKS || !(pack = sound_pack(a, p - 1))) return NULL;
-		s = kp_pack_sound(pack, id);
-	}
-	if (s) au->sfx[id] = load(au, s->ogg, s->size, 1);
+	if (speech && (s = kp_pack_sound(speech, id)) != NULL) au->sfx[id] = load(au, s->ogg, s->size, 1);
+	else if (a->ui_data.sound_paths[id]) au->sfx[id] = load_file(a, a->ui_data.sound_paths[id]);
 	return au->sfx[id];
-}
-
-/* packs/music.kpd: its track index is read at start (kp_app_music_open); a track plays as a stream of its bytes in the
- * file (the web's: in the container it keeps in memory), which the mixer decodes as it plays (MIX_SetTrackIOStream), so
- * no track is held in memory. */
-#define MUSIC_PATH "generated/packs/music.kpd"
-
-#ifdef __EMSCRIPTEN__
-static int music_read(void *ctx, uint64_t offset, uint8_t *out, size_t size)
-{
-	const KpApp *a = (const KpApp *)ctx;
-	if (!a->music_bytes || offset > a->music_size || size > a->music_size - offset) return -1;
-	memcpy(out, a->music_bytes + offset, size);
-	return 0;
-}
-#endif
-
-int kp_app_music_open(KpApp *a, char *err, size_t err_size)
-{
-	KpError e;
-	int rc;
-#ifdef __EMSCRIPTEN__
-	/* the web's files are in memory already: the container is kept whole and the tracks are slices of it */
-	if (!(a->music_bytes = kp_app_read(a, MUSIC_PATH, &a->music_size))) {
-		snprintf(err, err_size, "cannot read %s: %s", MUSIC_PATH, SDL_GetError());
-		return -1;
-	}
-	rc = kp_music_index(&a->music_index, a->music_bytes, a->music_size, a->music_size, music_read, a, &e);
-#else
-	{
-		uint8_t head[KP_MUSIC_HEAD];
-		char full[1200];
-		SDL_IOStream *io;
-		Sint64 size;
-		size_t n;
-		kp_app_path(a, MUSIC_PATH, full, sizeof full);
-		if (!(io = kp_io_open_head(full, head, sizeof head, &n, &size))) {
-			snprintf(err, err_size, "cannot read %s: %s", MUSIC_PATH, SDL_GetError());
-			return -1;
-		}
-		rc = kp_music_index(&a->music_index, head, n, (size_t)size, kp_io_read_into, io, &e);
-		SDL_CloseIO(io);
-	}
-#endif
-	if (rc != 0) SDL_Log("audio: %s (the game plays without music)", e.msg);
-	return 0;
 }
 
 #ifndef __EMSCRIPTEN__
@@ -378,37 +274,20 @@ static SDL_IOStream *res_io(KpRes *res, const char *name)
 	return io;
 }
 
-/* The music's track k as a stream of its bytes (NULL: none, or an empty track), and whether it loops: the original
- * data's file the executable's MUSI names (kind 1 loops), else the music container's track. */
+/* The music's track k as a stream of its bytes (NULL: none), and whether it loops: the original data's file the
+ * executable's MUSI names (kind 1 loops). */
 static SDL_IOStream *track_stream(KpApp *a, int k, int *loops)
 {
-	const KpMusicTrack *t;
+	char path[KP_APP_FILE_NAME];
+	int kind;
 	*loops = 0;
-	if (a->res) {
-		char path[KP_APP_FILE_NAME];
-		int kind;
-		if (!a->musi || kp_ui_music_track(a->musi, a->musi_size, k, path, sizeof path, &kind) != 0 || !path[0]) return NULL;
-		*loops = kind == KP_APP_MUSIC_LOOPS;
-		return res_io(a->res, path);
-	}
-	if (k < 0 || k >= a->music_index.count) return NULL;
-	t = &a->music_index.tracks[k];
-	*loops = t->loops;
-	if (t->size == 0) return NULL;
-#ifdef __EMSCRIPTEN__
-	if (!a->music_bytes || t->offset > a->music_size || t->size > a->music_size - t->offset) return NULL;
-	return SDL_IOFromConstMem(a->music_bytes + t->offset, t->size);
-#else
-	{
-		char full[1200];
-		kp_app_path(a, MUSIC_PATH, full, sizeof full);
-		return kp_app_range_io(full, (Sint64)t->offset, (Sint64)t->size);
-	}
-#endif
+	if (!a->musi || kp_ui_music_track(a->musi, a->musi_size, k, path, sizeof path, &kind) != 0 || !path[0]) return NULL;
+	*loops = kind == KP_APP_MUSIC_LOOPS;
+	return res_io(a->res, path);
 }
 
-/* A trigger's WAV: the mission's WAVS index of its string id; its file the string names in the scenario's directory
- * (the original data's), else the mission's sounds container's. */
+/* A trigger's WAV: the mission's WAVS index of its string id; the speech's line of that index (the world's
+ * mission_sounds: generated/speech/<loc>/missions/), else the file the string names in the scenario's directory. */
 static MIX_Audio *wav(KpApp *a, uint32_t string_id)
 {
 	KpAudio *au = &a->audio;
@@ -418,19 +297,16 @@ static MIX_Audio *wav(KpApp *a, uint32_t string_id)
 	for (k = 0; k < m->sound_count; k++) {
 		const KpMissionSound *s = &m->sounds[k];
 		if (s->string_id == string_id && s->index < KP_APP_WAVS) {
+			const KpAppMission *entry = a->flow.current >= 0 ? &a->missions[a->flow.current] : NULL;
 			const KpPackSound *ps;
+			char path[KP_APP_FILE_NAME];
 			if (au->wavs[s->index]) return au->wavs[s->index];
-			if (a->res) {
-				const KpAppMission *entry = a->flow.current >= 0 ? &a->missions[a->flow.current] : NULL;
-				char path[KP_APP_FILE_NAME];
-				if (entry && entry->directory[0]
-					&& kp_mission_sound_path(m, entry->directory, string_id, path, sizeof path) == 1) {
-					au->wavs[s->index] = load_file(a, path);
-				}
-				return au->wavs[s->index];
+			if (a->world.mission_sounds_bytes && (ps = kp_pack_sound(&a->world.mission_sounds, s->index)) != NULL) {
+				au->wavs[s->index] = load(au, ps->ogg, ps->size, 0);
+			} else if (entry && entry->directory[0]
+				&& kp_mission_sound_path(m, entry->directory, string_id, path, sizeof path) == 1) {
+				au->wavs[s->index] = load_file(a, path);
 			}
-			ps = kp_pack_sound(&a->world.mission_sounds, s->index);
-			if (ps) au->wavs[s->index] = load(au, ps->ogg, ps->size, 0);
 			return au->wavs[s->index];
 		}
 	}
@@ -539,6 +415,18 @@ void kp_audio_commands(KpApp *a, const KpUiSoundCommand *commands, size_t n)
 			break;
 		}
 	}
+}
+
+void kp_audio_music_again(KpApp *a)
+{
+	KpAudio *au = &a->audio;
+	KpUiSoundCommand c;
+	if (!au->mixer || !au->has_track || MIX_TrackPlaying(au->music)) return;
+	memset(&c, 0, sizeof c);
+	c.type = KP_UI_SOUND_MUSIC;
+	c.sound = (uint16_t)au->track;
+	c.volume = au->music_volume;
+	kp_audio_commands(a, &c, 1);
 }
 
 void kp_audio_stop_all(KpAudio *au)

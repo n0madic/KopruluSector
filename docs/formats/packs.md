@@ -39,7 +39,7 @@ All integers are little-endian.
 
 `TRKS`: u8 count (the 25 tracks of `ui.kpd` `MUSI`, `0x508c58`); per track k: u8 flags (bit 0: the track loops, MUSI kind 1: StartMusicTrack `0x46f1b0` opens those with the loop flag `0x40000`), u32 size, the OGG bytes. A track without a file (track 0) has size 0. Tracks that name one file (16 and 19, 17 and 20, 18 and 21, 5 and 23) each carry its bytes.
 
-The product does not hold the 31 MB container: at start `kp_music_index` (`native/kp_app/kp_music.c`) reads the file's head and the five-byte header of each track (the count, then each track's flags and size) and keeps the tracks' places (offset, size, loop flag; at most `KP_MUSIC_TRACKS` = 32), and `kp_app_audio.c` plays a track as a stream of its byte range in the file (`MIX_SetTrackIOStream`: SDL3_mixer decodes it as it plays, so no track is held in memory; the file is closed when another track starts or the music stops). The web keeps the whole container (its files are in memory already) and streams slices of it. An index that cannot be complete (more than 32 tracks, a track table cut short, a header that cannot be read, a track past the section) is refused whole, and the game plays without music. `test_music`.
+Since stage D8b the product does not read these containers: its bundles carry the [repack](repack.md), each mission's packs packed from the GRPs when it starts (`kp_pack_build`), the sounds and the music read from their WAVs and Oggs through `kp_res` (the music streamed). The containers are still written for the converter's checks and the tools until stage D8c; a language's speech packs (`speech/<loc>/…`) stay the product's.
 
 ## `MSND` (schema 1)
 

@@ -160,7 +160,7 @@ android {
         }
     }
     androidResources {
-        noCompress += ['kpd', 'kpm']
+        noCompress += ['kpd', 'kpm', 'mpq']
     }
     externalNativeBuild {
         cmake {

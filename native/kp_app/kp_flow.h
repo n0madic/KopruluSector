@@ -127,6 +127,9 @@ typedef struct {
 	int (*exists)(void *ctx, const char *path);
 	/* the interface and its language are replaced (the main menu's languages): the host drops what it kept of them */
 	void (*language)(void *ctx);
+	/* whether a mission's files are there (the web fetches its repack's group first: kp_res_group_wanted): 1 they are,
+	 * 0 on their way (the flow asks again each frame), -1 they cannot be had (the reason in err); NULL: always there */
+	int (*mission_files)(void *ctx, const KpAppMission *m, char *err, size_t err_size);
 } KpFlowHost;
 
 #define KP_FLOW_LOCALE_FILES 4 /* a language's packs the flow reads: the glyphs, the strings, the ui, the speech's sounds */
@@ -195,6 +198,7 @@ typedef struct KpFlow {
 	int world;             /* the host's world stands */
 	int64_t loads;         /* the session's loads the world has shown */
 	int current;           /* the mission shown, -1 none */
+	int waiting;           /* the mission current waits for its files (host.mission_files) before it starts */
 	int playing;
 	int result;            /* the game's result for the interface's result dialog, 0 none */
 	int glue_room;         /* the ready room's glue state of the game started from the glue, 0 none */

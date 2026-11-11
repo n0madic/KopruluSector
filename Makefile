@@ -31,17 +31,20 @@ PLATFORMS := macos web android ios ios-sim linux windows
 
 .DEFAULT_GOAL := help
 .PHONY: help convert convert-remastered remastered-extras check-source check-sc check-scr verify missions data \
-	resources icon hd cinematics locale speech fnt-tool toolchain app run test serve install-android clean \
+	resources repack icon hd cinematics locale speech fnt-tool toolchain app run test serve install-android clean \
 	$(PLATFORMS)
 
 help:
 	@echo "Koprulu Sector: convert the original data, then build the game."
 	@echo ""
 	@echo "Convert (SC = a StarCraft: Brood War 1.17.0.1 folder, SCR = a StarCraft: Remastered folder):"
-	@echo "  make convert SC=DIR          verify, missions, data, resources, icon and cinematics from 1.17"
+	@echo "  make convert SC=DIR          verify, missions, data, resources, the repack, icon and cinematics"
+	@echo "                               from 1.17"
 	@echo "                               (CINE=none leaves the cinematics out; without FFmpeg's libvpx-vp9"
 	@echo "                               encoder or oggenc they are left out with a warning)"
-	@echo "  make convert SCR=DIR         missions, data and resources from Remastered"
+	@echo "  make convert SCR=DIR         missions, data, resources and the repack from Remastered"
+	@echo "  make repack SC=DIR|SCR=DIR   the original files the game reads: OUT/repack (groups: the phones, the"
+	@echo "                               web) and OUT/repack-single (one koprulu.mpq: the computers)"
 	@echo "  make convert-remastered SCR=DIR"
 	@echo "                               all of the above from Remastered plus its HD art, cinematics, languages"
 	@echo "                               and SPEECH"
@@ -92,6 +95,7 @@ endif
 	$(MAKE) missions
 	$(MAKE) data
 	$(MAKE) resources
+	$(MAKE) repack
 ifneq ($(strip $(SC)),)
 	$(MAKE) icon
 ifneq ($(CINE),none)
@@ -118,6 +122,11 @@ verify: check-sc
 
 missions data resources: check-source
 	$(CONVERTER) $@ $(SOURCE) --out "$(OUT)"
+
+# The game's data (ADR 0018): the original files repacked, in groups and in one file (the cinematics apart in both)
+repack: check-source
+	$(CONVERTER) repack $(SOURCE) --out "$(OUT)/repack"
+	$(CONVERTER) repack $(SOURCE) --single --out "$(OUT)/repack-single"
 
 icon: check-sc
 	$(CONVERTER) icon --data "$(SC)" --out "$(OUT)"
@@ -166,8 +175,9 @@ app: toolchain
 	cmake -S . -B $(BUILD_DIR) -G Ninja -DCMAKE_BUILD_TYPE=Release -DKP_APP=ON -DKP_TOOLS=OFF
 	cmake --build $(BUILD_DIR) --target koprulu
 
-# The game reads <data folder>/generated/ and, run from the repository root, finds it by itself (a conversion to
-# another OUT is played from a bundle, whose staging puts it under generated/)
+# The game reads the repack in <data folder>/generated/repack-single (else generated/repack) and the rest of
+# generated/; run from the repository root it finds them by itself (a conversion to another OUT is played from a
+# bundle, whose staging puts it under generated/, or with --data naming the repack's folder)
 run: app
 	$(BUILD_DIR)/koprulu $(ARGS)
 

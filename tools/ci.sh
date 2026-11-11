@@ -29,7 +29,8 @@
 #     scripts with the profile's (converter/tests/test_casc.py); with generated/data/ui.kpd it also converts the
 #     install's languages (every check of converter locale on each it holds) and their speech (FFmpeg, every check
 #     of converter speech), and KOPRULU_APP's product runs each language with its speech;
-#   KOPRULU_APP=1 builds the product for macOS (tools/product.sh macos debug, needs generated/) and runs its
+#   KOPRULU_APP=1 builds the product for macOS (tools/product.sh macos debug, needs generated/ and its repack,
+#     generated/repack-single: python3 -m converter repack --single; ADR 0018, stage D8b) and runs its
 #     development checks, with no window on the screen and no sound (--headless, APP_WINDOW's size whatever the
 #     display): the autotest (every mission's terrain against the converter's CRCs, and with
 #     KOPRULU_ORIGINAL its composed views rebuilt on the CPU from the retail files, tools/viewer_compose_check.py),
@@ -45,7 +46,7 @@
 #     screen); with KOPRULU_ORIGINAL or KOPRULU_SCR the cine check over the install's own movies (stage D7: the 1.17
 #     install's Smacker files, Remastered's SD WebM and their subtitles, its HD2 set too when KOPRULU_CINEMATICS asks)
 #     and the install's repack (stage D8, converter repack into build/repack: the 1.17 install's groups, Remastered's
-#     one koprulu.mpq), the scripts over it writing what they write over the install;
+#     one koprulu.mpq), the scripts over it writing what they write over the install and over the bundle's repack;
 #   KOPRULU_CINEMATICS=sd|hd2|both, with KOPRULU_APP, builds the product with the packs from generated/video and runs
 #     the cine check (every cinematic decoded to its end, the first pictures also drawn by the GPU); unset or none (the
 #     default here, whatever product.sh's auto would take), the products are built without them (the player and its
@@ -512,12 +513,14 @@ if [ -n "${KOPRULU_APP:-}" ]; then
     grep -qE "^$PALETTE_OK" "build/script_play_$n.log"
   done
   if [ -n "${KOPRULU_ORIGINAL:-}" ]; then
-    # the original data (ADR 0018, stage D5): the game's data, the tileset, the packs packed from the GRPs, the
-    # interface, the sounds' WAVs, the triggers' WAVs and the music read from the 1.17 install with no container between;
-    # the same runs write the same files (the states, the frames, the profile) and play the same sounds
-    step "product scripts over the 1.17 install: the fixed clock's run and a play's files and sounds the converted data's"
+    # the original data (ADR 0018, stages D5, D8b): the game's data, the tileset, the packs packed from the GRPs, the
+    # interface, the sounds' WAVs, the triggers' WAVs and the music read from the 1.17 install itself; the same runs
+    # write the same files (the states, the frames, the profile) and play the same sounds as over the bundle's repack
+    # (its one koprulu.mpq, the WAVs as Ogg Vorbis where that is smaller)
+    step "product scripts over the 1.17 install: the fixed clock's run and a play's files and sounds the bundle's"
     SCRIPT_RUN=determinism_original app_script determinism 0 "$APP" --data "$KOPRULU_ORIGINAL"
     grep -qF 'data: the original data from the 1.17 install' build/script_determinism_original.err
+    grep -qF 'data: the original data from a repack' build/script_determinism.err
     diff -r build/script/determinism build/script/determinism_original
     SCRIPT_RUN=play_4_original app_script play_4 0 "$APP" --data "$KOPRULU_ORIGINAL"
     diff -r build/script/play_4 build/script/play_4_original

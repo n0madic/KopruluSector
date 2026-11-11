@@ -1,30 +1,14 @@
 /*
  * The playing game's world (plan phase S, stage S5): the mission's tileset and terrain, the lookup rows, the resource
- * packs with their atlas pages (decoded by SDL 3.4's PNG loader, which keeps 8-bit indices exactly: spike 16), the
- * frame table, the image data, the health bars, the fog and the screen palette, uploaded to kp_gfx; per frame the
- * presentation of the game's state.
+ * packs with their atlas pages (packed from the GRPs when the mission starts, ADR 0018 stage D5), the frame table, the
+ * image data, the health bars, the fog and the screen palette, uploaded to kp_gfx; per frame the presentation of the
+ * game's state.
  */
 #include "kp_app.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-/* An 8-bit PNG's indices (w x h, rows top first), or NULL. */
-static uint8_t *png_indices(const uint8_t *png, uint32_t size, int32_t *w, int32_t *h)
-{
-	SDL_Surface *s = SDL_LoadPNG_IO(SDL_IOFromConstMem(png, size), true);
-	uint8_t *out = NULL;
-	int32_t r;
-	if (!s) return NULL;
-	if (s->format == SDL_PIXELFORMAT_INDEX8 && (out = (uint8_t *)malloc((size_t)s->w * (size_t)s->h)) != NULL) {
-		for (r = 0; r < s->h; r++) memcpy(out + (size_t)r * (size_t)s->w, (const uint8_t *)s->pixels + (size_t)r * (size_t)s->pitch, (size_t)s->w);
-		*w = s->w;
-		*h = s->h;
-	}
-	SDL_DestroySurface(s);
-	return out;
-}
 
 static void free_pack(KpAppPack *p)
 {
@@ -34,7 +18,6 @@ static void free_pack(KpAppPack *p)
 		free(p->pages);
 	}
 	kp_pack_free(&p->pack);
-	free(p->bytes);
 	memset(p, 0, sizeof *p);
 }
 
@@ -354,15 +337,11 @@ static void sheet_edges(KpAppWorld *w)
 	int32_t ew, eh, cols = w->tileset.sheet_columns, first = w->tileset.sheet_count, n = w->tileset.edge_count, rows, k, y;
 	uint8_t *edges;
 	w->edge_count = 0;
-	if ((!w->tileset.edge_png && !w->tileset.edges) || n <= 0 || cols <= 0) return;
-	if (w->tileset.edges) { /* the original data's: indices already */
-		ew = n * KP_WORLD_TILE;
-		eh = KP_WORLD_TILE;
-		if (!(edges = (uint8_t *)malloc((size_t)ew * (size_t)eh))) return;
-		memcpy(edges, w->tileset.edges, (size_t)ew * (size_t)eh);
-	} else if (!(edges = png_indices(w->tileset.edge_png, w->tileset.edge_size, &ew, &eh))) {
-		return;
-	}
+	if (!w->tileset.edges || n <= 0 || cols <= 0) return;
+	ew = n * KP_WORLD_TILE; /* indices already (kp_tileset_from_files) */
+	eh = KP_WORLD_TILE;
+	if (!(edges = (uint8_t *)malloc((size_t)ew * (size_t)eh))) return;
+	memcpy(edges, w->tileset.edges, (size_t)ew * (size_t)eh);
 	rows = (first + n + cols - 1) / cols * KP_WORLD_TILE;
 	if (ew != n * KP_WORLD_TILE || eh != KP_WORLD_TILE || w->sheet_w != cols * KP_WORLD_TILE) {
 		SDL_Log("world: the tileset's creep edges do not fit its sheet: drawn without them");
@@ -396,8 +375,6 @@ static int build(KpApp *a, char *err, size_t err_size)
 	const KpAppMission *entry = &a->missions[a->flow.current];
 	KpGame *g = a->flow.session->g;
 	const KpGrpMeta *grp = kp_session_grp(a->flow.session);
-	const uint8_t *tileset;
-	size_t tileset_size;
 	const KpPack *packs[KP_APP_PACKS];
 	const char *names[KP_APP_PACKS];
 	char path[256];
@@ -411,27 +388,21 @@ static int build(KpApp *a, char *err, size_t err_size)
 	/* the session's mission and tileset file */
 	w->mission = kp_session_mission(a->flow.session);
 	kp_host_tileset_path(&a->flow.session->host, path, sizeof path);
-	if (a->res) { /* the original data's (ADR 0018, stage D5): built from the tileset's files */
-		if (kp_tileset_from_files(&w->tileset, &a->files, (int)(w->mission->tileset & 7), &e) != 0) {
-			return fail(err, err_size, "%s", e.msg);
-		}
-	} else {
-		tileset = kp_session_tileset(a->flow.session, &tileset_size);
-		if (kp_tileset_load(&w->tileset, tileset, tileset_size, path, &e) != 0) return fail(err, err_size, "%s", e.msg);
+	/* built from the tileset's files (ADR 0018, stage D5) */
+	if (kp_tileset_from_files(&w->tileset, &a->files, (int)(w->mission->tileset & 7), &e) != 0) {
+		return fail(err, err_size, "%s", e.msg);
 	}
 	w->ids = (uint16_t *)malloc(sizeof *w->ids * (size_t)w->mission->width * (size_t)w->mission->height);
 	if (!w->ids || kp_terrain_import(w->mission, &w->tileset, w->ids, &bad) != 0) {
 		return fail(err, err_size, "mission %s: a tile selects a missing CV5 group", entry->name);
 	}
-	if (w->tileset.sheet) { /* indices already: a copy, which the creep's edges may grow */
+	if (!w->tileset.sheet) return fail(err, err_size, "%s: no megatile sheet", path);
+	{ /* indices already: a copy, which the creep's edges may grow */
 		size_t n = (size_t)w->tileset.sheet_w * (size_t)w->tileset.sheet_h;
 		if (!(w->sheet = (uint8_t *)malloc(n ? n : 1))) return fail(err, err_size, "%s", "out of memory");
 		memcpy(w->sheet, w->tileset.sheet, n);
 		w->sheet_w = w->tileset.sheet_w;
 		w->sheet_h = w->tileset.sheet_h;
-	} else if (!w->tileset.sheet_png || !(w->sheet = png_indices(w->tileset.sheet_png, w->tileset.sheet_size, &w->sheet_w,
-		&w->sheet_h))) {
-		return fail(err, err_size, "%s: no megatile sheet (SHET)", path);
 	}
 	sheet_edges(w);
 	{ /* the cells as imported; the game's display megatiles and creep's edges replace them each frame (sync_terrain) */
@@ -442,7 +413,7 @@ static int build(KpApp *a, char *err, size_t err_size)
 	if (kp_lookups_build(&w->lookups, &a->palettes, (int)(w->mission->tileset & 7), w->tileset.rgb, 0, &e) != 0) {
 		return fail(err, err_size, "%s", e.msg);
 	}
-	/* the mission's resource packs (ADR 0004) with their pages */
+	/* the mission's resource packs (ADR 0004) with their pages: its GRPs decoded and packed as the converter packs them */
 	packed_at = SDL_GetTicksNS();
 	if (w->mission->pack_count > KP_APP_PACKS) {
 		snprintf(err, err_size, "%s: names %d packs, the world holds %d", entry->name, w->mission->pack_count, KP_APP_PACKS);
@@ -450,35 +421,17 @@ static int build(KpApp *a, char *err, size_t err_size)
 	}
 	for (k = 0; k < w->mission->pack_count; k++) {
 		KpAppPack *p = &w->packs[w->pack_count];
-		int j;
 		if (w->mission->packs[k].size >= sizeof p->name) {
 			snprintf(err, err_size, "%s: a pack name of %d bytes", entry->name, (int)w->mission->packs[k].size);
 			return -1;
 		}
 		snprintf(p->name, sizeof p->name, "%.*s", (int)w->mission->packs[k].size, (const char *)w->mission->packs[k].data);
-		if (a->res) { /* the original data's: its GRPs decoded and packed as the converter packs them */
-			w->pack_count++;
-			if (kp_pack_build(&p->pack, &p->pages, grp, &a->files, p->name, &e) != 0) return fail(err, err_size, "%s", e.msg);
-			packs[w->pack_count - 1] = &p->pack;
-			names[w->pack_count - 1] = p->name;
-			continue;
-		}
-		snprintf(path, sizeof path, "generated/packs/%s.kpd", p->name);
-		/* a pack the mission names but the data lacks would leave its sprites undrawn without a word */
-		if (!(p->bytes = kp_app_read(a, path, &p->size))) return fail(err, err_size, "%s: cannot read the pack", path);
 		w->pack_count++; /* the world frees it from here on */
-		if (kp_pack_load(&p->pack, p->bytes, p->size, path, &e) != 0) return fail(err, err_size, "%s", e.msg);
-		p->pages = (uint8_t **)calloc((size_t)(p->pack.page_count ? p->pack.page_count : 1), sizeof *p->pages);
-		if (!p->pages) return fail(err, err_size, "%s: out of memory", path);
-		for (j = 0; j < p->pack.page_count; j++) {
-			int32_t pw, ph;
-			p->pages[j] = png_indices(p->pack.pages[j].png, p->pack.pages[j].size, &pw, &ph);
-			if (!p->pages[j] || pw != p->pack.page_w || ph != p->pack.page_h) return fail(err, err_size, "%s: a bad page", path);
-		}
+		if (kp_pack_build(&p->pack, &p->pages, grp, &a->files, p->name, &e) != 0) return fail(err, err_size, "%s", e.msg);
 		packs[w->pack_count - 1] = &p->pack;
 		names[w->pack_count - 1] = p->name;
 	}
-	if (a->res) {
+	{
 		int32_t pages = 0;
 		for (k = 0; k < w->pack_count; k++) pages += w->packs[k].pack.page_count;
 		SDL_Log("world: %d packs packed from the GRPs, %d pages, in %.0f ms", w->pack_count, (int)pages,
@@ -495,23 +448,19 @@ static int build(KpApp *a, char *err, size_t err_size)
 		return fail(err, err_size, "%s", e.msg);
 	}
 	kp_fog_layer_init(&w->fog);
-	/* the triggers' WAVs (a catalog mission's): the chosen speech's, else the base's (ADR 0016, stage L5); the original
-	 * data reads each from the scenario's directory when it plays (kp_app_audio.c) */
-	if (entry->catalog && !a->res) {
+	/* the triggers' WAVs (a catalog mission's): the chosen speech's lines by WAVS index (ADR 0016, stage L5), else each
+	 * from the scenario's directory when it plays (kp_app_audio.c). TODO: (stage D8c, the speech's base computed in
+	 * memory) the lines are indexed by the WAVS of the mission the speech was converted against; a mission built from
+	 * another install whose WAVs the native parser takes differently would hear them shifted. */
+	if (entry->catalog && a->flags.speech[0] != 0 && strcmp(a->flags.speech, KP_LOCALE_BASE) != 0) {
 		size_t n = 0;
-		const char *speech = a->flags.speech;
-		path[0] = 0;
-		if (speech[0] != 0 && strcmp(speech, KP_LOCALE_BASE) != 0) {
-			snprintf(path, sizeof path, "generated/speech/%s/missions/%s_sounds.kpd", speech, entry->name);
-			if (!kp_app_exists(a, path)) {
-				SDL_Log("speech %s: no %s, the mission's own WAVs", speech, path);
-				path[0] = 0;
-			}
-		}
-		if (path[0] == 0) snprintf(path, sizeof path, "generated/missions/%s_sounds.kpd", entry->name);
-		w->mission_sounds_bytes = kp_app_read(a, path, &n);
-		if (w->mission_sounds_bytes && kp_mission_sounds_load(&w->mission_sounds, w->mission_sounds_bytes, n, path, &e) != 0) {
+		snprintf(path, sizeof path, "generated/speech/%s/missions/%s_sounds.kpd", a->flags.speech, entry->name);
+		if (!(w->mission_sounds_bytes = kp_app_read(a, path, &n))) {
+			SDL_Log("speech %s: no %s, the mission's own WAVs", a->flags.speech, path);
+		} else if (kp_mission_sounds_load(&w->mission_sounds, w->mission_sounds_bytes, n, path, &e) != 0) {
 			SDL_Log("%s", e.msg);
+			free(w->mission_sounds_bytes);
+			w->mission_sounds_bytes = NULL;
 		}
 	}
 	kp_world_upload(a);
@@ -529,10 +478,7 @@ static int build(KpApp *a, char *err, size_t err_size)
 
 int kp_world_build(KpApp *a, char *err, size_t err_size)
 {
-	if (build(a, err, err_size) == 0) {
-		kp_audio_drop_packs(&a->audio); /* the world's packs serve the sounds now */
-		return 0;
-	}
+	if (build(a, err, err_size) == 0) return 0;
 	kp_world_free(a); /* no half-built world stays active */
 	return -1;
 }

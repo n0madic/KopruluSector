@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
-# The product's builds (plan phase S, stage S6; ADR 0012): kp_app over SDL 3.4 with the converted data.
+# The product's builds (plan phase S, stage S6; ADR 0012): kp_app over SDL 3.4 with the original data's repack.
 #   tools/product.sh macos|web|android|ios|ios-sim|linux|windows [release|debug]
-# The data staged for a bundle: generated/data, the missions (.kpm, their sounds), the packs, the HD art where it was
-# imported (generated/hd, not for the web; a phone's HD2 transcoded by kp_hd_phone: its pages in ASTC, or in ETC2 with
+# The data staged for a bundle (ADR 0018, stage D8b): the repack of the original files (python3 -m converter repack):
+# a computer's one koprulu.mpq (generated/repack-single, repack --single), a phone's and the web's groups
+# (generated/repack, but its cinematics' group: the cinematics are the packs below), the web's core preloaded and
+# the other groups beside the page, fetched when needed (a mission's before it starts, the music's from the start),
+# Android's listed in generated/repack/repack.txt and copied out of the APK when it changed (StormLib reads files);
+# the vector fonts (third_party/fonts as fonts/); the console's pieces (generated/data/console.kpd); the HD art where
+# it was imported (generated/hd, not for the web; a phone's HD2 transcoded by kp_hd_phone: its pages in ASTC, or in ETC2 with
 # KOPRULU_PHONE_BLOCKS=etc2 for phones without ASTC, which otherwise draw the original's art, and by default on ios-sim,
 # whose context takes no ASTC; its tiles in ETC2);
 # the cinematics (generated/video, python3 -m converter cinematics; ADR 0015: StarCraft: Remastered's, or the 1.17
@@ -21,7 +26,8 @@
 # languages are staged, none on the web, whose page preloads its data, nor beside KOPRULU_LOCALES=none. Bundles go to
 # dist/product/<platform> (KOPRULU_DIST: another folder for <platform>, such as a second bundle of another
 # conversion); the converter's output (generated/, or KOPRULU_GENERATED: another --out directory, such as a
-# conversion from StarCraft: Remastered alone) must be current.
+# conversion from StarCraft: Remastered alone, whose repack is generated/repack-single or generated/repack of it)
+# must be current.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
@@ -109,22 +115,37 @@ case "$SPEECH" in
 esac
 echo "product: speech ${SPEECH:-none} (KOPRULU_SPEECH)" >&2
 
+# The repack (ADR 0018): a computer's one file, a phone's and the web's groups (each read or fetched when needed)
+case "$PLATFORM" in
+  web|android|ios|ios-sim) REPACK=repack; REPACK_HINT="python3 -m converter repack --data DIR|--scr DIR" ;;
+  *) REPACK=repack-single; REPACK_HINT="python3 -m converter repack --single --data DIR|--scr DIR" ;;
+esac
+if [ ! -f "$GENERATED/$REPACK/koprulu-core.mpq" ] && [ ! -f "$GENERATED/$REPACK/koprulu.mpq" ]; then
+  echo "product: no $GENERATED/$REPACK ($REPACK_HINT)" >&2
+  exit 1
+fi
+# the files of the repack a bundle carries (relative to $GENERATED): the cinematics' group goes, the packs show them
+GENERATED_DIR="$(cd "$GENERATED" && pwd)"
+repack_files() {
+  (cd "$GENERATED_DIR" && find "$REPACK" -name 'koprulu*.mpq' ! -name koprulu-cinematics.mpq | sort)
+}
+
 # The data of a bundle under $STAGE/generated (hard links where the file system allows).
 stage_data() {
   rm -rf "$STAGE"
   mkdir -p "$STAGE/generated"
   (cd "$GENERATED"
     {
-      find data -name '*.kpd'
-      find missions -name '*.kpm' -o -name '*_sounds.kpd' -o -name index.txt
-      find packs -name '*.kpd'
+      echo data/console.kpd # the console's pieces (Remastered's, whole: python3 -m converter console)
+      # the web preloads the core, the other groups lie beside the page (stage_web_fetched)
+      if [ "$PLATFORM" = web ]; then repack_files | grep '/koprulu-core\.mpq$'; else repack_files; fi
       if [ -n "$LOCALES$SPEECH" ]; then echo locale/glyphs.kpd; fi # LOCS lists the languages
       for id in $LOCALES; do find "locale/$id" -name '*.kpd' -o -name '*.kpm'; done # each language's overlays
       for id in $SPEECH; do find "speech/$id" -name '*.kpd' -o -name '*.kpm'; done   # each speech's
       if [ "$PLATFORM" != web ]; then # the web's head alone (web_hd_heads.py), the rest beside the page
         for v in $CINE_VARIANTS; do echo "video/cinematics-$v.kpd"; done
       fi
-      if [ "$VARIANT" = debug ]; then
+      if [ "$VARIANT" = debug ]; then # the test scenarios (converted .kpm, the scenarios' catalog)
         find scenarios -name '*.kpm' -o -name index.txt
         find viewer -name '*.mcrc'
       fi
@@ -138,6 +159,17 @@ stage_data() {
       mkdir -p "$STAGE/generated/$(dirname "$f")"
       ln "$f" "$STAGE/generated/$f" 2>/dev/null || cp "$f" "$STAGE/generated/$f"
     done)
+  # the vector fonts beside the data (kp_app_files.c read_vector_fonts), with their licences
+  for f in exo2/Exo2.ttf exo2/OFL.txt michroma/Michroma-Regular.ttf michroma/OFL.txt; do
+    mkdir -p "$STAGE/fonts/$(dirname "$f")"
+    cp "third_party/fonts/$f" "$STAGE/fonts/$f"
+  done
+  # Android's list of the repack's files ("FILE SIZE SHA256"): copied out of the APK when a line changed
+  if [ "$PLATFORM" = android ]; then
+    repack_files | while read -r f; do
+      printf '%s %s %s\n' "$(basename "$f")" "$(wc -c <"$GENERATED_DIR/$f" | tr -d ' ')" "$(sha256 "$GENERATED_DIR/$f")"
+    done >"$STAGE/generated/$REPACK/repack.txt"
+  fi
   # the Linux window's icon (SDL_SetWindowIcon; the other platforms' icons go into their bundles)
   if [ "$PLATFORM" = linux ] && [ -n "$ICON" ]; then
     mkdir -p "$STAGE/generated/icon"
@@ -158,12 +190,13 @@ stage_data() {
 
 # The web's HD2 (stage R4b) and cinematics: the page preloads the files' heads and sizes (stage_data,
 # tools/web_hd_heads.py) and fetches the rest as byte ranges from the files beside it (a server with Range requests:
-# tools/web_serve.py).
+# tools/web_serve.py); the repack's groups but its core, fetched whole (ADR 0018, stage D8b).
 stage_web_fetched() {
   local src f v
   src="$(cd "$GENERATED" && pwd)"
   { [ -d "$src/hd/hd2" ] && (cd "$src" && find hd/hd2 -name '*.kpd')
     for v in $CINE_VARIANTS; do echo "video/cinematics-$v.kpd"; done
+    repack_files | grep -v '/koprulu-core\.mpq$'
   } | while read -r f; do
     mkdir -p "$OUT/generated/$(dirname "$f")"
     ln "$src/$f" "$OUT/generated/$f" 2>/dev/null || cp "$src/$f" "$OUT/generated/$f"

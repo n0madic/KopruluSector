@@ -55,20 +55,29 @@ typedef struct {
 	char error[512];
 } Main;
 
-/* --data DIR: the converted data's root when it holds generated/ (the first such folder), the original data's when
- * it holds a repack or an install (kp_res_detect; a bundle's data/ may be both); else the converted data's root, whose
- * missing files the start reports. */
-static void data_dir(KpAppFlags *f, const char *dir)
+/* Whether a folder holds the converter's output (generated/: the HD art, the languages, the cinematics' packs). */
+static int has_generated(const char *dir)
 {
 	char probe[600];
-	int original = kp_res_detect(dir, NULL) != KP_RES_SOURCE_NONE;
 	SDL_PathInfo info;
-	snprintf(probe, sizeof probe, "%s/generated/data/dat.kpd", dir);
-	if (original) {
-		if (f->res_dir_count < KP_APP_RES_DIRS) snprintf(f->res_dirs[f->res_dir_count++], sizeof f->res_dirs[0], "%s", dir);
-		else SDL_Log("data: --data %s: more than %d folders of original data", dir, KP_APP_RES_DIRS);
-	}
-	if (!f->data[0] && (!original || SDL_GetPathInfo(probe, &info))) snprintf(f->data, sizeof f->data, "%s", dir);
+	snprintf(probe, sizeof probe, "%s/generated", dir);
+	return SDL_GetPathInfo(probe, &info) && info.type == SDL_PATHTYPE_DIRECTORY;
+}
+
+static void add_res_dir(KpAppFlags *f, const char *dir)
+{
+	if (f->res_dir_count < KP_APP_RES_DIRS) snprintf(f->res_dirs[f->res_dir_count++], sizeof f->res_dirs[0], "%s", dir);
+	else SDL_Log("data: --data %s: more than %d folders of original data", dir, KP_APP_RES_DIRS);
+}
+
+/* --data DIR: the original data's when it holds a repack or an install (kp_res_detect), the converted data's root when
+ * it holds generated/ (the first such folder; a bundle's data/ is both); else the converted data's root, whose missing
+ * files the start reports. */
+static void data_dir(KpAppFlags *f, const char *dir)
+{
+	int original = kp_res_detect(dir, NULL) != KP_RES_SOURCE_NONE;
+	if (original) add_res_dir(f, dir);
+	if (!f->data[0] && (!original || has_generated(dir))) snprintf(f->data, sizeof f->data, "%s", dir);
 }
 
 static void usage_flags(KpAppFlags *f, int argc, char **argv)
@@ -173,23 +182,43 @@ static void final_flags(KpAppFlags *f)
 }
 
 /* The converted data's root: --data, else the working directory when it holds generated/, else the program's own
- * directory's data/ (a bundle). Android reads the APK's assets and the web its preloaded /data. */
+ * directory's data/ (a bundle). Android reads the APK's assets and the web its preloaded /data. Without --data's
+ * original data, the root's own (a bundle's koprulu.mpq), else the converter's repack under it (generated/repack-single,
+ * else generated/repack: a working tree's); Android's is its repack copied out of the APK (kp_app_res_open). */
 static void data_root(KpAppFlags *f)
 {
+	static const char *const REPACKS[] = { "generated/repack-single", "generated/repack" };
+	size_t k;
 #if defined(SDL_PLATFORM_ANDROID)
 	(void)f;
-#elif defined(__EMSCRIPTEN__)
+	(void)REPACKS;
+	(void)k;
+#else
+#if defined(__EMSCRIPTEN__)
 	if (!f->data[0]) snprintf(f->data, sizeof f->data, "/data");
 #else
-	SDL_PathInfo info;
 	const char *base;
-	if (f->data[0]) return;
-	if (SDL_GetPathInfo("generated/data/dat.kpd", &info)) {
+	if (!f->data[0] && has_generated(".")) {
 		snprintf(f->data, sizeof f->data, ".");
+	} else if (!f->data[0] && (base = SDL_GetBasePath()) != NULL) {
+		snprintf(f->data, sizeof f->data, "%sdata", base);
+	}
+#endif
+	if (f->res_dir_count || !f->data[0]) return;
+	if (kp_res_detect(f->data, NULL) != KP_RES_SOURCE_NONE) {
+		char root[sizeof f->data]; /* a copy: add_res_dir writes into the flags it is read from */
+		snprintf(root, sizeof root, "%s", f->data);
+		add_res_dir(f, root);
 		return;
 	}
-	base = SDL_GetBasePath();
-	if (base) snprintf(f->data, sizeof f->data, "%sdata", base);
+	for (k = 0; k < sizeof REPACKS / sizeof REPACKS[0]; k++) {
+		char dir[sizeof f->data + 32];
+		snprintf(dir, sizeof dir, "%s/%s", f->data, REPACKS[k]);
+		if (kp_res_detect(dir, NULL) == KP_RES_SOURCE_REPACK) {
+			add_res_dir(f, dir);
+			return;
+		}
+	}
 #endif
 }
 
@@ -250,7 +279,7 @@ static int start(Main *m)
 	KpApp *a = &m->app;
 	system_locales(&a->flags);
 	if (kp_app_res_open(a, m->error, sizeof m->error) != 0 || kp_app_load_data(a, m->error, sizeof m->error) != 0) return -1;
-	kp_audio_init(&a->audio, a->sounds_bytes, a->sounds_size);
+	kp_audio_init(&a->audio);
 	kp_app_cine_open(a);
 	if (kp_app_flow_init(a, m->error, sizeof m->error) != 0) return -1;
 	if (kp_dev_init(a) != 0) return -1;
@@ -560,6 +589,7 @@ SDL_AppResult SDL_AppIterate(void *appstate)
 	}
 	if (frame_skipped(m)) return SDL_APP_CONTINUE;
 	kp_app_clock_frame(a);
+	kp_app_groups_frame(a);
 	window_size(a);
 	kp_input_frame(a);
 	gfx_failures(a);
@@ -653,6 +683,7 @@ void SDL_AppQuit(void *appstate, SDL_AppResult result)
 	kp_hd_ui_free(&m->app);
 	kp_app_data_free(&m->app);
 	free(m->app.web_sizes);
+	kp_app_groups_free(&m->app);
 	kp_audio_free(&m->app.audio);
 	kp_app_res_close(&m->app); /* after the audio: the music's stream reads through it */
 	kp_gfx_free(m->app.gfx);

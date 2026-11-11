@@ -17,7 +17,8 @@ original's parser refuses, or whose header is longer than kp_files.c's WAV_HEAD,
 Groups, for a build that fetches them when it needs them (the web): `koprulu-core.mpq`, what the program reads when it
 starts; a group per mission directory, its CHK and speech (`koprulu-<campaign>-<mission>.mpq`); `koprulu-music.mpq`;
 `koprulu-cinematics.mpq`. The core's listing names each group with the prefix of its names. `single` writes one
-`koprulu.mpq` instead (the desktops).
+`koprulu.mpq` instead (the desktops), the cinematics still apart in their group, which its listing names: a bundle
+leaves them out for the converted packs, a third of their size.
 
 The listing (`(koprulu)`, a line each):
     koprulu repack 2
@@ -189,12 +190,13 @@ def _read(source, kind: str, name: str, size: int | None, digest: str | None) ->
 def write(source, out: Path, *, kind: str, single: bool = False, extra: list[str] | None = None,
           oggs: OggStore | None = None) -> Report:
     """Write the repack of `source` (`kind` "1.17": a Resolver; "remastered": a ScrSource, its statuses) into `out`:
-    its groups, or one koprulu.mpq (`single`); the koprulu*.mpq there before are removed."""
+    its groups, or one koprulu.mpq and the cinematics' group (`single`); the koprulu*.mpq there before are removed."""
     reads = _reads(source, extra or [], movies=kind == "1.17")
     root = SINGLE if single else CORE
 
     def group(key: str) -> str:
-        return root if single else group_of(key)[0]
+        g = group_of(key)[0]
+        return g if not single or g == CINEMATICS else root
 
     counts = {root: 0}
     for _, key, _, _ in reads:
@@ -231,8 +233,7 @@ def write(source, out: Path, *, kind: str, single: bool = False, extra: list[str
                         report.ogg += 1
                         report.wav_bytes += stored.wav[1]
                         report.ogg_bytes += len(stored.data)
-        if not single:
-            listings[root][len(head):len(head)] = [f"group {g} {prefixes[g]}\n" for g in sorted(report.files) if g != root]
+        listings[root][len(head):len(head)] = [f"group {g} {prefixes[g]}\n" for g in sorted(report.files) if g != root]
         for g, archive in archives.items():
             archive.add(LISTING, "".join(listings[g]).encode())
     finally:

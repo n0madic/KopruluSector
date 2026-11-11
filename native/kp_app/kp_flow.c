@@ -410,9 +410,8 @@ static int build_scene(KpFlow *f, char *err, size_t err_size)
 		}
 	}
 	mission_overlay(f, entry, "locale", "language", f->flags->locale, "text", kp_host_game_text);
-	/* a speech's triggers time its own WAVs, the converted data's: the original data plays the scenario's (TODO: the
-	 * languages' speech from the original data) */
-	if (!f->files) mission_overlay(f, entry, "speech", "speech", f->flags->speech, "triggers", kp_host_game_speech);
+	/* a speech's triggers time its own lines, which the host plays in place of the scenario's WAVs */
+	mission_overlay(f, entry, "speech", "speech", f->flags->speech, "triggers", kp_host_game_speech);
 	kp_host_tileset_path(&f->session->host, tileset, sizeof tileset);
 	tileset_size = 0; /* the original data's game has its CV5 and VF4 already (kp_session_load_from) */
 	tileset_bytes = f->files ? NULL : f->host.read(f->host.ctx, tileset, &tileset_size);
@@ -454,16 +453,42 @@ static int build_scene(KpFlow *f, char *err, size_t err_size)
 	return 0;
 }
 
-int kp_flow_start_mission(KpFlow *f, int index, char *err, size_t err_size)
+/* The mission current started once its files are there (ready: host.mission_files' answer); 0, or -1 with nothing of a
+ * game that did not start left: no session, no world, no console, no save waiting for it. */
+static int start_current(KpFlow *f, int ready, char *err, size_t err_size)
 {
-	f->current = index;
+	f->waiting = 0;
 	f->playing = 1;
-	if (build_scene(f, err, err_size) == 0) return 0;
-	/* nothing of a game that did not start stays: no session, no world, no console, no save waiting for it */
+	if (ready > 0 && build_scene(f, err, err_size) == 0) return 0;
 	destroy_scene(f);
 	f->playing = 0;
 	f->load_on_start[0] = 0;
 	return -1;
+}
+
+int kp_flow_start_mission(KpFlow *f, int index, char *err, size_t err_size)
+{
+	int ready = 1;
+	f->current = index;
+	f->waiting = 0;
+	if (f->host.mission_files && (ready = f->host.mission_files(f->host.ctx, &f->missions[index], err, err_size)) == 0) {
+		say(f, "play %s: waiting for its files", f->missions[index].name);
+		f->waiting = 1;
+		return 0;
+	}
+	return start_current(f, ready, err, err_size);
+}
+
+/* A mission waiting for its files: started once they came; one that cannot start says why, the glue back at its main
+ * menu (a run of --mission with no glue ends, as a start that fails at once does). */
+static void mission_wait(KpFlow *f)
+{
+	char err[512];
+	int ready = f->host.mission_files(f->host.ctx, &f->missions[f->current], err, sizeof err);
+	if (ready == 0 || start_current(f, ready, err, sizeof err) == 0) return;
+	say(f, "play %s: %s", f->missions[f->current].name, err);
+	if (f->glue_on) kp_glue_menus(&f->glue, KP_GLUE_MAIN);
+	else f->host.quit(f->host.ctx);
 }
 
 /* --- the saves --- */
@@ -1181,6 +1206,7 @@ static void start_over(KpFlow *f);
 void kp_flow_frame(KpFlow *f)
 {
 	tell_missing_glyphs(f);
+	if (f->waiting) mission_wait(f);
 	if (f->cine_then.kind != THEN_NONE && !f->host.cine_active(f->host.ctx)) cine_continue(f); /* the cinematics ended */
 	if (f->after_game) glue_after_game(f);
 	f->fixed_screen = kp_flow_glue_active(f); /* a glue screen keeps the original's 640 x 480 */

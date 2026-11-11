@@ -1,8 +1,9 @@
 /*
  * The product's files (plan phase S, stage S5): the converted data read through SDL (a directory on the desktop, the
- * APK's assets on Android, the preloaded package on the web), the mission index, and the preferences (the profile and
- * the saves) in SDL's preference path; on the web that path is an IndexedDB mount, written back after every write
- * (FS.syncfs).
+ * APK's assets on Android, the preloaded package on the web: the HD art, the languages, the cinematics' packs), the
+ * original data every game and the interface are built from (ADR 0018: an install or a repack through kp_res; Android's
+ * repack copied out of the APK), and the preferences (the profile and the saves) in SDL's preference path; on the web
+ * that path is an IndexedDB mount, written back after every write (FS.syncfs).
  */
 #include "kp_app.h"
 #include "kp_sha256.h"
@@ -140,48 +141,38 @@ uint8_t *kp_app_read_head(KpApp *a, const char *path, size_t want, size_t *size,
 	return data;
 }
 
-int kp_app_read_missions(KpApp *a)
-{
-	size_t size, scenarios_size = 0;
-	char *text = (char *)kp_app_read(a, "generated/missions/index.txt", &size), *scenarios;
-	if (!text) return -1;
-	scenarios = (char *)kp_app_read(a, "generated/scenarios/index.txt", &scenarios_size);
-	a->mission_count = kp_flow_missions(a->missions, KP_APP_MISSIONS, text, size, scenarios, scenarios_size);
-	free(text);
-	free(scenarios);
-	return 0;
-}
-
-static int need(KpApp *a, const char *path, uint8_t **out, size_t *size, char *err, size_t err_size)
-{
-	if ((*out = kp_app_read(a, path, size)) != NULL) return 0;
-	snprintf(err, err_size, "cannot read %s%s%s: %s", a->flags.data, a->flags.data[0] ? "/" : "", path, SDL_GetError());
-	return -1;
-}
-
-/* The vector fonts of the interface's text at large scales (ADR 0011): SIL OFL fonts, not original data, as ui.kpd's
- * VFNT names them (converter/kpf/kpd.py VECTOR_FONTS); the original data's interface reads them from the program's
- * fonts/ folder, else the source tree's third_party/fonts/ (the working directory's). */
+/* The vector fonts of the interface's text at large scales (ADR 0011): SIL OFL fonts, not original data, under the
+ * names the interface looks them up by (converter/kpf/kpd.py VECTOR_FONTS); read from the data root's fonts/ (a
+ * bundle's, tools/product.sh), else the source tree's third_party/fonts/ (the working directory's). */
 static const char *const VECTOR_FONTS[KP_APP_VECTOR_FONTS][2] = {
 	{ "fonts\\Exo2.ttf", "exo2/Exo2.ttf" },
 	{ "fonts\\Michroma-Regular.ttf", "michroma/Michroma-Regular.ttf" },
 };
 
-/* TODO: D8's bundles carry the fonts beside the repack; until then a product without them draws no vector text. */
+/* A file outside the data root (the source tree's) in malloc'd bytes, or NULL. */
+static uint8_t *read_plain(const char *path, size_t *size)
+{
+	void *bytes = SDL_LoadFile(path, size);
+	uint8_t *copy;
+	if (!bytes) return NULL;
+	if ((copy = (uint8_t *)malloc(*size ? *size : 1)) != NULL) memcpy(copy, bytes, *size);
+	SDL_free(bytes);
+	return copy;
+}
+
 static int read_vector_fonts(KpApp *a, KpUiFile *out)
 {
-	const char *base = SDL_GetBasePath();
 	int k, n = 0;
 	for (k = 0; k < KP_APP_VECTOR_FONTS; k++) {
 		char path[1200];
 		size_t size = 0;
-		snprintf(path, sizeof path, "%sfonts/%s", base ? base : "", VECTOR_FONTS[k][1]);
-		if (!(a->vector_fonts[k] = SDL_LoadFile(path, &size))) {
+		snprintf(path, sizeof path, "fonts/%s", VECTOR_FONTS[k][1]);
+		if (!(a->vector_fonts[k] = kp_app_read(a, path, &size))) {
 			snprintf(path, sizeof path, "third_party/fonts/%s", VECTOR_FONTS[k][1]);
-			a->vector_fonts[k] = SDL_LoadFile(path, &size);
+			a->vector_fonts[k] = read_plain(path, &size);
 		}
 		if (!a->vector_fonts[k]) {
-			SDL_Log("data: no %s beside the program or in third_party/fonts: the text drawn without it", VECTOR_FONTS[k][1]);
+			SDL_Log("data: no fonts/%s in the data or third_party/fonts: the text drawn without it", VECTOR_FONTS[k][1]);
 			continue;
 		}
 		out[n].path = VECTOR_FONTS[k][0];
@@ -193,9 +184,10 @@ static int read_vector_fonts(KpApp *a, KpUiFile *out)
 	return n;
 }
 
-/* The save identity of the original data (ADR 0018, stage D5): the profile's id and the SHA-256 of the data set's DAT
- * (the games' CRCs of the rest are checked on a load). TODO: D8's identity of the simulation's inputs, the same from
- * either data. */
+/* The save identity (ADR 0018 item 6): the profile's id and the SHA-256 of the data set's DAT; a load checks the CRC-32s
+ * of the rest the games are built from (kp_host.c: grpmeta, iscript, the AI scripts, the tileset's CV5 and VF4, the
+ * mission). Each is built from the original files, the same from a 1.17 install, Remastered's or a repack, so a save
+ * goes from one to the other; one made over the converted containers is refused. */
 static void files_identity(KpSaveIdentity *id, const KpFiles *files, const KpDat *dat)
 {
 	memset(id, 0, sizeof *id);
@@ -205,13 +197,18 @@ static void files_identity(KpSaveIdentity *id, const KpFiles *files, const KpDat
 
 /* The data every game and the interface read, built from the original files (ADR 0018, stage D5); the missions are the
  * campaign's (mapdata.dat's directories) and the converted data's test scenarios when it has them. */
-static int load_original(KpApp *a, char *err, size_t err_size)
+int kp_app_load_data(KpApp *a, char *err, size_t err_size)
 {
 	KpError e;
 	KpUiFile fonts[KP_APP_VECTOR_FONTS];
 	int font_count;
 	size_t scenarios_size = 0;
 	char *scenarios;
+	if (!a->res) {
+		snprintf(err, err_size, "no original data: --data names a StarCraft 1.17.0.1 install, StarCraft: Remastered's or "
+			"a repack (python3 -m converter repack)");
+		return -1;
+	}
 	kp_res_files(a->res, &a->files);
 	if (!a->files.profile) {
 		snprintf(err, err_size, "data: the original data has no compiled profile");
@@ -235,50 +232,6 @@ static int load_original(KpApp *a, char *err, size_t err_size)
 	return 0;
 }
 
-int kp_app_load_data(KpApp *a, char *err, size_t err_size)
-{
-	KpError e;
-	uint8_t *grp = NULL, *iscript = NULL, *aiscript = NULL;
-	size_t grp_size, iscript_size, aiscript_size;
-	int k, rc = -1;
-	if (a->res) return load_original(a, err, err_size);
-	/* the shared data parsed once (its loaders copy what they keep) */
-	if (need(a, "generated/data/grpmeta.kpd", &grp, &grp_size, err, err_size) == 0
-		&& need(a, "generated/data/iscript.kpd", &iscript, &iscript_size, err, err_size) == 0
-		&& need(a, "generated/data/aiscript.kpd", &aiscript, &aiscript_size, err, err_size) == 0) {
-		rc = kp_host_shared_load(&a->shared, grp, grp_size, iscript, iscript_size, aiscript, aiscript_size, &e);
-		if (rc != 0) snprintf(err, err_size, "%s", e.msg);
-	}
-	free(grp);
-	free(iscript);
-	free(aiscript);
-	if (rc != 0) return -1;
-	if (need(a, "generated/data/dat.kpd", &a->dat, &a->dat_size, err, err_size) != 0
-		|| need(a, "generated/data/palettes.kpd", &a->palettes_bytes, &a->palettes_size, err, err_size) != 0
-		|| need(a, "generated/data/campaign.kpd", &a->campaign_bytes, &a->campaign_size, err, err_size) != 0
-		|| need(a, "generated/data/sounds.kpd", &a->sounds_bytes, &a->sounds_size, err, err_size) != 0
-		|| kp_app_music_open(a, err, err_size) != 0) {
-		return -1;
-	}
-	for (k = 0; k < KP_UI_FILES; k++) {
-		char path[128];
-		snprintf(path, sizeof path, "generated/data/%s", KP_UI_FILE_NAMES[k]);
-		if (need(a, path, &a->ui_files[k], &a->ui_sizes[k], err, err_size) != 0) return -1;
-	}
-	a->console_art = kp_app_read(a, "generated/data/console.kpd", &a->console_art_size);
-	if (kp_palettes_load(&a->palettes, a->palettes_bytes, a->palettes_size, &e) != 0
-		|| kp_campaign_load(&a->campaign, a->campaign_bytes, a->campaign_size, "campaign.kpd", &e) != 0
-		|| kp_save_identity(&a->identity, a->dat, a->dat_size, &e) != 0) {
-		snprintf(err, err_size, "%s", e.msg);
-		return -1;
-	}
-	if (kp_app_read_missions(a) != 0) {
-		snprintf(err, err_size, "cannot read the mission index generated/missions/index.txt");
-		return -1;
-	}
-	return 0;
-}
-
 void kp_app_data_free(KpApp *a)
 {
 	int k;
@@ -287,14 +240,8 @@ void kp_app_data_free(KpApp *a)
 	kp_campaign_free(&a->campaign);
 	kp_dat_free(&a->dat_proto);
 	kp_ui_data_free(&a->ui_data);
-	for (k = 0; k < KP_APP_VECTOR_FONTS; k++) SDL_free(a->vector_fonts[k]);
-	for (k = 0; k < KP_UI_FILES; k++) free(a->ui_files[k]);
-	free(a->dat);
-	free(a->palettes_bytes);
-	free(a->campaign_bytes);
-	free(a->sounds_bytes);
+	for (k = 0; k < KP_APP_VECTOR_FONTS; k++) free(a->vector_fonts[k]);
 	free(a->console_art);
-	free(a->music_bytes);
 	memset(&a->files, 0, sizeof a->files);
 }
 
@@ -304,11 +251,107 @@ static void res_log(void *ctx, const char *line)
 	SDL_Log("%s", line);
 }
 
+#if defined(SDL_PLATFORM_ANDROID)
+#define REPACK_ASSETS "generated/repack/" /* tools/product.sh: the repack's groups in the APK's assets */
+#define REPACK_LIST "repack.txt"            /* and their list there: "FILE SIZE SHA256" a line each */
+#define REPACK_COPY (1u << 20)
+
+/* Whether text (size bytes) has a line of those len bytes. */
+static int has_line(const char *text, size_t size, const char *line, size_t len)
+{
+	size_t at = 0;
+	while (at < size) {
+		const char *end = (const char *)memchr(text + at, '\n', size - at);
+		size_t n = end ? (size_t)(end - (text + at)) : size - at;
+		if (n == len && memcmp(text + at, line, len) == 0) return 1;
+		at += n + 1;
+	}
+	return 0;
+}
+
+/* An asset copied into path (through a file beside it, renamed when whole): 0, or -1 with the reason. */
+static int copy_asset(const char *asset, const char *path, char *err, size_t err_size)
+{
+	char tmp[1100];
+	SDL_IOStream *in = SDL_IOFromFile(asset, "rb"), *out;
+	uint8_t *buf = (uint8_t *)malloc(REPACK_COPY);
+	size_t n;
+	int ok = 1;
+	snprintf(tmp, sizeof tmp, "%s.part", path);
+	out = in && buf ? SDL_IOFromFile(tmp, "wb") : NULL;
+	if (!out) {
+		snprintf(err, err_size, "the repack's %s cannot be copied out of the APK: %s", asset, SDL_GetError());
+		if (in) SDL_CloseIO(in);
+		free(buf);
+		return -1;
+	}
+	while (ok && (n = SDL_ReadIO(in, buf, REPACK_COPY)) > 0) ok = SDL_WriteIO(out, buf, n) == n;
+	ok = ok && SDL_GetIOStatus(in) != SDL_IO_STATUS_ERROR;
+	SDL_CloseIO(in);
+	ok = SDL_CloseIO(out) && ok && SDL_RenamePath(tmp, path);
+	free(buf);
+	if (!ok) {
+		snprintf(err, err_size, "the repack's %s cannot be copied to %s: %s", asset, path, SDL_GetError());
+		SDL_RemovePath(tmp);
+		return -1;
+	}
+	return 0;
+}
+
+/* The repack in the APK's assets copied into the preference path's repack/ (StormLib reads files, not assets): each
+ * file REPACK_LIST names, when the copy's list does not have its line (a new APK) or its file is not that size; the
+ * list written last. The folder in dir ("" when the APK has no repack): 0, or -1 with the reason. */
+static int android_repack(KpApp *a, char *dir, size_t dir_size, char *err, size_t err_size)
+{
+	char list_path[1100];
+	size_t size = 0, old_size = 0, copied = 0;
+	char *list = (char *)kp_app_read(a, REPACK_ASSETS REPACK_LIST, &size), *old, *line, *next;
+	int rc = 0;
+	dir[0] = 0;
+	if (!list) return 0;
+	snprintf(dir, dir_size, "%srepack", a->pref);
+	snprintf(list_path, sizeof list_path, "%s/%s", dir, REPACK_LIST);
+	SDL_CreateDirectory(dir);
+	old = (char *)read_plain(list_path, &old_size);
+	for (line = list; rc == 0 && line && *line; line = next) {
+		char file[128], path[1100], asset[sizeof REPACK_ASSETS + sizeof file];
+		unsigned long long want;
+		SDL_PathInfo info;
+		size_t len;
+		next = strchr(line, '\n');
+		len = next ? (size_t)(next - line) : strlen(line);
+		if (next) next++;
+		if (sscanf(line, "%127s %llu", file, &want) != 2 || strchr(file, '/')) continue;
+		snprintf(path, sizeof path, "%s/%s", dir, file);
+		if (old && has_line(old, old_size, line, len) && SDL_GetPathInfo(path, &info) && info.size == (Uint64)want) continue;
+		snprintf(asset, sizeof asset, "%s%s", REPACK_ASSETS, file);
+		rc = copy_asset(asset, path, err, err_size);
+		copied += (size_t)want;
+	}
+	if (rc == 0 && copied) {
+		SDL_IOStream *io = SDL_IOFromFile(list_path, "wb");
+		if (!io || SDL_WriteIO(io, list, size) != size) SDL_Log("data: %s cannot be written: %s", list_path, SDL_GetError());
+		if (io) SDL_CloseIO(io);
+		SDL_Log("data: the repack copied out of the APK (%.1f MB)", (double)copied / 1e6);
+	}
+	free(old);
+	free(list);
+	return rc;
+}
+#endif
+
 int kp_app_res_open(KpApp *a, char *err, size_t err_size)
 {
 	KpResConfig config;
 	const char *dirs[KP_APP_RES_DIRS];
 	int k;
+#if defined(SDL_PLATFORM_ANDROID)
+	if (!a->flags.res_dir_count) {
+		char dir[sizeof a->flags.res_dirs[0]];
+		if (android_repack(a, dir, sizeof dir, err, err_size) != 0) return -1;
+		if (dir[0]) snprintf(a->flags.res_dirs[a->flags.res_dir_count++], sizeof a->flags.res_dirs[0], "%s", dir);
+	}
+#endif
 	if (!a->flags.res_dir_count) return 0;
 	for (k = 0; k < a->flags.res_dir_count; k++) dirs[k] = a->flags.res_dirs[k];
 	memset(&config, 0, sizeof config);

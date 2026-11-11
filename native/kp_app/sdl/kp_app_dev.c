@@ -349,6 +349,17 @@ static void autotest_start(KpApp *a, Dev *d)
 		d->step = AT_DONE;
 		return;
 	}
+	/* its files first (the web fetches its repack's group): the game starts at once once they are there */
+	if (a->flow.host.mission_files) {
+		int ready = a->flow.host.mission_files(a->flow.host.ctx, &a->missions[d->mission], err, sizeof err);
+		if (ready == 0) return; /* asked again on the next frame */
+		if (ready < 0) {
+			kp_dev_line("mission %s: %s", a->missions[d->mission].name, err);
+			d->failures++;
+			d->mission++;
+			return;
+		}
+	}
 	if (kp_flow_start_mission(&a->flow, d->mission, err, sizeof err) != 0) {
 		kp_dev_line("mission %s: %s", a->missions[d->mission].name, err);
 		d->failures++;

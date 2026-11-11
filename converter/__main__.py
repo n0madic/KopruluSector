@@ -33,14 +33,16 @@ Commands:
                                install holds, others are told in the log) and the glyph
                                supplement generated/locale/glyphs.kpd (run `data` and `missions` first,
                                build the kp_fnt_make target; reports/locale-<LOC>.json has the checks)
-  repack --data DIR|--scr DIR [--out generated/repack] [--single] [--res-log FILE] [--wav]
+  repack --data DIR|--scr DIR [--out DIR] [--single] [--res-log FILE] [--wav]
          [--cache generated/cache/repack-ogg]
                                write the koprulu*.mpq repack (ADR 0018, stage D8; converter/repack.py):
                                the files the game reads in their original formats, Remastered's
                                rebuilt 1.17 files from --scr, a WAV as Ogg Vorbis when that is smaller
                                (oggenc, each encoded once into --cache; --wav keeps the WAVs), the
                                names --res-log read unlisted; its groups (the core, a group per
-                               mission, the music, the cinematics), or one koprulu.mpq with --single
+                               mission, the music, the cinematics) into generated/repack, or with
+                               --single one koprulu.mpq (the cinematics' group beside it) into
+                               generated/repack-single
   dump FILE [--section XXXX]   print a .kpd/.kpm container in readable form
   --scr DIR (missions, data, scenarios, resources) reads the profile's files from a StarCraft:
                                Remastered install instead (converter/casc/source.py) and writes
@@ -309,15 +311,16 @@ def _repack(args: argparse.Namespace) -> int:
         extra = [row[0].replace("/", "\\") for row in rows if len(row) > 1 and row[1] == "unlisted"]
     oggs = None if args.wav else repack.OggStore(Path(args.cache))
     with _open_source(args) as source:
-        report = repack.write(source, Path(args.out), kind="remastered" if args.scr else "1.17", single=args.single,
-                              extra=extra, oggs=oggs)
+        out = Path(args.out or ("generated/repack-single" if args.single else "generated/repack"))
+        report = repack.write(source, out, kind="remastered" if args.scr else "1.17", single=args.single, extra=extra,
+                              oggs=oggs)
     for name in report.missing[:10]:
         log.warning("not in the source, left out: %s", name)
     if len(report.missing) > 10:
         log.warning("... %d files left out in all", len(report.missing))
     for group in sorted(report.files):
         log.info("%s: %d files, %.1f MB", group, report.files[group], report.sizes[group] / 1e6)
-    log.info("%s: %d files (%s), %d WAVs as Ogg Vorbis (%.1f MB for %.1f MB)%s", args.out, sum(report.files.values()),
+    log.info("%s: %d files (%s), %d WAVs as Ogg Vorbis (%.1f MB for %.1f MB)%s", out, sum(report.files.values()),
              ", ".join(f"{n} {s}" for s, n in sorted(report.statuses.items())), report.ogg, report.ogg_bytes / 1e6,
              report.wav_bytes / 1e6, f", {oggs.encoded} encoded" if oggs else "")
     return 0
@@ -421,8 +424,9 @@ def main(argv: list[str] | None = None) -> int:
     p.set_defaults(func=_icon)
     p = sub.add_parser("repack", help="write the koprulu*.mpq repack: the files the game reads, in their formats")
     _source_arguments(p)
-    p.add_argument("--out", default="generated/repack")
-    p.add_argument("--single", action="store_true", help="one koprulu.mpq instead of the groups (the desktops)")
+    p.add_argument("--out", help="the folder (default generated/repack, with --single generated/repack-single)")
+    p.add_argument("--single", action="store_true",
+                   help="one koprulu.mpq instead of the groups, the cinematics' beside it (the desktops)")
     p.add_argument("--res-log", help="kp_res's --res-log of a run: the names it read unlisted go in too")
     p.add_argument("--wav", action="store_true", help="keep the WAVs as they are (no oggenc)")
     p.add_argument("--cache", default="generated/cache/repack-ogg", help="where each WAV's Ogg Vorbis is kept")

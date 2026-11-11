@@ -692,7 +692,7 @@ static uint8_t *remake_plain_grp(KpCasc *casc, KpResScr *s, const char *key, con
 		uint32_t above;
 		char why[KP_SCR_ERR];
 		size_t w = records[f].w, h = records[f].h;
-		if (!(frames[f] = (uint8_t *)calloc(w * h ? w * h : 1, 1))) goto done;
+		if (!(frames[f] = (uint8_t *)calloc(w * h > 0 ? w * h : 1, 1))) goto done;
 		if (kp_scr_dds(images[f].dds, images[f].size, &im, why, sizeof why) != 0) goto done;
 		if (kp_scr_fit(&im, (uint32_t)w, (uint32_t)h, &above) != 0 || kp_index_map_init(&map, palette) != 0) {
 			kp_scr_image_free(&im);
