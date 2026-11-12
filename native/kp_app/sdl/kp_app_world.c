@@ -30,7 +30,9 @@ static void free_hd(KpAppWorld *w)
 	for (k = 0; k < KP_APP_PACKS; k++) {
 		free(w->hd_bytes[k]);
 		w->hd_bytes[k] = NULL;
+		kp_hd_layout_free(&w->hd_layouts[k]);
 		memset(&w->hd_packs[k], 0, sizeof w->hd_packs[k]);
+		memset(&w->hd_sources[k], 0, sizeof w->hd_sources[k]);
 	}
 	kp_frame_table_free(&w->hd_frames);
 	kp_hd_terrain_free(&w->hd_terrain);
@@ -94,29 +96,160 @@ static int hd_format_usable_or_say(KpApp *a, int format)
 	return 0;
 }
 
-/* An HD pack's header and frames (its pages stay in the file). */
-static int open_hd_pack(KpApp *a, int k, const char *path)
+/* The pack an HD set's page format is read from: all its packs have the one format (load_hd_variant). */
+#define HD_FORMAT_PACK "terran"
+
+/* Where a repack's file of an HD set lies (ADR 0019, stage C5): in an open group (place: read on any thread), or in
+ * the web's group beside the page (url, its bytes at base); its size. 0, or -1 when no repack holds it, or its group
+ * is not there (a bundle ships the sets it draws). */
+static int repack_where(KpApp *a, const char *raw, KpHdSource *s, uint64_t *size)
 {
-	KpAppWorld *w = &a->world;
-	size_t n, file_size, need;
-	KpError e;
-	uint8_t *first = kp_app_read_head(a, path, KP_HD_PACK_FIRST_READ, &n, &file_size);
-	if (!first) return -1; /* not imported */
-	need = kp_hd_pack_head_size(first, n, file_size);
+	char file[128];
+	uint32_t n;
+	memset(s, 0, sizeof *s);
+	if (kp_res_raw_place(a->res, raw, &s->place) && s->place.kind == KP_RES_SOURCE_REPACK) {
+		*size = s->place.size;
+		return 0;
+	}
+	memset(&s->place, 0, sizeof s->place);
+#ifdef __EMSCRIPTEN__ /* a group read by ranges, beside the page */
+	if (kp_res_raw_range(a->res, raw, file, sizeof file, &s->base, &n) && kp_res_repack_dir(a->res)[0]) {
+		snprintf(s->url, sizeof s->url, "%s/%s", kp_res_repack_dir(a->res), file);
+		*size = n;
+		if (kp_app_web_beside(a, s->url)) return 0;
+	}
+	memset(s, 0, sizeof *s);
+#else
+	(void)file;
+	(void)n;
+#endif
+	return -1;
+}
+
+/* The page format of a repack's HD set (its first pack's head), -1 when the repack has no such set. */
+static int repack_format(KpApp *a, const char *set)
+{
+	char name[160], why[256];
+	KpHdSource s;
+	uint64_t size, total;
+	size_t n;
+	uint8_t *first;
+	int format;
+	snprintf(name, sizeof name, KP_HD_REPACK_PACK, set, HD_FORMAT_PACK);
+	if (!kp_res_raw_held(a->res, name) || repack_where(a, name, &s, &size) != 0 || size > SIZE_MAX) return -1;
+	snprintf(name, sizeof name, KP_HD_REPACK_HEAD, set, HD_FORMAT_PACK);
+	if (!kp_res_raw_held(a->res, name)) return -1;
+	if (!(first = kp_res_raw_head(a->res, name, KP_HD_PACK_FIRST_READ, &n, &total, why, sizeof why))) {
+		SDL_Log("world: %s: %s", name, why);
+		return -1;
+	}
+	format = kp_hd_pack_format(first, n, (size_t)size);
 	free(first);
-	if (need == 0 || !(w->hd_bytes[k] = kp_app_read_head(a, path, need, &n, &file_size)) || n != need) {
-		SDL_Log("world: %s: not an HD pack", path);
-		return -1;
+	return format;
+}
+
+/* Whether the world takes pages of the format: as their blocks (strict), else also decoded; any: whatever it is. */
+static int hd_takes(KpApp *a, int format, int strict, int any)
+{
+	if (any) return 1;
+	return strict ? !a->flags.hd_decode && kp_gfx_hd_takes(a->gfx, format) : kp_world_hd_format_usable(a, format);
+}
+
+/* The first source of a variant's HD world as kp_world_hd_pick (any: whatever its format). */
+static int hd_pick(KpApp *a, const char *variant, int any, KpHdPick *out)
+{
+	const char *suffix;
+	int v = kp_hd_scr_variant_of(variant), strict, k;
+	if (!a->res || v < 0) return 0;
+	for (strict = 1; strict >= 0; strict--) {
+		for (k = 0; (suffix = kp_hd_scr_set_suffix(k, NULL)) != NULL; k++) {
+			memset(out, 0, sizeof *out);
+			snprintf(out->set, sizeof out->set, "%s%s", variant, suffix);
+			out->variant = v;
+			out->format = repack_format(a, out->set);
+			if (out->format >= 0 && hd_takes(a, out->format, strict, any)) return 1;
+		}
+		memset(out, 0, sizeof *out);
+		out->variant = v;
+		out->format = KP_HD_FORMAT_BC;
+		if (kp_hd_scr_held(a->res, v) && hd_takes(a, out->format, strict, any)) return 1;
 	}
-	if (kp_hd_pack_open(&w->hd_packs[k], w->hd_bytes[k], n, file_size, path, &e) != 0) {
-		SDL_Log("world: %s", e.msg);
-		return -1;
-	}
-	kp_app_path(a, path, w->hd_paths[k], sizeof w->hd_paths[k]);
 	return 0;
 }
 
-/* One HD variant's art for the world's packs and tileset (generated/hd/<variant>/); -1 when it is not all there. */
+int kp_world_hd_pick(KpApp *a, const char *variant, KpHdPick *out) { return hd_pick(a, variant, 0, out); }
+
+/* A repack's HD pack of the set, opened from its head in the core (KP_HD_REPACK_HEAD); its pages where the set's group
+ * keeps it (repack_where). 0, or -1 (logged). */
+static int open_repack_pack(KpApp *a, int k, const char *set, const char *pack)
+{
+	KpAppWorld *w = &a->world;
+	char head[160], name[160], why[256];
+	size_t n;
+	uint64_t size;
+	KpError e;
+	snprintf(head, sizeof head, KP_HD_REPACK_HEAD, set, pack);
+	snprintf(name, sizeof name, KP_HD_REPACK_PACK, set, pack);
+	if (repack_where(a, name, &w->hd_sources[k], &size) != 0 || size > SIZE_MAX) {
+		SDL_Log("world: %s is not in the data", name);
+		return -1;
+	}
+	if (!(w->hd_bytes[k] = kp_res_raw_read(a->res, head, &n, why, sizeof why))) {
+		SDL_Log("world: %s: %s", head, why[0] ? why : "not in the data");
+		return -1;
+	}
+	if (kp_hd_pack_open(&w->hd_packs[k], w->hd_bytes[k], n, (size_t)size, name, &e) != 0) {
+		SDL_Log("world: %s", e.msg);
+		return -1;
+	}
+	return 0;
+}
+
+/* The install's HD packs of the variant: each pack laid out from the anims of the images drawing its GRPs' frames
+ * (kp_hd_scr_layout: their headers read now, their sheets when the loader builds a page). 0, or -1 (logged). */
+static int open_install_packs(KpApp *a, int variant, const KpGrpMeta *grp, const char *const *names)
+{
+	KpAppWorld *w = &a->world;
+	const KpDatColumn *grp_file = kp_dat_column(&a->data.dat, "images", "grp_file");
+	int32_t *owner_of = NULL, images = grp_file ? (int32_t)grp_file->count : 0, i;
+	KpAnim *anims = NULL;
+	KpResReader *h = NULL;
+	KpResPlace install;
+	KpError e;
+	Uint64 at = SDL_GetTicksNS();
+	int k, rc = -1;
+	if (!kp_res_raw_place(a->res, KP_HD_SCR_RELATIONS, &install) || install.kind != KP_RES_SOURCE_CASC) return -1;
+	if (kp_hd_scr_owners(a->res, grp, &a->data.dat, variant, &owner_of, &e) != 0) {
+		SDL_Log("world: %s", e.msg);
+		return -1;
+	}
+	if (!(anims = (KpAnim *)calloc((size_t)(images ? images : 1), sizeof *anims)) || !(h = kp_res_reader_new())) {
+		SDL_Log("world: the HD layouts: out of memory");
+		goto done;
+	}
+	for (k = 0; k < w->pack_count; k++) {
+		KpHdSource *s = &w->hd_sources[k];
+		if (kp_hd_scr_layout(a->res, h, grp, owner_of, variant, names[k], anims, images, &w->hd_layouts[k], &e) != 0) {
+			SDL_Log("world: %s", e.msg);
+			goto done;
+		}
+		kp_hd_layout_pack(&w->hd_layouts[k], &w->hd_packs[k]);
+		memset(s, 0, sizeof *s);
+		s->layout = &w->hd_layouts[k];
+		s->sheets.install = install;
+		s->sheets.variant = variant;
+	}
+	SDL_Log("world: %d packs laid out from the install's %s anims in %.0f ms", w->pack_count,
+		kp_hd_scr_variant_name(variant), (double)(SDL_GetTicksNS() - at) / 1e6);
+	rc = 0;
+done:
+	for (i = 0; anims && i < images; i++) kp_anim_free(&anims[i]);
+	free(anims);
+	kp_res_reader_free(h);
+	free(owner_of);
+	return rc;
+}
+
 /* The HD world's tileset and water once they are read (fetched on the web, the original drawn meanwhile): its
  * terrain, water and page loader. 1 while they are on their way, 0 done, -1 when the tileset cannot be read or
  * loaded. */
@@ -131,10 +264,10 @@ static int hd_finish(KpApp *a)
 	w->hd_tileset_bytes = kp_fetch_take(w->hd_fetches[0], &n);
 	w->hd_fetches[0] = NULL;
 	if (!w->hd_tileset_bytes) {
-		SDL_Log("world: %s could not be read", w->hd_tileset_path);
+		SDL_Log("world: %s could not be read", w->hd_tileset_name);
 		return -1;
 	}
-	if (kp_hd_tileset_load(&w->hd_tileset, w->hd_tileset_bytes, n, w->hd_tileset_path, &e) != 0) {
+	if (kp_hd_tileset_load(&w->hd_tileset, w->hd_tileset_bytes, n, w->hd_tileset_name, &e) != 0) {
 		SDL_Log("world: %s", e.msg);
 		return -1;
 	}
@@ -148,7 +281,7 @@ static int hd_finish(KpApp *a)
 		(int)w->hd_terrain.h);
 	w->hd_water_bytes = kp_fetch_take(w->hd_fetches[1], &n);
 	w->hd_fetches[1] = NULL;
-	if (w->hd_water_bytes && kp_hd_water_load(&w->hd_water, w->hd_water_bytes, n, "water.kpd", &e) != 0) {
+	if (w->hd_water_bytes && kp_hd_water_load(&w->hd_water, w->hd_water_bytes, n, "the HD water", &e) != 0) {
 		SDL_Log("world: %s (the water stays still)", e.msg);
 		free(w->hd_water_bytes);
 		w->hd_water_bytes = NULL;
@@ -160,33 +293,61 @@ static int hd_finish(KpApp *a)
 	return 0;
 }
 
-/* Starts reading a variant's tileset and water.kpd (fetched on the web), then finishes when they are read: 0 (or on
- * their way), -1 when they are not there. */
-static int load_tileset(KpApp *a, const char *variant)
+/* A repack's file of an HD set read now (its group open), or on its way (the web: its range in the group); NULL when no
+ * repack holds it or it cannot be read (logged). */
+static KpFetch *repack_fetch(KpApp *a, const char *raw)
+{
+	KpHdSource s;
+	uint64_t size;
+	size_t n = 0;
+	char why[256];
+	uint8_t *b;
+	if (repack_where(a, raw, &s, &size) != 0) return NULL;
+	if (s.url[0]) return s.base + size <= UINT32_MAX ? kp_fetch_start(s.url, (uint32_t)s.base, (uint32_t)size) : NULL;
+	if (!(b = kp_res_raw_read(a->res, raw, &n, why, sizeof why))) SDL_Log("world: %s: %s", raw, why);
+	return kp_fetch_done(b, n);
+}
+
+/* Starts reading the source's tileset and water (a repack's: fetched on the web; the install's: built from its files),
+ * then finishes when they are read: 0 (or on their way), -1 when they are not there. */
+static int load_tileset(KpApp *a, const KpHdPick *p)
 {
 	KpAppWorld *w = &a->world;
-	char path[256], full[1200];
-	snprintf(w->hd_tileset_path, sizeof w->hd_tileset_path, "generated/hd/%s/tilesets/%s.kpd", variant,
-		KP_TILESET_NAMES[a->flow.session->host.data.mission.tileset]);
-	kp_app_path(a, w->hd_tileset_path, full, sizeof full);
-	w->hd_fetches[0] = kp_fetch_start(full, 0, 0);
-	snprintf(path, sizeof path, "generated/hd/%s/water.kpd", variant);
-	kp_app_path(a, path, full, sizeof full);
-	w->hd_fetches[1] = kp_fetch_start(full, 0, 0);
+	int tileset = (int)(w->mission->tileset & 7);
+	if (p->set[0]) {
+		char water[160];
+		snprintf(w->hd_tileset_name, sizeof w->hd_tileset_name, KP_HD_REPACK_TILESET, p->set, KP_TILESET_NAMES[tileset]);
+		snprintf(water, sizeof water, KP_HD_REPACK_WATER, p->set);
+		w->hd_fetches[0] = repack_fetch(a, w->hd_tileset_name);
+		w->hd_fetches[1] = repack_fetch(a, water);
+	} else {
+		KpError e;
+		size_t n = 0;
+		uint8_t *b;
+		snprintf(w->hd_tileset_name, sizeof w->hd_tileset_name, "the install's %s %s tileset",
+			kp_hd_scr_variant_name(p->variant), KP_TILESET_NAMES[tileset]);
+		if (!(b = kp_hd_scr_tileset(a->res, p->variant, tileset, &n, &e))) SDL_Log("world: %s", e.msg);
+		w->hd_fetches[0] = kp_fetch_done(b, n);
+		if (!(b = kp_hd_scr_water(a->res, p->variant, &n, &e))) SDL_Log("world: %s (the water stays still)", e.msg);
+		w->hd_fetches[1] = kp_fetch_done(b, n);
+	}
 	return w->hd_fetches[0] && hd_finish(a) >= 0 ? 0 : -1;
 }
 
+/* One HD variant's art for the world's packs and tileset, from its first source (kp_world_hd_pick); -1 when it is not
+ * all there. */
 static int load_hd_variant(KpApp *a, const char *variant, const KpGrpMeta *grp, const KpPack *const *packs,
 	const char *const *names)
 {
 	KpAppWorld *w = &a->world;
 	const KpHdPack *hd[KP_APP_PACKS];
-	char path[256];
+	KpHdPick p;
 	KpError e;
 	int k;
+	if (w->pack_count == 0 || !kp_world_hd_pick(a, variant, &p)) return -1;
+	if (!p.set[0] && open_install_packs(a, p.variant, grp, names) != 0) return -1;
 	for (k = 0; k < w->pack_count; k++) {
-		snprintf(path, sizeof path, "generated/hd/%s/packs/%s.kpd", variant, names[k]);
-		if (open_hd_pack(a, k, path) != 0) return -1;
+		if (p.set[0] && open_repack_pack(a, k, p.set, names[k]) != 0) return -1;
 		if (k > 0 && (w->hd_packs[k].scale != w->hd_packs[0].scale
 			|| w->hd_packs[k].page_size != w->hd_packs[0].page_size || w->hd_packs[k].format != w->hd_packs[0].format)) {
 			SDL_Log("world: HD packs of two scales, page sizes or formats");
@@ -195,13 +356,15 @@ static int load_hd_variant(KpApp *a, const char *variant, const KpGrpMeta *grp, 
 		w->hd_page_base[k + 1] = w->hd_page_base[k] + w->hd_packs[k].page_count;
 		hd[k] = &w->hd_packs[k];
 	}
-	if (w->pack_count == 0) return -1;
 	if (!hd_format_usable_or_say(a, w->hd_packs[0].format)) return -1;
 	if (kp_hd_frame_table_build(&w->hd_frames, &w->frames, grp, packs, hd, names, w->pack_count, &e) != 0) {
 		SDL_Log("world: %s", e.msg);
 		return -1;
 	}
-	return load_tileset(a, variant);
+	if (load_tileset(a, &p) != 0) return -1;
+	SDL_Log("world: StarCraft: Remastered's %s art (%s%s)", variant, p.set[0] ? "the repack's " : "the install's",
+		p.set[0] ? p.set : " anims");
+	return 0;
 }
 
 const char *kp_app_hd_variant(const KpApp *a, int k)
@@ -232,32 +395,32 @@ static int fx_water(const KpApp *a)
 	return a->flags.water == KP_VIDEO_AUTO ? a->world.hd_scale != 0 : a->flags.water == KP_WATER_ANIMATED;
 }
 
-/* StarCraft: Remastered's HD art (ADR 0013) when --graphics asks for it and the player imported it; else, when the
- * effects ask for them, the original's art through the RGBA path with the water masks of an imported variant. */
+/* StarCraft: Remastered's HD art (ADR 0013; ADR 0019, stage C5) when --graphics asks for it and the data has it (a
+ * repack's HD set, a Remastered install's anims); else, when the effects ask for them, the original's art through the
+ * RGBA path with the water masks of a variant the data has. */
 static int load_hd(KpApp *a, const KpGrpMeta *grp, const KpPack *const *packs, const char *const *names)
 {
 	static const char *const MASKS[2] = { "hd2", "hd" };
 	const char *variant;
 	int k;
 	for (k = 0; (variant = kp_app_hd_variant(a, k)) != NULL; k++) {
-		if (load_hd_variant(a, variant, grp, packs, names) == 0) {
-			SDL_Log("world: StarCraft: Remastered's %s art", variant);
-			return 1;
-		}
+		if (load_hd_variant(a, variant, grp, packs, names) == 0) return 1;
 		free_hd(&a->world);
 	}
 	if (!fx_smooth(a) && !fx_water(a)) return 0;
 	a->world.fx = 1;
 	SDL_Log("world: the original's art with the modern effects (fog %s, water %s)", fx_smooth(a) ? "smooth" : "original",
 		fx_water(a) ? "on" : "off");
-	for (k = 0; fx_water(a) && k < 2; k++) { /* the water masks: HD2's are enough */
+	for (k = 0; fx_water(a) && k < 2; k++) { /* the water masks (of any source's tileset): HD2's are enough */
+		KpHdPick p;
 #if defined(SDL_PLATFORM_ANDROID) || defined(SDL_PLATFORM_IOS) || defined(__EMSCRIPTEN__)
 		if (k > 0) break; /* HD2 only there */
 #endif
-		if (load_tileset(a, MASKS[k]) == 0) return 0;
+		if (!hd_pick(a, MASKS[k], 1, &p)) continue;
+		if (load_tileset(a, &p) == 0) return 0;
 		free_hd(&a->world);
 	}
-	if (fx_water(a)) SDL_Log("world: no water masks imported (python3 -m converter hd): the water stays still");
+	if (fx_water(a)) SDL_Log("world: no HD water masks in the data: the water stays still");
 	return 0;
 }
 
@@ -621,7 +784,7 @@ static void stream_hd(KpApp *a, int changed)
 		while (k + 1 < w->pack_count && page >= w->hd_page_base[k + 1]) k++;
 		local = page - w->hd_page_base[k];
 		kp_hd_page_offsets(&w->hd_packs[k], local, &diffuse, &team, light);
-		if (kp_hd_loader_request(w->hd_loader, page, w->hd_paths[k], diffuse, team,
+		if (kp_hd_loader_request(w->hd_loader, page, &w->hd_sources[k], local, diffuse, team,
 			w->hd_lit && local < w->hd_packs[k].lit_pages ? light : NULL, w->hd_packs[k].page_size,
 			w->hd_packs[k].format, w->hd_decode, w->hd_generation) != 0) {
 			kp_hd_cache_failed(c, page);

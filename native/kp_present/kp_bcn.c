@@ -1,6 +1,6 @@
 /*
  * BC1 (DXT1) and BC3 (DXT5) blocks decoded to RGBA8, for a context without S3TC (ADR 0013, stage R3): the HD art keeps
- * its blocks (converter/emit/hd.py); kp_gfx uploads them as they are where it can, else these images.
+ * its blocks (kp_anim.c, kp_hd_scr.c); kp_gfx uploads them as they are where it can, else these images.
  */
 #include "kp_present.h"
 

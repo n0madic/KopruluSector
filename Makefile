@@ -44,13 +44,14 @@ help:
 	@echo "                               web) and OUT/repack-single (one koprulu.mpq: the computers), the"
 	@echo "                               cinematics apart in both (1.17's transcoded into WebM, Remastered's"
 	@echo "                               SD and HD2 sets as they are); from Remastered a group per language it"
-	@echo "                               holds (its texts and speech)"
+	@echo "                               holds (its texts and speech) and the HD art's sets (the computers' hd2"
+	@echo "                               and hd, the web's hd2, the phones' hd2-astc and hd2-etc2)"
 	@echo "  make console SCR=DIR         the console's pieces OUT/data/console.kpd from Remastered's art"
 	@echo "  make scenarios SC=DIR|SCR=DIR  the test scenarios' CHKs OUT/scenarios/ (tests, the oracle's tools)"
 	@echo "  make terrain SC=DIR|SCR=DIR    the terrain checks' CRCs OUT/viewer/ (koprulu --autotest)"
 	@echo "  make convert-remastered SCR=DIR"
-	@echo "                               all of the above from Remastered plus its HD art"
-	@echo "  make hd SCR=DIR [HD=hd2|hd|all]"
+	@echo "                               all of the above from Remastered plus the HD interface's art"
+	@echo "  make hd SCR=DIR [HD=hd2|hd|all]  the HD interface's art and portraits OUT/hd/<variant>/"
 	@echo "  make locale-check SCR=DIR    every string of each language Remastered holds checked, the reports"
 	@echo "                               OUT/reports/locale-<LOC>.json"
 	@echo ""
@@ -120,19 +121,26 @@ terrain: check-source convert-tool
 console: check-scr
 	$(CONVERTER) console --scr "$(SCR)" --out "$(OUT)"
 
-# The game's data (ADR 0018): the original files repacked, in groups and in one file (the cinematics apart in both)
+# The game's data (ADR 0018): the original files repacked, in groups and in one file (the cinematics, the languages and
+# the HD sets apart in both). The HD art's sets (ADR 0019, stage C5) come from Remastered: the groups take the web's
+# HD2 and the phones' (its pages in ASTC, or in ETC2 for phones without ASTC), the single file the computers' HD2 and
+# HD (kp_convert's default).
+REPACK_HD := $(if $(strip $(SC)),,--hd hd2,hd2-astc,hd2-etc2)
 repack: check-source convert-tool
-	$(KP_CONVERT) repack "$(SOURCE)" --out "$(OUT)/repack"
+	$(KP_CONVERT) repack "$(SOURCE)" --out "$(OUT)/repack" $(REPACK_HD)
 	$(KP_CONVERT) repack "$(SOURCE)" --single --out "$(OUT)/repack-single"
 
 icon: check-sc convert-tool
 	$(KP_CONVERT) icon "$(SC)" --out "$(OUT)"
 
+# TODO: the HD interface's art and portraits from Remastered's files at the runtime (ADR 0019, stage C6)
 hd: check-scr
 	$(CONVERTER) hd --scr "$(SCR)" --variant $(HD) --out "$(OUT)"
 
+# kp_convert with the ASTC encoder (the phones' HD sets)
 convert-tool: toolchain
-	cmake -S . -B $(TOOLS_DIR) -G Ninja -DCMAKE_BUILD_TYPE=Release
+	tools/toolchain/fetch.sh astc
+	cmake -S . -B $(TOOLS_DIR) -G Ninja -DCMAKE_BUILD_TYPE=Release -DKP_ASTC=ON
 	cmake --build $(TOOLS_DIR) --target kp_convert
 
 # --- Builds -------------------------------------------------------------------------------------------------------

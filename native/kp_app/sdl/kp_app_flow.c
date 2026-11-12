@@ -174,29 +174,9 @@ static void host_palette(void *ctx, const uint8_t *rgb) { kp_gfx_palette(((KpApp
 
 static void host_gamma(void *ctx, int32_t gamma) { kp_gfx_gamma(((KpApp *)ctx)->gfx, gamma); }
 
-/* The pack an HD variant's page format is read from: all its packs have the one format (load_hd_variant). */
-#define HD_FORMAT_PACK "terran"
-
-/* The page format of an HD variant's packs (generated/hd/<variant>/), -1 when none is imported. */
-static int hd_variant_format(KpApp *a, const char *variant)
-{
-	char path[64];
-	size_t n, file_size;
-	uint8_t *first;
-	int format;
-	snprintf(path, sizeof path, "generated/hd/%s/packs/" HD_FORMAT_PACK ".kpd", variant);
-	if (!(first = kp_app_read_head(a, path, KP_HD_PACK_FIRST_READ, &n, &file_size))) {
-		SDL_Log("video: %s not found", path);
-		return -1;
-	}
-	format = kp_hd_pack_format(first, n, file_size);
-	free(first);
-	return format;
-}
-
-/* The options the player has: the HD variants imported and drawable here (a computer's x4; a phone's and the web's x2
- * only; a phone without ASTC does not draw ASTC's), the lighting where the context takes such a variant's packs' blocks
- * (decoded pages draw unlit) and the vector text's TrueType fonts. */
+/* The options the player has: the HD variants the data has and this context draws (a computer's x4; a phone's and the
+ * web's x2 only; kp_world_hd_pick), the lighting where the context takes such a variant's pages' blocks (decoded pages
+ * draw unlit) and the vector text's TrueType fonts. */
 static uint8_t host_video_available(void *ctx, const KpUi *ui)
 {
 	static const struct {
@@ -214,17 +194,10 @@ static uint8_t host_video_available(void *ctx, const KpUi *ui)
 	const uint8_t *const *fonts;
 	const size_t *font_sizes;
 	for (k = 0; k < sizeof VARIANTS / sizeof VARIANTS[0]; k++) {
-		char path[64];
-		size_t n, file_size;
-		uint8_t *head;
-		int format;
-		snprintf(path, sizeof path, "generated/hd/%s/ui.kpd", VARIANTS[k].name);
-		if (!(head = kp_app_read_head(a, path, 1, &n, &file_size))) continue;
-		free(head);
-		format = hd_variant_format(a, VARIANTS[k].name);
-		if (!kp_world_hd_format_usable(a, format)) continue;
+		KpHdPick p;
+		if (!kp_world_hd_pick(a, VARIANTS[k].name, &p)) continue;
 		has |= VARIANTS[k].has;
-		if (!a->flags.hd_decode && kp_gfx_hd_takes(a->gfx, format)) has |= KP_VIDEO_HAS_LIGHTING;
+		if (!a->flags.hd_decode && kp_gfx_hd_takes(a->gfx, p.format)) has |= KP_VIDEO_HAS_LIGHTING;
 	}
 	if (kp_ui_vector_fonts(ui, &fonts, &font_sizes) > 0 || a->flags.vector_font[0]) has |= KP_VIDEO_HAS_VECTOR;
 	return has;

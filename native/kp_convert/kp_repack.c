@@ -8,6 +8,9 @@
 #include "kp_cine.h"
 #include "kp_data.h"
 #include "kp_fs.h"
+#include "kp_grpmeta.h"
+#include "kp_hd_scr.h"
+#include "kp_hd_transcode.h"
 #include "kp_json.h"
 #include "kp_locale.h"
 #include "kp_movie.h"
@@ -21,6 +24,9 @@
 #define CORE "koprulu-core.mpq"
 #define MUSIC "koprulu-music.mpq"
 #define CINEMATICS "koprulu-cinematics" /* + ".mpq" the SD set's group, + "-hd2.mpq" the HD2 set's: read by ranges */
+#define HD_GROUP "koprulu-hd"            /* + the rest of an HD set's name + ".mpq" (KP_HD_REPACK_GROUP): read by ranges */
+#define HD_NAMES "koprulu/"              /* KP_HD_REPACK_PREFIX's start, normalized */
+#define HD_HEADS "koprulu/heads/"        /* KP_HD_REPACK_HEAD's: the core's */
 #define LOCALE_GROUP "koprulu-locale-" /* + the locale in lower case + ".mpq" */
 #define LOCALES "locales/"
 #define WINDOW 64 /* the files read, then encoded, at a time (the music's WAVs are 17 MB each) */
@@ -100,8 +106,11 @@ static int base_locale(const char *locale, size_t n)
 	return 1;
 }
 
-/* Whether a group's files are read by ranges: the cinematics' */
-static int ranged_group(const char *file) { return strncmp(file, CINEMATICS, sizeof CINEMATICS - 1) == 0; }
+/* Whether a group's files are read by ranges: the cinematics' and the HD sets' */
+static int ranged_group(const char *file)
+{
+	return strncmp(file, CINEMATICS, sizeof CINEMATICS - 1) == 0 || strncmp(file, HD_GROUP, sizeof HD_GROUP - 1) == 0;
+}
 
 void kp_repack_group(const char *key, char *out, size_t size, char *prefix, size_t prefix_size)
 {
@@ -122,6 +131,15 @@ void kp_repack_group(const char *key, char *out, size_t size, char *prefix, size
 		size_t n = (size_t)(at - key) + 1;
 		snprintf(prefix, prefix_size, "%.*s", (int)n, key);
 		snprintf(out, size, LOCALE_GROUP "%.*s.mpq", (int)(n - sizeof LOCALES), key + sizeof LOCALES - 1);
+		return;
+	}
+	if (strncmp(key, HD_NAMES, sizeof HD_NAMES - 1) == 0 && strncmp(key, HD_HEADS, sizeof HD_HEADS - 1) != 0
+		&& (at = strchr(key + sizeof HD_NAMES - 1, '/')) != NULL) { /* an HD set's: "koprulu/<set>/" */
+		size_t n = (size_t)(at - key) + 1;
+		char set[64];
+		snprintf(prefix, prefix_size, "%.*s", (int)n, key);
+		snprintf(set, sizeof set, "%.*s", (int)(n - sizeof HD_NAMES), key + sizeof HD_NAMES - 1);
+		snprintf(out, size, KP_HD_REPACK_GROUP, set);
 		return;
 	}
 	if (strncmp(key, "music/", 6) == 0) {
@@ -470,16 +488,14 @@ static void say(const KpRepackConfig *c, const char *line)
 	if (c->log && line[0]) c->log(c->log_ctx, line);
 }
 
-/* The job's file into its group's archive and listing (a group read by ranges: placed in the core's, ranges). */
-static int store(Group *g, Job *j, KpBuf *ranges, KpRepackReport *rep, char *err, size_t err_size)
+/* A file's bytes into its group's archive under its MPQ name (a group read by ranges: stored as they are, placed in the
+ * core's listing, ranges) and its listing line begun ("<sha256> <size> <status>"). 0, or -1. */
+static int put(Group *g, const char *name, const uint8_t *data, size_t size, int compress, KpResStatus status,
+	KpBuf *ranges, char *err, size_t err_size)
 {
-	const uint8_t *data = j->ogg ? j->ogg : j->data;
-	size_t size = j->ogg ? j->ogg_size : j->size;
 	uint8_t sha[KP_SHA256_SIZE];
-	char hex[2 * KP_SHA256_SIZE + 1], name[KP_REPACK_NAME];
-	int compress = !g->ranged && !j->ogg && !ends_with(j->read->stored, ".ogg") && !ends_with(j->read->stored, ".webm");
-	mpq_name(j->read->stored, name, sizeof name);
-	if (kp_mpq_add(g->mpq, name, data, size, compress ? KP_MPQ_ZLIB : KP_MPQ_STORE, err, err_size) != 0) return -1;
+	char hex[2 * KP_SHA256_SIZE + 1];
+	if (kp_mpq_add(g->mpq, name, data, size, compress && !g->ranged ? KP_MPQ_ZLIB : KP_MPQ_STORE, err, err_size) != 0) return -1;
 	kp_sha256(data, size, sha);
 	kp_sha256_hex(sha, hex);
 	if (g->ranged) {
@@ -489,9 +505,23 @@ static int store(Group *g, Job *j, KpBuf *ranges, KpRepackReport *rep, char *err
 			return -1;
 		}
 		kp_buf_printf(ranges, "in %s %llu %s %lu %s %s\n", g->file, (unsigned long long)offset, hex, (unsigned long)size,
-			kp_res_status_name(j->status), name);
+			kp_res_status_name(status), name);
 	}
-	kp_buf_printf(&g->lines, "%s %lu %s", hex, (unsigned long)size, kp_res_status_name(j->status));
+	kp_buf_printf(&g->lines, "%s %lu %s", hex, (unsigned long)size, kp_res_status_name(status));
+	g->files++;
+	g->bytes += size;
+	return 0;
+}
+
+/* The job's file into its group's archive and listing (put). */
+static int store(Group *g, Job *j, KpBuf *ranges, KpRepackReport *rep, char *err, size_t err_size)
+{
+	const uint8_t *data = j->ogg ? j->ogg : j->data;
+	size_t size = j->ogg ? j->ogg_size : j->size;
+	char hex[2 * KP_SHA256_SIZE + 1], name[KP_REPACK_NAME];
+	int compress = !j->ogg && !ends_with(j->read->stored, ".ogg") && !ends_with(j->read->stored, ".webm");
+	mpq_name(j->read->stored, name, sizeof name);
+	if (put(g, name, data, size, compress, j->status, ranges, err, err_size) != 0) return -1;
 	if (j->ogg) {
 		size_t i;
 		kp_sha256_hex(j->wav_sha, hex);
@@ -514,11 +544,210 @@ static int store(Group *g, Job *j, KpBuf *ranges, KpRepackReport *rep, char *err
 		rep->movie_bytes += size;
 	}
 	kp_buf_printf(&g->lines, " %s\n", name);
-	g->files++;
-	g->bytes += size;
 	rep->statuses[j->status]++;
 	if (j->encoded) rep->encoded++;
 	return 0;
+}
+
+/* --- the HD sets (ADR 0019, stage C5) --- */
+
+#define HD_PACKS 16
+
+/* What the HD sets are built from: the install's data, its grpmeta, the SD packs' names (its atlases', in order). */
+typedef struct {
+	KpData d;
+	KpGrpMeta grp;
+	char packs[HD_PACKS][32];
+	int pack_count, built;
+} Hd;
+
+static void hd_free(Hd *h)
+{
+	if (!h->built) return;
+	kp_grpmeta_free(&h->grp);
+	kp_data_free(&h->d);
+	h->built = 0;
+}
+
+/* The install's data, grpmeta and packs (a Remastered install holding each set's anims): 0, or -1 with err. */
+static int hd_init(Hd *h, KpRes *res, const KpRepackConfig *c, char *err, size_t err_size)
+{
+	KpError e;
+	uint32_t a;
+	int k, variant, format;
+	memset(h, 0, sizeof *h);
+	for (k = 0; k < c->hd_set_count; k++) {
+		if (kp_hd_scr_set(c->hd_sets[k], &variant, &format) != 0) {
+			snprintf(err, err_size, "%s: not an HD set (hd2, hd, hd2-astc, hd2-etc2)", c->hd_sets[k]);
+			return -1;
+		}
+		if (!kp_hd_scr_held(res, variant)) {
+			snprintf(err, err_size, "the HD set %s: the install holds no %s anims (StarCraft: Remastered's)", c->hd_sets[k],
+				kp_hd_scr_variant_name(variant));
+			return -1;
+		}
+	}
+	if (kp_data_build(&h->d, res, NULL, 0, NULL, 0, &e) != 0) {
+		snprintf(err, err_size, "the HD sets: %s", e.msg);
+		return -1;
+	}
+	if (kp_grpmeta_from_files(&h->grp, &h->d.files, &h->d.dat, &e) != 0) {
+		kp_data_free(&h->d);
+		snprintf(err, err_size, "the HD sets: %s", e.msg);
+		return -1;
+	}
+	h->built = 1;
+	for (a = 1; a <= h->grp.atlas_count; a++) {
+		const KpLabel *pack = &h->grp.atlases[a].pack;
+		for (k = 0; k < h->pack_count; k++) {
+			if (pack->size == strlen(h->packs[k]) && memcmp(pack->text, h->packs[k], pack->size) == 0) break;
+		}
+		if (k < h->pack_count) continue;
+		if (h->pack_count == HD_PACKS || pack->size >= sizeof h->packs[0]) {
+			snprintf(err, err_size, "the HD sets: more than %d packs, or a long pack name", HD_PACKS);
+			return -1;
+		}
+		snprintf(h->packs[h->pack_count++], sizeof h->packs[0], "%.*s", (int)pack->size, pack->text);
+	}
+	return 0;
+}
+
+/* An HD set's names, normalized, as kp_repack_group groups them: k < pack_count its packs, then the tilesets', the
+ * water's; with head its packs' heads (k < pack_count). 0, or -1 past the last. */
+static int hd_name(const Hd *h, const char *set, int k, int head, char *out, size_t size)
+{
+	char name[KP_REPACK_NAME];
+	if (k < h->pack_count) snprintf(name, sizeof name, head ? KP_HD_REPACK_HEAD : KP_HD_REPACK_PACK, set, h->packs[k]);
+	else if (head) return -1;
+	else if (k < h->pack_count + KP_TILESETS) snprintf(name, sizeof name, KP_HD_REPACK_TILESET, set, KP_TILESET_NAMES[k - h->pack_count]);
+	else if (k == h->pack_count + KP_TILESETS) snprintf(name, sizeof name, KP_HD_REPACK_WATER, set);
+	else return -1;
+	normalize(name, out, size);
+	return 0;
+}
+
+/* A BC container in a phone's format (kp_hd_transcode) from the cache, or encoded and kept there
+ * (<BC SHA-256>-<etc2|astc>-KP_HD_TRANSCODE_SETTINGS.kpd). Malloc'd, or NULL with err. */
+static uint8_t *hd_phone(const KpRepackConfig *c, const uint8_t *bc, size_t bc_size, int format, size_t *size,
+	int *encoded, char *err, size_t err_size)
+{
+	char hex[2 * KP_SHA256_SIZE + 1], path[PATH], why[NOTE];
+	uint8_t sha[KP_SHA256_SIZE], *out = NULL;
+	KpError e;
+	if (c->cache) {
+		kp_sha256(bc, bc_size, sha);
+		kp_sha256_hex(sha, hex);
+		snprintf(path, sizeof path, "%s/%s-%s-%s.kpd", c->cache, hex, format == KP_HD_FORMAT_ASTC ? "astc" : "etc2",
+			KP_HD_TRANSCODE_SETTINGS);
+		if ((out = kp_fs_read(path, size, why, sizeof why)) != NULL) return out;
+	}
+	if (!(out = kp_hd_transcode(bc, bc_size, format, c->threads > 0 ? c->threads : kp_work_processors(), size, &e))) {
+		snprintf(err, err_size, "%s", e.msg);
+		return NULL;
+	}
+	(*encoded)++;
+	if (c->cache && kp_fs_write(path, out, *size, why, sizeof why) != 0) {
+		snprintf(why + strlen(why), sizeof why - strlen(why), " (the transcoding is not kept)");
+		say(c, why);
+	}
+	return out;
+}
+
+/* One container of an HD set into its group (stored: read by ranges), and a pack's head into the root: its first
+ * bytes up to its frames' end (kp_hd_pack_head_size), which the runtime opens the pack from. 0, or -1 with err. */
+static int hd_put(Group *groups, int *group_count, const char *key, const char *head_key, const uint8_t *data, size_t size,
+	int single, KpBuf *ranges, char *err, size_t err_size)
+{
+	char name[KP_REPACK_NAME];
+	Group *g;
+	if (!(g = group_of(groups, group_count, key, single, err, err_size))) return -1;
+	mpq_name(key, name, sizeof name);
+	if (put(g, name, data, size, 0, KP_RES_CONVERTED, ranges, err, err_size) != 0) return -1;
+	kp_buf_printf(&g->lines, " %s\n", name);
+	if (head_key) {
+		size_t n = kp_hd_pack_head_size(data, size < KP_HD_PACK_FIRST_READ ? size : KP_HD_PACK_FIRST_READ, size);
+		if (n == 0 || n > size) {
+			snprintf(err, err_size, "%s: no HD pack's head", name);
+			return -1;
+		}
+		if (!(g = group_of(groups, group_count, head_key, single, err, err_size))) return -1;
+		mpq_name(head_key, name, sizeof name);
+		if (put(g, name, data, n, 1, KP_RES_CONVERTED, ranges, err, err_size) != 0) return -1;
+		kp_buf_printf(&g->lines, " %s\n", name);
+	}
+	return 0;
+}
+
+/* An HD set built from the install's anims, tilesets and water (kp_hd_scr.h; a phone's transcoded, hd_phone) into its
+ * group and its packs' heads into the root: 0, or -1 with err. */
+static int hd_write(KpRes *res, const KpRepackConfig *c, Hd *h, const char *set, Group *groups, int *group_count,
+	KpBuf *ranges, KpRepackReport *rep, char *err, size_t err_size)
+{
+	const KpDatColumn *grp_file = kp_dat_column(&h->d.dat, "images", "grp_file");
+	int32_t *owner_of = NULL, images = grp_file ? (int32_t)grp_file->count : 0, i;
+	KpAnim *anims = NULL;
+	KpHdScrSheets sheets;
+	KpError e;
+	int variant, format, k, rc = -1;
+	char key[KP_REPACK_NAME], head[KP_REPACK_NAME];
+	memset(&sheets, 0, sizeof sheets);
+	kp_hd_scr_set(set, &variant, &format);
+	sheets.variant = variant;
+	if (!kp_res_raw_place(res, KP_HD_SCR_RELATIONS, &sheets.install) || sheets.install.kind != KP_RES_SOURCE_CASC) {
+		snprintf(err, err_size, "the HD set %s: no install to read the anims from", set);
+		return -1;
+	}
+	if (kp_hd_scr_owners(res, &h->grp, &h->d.dat, variant, &owner_of, &e) != 0) {
+		snprintf(err, err_size, "the HD set %s: %s", set, e.msg);
+		return -1;
+	}
+	if (!(anims = (KpAnim *)calloc((size_t)(images ? images : 1), sizeof *anims)) || !(sheets.reader = kp_res_reader_new())) {
+		snprintf(err, err_size, "out of memory");
+		goto done;
+	}
+	for (k = 0; hd_name(h, set, k, 0, key, sizeof key) == 0; k++) {
+		uint8_t *data = NULL, *phone;
+		size_t size = 0;
+		int is_pack = k < h->pack_count;
+		if (is_pack) {
+			KpHdLayout l;
+			if (kp_hd_scr_layout(res, sheets.reader, &h->grp, owner_of, variant, h->packs[k], anims, images, &l, &e) != 0
+				|| kp_hd_pack_build(&l, kp_hd_scr_sheets_read, &sheets, kp_res_profile(res)->id, &data, &size, &e) != 0) {
+				kp_hd_layout_free(&l);
+				snprintf(err, err_size, "the HD set %s: %s", set, e.msg);
+				goto done;
+			}
+			rep->hd_pages += l.page_count;
+			kp_hd_layout_free(&l);
+			hd_name(h, set, k, 1, head, sizeof head);
+		} else if (k < h->pack_count + KP_TILESETS) {
+			data = kp_hd_scr_tileset(res, variant, k - h->pack_count, &size, &e);
+		} else {
+			data = kp_hd_scr_water(res, variant, &size, &e);
+		}
+		if (!data) {
+			snprintf(err, err_size, "the HD set %s: %s", set, e.msg);
+			goto done;
+		}
+		if (format != KP_HD_FORMAT_BC) { /* a phone's: the tiles and normal maps in ETC2 for either */
+			phone = hd_phone(c, data, size, is_pack ? format : KP_HD_FORMAT_ETC2, &size, &rep->hd_encoded, err, err_size);
+			free(data);
+			if (!(data = phone)) goto done;
+		}
+		if (hd_put(groups, group_count, key, is_pack ? head : NULL, data, size, c->single, ranges, err, err_size) != 0) {
+			free(data);
+			goto done;
+		}
+		free(data);
+		rep->hd_files++;
+	}
+	rc = 0;
+done:
+	for (i = 0; anims && i < images; i++) kp_anim_free(&anims[i]);
+	free(anims);
+	kp_res_reader_free(sheets.reader);
+	free(owner_of);
+	return rc;
 }
 
 static int cmp_groups(const void *a, const void *b)
@@ -585,8 +814,10 @@ int kp_repack_write(KpRes *res, const KpRepackConfig *c, KpRepackReport *rep, ch
 	Read *reads = NULL;
 	Job *jobs = NULL;
 	KpBuf head, ranges;
+	Hd hd;
 	int count = 0, group_count = 0, k, at, rc = -1, threads = c->threads > 0 ? c->threads : kp_work_processors();
 	memset(rep, 0, sizeof *rep);
+	memset(&hd, 0, sizeof hd);
 	kp_buf_init(&head);
 	kp_buf_init(&ranges);
 	if (kp_res_repacks(res) || (kind != KP_RES_SOURCE_MPQ && kind != KP_RES_SOURCE_CASC)) {
@@ -607,6 +838,18 @@ int kp_repack_write(KpRes *res, const KpRepackConfig *c, KpRepackReport *rep, ch
 		Group *g = group_of(groups, &group_count, reads[k].stored, c->single, err, err_size);
 		if (!g) goto done;
 		g->planned++;
+	}
+	if (c->hd_set_count > 0 && hd_init(&hd, res, c, err, err_size) != 0) goto done;
+	for (k = 0; k < c->hd_set_count; k++) { /* the HD sets' containers and their packs' heads (hd_write) */
+		char key[KP_REPACK_NAME];
+		int n, heads;
+		for (heads = 0; heads < 2; heads++) {
+			for (n = 0; hd_name(&hd, c->hd_sets[k], n, heads, key, sizeof key) == 0; n++) {
+				Group *g = group_of(groups, &group_count, key, c->single, err, err_size);
+				if (!g) goto done;
+				g->planned++;
+			}
+		}
 	}
 	if (!group_of(groups, &group_count, "", c->single, err, err_size)) goto done; /* the root, even with no file */
 	if (kp_fs_mkdirs(c->out, err, err_size) != 0 || kp_fs_remove_matching(c->out, "koprulu", ".mpq", err, err_size) < 0)
@@ -681,8 +924,12 @@ int kp_repack_write(KpRes *res, const KpRepackConfig *c, KpRepackReport *rep, ch
 			j->data = j->ogg = NULL;
 		}
 	}
+	for (k = 0; k < c->hd_set_count; k++) {
+		if (hd_write(res, c, &hd, c->hd_sets[k], groups, &group_count, &ranges, rep, err, err_size) != 0) goto done;
+	}
 	rc = finish(groups, group_count, root, kp_buf_text(&head), &ranges, c->out, rep, err, err_size);
 done:
+	hd_free(&hd);
 	for (k = 0; jobs && k < WINDOW; k++) {
 		free(jobs[k].data);
 		free(jobs[k].ogg);

@@ -130,3 +130,25 @@ The stages that use them (C3, C5, C7) measure them.
 - **The web reads a movie by its range.** The movies' groups are stored uncompressed; the core's listing (version 4) places each file in its group (`in` lines). While a group is not open, `kp_res_raw_range` names the file and the range, and the player fetches that alone (`KP_CINE_LOAD_WAIT` while it comes). A computer or a phone opens every group it carries and reads through StormLib.
 - **Removed:** the `CINE` container and its reader (`kp_cine_index`, the pack's host), `converter cinematics`, `emit/cinematics.py`, `emit/cinematics_smk.py`, `emit/sound.py`, `formats/ivf.py`, `formats/srt.py`, their tests, `make cinematics` and `CINE=`, `generated/video/`; FFmpeg is left only for the HD portraits (C6) and the test fixtures (C7), oggenc nowhere.
 
+## Stage C5: the HD world (2026-11-12)
+
+- **From an install.** `kp_anim.c` reads the anims' heads and lays out each SD pack's HD pack as the converter did:
+  - `SD/images.rel` names the anim of an image without its own;
+  - the grouped packer (`kp_pages_pack_groups`) places each image's frames together, the lit images first, on the last four open pages.
+
+  A mission's packs are laid out at its start: on terran02, 155 ms for HD2 and 138 ms for HD. The HD loader's thread builds each page from the anims' sheets through a reader of its own (`kp_res_raw_place`, `kp_res_reader_*`). `kp_hd_scr.c` builds `HDTS` and `HDWA` from the tilesets' and the water's DDS files. Nothing is read from `generated/hd/` for the world.
+- **The repack's HD sets.** `kp_convert repack --hd` writes them with the same code:
+  - `hd2` and `hd` in BC (the default from a Remastered install);
+  - `hd2-astc` and `hd2-etc2` for phones, transcoded by `kp_hd_transcode.c` (`kp_hd_phone`'s code, now `kp_convert`'s) and cached by their BC bytes.
+
+  Each set is a group, `koprulu-<set>.mpq`, read by ranges like the movies'. Each pack's head goes in the core, so the web fetches only pages. Sizes: HD2 648.8 MB, HD 2,449.4 MB, `hd2-etc2` 606.9 MB, `hd2-astc` 545.4 MB.
+- **The source a variant draws from** (`kp_world_hd_pick`): the first source whose pages the context takes as they are, else the first it can decode.
+  - The repack's sets come first, in BC, ASTC, ETC2 order, then the install's anims.
+  - `--graphics auto` and the video options ask the same.
+- **Equal to the Python converter.** Before `converter hd` stopped writing the world, its output over the install was recorded in `tests/golden/hd/converter.json` (private): the SHA-256 of each pack's HEAD and FRMS, each page's layers, and each tileset's and the water's sections, HD2 and HD.
+  - `test_hd` compares the packs and pages built from the install (`KP_TEST_SCR`): byte for byte.
+  - It compares a repack's sets too (`KP_TEST_HD_REPACK`, a step of `tools/ci.sh`): byte for byte.
+- **Removed:**
+  - `converter/emit/hd.py`'s packs, tilesets and water (it keeps the interface and portraits until C6) and `converter/formats/anim.py`;
+  - `kp_hd_phone`'s transcoding modes and `tools/product.sh`'s phone transcoding;
+  - the runtime's reads of `generated/hd/<variant>/packs/`, `tilesets/` and `water.kpd`.

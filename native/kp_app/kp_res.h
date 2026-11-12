@@ -138,6 +138,30 @@ int kp_res_raw_held(KpRes *r, const char *raw);
 int kp_res_raw_range(const KpRes *r, const char *raw, char *file, size_t file_size, uint64_t *offset, uint32_t *size);
 /* The core's reader over the raw names (kp_files.h): kp_res_raw_read and kp_res_raw_head over r, its profile. */
 void kp_res_raw_files(KpRes *r, KpFiles *f);
+
+/* Where a Remastered file lies for a reader on another thread (ADR 0019, stage C5: the HD pages, which the loader's
+ * thread reads; a KpRes is one thread's): an open repack's archive (what kp_mpq_open opens: a file's path or a slice's
+ * name) and its MPQ name there, or the Remastered install's folder and the CASC name. */
+#define KP_RES_PATH 1024
+typedef struct {
+	KpResSourceKind kind; /* KP_RES_SOURCE_REPACK or KP_RES_SOURCE_CASC */
+	char path[KP_RES_PATH];
+	char name[KP_RES_PATH];
+	uint64_t size;        /* a repack's listed size; 0 for the install's (kp_res_reader_size) */
+} KpResPlace;
+typedef struct KpResReader KpResReader;
+
+/* A raw name's place (as kp_res_raw_read would read it; noted among the files read): 1, or 0 when no open repack lists
+ * it (its group not open: kp_res_raw_range) and the install does not hold it. */
+int kp_res_raw_place(KpRes *r, const char *raw, KpResPlace *p);
+/* A reader of places on one thread, through handles of its own (the last archive or install, and file, it read stay
+ * open for the next read). */
+KpResReader *kp_res_reader_new(void);
+/* The size of the place's file: 0, or -1 when it cannot be opened. */
+int kp_res_reader_size(KpResReader *h, const KpResPlace *p, uint64_t *size);
+/* size bytes at offset of the place's file into out: 0, or -1. */
+int kp_res_reader_read(KpResReader *h, const KpResPlace *p, uint64_t offset, void *out, size_t size);
+void kp_res_reader_free(KpResReader *h);
 /* A Remastered install's text locale ("deDE"; Remastered downloads that language's files), "" none. */
 const char *kp_res_text_locale(const KpRes *r);
 /* The text locale of a .build.info's text (NUL terminated) into out (5 bytes at least), "" none: of the non-empty lines

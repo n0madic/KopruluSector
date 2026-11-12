@@ -28,14 +28,22 @@
  * in as Ogg Vorbis mono at 22,050 Hz (kp_ogg_speech) when that is smaller; a voice keeps its WAV header in the
  * listing, as the base's sounds do.
  *
+ * The HD world (ADR 0019, stage C5) goes in as the HD sets asked (hd_sets; from a Remastered install only): each SD
+ * pack's HDPK laid out from the install's anims (kp_hd_pack_build, the runtime's own layout), each tileset's HDTS and
+ * the water's HDWA (kp_hd_scr.h), under KP_HD_REPACK_*'s names, listed "converted"; a phone's set ("hd2-astc",
+ * "hd2-etc2") transcodes them (kp_hd_transcode.h; once into the cache as <BC SHA-256>-<etc2|astc>-
+ * KP_HD_TRANSCODE_SETTINGS.kpd). Each pack's head (its bytes up to its frames' end) goes in the root too, which the
+ * runtime opens the pack from before it reads any page. A variant the install lacks stops the repack.
+ *
  * Groups, for a build that fetches them when it needs them (the web): koprulu-core.mpq, what the program reads when it
- * starts (the base language's subtitles too); a group per mission directory, its CHK and speech
- * (koprulu-<campaign>-<mission>.mpq); koprulu-music.mpq; the movies' sets, koprulu-cinematics.mpq (SD) and
- * koprulu-cinematics-hd2.mpq; a language's speech and text, koprulu-locale-<locale>.mpq. The core's listing names each
- * group with the prefix of its names. A single repack is one koprulu.mpq instead (the desktops), the movies' sets and
- * each language still apart in their groups, which its listing names (a bundle takes the sets and languages it
- * ships). The movies' groups are read by ranges (the web fetches a movie alone): their files stored as they are, the
- * core's listing places each.
+ * starts (the base language's subtitles and the HD packs' heads too); a group per mission directory, its CHK and
+ * speech (koprulu-<campaign>-<mission>.mpq); koprulu-music.mpq; the movies' sets, koprulu-cinematics.mpq (SD) and
+ * koprulu-cinematics-hd2.mpq; a language's speech and text, koprulu-locale-<locale>.mpq; an HD set's containers,
+ * koprulu-<set>.mpq. The core's listing names each group with the prefix of its names. A single repack is one
+ * koprulu.mpq instead (the desktops), the movies' sets, each language and each HD set still apart in their groups,
+ * which its listing names (a bundle takes the sets and languages it ships). The movies' and the HD sets' groups are
+ * read by ranges (the web fetches a movie alone, an HD page alone): their files stored as they are, the core's listing
+ * places each.
  *
  * The listing (a line each):
  *     koprulu repack 4
@@ -76,6 +84,8 @@ typedef struct {
 	int extra_count;
 	const char *const *locales; /* the languages whose speech goes in ("ruRU"; the install's: kp_res_raw_read) */
 	int locale_count;
+	const char *const *hd_sets; /* the HD sets that go in (KP_HD_REPACK_*: "hd2", "hd", "hd2-astc", "hd2-etc2") */
+	int hd_set_count;
 	int threads;            /* the encoder's threads (0: the processors) */
 	void (*log)(void *ctx, const char *line); /* warnings (a WAV kept as it is), NULL none */
 	void *log_ctx;
@@ -98,6 +108,7 @@ typedef struct {
 	int movies;                         /* a 1.17 install's movies as WebM */
 	uint64_t movie_from, movie_bytes;   /* their SMKs, and they */
 	int raw_absent;                     /* Remastered names the install lacks or keeps empty (a language's: the base's) */
+	int hd_files, hd_pages, hd_encoded; /* the HD sets' containers, their packs' pages, the phones' transcoded now */
 } KpRepackReport;
 
 /* The group file of a normalized name and the prefix of its group's names into out and prefix: a mission directory's

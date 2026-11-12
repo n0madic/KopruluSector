@@ -43,11 +43,13 @@
 #     checks (play_1..5.kps: box selection, right clicks, the terrain, the fog and the palette pass against their CPU
 #     twins), the video options (video.kps: clicked through, the art following them), a save (save.kps: made during a
 #     transmission, loaded in its game and from its file, the saved view and minimap in the load's frame and its
-#     trigger wait ending), the touch layer (touch.kps: terran01 played by synthetic fingers) and, with the HD art
-#     imported, the HD interface (hd_glue.kps, hd_game.kps on each race: the glue's screens and the game's screens and
-#     menus with no SD pixel where HD art exists; each language's walk on terran01 too, without the HD art its first
-#     screen); with KOPRULU_ORIGINAL or KOPRULU_SCR the install's repack (stage D8, kp_convert repack into build/repack:
-#     the 1.17 install's groups, Remastered's one koprulu.mpq), the scripts over it writing what they write over the
+#     trigger wait ending), the touch layer (touch.kps: terran01 played by synthetic fingers) and, with the HD
+#     interface's art imported (generated/hd's ui.kpd) and KOPRULU_SCR, the HD art (hd_glue.kps, hd_game.kps on each
+#     race: the glue's screens and the game's screens and menus with no SD pixel where HD art exists, over Remastered's
+#     install, the world's packs laid out from its anims, and over its repack's sets; each language's walk on terran01
+#     too, without the interface's art its first screen); with KOPRULU_ORIGINAL or KOPRULU_SCR the install's repack
+#     (stage D8, kp_convert repack into build/repack: the 1.17 install's groups, Remastered's one koprulu.mpq and its
+#     HD sets' groups, stage C5: their packs, tilesets and water the Python converter's), the scripts over it writing what they write over the
 #     install and over the bundle's repack, and with a mission's group taken out the same over the install beside it,
 #     the mission refused with none; and the cine check over the install's own movies and over its repack's (stage D7:
 #     the 1.17 install's Smacker files; Remastered's SD WebM and their subtitles, its HD2 set too when
@@ -268,23 +270,8 @@ if [ -n "${KOPRULU_ORIGINAL:-}${KOPRULU_SCR:-}" ]; then
   build/cmake/kp_convert scenarios "${KOPRULU_ORIGINAL:-$KOPRULU_SCR}" --out generated 2>/dev/null | tail -1
   build/cmake/kp_convert terrain "${KOPRULU_ORIGINAL:-$KOPRULU_SCR}" --out generated 2>/dev/null | tail -1
 fi
-step "kp_hd_phone: small packs through etc2 and astc, opened and read back"
-KP_HD_PHONE_THREADS=2 build/cmake/kp_hd_phone --selftest build/cmake | tail -1
-# tools/product.sh stamps the phones' transcoding caches with kp_hd_phone's SHA-256: the tool links only what decides
-# their blocks (itself, the codecs, the HD containers, the readers' common helpers and the container format), so a change
-# elsewhere in kp_core or kp_present (the SD packs, the renderer's HD side: kp_hd_render.c) keeps them. Every symbol of
-# ours counts, data too (a member of tables alone, as kp_defs' profiles are, defines no function).
-step "kp_hd_phone: its symbols from the codecs, the HD containers and the container format alone"
-kp_symbols() { nm -g --defined-only "$@" | awk '$3 ~ /^_?(kp|KP)_/ { print $3 }' | sort -u; }
-hd_phone_objects=(build/cmake/CMakeFiles/kp_hd_phone.dir/native/kp_core/tools/kp_hd_phone.c.o
-  build/cmake/CMakeFiles/kp_core.dir/native/kp_core/src/core/kp_kpf.c.o)
-for f in kp_bcn kp_etc kp_hd kp_present_common; do hd_phone_objects+=("build/cmake/CMakeFiles/kp_present.dir/native/kp_present/$f.c.o"); done
-hd_phone_extra="$(comm -23 <(kp_symbols build/cmake/kp_hd_phone) <(kp_symbols "${hd_phone_objects[@]}"))"
-if [ -n "$hd_phone_extra" ]; then
-  echo "ci: kp_hd_phone links more than its objects (a change there would empty the phones' caches):" $hd_phone_extra >&2
-  exit 1
-fi
-echo "kp_hd_phone: $(kp_symbols build/cmake/kp_hd_phone | wc -l | tr -d ' ') symbols, all from its objects"
+step "the phones' HD transcoding (kp_hd_transcode.c): small packs through etc2 and astc, opened and read back"
+build/cmake/kp_hd_phone --selftest | tail -1
 if [ -z "$PUBLIC" ]; then
   step "kp_replay: every scenario against the original's CRCs (the native tools)"
   mkdir -p build/replays
@@ -372,7 +359,7 @@ else
   done
 fi
 # The default compiler's sanitizer build: the suites only without an LLVM clang, whose build below checks more; the
-# ASTC encoder's half of kp_hd_phone and the loaders over the data always.
+# phones' HD transcoding with the ASTC encoder (kp_hd_phone's selftest) and the loaders over the data always.
 cmake -S . -B build/cmake-asan -G Ninja -DKP_SANITIZE=ON -DKP_CXX_CHECK=OFF -DKP_ASTC=ON >/dev/null
 if [ -n "$LLVM_CLANG" ]; then
   step "the tools under ASan and UBSan (the C suites run in the LLVM build below)"
@@ -383,7 +370,7 @@ else
   c_suites asan build/cmake-asan/kp_test long "" "$(cc --version | head -n 1)" \
     KP_TEST_GLSLANG=1 KP_TEST_LOGS=build/c-tests-asan "$RES_ORIGINAL" "$RES_SCR"
 fi
-KP_HD_PHONE_THREADS=2 build/cmake-asan/kp_hd_phone --selftest build/cmake-asan | tail -1
+build/cmake-asan/kp_hd_phone --selftest | tail -1
 if [ -n "$LLVM_CLANG" ]; then
   step "C suites under ASan, LSan and UBSan with $LLVM_CLANG (-fsanitize=function, leaks)"
   cmake -S . -B build/cmake-asan-llvm -G Ninja -DKP_SANITIZE=ON -DKP_CXX_CHECK=OFF \
@@ -393,7 +380,7 @@ if [ -n "$LLVM_CLANG" ]; then
   c_suites asan-llvm build/cmake-asan-llvm/kp_test long "" "$("$LLVM_CLANG" --version | head -n 1)" \
     ASAN_OPTIONS=detect_leaks=1:strict_string_checks=1:detect_stack_use_after_return=1:check_initialization_order=1 \
     KP_TEST_GLSLANG=1 KP_TEST_LOGS=build/c-tests-asan-llvm "$RES_ORIGINAL" "$RES_SCR"
-  build/cmake-asan-llvm/kp_hd_phone --selftest build/cmake-asan-llvm | tail -1 # the tool without the ASTC encoder
+  build/cmake-asan-llvm/kp_hd_phone --selftest | tail -1 # the codecs without the ASTC encoder
 fi
 if [ -d generated ]; then
   step "the converter's containers parsed under ASan and UBSan (console.kpd, the HD files)"
@@ -581,6 +568,11 @@ if [ -n "${KOPRULU_APP:-}" ]; then
     SCRIPT_RUN=determinism_scr_repack app_script determinism 0 "$APP" --data build/repack/scr
     grep -qF 'data: the original data from a repack' build/script_determinism_scr_repack.err
     diff -r build/script/determinism_scr build/script/determinism_scr_repack
+    # the repack's HD sets (ADR 0019, stage C5: hd2 and hd, kp_convert repack's default over a CASC install): each
+    # pack opened from its head in the root as the runtime opens it, its pages, the tilesets and the water read from
+    # the set's group, the Python converter's (tests/golden/hd/converter.json, recorded before stage C5 deleted it)
+    step "Remastered's repack's HD sets: their packs, tilesets and water the Python converter's"
+    env KP_TEST_HD_REPACK=build/repack/scr build/cmake/kp_test test_hd:repack_equals_the_converters | tail -1
     # the languages' groups (ADR 0019, stages C2 and C3): their texts, maps' strings and TIME and voices' records are
     # the install's
     step "the languages from Remastered's repack: its language groups give what the install gives"
@@ -598,6 +590,7 @@ if [ -n "${KOPRULU_APP:-}" ]; then
         --screenshot "build/locale_check/$loc/menu_repack.png"
       logs=("build/locale_menu_$loc.err" "build/locale_menu_$loc.log" "build/locale_menu_repack_$loc.err"
         "build/locale_menu_repack_$loc.log")
+      # TODO: with no generated/hd's ui.kpd once the interface's art is the install's (ADR 0019, stage C6)
       if [ -d "${KOPRULU_GENERATED:-generated}/hd" ]; then
         SCRIPT_RUN="locale_$loc" app_script hd_game 0 "$APP" "${language[@]}" --speech "$loc" --mission terran/terran01
         logs+=("build/script_locale_$loc.err" "build/script_locale_$loc.log")
@@ -668,17 +661,28 @@ if [ -n "${KOPRULU_APP:-}" ]; then
       grep -qE "^SPIKE cine check smk.starintr: subtitle 0 at " "build/cine_check_scr_repack_$variant.log"
     done
   fi
-  if [ -d "${KOPRULU_GENERATED:-generated}/hd" ]; then
-    for mission in glue terran/terran02 zerg/zerg02 protoss/protoss02; do
-      step "product HD script on $mission: the screens and menus with no SD pixel where HD art exists"
-      if [ "$mission" = glue ]; then # the glue's screens by clicks: the menus, a briefing, a victory, the score
-        app_script hd_glue 0 "$APP"
-        log=build/script_hd_glue.log
+  # the HD art (ADR 0019, stage C5): the world's packs laid out from Remastered's anims at a mission's start, and the
+  # repack's sets (koprulu-hd2.mpq, koprulu-hd.mpq) read as they are; each run's log names the source its art came from
+  # TODO: the interface's art from the install and the repack too, no generated/hd's ui.kpd (ADR 0019, stage C6)
+  if [ -n "${KOPRULU_SCR:-}" ] && [ -d "${KOPRULU_GENERATED:-generated}/hd" ]; then
+    for source in install repack; do
+      if [ "$source" = install ]; then
+        data="$KOPRULU_SCR" art="the install's anims"
       else
-        SCRIPT_RUN="hd_game_${mission#*/}" app_script hd_game 0 "$APP" --mission "$mission"
-        log="build/script_hd_game_${mission#*/}.log"
+        data=build/repack/scr art="the repack's hd2?"
       fi
-      grep -E "^SPIKE hd check" "$log" | grep -vE ": [0-9]+ HD pixels; SD over HD art: 0 lost, 0 outside, 0 through, 0 waiting, 0 unreadable; 0 drawn outside the log; 0 log drops;" || true
+      for mission in glue terran/terran02 zerg/zerg02 protoss/protoss02; do
+        step "product HD script on $mission from Remastered's $source: the screens and menus with no SD pixel where HD art exists"
+        if [ "$mission" = glue ]; then # the glue's screens by clicks: the menus, a briefing, a victory, the score
+          run="hd_glue_$source"
+          SCRIPT_RUN="$run" app_script hd_glue 0 "$APP" --data "$data"
+        else
+          run="hd_game_${mission#*/}_$source"
+          SCRIPT_RUN="$run" app_script hd_game 0 "$APP" --data "$data" --mission "$mission"
+          grep -qE "Remastered's hd2? art \($art\)" "build/script_$run.err"
+        fi
+        grep -E "^SPIKE hd check" "build/script_$run.log" | grep -vE ": [0-9]+ HD pixels; SD over HD art: 0 lost, 0 outside, 0 through, 0 waiting, 0 unreadable; 0 drawn outside the log; 0 log drops;" || true
+      done
     done
   fi
 fi

@@ -376,6 +376,13 @@ typedef struct {
  * where it fits at the skyline's lowest top edge (ties: the lowest x), a new page when none has room; out[k] its place
  * (a zero-area rectangle: page 0 at 0, 0), *page_count the pages. -1 with the error when one is larger than a page. */
 int kp_pages_pack(const uint16_t *sizes, uint32_t n, int32_t page_size, KpPagePlace *out, int *page_count, KpError *err);
+/* The HD packs' packer (ADR 0019, stage C5): groups of rectangles (an image's frames;
+ * group g is rectangles first[g] to first[g + 1] - 1 of sizes, in the same units as page_size), each group's in
+ * order of height, then width (both descending), then position, each at the lowest, then leftmost, place on the last
+ * open_pages pages (the earliest of equal places), else on a new page; out[k - first[0]] the place of rectangle k,
+ * *page_count the pages. -1 with the error when one is larger than a page. */
+int kp_pages_pack_groups(const uint16_t *sizes, const uint32_t *first, uint32_t groups, int32_t page_size,
+	int32_t open_pages, KpPagePlace *out, int *page_count, KpError *err);
 /* Pack `name` built from the original GRPs as the converter's container holds it (converter/kpf/resources.py
  * build_pack, without its sounds): grpmeta's atlases of the pack in order, each GRP entry's frames read through files
  * and decoded, equal frames sharing one rectangle, FRMS in p (p->owned), the pages' indices in *pages (page_count
@@ -414,13 +421,13 @@ void kp_frame_table_free(KpFrameTable *t);
 int32_t kp_frame_table_frame(const KpFrameTable *t, const KpGrpMeta *g, int32_t grp, int32_t frame);
 
 /* ------------------------------------------------------------------------------------------------------------- */
-/* StarCraft: Remastered's HD art (ADR 0013, kp_hd.c, kp_hd_render.c; converter/emit/hd.py)                       */
+/* StarCraft: Remastered's HD art (ADR 0013, ADR 0019; kp_hd.c, kp_hd_render.c, kp_anim.c)                       */
 /* ------------------------------------------------------------------------------------------------------------- */
 
 #define KP_HD_PACK_KIND "HDPK"
 #define KP_HD_TILESET_KIND "HDTS"
 #define KP_HD_SCHEMA 2      /* the tilesets', the water's, ui.kpd's container and portraits.kpd's */
-#define KP_HD_PACK_SCHEMA 3 /* the packs': their lit pages' lighting layers (converter/emit/hd.py PACK_SCHEMA) */
+#define KP_HD_PACK_SCHEMA 3 /* the packs': their lit pages' lighting layers */
 #define KP_HD_PACK_HEAD_BYTES 12 /* u8 scale, u16 page size, u16 pages, u32 frames, u8 format, u16 lit pages */
 /* An HD terrain atlas layer's largest side and the most layers: GLES 3.0's least GL_MAX_TEXTURE_SIZE and
  * GL_MAX_ARRAY_TEXTURE_LAYERS */
@@ -493,6 +500,81 @@ void kp_hd_page_offsets(const KpHdPack *p, int32_t page, uint32_t *diffuse, uint
  * scale); a frame without HD art has zero size. */
 int kp_hd_frame_table_build(KpFrameTable *hd, const KpFrameTable *sd, const KpGrpMeta *g, const KpPack *const *packs,
 	const KpHdPack *const *hd_packs, const char *const *pack_names, int pack_count, KpError *err);
+
+/* StarCraft: Remastered's HD sprites from its own files (ADR 0019, stage C5; kp_anim.c): an image's anim
+ * (anim/main_NNN.anim, HD2/anim/main_NNN.anim) read from its head and frame records, and the HD packs laid out from
+ * the anims as the Python converter packed them before stage C5 (its FRMS and pages, byte for byte): each SD pack's
+ * GRPs drawn by the anim of the first image naming them (or the image SD/images.rel relates it to), each image's
+ * frames by their block rectangles (a rectangle two frames share once) packed together on KP_HD_PAGE_SIZE pages, the
+ * images Remastered lights (a normal map and an occlusion one) on pages of their own first. */
+#define KP_HD_PAGE_SIZE 2048  /* the HD packs' pages */
+#define KP_HD_OPEN_PAGES 4    /* the pages a frame may still go into */
+#define KP_ANIM_FRAME_RECORD 16
+#define KP_ANIM_HEAD_READ 464 /* an anim's head: header, layer names, the entry and its ten layers */
+#define KP_ANIM_RELATIONS 8   /* SD/images.rel's record: u32, i32 the image whose frames it draws (-1: its own) */
+
+/* An anim's image: its box and frames in the file's pixels (HD2's halved records), its layers' DDS sheets in the file
+ * (KP_HD_LAYER_* order; offset 0: the image has no such layer). */
+typedef struct {
+	int32_t scale;      /* 4 HD, 2 HD2 */
+	int32_t box_w, box_h;
+	uint32_t frame_count, frames_at;
+	uint32_t layer_offset[KP_HD_LAYERS], layer_size[KP_HD_LAYERS];
+	int32_t *frames;    /* 6 a frame: x, y in the sheet, left, top in the box, width, height; NULL until read */
+} KpAnim;
+
+/* An anim's head (its first n bytes, KP_ANIM_HEAD_READ at least, of file_size): 0, or -1 with err. */
+int kp_anim_open(KpAnim *a, const uint8_t *head, size_t n, uint64_t file_size, const char *name, KpError *err);
+/* Its frame records (n bytes at frames_at): 0, or -1 with err. */
+int kp_anim_frames(KpAnim *a, const uint8_t *records, size_t n, const char *name, KpError *err);
+void kp_anim_free(KpAnim *a);
+/* Whether Remastered lights the image: it has a normal map and an occlusion one. */
+int kp_anim_lit(const KpAnim *a);
+/* SD/images.rel's image per image (n bytes): *owners malloc'd, *count of them; 0, or -1 with err. */
+int kp_anim_relations(const uint8_t *rel, size_t n, int32_t **owners, uint32_t *count, KpError *err);
+
+/* A piece of an HD page: an image's block rectangle in its sheets (sx, sy) at its place in the page */
+typedef struct {
+	int32_t owner; /* the layout's image (KpHdLayout.images) */
+	uint16_t sx, sy, w, h, x, y;
+} KpHdPiece;
+
+/* An image's layers in its anim file (KpAnim's) */
+typedef struct {
+	uint32_t offset[KP_HD_LAYERS], size[KP_HD_LAYERS];
+} KpHdLayers;
+
+/* An SD pack's HD layout: its HD pack's HEAD and FRMS, and what each page's blocks are made of. */
+typedef struct {
+	int32_t scale, page_size, page_count, lit_pages;
+	uint32_t frame_count;
+	uint8_t *frames;     /* FRMS: KP_HD_FRAME_RECORD bytes a frame */
+	KpHdPiece *pieces;   /* page after page, each image's together */
+	int32_t *page_first; /* [page_count + 1]: page p's pieces */
+	int32_t image_count; /* the images drawing the pack, lit first, then by image */
+	int32_t *images;     /* their images.dat indices */
+	KpHdLayers *layers;  /* their sheets */
+} KpHdLayout;
+
+/* Reads size bytes at offset of image's anim file into out: 0, or -1. */
+typedef int (*KpHdAnimRead)(void *ctx, int32_t image, uint64_t offset, void *out, size_t size);
+
+/* SD pack `name`'s HD layout at page_size: the GRPs of its atlases (grpmeta's) drawn by owner_of[entry] (an image whose
+ * anim, anims[image] of image_count, has its frames; -1 none) of the variant's scale. 0, or -1 with err. */
+int kp_hd_layout_build(KpHdLayout *l, const KpGrpMeta *g, const char *name, const int32_t *owner_of, const KpAnim *anims,
+	int32_t image_count, int32_t scale, int32_t page_size, KpError *err);
+void kp_hd_layout_free(KpHdLayout *l);
+/* The layout as an HD pack whose pages are built (kp_hd_layout_page), not read: its frames point into the layout. */
+void kp_hd_layout_pack(const KpHdLayout *l, KpHdPack *p);
+/* A page's BC blocks built from the anims' sheets read through `read`: its diffuse, team and, on a lit page, the
+ * lighting layers into light (NULL: not wanted; else KP_HD_LIGHTS buffers), each of kp_hd_layer_bytes of
+ * KP_HD_FORMAT_BC, zero where an image has no such layer. 0, or -1 with err. */
+int kp_hd_layout_page(const KpHdLayout *l, int32_t page, KpHdAnimRead read, void *ctx, uint8_t *diffuse, uint8_t *team,
+	uint8_t *const *light, KpError *err);
+/* The whole HD pack (HDPK) of a layout, its pages built through `read`: *out malloc'd, *size its bytes. 0, or -1 with
+ * err. */
+int kp_hd_pack_build(const KpHdLayout *l, KpHdAnimRead read, void *ctx, const char *profile_id, uint8_t **out,
+	size_t *size, KpError *err);
 
 /* The residency of the HD pages (stage R4a, kp_hd_cache.c): a fixed number of slots (the layers of the HD textures)
  * hold the pages last wanted; a page is wanted while an image drawn shows a frame of it (kp_hd_cache_want_images, once

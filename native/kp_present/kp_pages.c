@@ -172,6 +172,69 @@ done:
 	return rc;
 }
 
+int kp_pages_pack_groups(const uint16_t *sizes, const uint32_t *first, uint32_t groups, int32_t page_size, int32_t open_pages,
+	KpPagePlace *out, int *page_count, KpError *err)
+{
+	Skyline *pages = NULL;
+	uint64_t *order = NULL;
+	uint32_t g, i, n = first[groups] - first[0];
+	int count = 0, cap = 0, p, rc = -1;
+	*page_count = 0;
+	memset(out, 0, (size_t)n * sizeof *out);
+	if (!(order = (uint64_t *)malloc((size_t)(n ? n : 1) * sizeof *order))) return kp_present_fail(err, "pages", "out of memory");
+	for (g = 0; g < groups; g++) {
+		uint32_t m = 0;
+		for (i = first[g]; i < first[g + 1]; i++) order[m++] = order_key(sizes[2 * i], sizes[2 * i + 1], i);
+		qsort(order, m, sizeof *order, by_key);
+		for (i = 0; i < m; i++) {
+			uint32_t k = (uint32_t)(order[i] & 0xffffffffu);
+			int32_t w = sizes[2 * k], h = sizes[2 * k + 1], x = 0, y = 0, best_x = 0, best_y = 0;
+			int at = 0, best_at = 0, best = -1;
+			if (w > page_size || h > page_size) {
+				snprintf(err->msg, sizeof err->msg, "pages: rectangle %dx%d larger than a %dx%d page", (int)w, (int)h,
+					(int)page_size, (int)page_size);
+				goto done;
+			}
+			/* the lowest place, then the leftmost, on the last open_pages pages (the earliest of equal ones) */
+			for (p = count > open_pages ? count - open_pages : 0; p < count; p++) {
+				if (sky_find(&pages[p], w, h, page_size, &at, &x, &y)
+					&& (best < 0 || y < best_y || (y == best_y && x < best_x))) {
+					best = p;
+					best_at = at;
+					best_x = x;
+					best_y = y;
+				}
+			}
+			if (best < 0) {
+				if (count == cap) {
+					int c = cap ? 2 * cap : 8;
+					Skyline *grown = (Skyline *)realloc(pages, (size_t)c * sizeof *grown);
+					if (!grown) goto oom;
+					pages = grown;
+					cap = c;
+				}
+				if (sky_init(&pages[count], page_size) != 0) goto oom;
+				best = count++;
+				sky_find(&pages[best], w, h, page_size, &best_at, &best_x, &best_y);
+			}
+			if (sky_place(&pages[best], best_at, best_x, best_y, w, h) != 0) goto oom;
+			out[k - first[0]].page = (uint16_t)best;
+			out[k - first[0]].x = (uint16_t)best_x;
+			out[k - first[0]].y = (uint16_t)best_y;
+		}
+	}
+	*page_count = count;
+	rc = 0;
+	goto done;
+oom:
+	kp_present_fail(err, "pages", "out of memory");
+done:
+	for (p = 0; p < count; p++) free(pages[p].s);
+	free(pages);
+	free(order);
+	return rc;
+}
+
 /* --- a pack built (resources.build_pack without its sounds) --- */
 
 typedef struct {
@@ -270,8 +333,6 @@ static int distinct_of(Builder *b, uint16_t w, uint16_t h, const uint8_t *pixels
 	return 0;
 }
 
-static int label_is(const KpLabel *l, const char *s) { return l->size == strlen(s) && memcmp(l->text, s, l->size) == 0; }
-
 /* The frames of GRP entry e read and added in order: 0, or -1 with the reason. */
 static int add_entry(Builder *b, const KpGrpEntry *e, const KpFiles *files, uint8_t *scratch,
 	KpError *err)
@@ -338,14 +399,14 @@ int kp_pack_build(KpPack *p, uint8_t ***pages_out, const KpGrpMeta *g, const KpF
 	memset(p, 0, sizeof *p);
 	memset(&b, 0, sizeof b);
 	*pages_out = NULL;
-	for (a = 1; a <= g->atlas_count; a++) n += label_is(&g->atlases[a].pack, name);
+	for (a = 1; a <= g->atlas_count; a++) n += kp_label_is(&g->atlases[a].pack, name);
 	if (!(p->atlases = (KpPackAtlas *)calloc((size_t)(n ? n : 1), sizeof *p->atlases))
 		|| !(scratch = (uint8_t *)malloc(255 * 255))) {
 		goto oom;
 	}
 	for (a = 1; a <= g->atlas_count; a++) {
 		KpPackAtlas *at;
-		if (!label_is(&g->atlases[a].pack, name)) continue;
+		if (!kp_label_is(&g->atlases[a].pack, name)) continue;
 		at = &p->atlases[p->atlas_count++];
 		if (g->atlases[a].name.size >= sizeof at->name) {
 			kp_present_fail(err, name, "an atlas name too long");

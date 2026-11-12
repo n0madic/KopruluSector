@@ -100,6 +100,13 @@ typedef struct {
  * out of memory or a field too long. */
 int kp_kpf_build(const char *kind, uint32_t schema_version, uint32_t converter_version, const char *profile_id,
 	const uint8_t *source_hash, const KpKpfOut *sections, int count, uint8_t **out, size_t *size);
+/* The same container with its sections' payloads zeroed (their sizes only: payload ignored) and no checksums, for a
+ * writer that fills them in place (the HD packs, kp_hd_pack_build): offsets[k] (count of them) where section k lies in
+ * *out; kp_kpf_seal once they are filled. -1 out of memory, a field too long or past 4 GB. */
+int kp_kpf_layout(const char *kind, uint32_t schema_version, uint32_t converter_version, const char *profile_id,
+	const uint8_t *source_hash, const KpKpfOut *sections, int count, uint8_t **out, size_t *size, size_t *offsets);
+/* Each section's CRC-32 written into the table of a container kp_kpf_layout laid out. */
+void kp_kpf_seal(uint8_t *data);
 
 /* Little-endian reads; the caller has checked the bounds. */
 static inline uint32_t kp_le_u8(const uint8_t *p) { return p[0]; }

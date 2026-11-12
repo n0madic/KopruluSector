@@ -11,7 +11,6 @@
 #include "kp_res_scr.h"
 #include "kp_sha256.h"
 
-#define KP_RES_PATH 1024
 #define KP_RES_NAME 512
 #define KP_RES_ARCHIVES 8 /* an install's archives (the profile's) */
 #define KP_RES_REPACK_MAX 128 /* a repack's archives: the core or single file and its groups */
@@ -1249,6 +1248,101 @@ int kp_res_raw_range(const KpRes *r, const char *raw, char *file, size_t file_si
 	*offset = e->offset;
 	*size = e->size;
 	return 1;
+}
+
+/* --- Remastered's own files read on another thread (ADR 0019, stage C5: the HD pages) --- */
+
+int kp_res_raw_place(KpRes *r, const char *raw, KpResPlace *p)
+{
+	char key[KP_RES_NAME];
+	const Entry *e;
+	memset(p, 0, sizeof *p);
+	normalize(raw, key, sizeof key);
+	if ((e = map_find(&r->raw, key)) != NULL) {
+		if (e->archive < 0 || e->head) return 0; /* its group not open (the web's: kp_res_raw_range), an Ogg of a WAV */
+		p->kind = KP_RES_SOURCE_REPACK;
+		snprintf(p->path, sizeof p->path, "%s", r->repack[e->archive].path);
+		mpq_name(key, p->name, sizeof p->name);
+		p->size = e->size;
+		seen(r, key, (KpResStatus)e->status, r->repack[e->archive].file);
+		return 1;
+	}
+	if (!r->casc || !kp_casc_held(r->casc, raw)) return 0;
+	p->kind = KP_RES_SOURCE_CASC;
+	snprintf(p->path, sizeof p->path, "%s", r->install_dir);
+	snprintf(p->name, sizeof p->name, "%s", raw);
+	seen(r, key, KP_RES_REMASTERED, "CASC");
+	return 1;
+}
+
+struct KpResReader {
+	KpResSourceKind kind; /* the open file's place: KP_RES_SOURCE_REPACK or _CASC, NONE: none */
+	char path[KP_RES_PATH], name[KP_RES_NAME];
+	KpMpq *mpq;           /* the archive at path (a repack's) */
+	KpCasc *casc;         /* the install at path */
+	KpMpqFile *mpq_file;  /* the file named, kept open for the next read */
+	KpCascFile *casc_file;
+	uint64_t size;
+};
+
+KpResReader *kp_res_reader_new(void) { return (KpResReader *)calloc(1, sizeof(KpResReader)); }
+
+/* The place's file open on the reader's own handles: 0, or -1. */
+static int reader_open(KpResReader *h, const KpResPlace *p)
+{
+	char why[KP_RES_MESSAGE];
+	if (h->kind == p->kind && strcmp(h->path, p->path) == 0 && strcmp(h->name, p->name) == 0) return 0;
+	kp_mpq_file_close(h->mpq_file);
+	kp_casc_file_close(h->casc_file);
+	h->mpq_file = NULL;
+	h->casc_file = NULL;
+	h->kind = KP_RES_SOURCE_NONE;
+	if (p->kind == KP_RES_SOURCE_REPACK) {
+		if (!h->mpq || strcmp(h->path, p->path) != 0) {
+			kp_mpq_close(h->mpq);
+			kp_casc_close(h->casc);
+			h->casc = NULL;
+			if (!(h->mpq = kp_mpq_open(p->path, 0, why, sizeof why))) return -1;
+		}
+		if (!(h->mpq_file = kp_mpq_file_open(h->mpq, p->name, &h->size, why, sizeof why))) return -1;
+	} else if (p->kind == KP_RES_SOURCE_CASC) {
+		if (!h->casc || strcmp(h->path, p->path) != 0) {
+			kp_casc_close(h->casc);
+			kp_mpq_close(h->mpq);
+			h->mpq = NULL;
+			if (!(h->casc = kp_casc_open(p->path, why, sizeof why))) return -1;
+		}
+		if (!(h->casc_file = kp_casc_file_open(h->casc, p->name, &h->size, why, sizeof why))) return -1;
+	} else {
+		return -1;
+	}
+	h->kind = p->kind;
+	snprintf(h->path, sizeof h->path, "%s", p->path);
+	snprintf(h->name, sizeof h->name, "%s", p->name);
+	return 0;
+}
+
+int kp_res_reader_size(KpResReader *h, const KpResPlace *p, uint64_t *size)
+{
+	if (reader_open(h, p) != 0) return -1;
+	*size = h->size;
+	return 0;
+}
+
+int kp_res_reader_read(KpResReader *h, const KpResPlace *p, uint64_t offset, void *out, size_t size)
+{
+	if (reader_open(h, p) != 0 || offset > h->size || size > h->size - offset) return -1;
+	return h->mpq_file ? kp_mpq_file_read(h->mpq_file, offset, out, size) : kp_casc_file_read(h->casc_file, offset, out, size);
+}
+
+void kp_res_reader_free(KpResReader *h)
+{
+	if (!h) return;
+	kp_mpq_file_close(h->mpq_file);
+	kp_casc_file_close(h->casc_file);
+	kp_mpq_close(h->mpq);
+	kp_casc_close(h->casc);
+	free(h);
 }
 
 int kp_res_stream_read(KpResStream *s, uint64_t offset, void *out, size_t size)

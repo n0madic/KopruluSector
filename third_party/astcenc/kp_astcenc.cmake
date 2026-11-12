@@ -1,5 +1,5 @@
 # The Arm ASTC encoder as a library of its own (ADR 0013): the sources of the pinned release fetched by
-# `tools/toolchain/fetch.sh astc`, for the host's kp_hd_phone only (the product draws ASTC blocks and has no codec).
+# `tools/toolchain/fetch.sh astc`, for the host's kp_convert and kp_hd_phone only (the product draws ASTC blocks and has no codec).
 # Its SIMD comes from the compiler's target (NEON on arm64, SSE2 on x86-64). Included (include()d, not a subdirectory)
 # by the top CMakeLists.txt only with -DKP_ASTC=ON. Built without the project's warnings, like kp_stb.
 set(KP_ASTC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/tools/toolchain/astc/astc-encoder-5.7.0/Source)

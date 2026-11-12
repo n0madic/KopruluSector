@@ -1,5 +1,5 @@
 """Remastered's own formats and the rebuilds of 1.17 files from them (ADR 0013, stage R1; ADR 0018, stage D6): KPW1,
-DDS, anim, and converter/casc/rebuild.py on synthetic data."""
+DDS and converter/casc/rebuild.py on synthetic data."""
 from __future__ import annotations
 
 import shutil
@@ -7,7 +7,7 @@ import struct
 import unittest
 
 from converter.casc import rebuild
-from converter.formats import anim, dds, dialog, grp, kpw, palette, pcx, smk
+from converter.formats import dds, dialog, grp, kpw, palette, pcx, smk
 from converter.kpf import fixtures
 from converter.kpf.fixtures import dialog_bin
 
@@ -81,21 +81,6 @@ class DdsTest(unittest.TestCase):
             assert dds.alpha(image) == (w, h, dds.decode(image).rgba[3::4])
         image = dds_rgba(2, 1, bytes([1, 2, 3, 255, 4, 5, 6, 0]))
         assert dds.alpha(image) == (2, 1, bytes([255, 0]))
-
-
-class AnimTest(unittest.TestCase):
-    def test_hd2_records_halved(self):
-        sheet = dds_dxt1(8, 4, bytes(16))
-        names = b"".join(n.ljust(anim.LAYER_NAME, b"\0") for n in (b"diffuse", b"teamcolor")) + bytes(32 * 8)
-        head = anim.HEADER.pack(b"ANIM", 2, 2, 0, 2, 1) + names
-        frames_at = len(head) + anim.ENTRY.size + 2 * anim.LAYER.size
-        sheet_at = frames_at + anim.FRAME.size
-        data = (head + anim.ENTRY.pack(1, 0xFFFF, 40, 20, frames_at) + anim.LAYER.pack(sheet_at, len(sheet), 8, 4)
-                + anim.LAYER.pack(0, 0, 0, 0) + anim.FRAME.pack(8, 4, 2, 6, 16, 8, 1) + sheet)
-        image = anim.parse(data)
-        assert image.scale == 2 and image.box == (20, 10)
-        assert image.frames == [anim.Frame(4, 2, 1, 3, 8, 4)]
-        assert list(image.layers) == ["diffuse"] and image.layers["diffuse"].fourcc == b"DXT1"
 
 
 class RebuildTest(unittest.TestCase):

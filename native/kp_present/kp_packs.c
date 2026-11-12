@@ -50,15 +50,13 @@ int kp_grpmeta_afrm(const KpGrpMeta *g, uint32_t **out, KpError *err)
 	return 0;
 }
 
-static int label_is(const KpLabel *l, const char *s) { return strlen(s) == l->size && memcmp(l->text, s, l->size) == 0; }
-
 int kp_pack_atlas_find(const KpGrpMeta *g, uint32_t a, const KpPack *const *packs, const char *const *pack_names,
 	int pack_count, int *k, int *j)
 {
 	for (*k = 0; *k < pack_count; (*k)++) {
-		if (!label_is(&g->atlases[a].pack, pack_names[*k])) continue;
+		if (!kp_label_is(&g->atlases[a].pack, pack_names[*k])) continue;
 		for (*j = 0; *j < packs[*k]->atlas_count; (*j)++) {
-			if (label_is(&g->atlases[a].name, packs[*k]->atlases[*j].name)) return 1;
+			if (kp_label_is(&g->atlases[a].name, packs[*k]->atlases[*j].name)) return 1;
 		}
 	}
 	return 0;

@@ -206,28 +206,22 @@ int kp_kpf_check(const KpKpf *c, const KpKpfExpect *expect, KpError *err)
 	return 0;
 }
 
-int kp_kpf_build(const char *kind, uint32_t schema_version, uint32_t converter_version, const char *profile_id,
-	const uint8_t *source_hash, const KpKpfOut *sections, int count, uint8_t **out, size_t *size)
+int kp_kpf_layout(const char *kind, uint32_t schema_version, uint32_t converter_version, const char *profile_id,
+	const uint8_t *source_hash, const KpKpfOut *sections, int count, uint8_t **out, size_t *size, size_t *offsets)
 {
-	size_t cursor = KP_KPF_HEADER_SIZE + (size_t)KP_KPF_ENTRY_SIZE * (size_t)count, total, *offsets;
+	size_t cursor = KP_KPF_HEADER_SIZE + (size_t)KP_KPF_ENTRY_SIZE * (size_t)count, total;
 	uint8_t *b;
 	int k;
 	*out = NULL;
 	*size = 0;
 	if (strlen(kind) != 4 || strlen(profile_id) > 16 || count < 0 || count > 0xffff) return -1;
-	offsets = (size_t *)malloc(sizeof *offsets * (size_t)(count ? count : 1));
-	if (!offsets) return -1;
 	for (k = 0; k < count; k++) {
 		cursor += (4 - cursor % 4) % 4;
 		offsets[k] = cursor;
 		cursor += sections[k].size;
 	}
 	total = cursor + (4 - cursor % 4) % 4;
-	b = (uint8_t *)calloc(total, 1);
-	if (!b) {
-		free(offsets);
-		return -1;
-	}
+	if (total > UINT32_MAX || !(b = (uint8_t *)calloc(total, 1))) return -1;
 	memcpy(b, KP_KPF_MAGIC, 4);
 	memcpy(b + 4, kind, 4);
 	kp_le_put16(b + 8, KP_KPF_VERSION);
@@ -247,11 +241,34 @@ int kp_kpf_build(const char *kind, uint32_t schema_version, uint32_t converter_v
 		kp_le_put32(e + 8, (uint32_t)offsets[k]);
 		kp_le_put32(e + 12, (uint32_t)sections[k].size);
 		kp_le_put32(e + 16, sections[k].schema_version ? sections[k].schema_version : 1);
-		kp_le_put32(e + 20, kp_crc32(sections[k].payload, sections[k].size));
-		if (sections[k].size) memcpy(b + offsets[k], sections[k].payload, sections[k].size);
 	}
-	free(offsets);
 	*out = b;
 	*size = total;
 	return 0;
+}
+
+void kp_kpf_seal(uint8_t *data)
+{
+	uint32_t k, count = kp_le_u16(data + 14);
+	for (k = 0; k < count; k++) {
+		uint8_t *e = data + KP_KPF_HEADER_SIZE + (size_t)KP_KPF_ENTRY_SIZE * k;
+		kp_le_put32(e + 20, kp_crc32(data + kp_le_u32(e + 8), kp_le_u32(e + 12)));
+	}
+}
+
+int kp_kpf_build(const char *kind, uint32_t schema_version, uint32_t converter_version, const char *profile_id,
+	const uint8_t *source_hash, const KpKpfOut *sections, int count, uint8_t **out, size_t *size)
+{
+	size_t *offsets = (size_t *)malloc(sizeof *offsets * (size_t)(count > 0 ? count : 1));
+	int k, rc;
+	*out = NULL;
+	*size = 0;
+	if (!offsets) return -1;
+	rc = kp_kpf_layout(kind, schema_version, converter_version, profile_id, source_hash, sections, count, out, size, offsets);
+	for (k = 0; rc == 0 && k < count; k++) {
+		if (sections[k].size) memcpy(*out + offsets[k], sections[k].payload, sections[k].size);
+	}
+	if (rc == 0) kp_kpf_seal(*out);
+	free(offsets);
+	return rc;
 }

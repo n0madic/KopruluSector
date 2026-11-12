@@ -13,6 +13,7 @@
 #include "kp_cine.h"
 #include "kp_flow.h"
 #include "kp_gfx.h"
+#include "kp_hd_scr.h"
 #include "kp_hud.h"
 #include "kp_present.h"
 #include "kp_res.h"
@@ -65,6 +66,8 @@ typedef struct KpFetch KpFetch;
 /* Starts reading size bytes at offset of a data file (its full path, kp_app_path; size 0: the whole file); NULL out of
  * memory. */
 KpFetch *kp_fetch_start(const char *path, uint32_t offset, uint32_t size);
+/* Bytes already read (taken) as an ended request; NULL when data is (a failed read) or out of memory. */
+KpFetch *kp_fetch_done(uint8_t *data, size_t size);
 int kp_fetch_state(const KpFetch *f); /* KP_FETCH_*; NULL: failed */
 /* A request that ended: its bytes (NULL when it failed; the caller frees them), the request freed; NULL and kept while
  * it is pending. */
@@ -84,8 +87,11 @@ typedef struct {
 	KpFetch *fetch;
 } KpAppGroupFetch;
 
-/* The HD pages' loader (kp_app_hd.c, stage R4a): a thread reading the pages asked for from the HD packs' files (without
- * threads, the web's, fetched as byte ranges). */
+/* The HD pages' loader (kp_app_hd.c, stage R4a): a thread reading the pages asked for (without threads, the web's,
+ * fetched as byte ranges). A pack's pages come from its source (ADR 0019, stage C5): a repack's HD pack in an open
+ * group (place, read on the loader's thread through a reader of its own), the web's in the group's file beside the page
+ * (url, the pack's bytes at base: fetched by range), or a Remastered install's anims (layout: the pages built from
+ * their sheets, sheets naming the install and the variant). */
 typedef struct KpHdLoader KpHdLoader;
 typedef struct {
 	int32_t page;
@@ -94,13 +100,21 @@ typedef struct {
 	uint8_t *diffuse, *team; /* the page's blocks, or its decoded texels; malloc'd */
 	uint8_t *light[KP_HD_LIGHTS]; /* a lit page's lighting layers' blocks (NULL: not asked for); malloc'd */
 } KpHdLoaded;
+typedef struct {
+	KpResPlace place;         /* kind KP_RES_SOURCE_REPACK: a repack's pack */
+	char url[1200];           /* "": none */
+	uint64_t base;
+	const KpHdLayout *layout; /* NULL: none */
+	KpHdScrSheets sheets;     /* its reader the loader's own */
+} KpHdSource;
 
 KpHdLoader *kp_hd_loader_new(void);
 void kp_hd_loader_free(KpHdLoader *l);
-/* Asks for a page: its blocks (of KP_HD_FORMAT_* format) at the offsets of the file at path, decoded (RGBA8 diffuse,
- * the team mask's red) when decode is set, else with light (not NULL) its lighting layers' blocks at those offsets. */
-int kp_hd_loader_request(KpHdLoader *l, int32_t page, const char *path, uint32_t diffuse_offset, uint32_t team_offset,
-	const uint32_t *light, int32_t page_size, int format, int decode, uint32_t generation);
+/* Asks for page `local` of a pack (page among all: the result's), from its source (which must outlive the loader):
+ * its blocks (of KP_HD_FORMAT_* format; a layout's are BC) at the offsets in the pack, decoded (RGBA8 diffuse, the
+ * team mask's red) when decode is set, else with light (not NULL) its lighting layers' blocks at those offsets. */
+int kp_hd_loader_request(KpHdLoader *l, int32_t page, const KpHdSource *source, int32_t local, uint32_t diffuse_offset,
+	uint32_t team_offset, const uint32_t *light, int32_t page_size, int format, int decode, uint32_t generation);
 /* A page read, if any (wait: until one is, while any is asked for); 0 none. */
 int kp_hd_loader_result(KpHdLoader *l, KpHdLoaded *out, int wait);
 void kp_hd_loaded_free(KpHdLoaded *r);
@@ -171,8 +185,9 @@ typedef struct {
 	 * into kp_gfx's slots: stage R4a), its frame table, the map's megatiles */
 	int hd_scale; /* HD pixels a logical pixel (2: HD2, 4: HD); 0 none */
 	KpHdPack hd_packs[KP_APP_PACKS];
-	uint8_t *hd_bytes[KP_APP_PACKS];       /* each pack's header and frames */
-	char hd_paths[KP_APP_PACKS][1200];     /* each pack's file */
+	uint8_t *hd_bytes[KP_APP_PACKS];       /* each repack's pack's head (its header and frames) */
+	KpHdLayout hd_layouts[KP_APP_PACKS];   /* each install's pack's layout (its frames) */
+	KpHdSource hd_sources[KP_APP_PACKS];   /* where each pack's pages are read */
 	int32_t hd_page_base[KP_APP_PACKS + 1]; /* each pack's first page among all; [pack_count]: the page count */
 	KpHdCache hd_cache;
 	KpHdLoader *hd_loader;
@@ -184,8 +199,8 @@ typedef struct {
 	KpFrameTable hd_frames;
 	uint8_t *hd_tileset_bytes;
 	uint8_t *hd_water_bytes; /* water.kpd (NULL: still water) */
-	KpFetch *hd_fetches[2];  /* the tileset and water.kpd on their way (the web); the HD world is drawn once they came */
-	char hd_tileset_path[256];
+	KpFetch *hd_fetches[2];  /* the tileset and water on their way (the web); the HD world is drawn once they came */
+	char hd_tileset_name[256];
 	KpHdWater hd_water;
 	double hd_clock;         /* when the world was built: the water's clock starts */
 	KpHdTileset hd_tileset;
@@ -206,10 +221,10 @@ typedef struct {
  * options change them in the game (kp_ui.h's KpUiVideoOptions). */
 #define KP_FX_SCALE_MAX 4 /* the RGBA target's pixels a logical pixel at most for the original's art */
 
-/* --graphics (KP_GRAPHICS_*): the world in the original's indexed art, in StarCraft: Remastered's HD art (generated/hd/,
- * made from the player's install by `python3 -m converter hd`) at x2 (HD2; a phone's in ASTC or ETC2: tools/product.sh) or x4
- * (HD, a computer's), or auto (KP_VIDEO_AUTO): HD from KP_HD_AUTO_SCALE up when it is there, HD (x4) above
- * KP_HD_X4_SCALE on a computer, else HD2. */
+/* --graphics (KP_GRAPHICS_*): the world in the original's indexed art, in StarCraft: Remastered's HD art (ADR 0019,
+ * stage C5: laid out from the install's anims, or the repack's sets, kp_world_hd_pick) at x2 (HD2; a phone's set in
+ * ASTC or ETC2: kp_convert repack --hd) or x4 (HD, a computer's), or auto (KP_VIDEO_AUTO): HD from KP_HD_AUTO_SCALE up
+ * when it is there, HD (x4) above KP_HD_X4_SCALE on a computer, else HD2. */
 #define KP_HD_AUTO_SCALE 2.0
 #define KP_HD_X4_SCALE 3.0
 /* The memory the HD pages' slots may take (bytes of texture), and the pages uploaded a frame at most. */
@@ -404,11 +419,21 @@ void kp_world_draw(KpApp *a);
 /* Whether pages of a pack format can be drawn: the context takes their blocks or they are decoded on the CPU (ASTC's
  * cannot be: the product has no codec). */
 int kp_world_hd_format_usable(KpApp *a, int format);
+/* Where an HD variant's world comes from (ADR 0019, stage C5): a repack's set of its packs ("hd2", or for phones
+ * "hd2-astc", "hd2-etc2": KP_HD_REPACK_*) or the Remastered install's anims (set ""), and its pages' format. */
+typedef struct {
+	char set[16];
+	int variant; /* KP_HD_SCR_* */
+	int format;  /* KP_HD_FORMAT_* */
+} KpHdPick;
+/* The variant's ("hd", "hd2") first source whose pages the context takes as they are (the repack's sets, then the
+ * install's), else the first whose pages it draws decoded: 1, or 0 when the data has none it draws. */
+int kp_world_hd_pick(KpApp *a, const char *variant, KpHdPick *out);
 /* The HD packs' lit pages (their sprites drawn lit when the slots hold their lighting layers). */
 int32_t kp_world_hd_lit_pages(const KpApp *a);
 /* The k-th HD variant to try ("hd", "hd2") for --graphics and the scale, or NULL past them or without HD. */
 const char *kp_app_hd_variant(const KpApp *a, int k);
-/* Whether the player imported this HD variant ("hd", "hd2") and this context draws it (video_available). */
+/* Whether the data has this HD variant ("hd", "hd2") and this context draws it (video_available). */
 int kp_app_hd_variant_available(const KpApp *a, const char *variant);
 /* Before a canvas is composed: the HD interface on or off (its variant's art open, the canvas's item plane). */
 void kp_hd_ui_mode(KpApp *a, KpCanvas *c);

@@ -22,13 +22,16 @@
  *   icon DIR [--out generated]
  *       the game's icon for the product's bundles (kp_icon.h), from a 1.17 install's StarCraft.exe (the profile's, by
  *       its SHA-256): <out>/icon/ with icon-<size>.png, icon.ico, icon.icns and the ios/, web/ and android/res/ files
- *   repack DIR [--out DIR] [--single] [--wav] [--res-log FILE] [--cache DIR] [--threads N] [--locales LIST]
+ *   repack DIR [--out DIR] [--single] [--wav] [--res-log FILE] [--cache DIR] [--threads N] [--locales LIST] [--hd LIST]
  *       the koprulu*.mpq repack of an install (kp_repack.h): its groups into generated/repack, or with --single one
  *       koprulu.mpq (the movies' sets' and the languages' groups beside it) into generated/repack-single; a WAV as Ogg
  *       Vorbis when that is smaller (--wav keeps the WAVs), a 1.17 movie as WebM (each encoded once into --cache,
  *       generated/cache/repack); --res-log: a run's kp_res log, the names it read unlisted go in too;
  *       --locales: the languages that go in (their texts and speech), each its koprulu-locale-<locale>.mpq
- *       ("ruRU,deDE"; "none"; by default every language of the profile but the base's the install holds)
+ *       ("ruRU,deDE"; "none"; by default every language of the profile but the base's the install holds);
+ *       --hd: the HD sets that go in, each its koprulu-<set>.mpq (the packs, tilesets and water built from a
+ *       Remastered install's anims; "hd2", "hd", for phones "hd2-astc", "hd2-etc2": transcoded once into --cache;
+ *       "none"; by default the install's hd2 and hd)
  *   locale-check DIR [--locale L|all] [--out generated]
  *       each language (all: every one of the profile's but the base's the install holds) built from the source's
  *       files as the game builds it (kp_locale.h): its texts, every campaign mission's strings and the glyphs, a
@@ -56,6 +59,7 @@
 #include "kp_chk.h"
 #include "kp_data.h"
 #include "kp_fs.h"
+#include "kp_hd_scr.h"
 #include "kp_icon.h"
 #include "kp_json.h"
 #include "kp_kpf.h"
@@ -400,12 +404,46 @@ static int repack_locales(KpRes *res, const char *spec, char ids[LOCALES_MAX][LO
 	return n;
 }
 
+#define HD_SETS_MAX 8
+#define HD_SET 16
+
+/* The HD sets a repack takes (ADR 0019, stage C5): --hd's list (comma apart; "none" no set), else the BC sets of each
+ * variant whose anims a Remastered install holds (hd2, hd). Their count, or -1 with a line. */
+static int repack_hd_sets(KpRes *res, const char *spec, char ids[HD_SETS_MAX][HD_SET], const char **out)
+{
+	int n = 0, v;
+	if (spec) {
+		const char *at = spec;
+		if (strcmp(spec, "none") == 0) return 0;
+		while (*at) {
+			size_t len = strcspn(at, ",");
+			if (len == 0 || len >= HD_SET || n == HD_SETS_MAX) {
+				fprintf(stderr, "kp_convert: --hd %s: a list of HD sets (\"hd2,hd2-astc\") or none\n", spec);
+				return -1;
+			}
+			snprintf(ids[n], HD_SET, "%.*s", (int)len, at);
+			out[n] = ids[n];
+			n++;
+			at += len + (at[len] == ',');
+		}
+		return n;
+	}
+	for (v = 0; v < KP_HD_SCR_VARIANTS && kp_res_install(res) == KP_RES_SOURCE_CASC; v++) {
+		if (!kp_hd_scr_held(res, v)) continue;
+		snprintf(ids[n], HD_SET, "%s", kp_hd_scr_variant_name(v));
+		out[n] = ids[n];
+		n++;
+	}
+	return n;
+}
+
 static int cmd_repack(int argc, char **argv)
 {
 	KpRepackConfig c;
 	KpRepackReport *rep;
-	const char *dir = NULL, *res_log = NULL, *locales_spec = NULL, *locales[LOCALES_MAX];
+	const char *dir = NULL, *res_log = NULL, *locales_spec = NULL, *locales[LOCALES_MAX], *hd_spec = NULL, *hd_sets[HD_SETS_MAX];
 	char err[MESSAGE], **extra = NULL, *log_text = NULL, groups[KP_REPACK_GROUPS][64], ids[LOCALES_MAX][LOCALE_ID];
+	char hd_ids[HD_SETS_MAX][HD_SET];
 	int i, shown = 0, rc, files = 0, statuses_shown = 0;
 	KpRes *res;
 	memset(&c, 0, sizeof c);
@@ -419,6 +457,7 @@ static int cmd_repack(int argc, char **argv)
 		else if (strcmp(argv[i], "--cache") == 0 && i + 1 < argc) c.cache = argv[++i];
 		else if (strcmp(argv[i], "--threads") == 0 && i + 1 < argc) c.threads = atoi(argv[++i]);
 		else if (strcmp(argv[i], "--locales") == 0 && i + 1 < argc) locales_spec = argv[++i];
+		else if (strcmp(argv[i], "--hd") == 0 && i + 1 < argc) hd_spec = argv[++i];
 		else if (argv[i][0] == '-' || dir) return -1;
 		else dir = argv[i];
 	}
@@ -431,14 +470,16 @@ static int cmd_repack(int argc, char **argv)
 		free(log_text);
 		return 2;
 	}
-	if ((c.locale_count = repack_locales(res, locales_spec, ids, locales)) < 0 || !(rep = (KpRepackReport *)malloc(sizeof *rep))) {
-		if (c.locale_count >= 0) fprintf(stderr, "kp_convert: out of memory\n");
+	if ((c.locale_count = repack_locales(res, locales_spec, ids, locales)) < 0
+		|| (c.hd_set_count = repack_hd_sets(res, hd_spec, hd_ids, hd_sets)) < 0 || !(rep = (KpRepackReport *)malloc(sizeof *rep))) {
+		if (c.locale_count >= 0 && c.hd_set_count >= 0) fprintf(stderr, "kp_convert: out of memory\n");
 		free(extra);
 		free(log_text);
 		kp_res_close(res);
 		return 2;
 	}
 	c.locales = locales;
+	c.hd_sets = hd_sets;
 	rc = kp_repack_write(res, &c, rep, err, sizeof err);
 	for (i = 0; i < rep->missing && i < SHOWN_MISSING && i < KP_REPACK_NAMES; i++)
 		fprintf(stderr, "not in the source, left out: %s\n", rep->missing_names[i]);
@@ -473,6 +514,11 @@ static int cmd_repack(int argc, char **argv)
 		}
 		if (rep->raw_absent)
 			printf("%d Remastered names the install lacks or keeps empty (a language's: the base's played)\n", rep->raw_absent);
+		if (c.hd_set_count > 0) {
+			printf("HD sets");
+			for (i = 0; i < c.hd_set_count; i++) printf(" %s", hd_sets[i]);
+			printf(": %d containers, %d pages, %d transcoded now\n", rep->hd_files, rep->hd_pages, rep->hd_encoded);
+		}
 	}
 	free(rep);
 	free(extra);
@@ -930,7 +976,7 @@ static const struct {
 	{ "digests", "digests DIR --out PATH", cmd_digests },
 	{ "extract", "extract DIR NAME OUT", cmd_extract },
 	{ "icon", "icon DIR [--out DIR]", cmd_icon },
-	{ "repack", "repack DIR [--out DIR] [--single] [--wav] [--res-log FILE] [--cache DIR] [--threads N] [--locales LIST]",
+	{ "repack", "repack DIR [--out DIR] [--single] [--wav] [--res-log FILE] [--cache DIR] [--threads N] [--locales LIST] [--hd LIST]",
 		cmd_repack },
 	{ "locale-check", "locale-check DIR [--locale L|all] [--out DIR]", cmd_locale_check },
 	{ "scenarios", "scenarios DIR [--specs DIR] [--out DIR]", cmd_scenarios },

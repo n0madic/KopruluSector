@@ -15,7 +15,7 @@ The converter becomes `kp_convert`, in C, sharing its builders with the runtime.
 | C2 | Speech: the lines and voices of `locales/<loc>/Assets/` played as they are, TIME merged from the language's CHK when a mission loads; the repack's language group recompressed; the speech overlays go | done 2026-11-12 |
 | C3 | Language texts: `kp_locale.c` (the six tables, dialogs by `defs/l10n`, `rez\*.txt`, the maps' STR, subtitles, the glyphs at start, VFNT from TTF); `kp_convert locale-check`; the text overlays and `glyphs.kpd` go | done 2026-11-12 |
 | C4 | Cinematics: the 1.17 SMK transcoded to VP9 and Vorbis in our own WebM by `kp_convert repack`; Remastered's WebM as they are; `CINE` and FFmpeg go | done 2026-11-12 |
-| C5 | The HD world: `kp_anim.c`, `images.rel`, the grouped packer, the HD page thread over anim; `HDTS`/`HDWA` from the originals; `HDPK`/`HDTS`/`HDWA` in the `hd2`/`hd` groups | |
+| C5 | The HD world: `kp_anim.c`, `images.rel`, the grouped packer, the HD page thread over anim; `HDTS`/`HDWA` from the originals; `HDPK`/`HDTS`/`HDWA` in the `hd2`/`hd` groups, the phones' sets transcoded by `kp_convert` | done 2026-11-12 |
 | C6 | The HD interface, portraits, console: `kp_convert hd-ui-table` writes `defs/scr/hd-ui-bw-1.17.0.1.json`; `HDUI`/`CONW` built from the originals; `HDUI`/`HDPV`/`CONW` in the `ui` group | |
 | C7 | `converter/` deleted; the readers for research moved to `tools/research/`; the bundles carry `koprulu*.mpq` only; the Fold7 run | |
 
@@ -60,7 +60,7 @@ The converter becomes `kp_convert`, in C, sharing its builders with the runtime.
 
 **Open after C0:**
 - The encoders' generic C build (`generic-enc`) is not compared with the SIMD builds' bytes.
-- Not measured yet: the anims' read with a cold cache (C5), the glyphs on the Fold7 (C3), the language group on the web (C7).
+- Not measured yet: the anims' read with a cold cache (C5; still open after it), the glyphs on the Fold7 (C3), the language group on the web (C7).
 - On Linux with GCC 15.2, `tests/c/test_res.c`'s `dir_path` tripped `-Werror=restrict` at `-O3`: a false overlap between two members of one structure, older than phase C. Resolved in C1: the folder is the test's own string (`kp_t_temp_dir`).
 - `kp_test` did not build for Windows (`mkdir` with a mode, among others). Resolved in C1: it builds with mingw-w64 and runs under Wine.
 
@@ -241,3 +241,99 @@ Each is cached as `<sha256>-q3-s<serial>-speech.ogg`. From `/Applications/StarCr
 - The web's movies are not covered by `tools/ci.sh` (checked in the browser pane by hand); `--cine-check` cannot run there.
 - The fixture movies (`cine0.webm`, `cine1.webm`) are still made by FFmpeg (C7).
 
+
+## C5 as built (2026-11-12)
+
+**The HD packs from the anims** (`native/kp_present/kp_anim.c`, `kp_pages.c`, `native/kp_app/kp_hd_scr.c`).
+- `kp_anim_open` reads an anim's head and frame records. `kp_hd_scr_owners` picks the anim that draws each GRP entry: the first image naming the GRP, or the image `SD/images.rel` relates it to.
+- `kp_hd_layout_build` lays out an SD pack's HD pack from the anims' heads alone:
+  - each image's frames by their block rectangles (a rectangle two frames share goes in once);
+  - the lit images' groups first, on pages of their own;
+  - packed by `kp_pages_pack_groups` on 2048 × 2048 pages: a skyline, the lowest then leftmost place on the last `KP_HD_OPEN_PAGES` (4) pages.
+
+  It gives the Python converter's HEAD and FRMS, page for page.
+- `kp_hd_layout_page` builds one page's layers from the anims' sheets when the loader asks for it. `kp_hd_pack_build` writes a whole `HDPK`: `kp_kpf_layout` lays out the container, the pages are filled in place, and `kp_kpf_seal` writes the CRCs.
+- `kp_hd_scr_tileset` and `kp_hd_scr_water` build `HDTS` and `HDWA` from the same files the converter read.
+  - `HDTS`: `TileSet/<name>.dds.vr4`, `.tmsk`, `_mask.dds.grp`, and `.dds.grp` for creep's edges.
+  - `HDWA`: `effect/water_normal_1.dds.grp` and `_2`.
+
+**The runtime** (`sdl/kp_app_world.c`, `sdl/kp_app_hd.c`, `sdl/kp_app_flow.c`).
+- **Choosing a source.** `kp_world_hd_pick` makes two passes: first for a source whose pages the context takes as they are, then for one it draws decoded.
+  - In each pass it tries the repack's sets (`hd2`, then `hd2-astc`, then `hd2-etc2`), then the install's anims (BC).
+  - A set's format comes from its terran pack's head.
+  - `--graphics auto`, the video options and the gate on a variant all ask it; none of them looks for `generated/hd/` any more.
+- **From an install.** At a mission's start the packs are laid out from the anims' heads. On terran02: HD2 in 155 ms, HD in 138 ms; the tileset and water in 66 ms (HD2) and 275 ms (HD). The loader's thread builds each page from the sheets through a reader of its own (`kp_res_raw_place`, `kp_res_reader_*`), because a `KpRes` belongs to one thread.
+- **From a repack.** Each pack opens from its head in the core (`koprulu\heads\<set>\<pack>.kpd`). Its pages are read from the set's group:
+  - on a computer or a phone, by the loader's reader at the place `kp_res_raw_place` names;
+  - on the web, each layer fetched alone by a Range request within `koprulu-<set>.mpq`, at the offset the core's listing gives.
+- **Without a loader thread** (the web, or a platform where none starts), a page in a URL's group is fetched by its range; any other page is read or built at once, when it is asked for.
+
+**The repack** (`native/kp_convert/kp_repack.c`, `kp_hd_transcode.c`).
+- **Which sets.** `kp_convert repack --hd LIST` picks the sets:
+  - from a Remastered install the default is the BC variants it holds (`hd2 hd`); `--hd none` writes none;
+  - `make repack` asks for `hd2,hd2-astc,hd2-etc2` for the groups (phones and the web) and takes the default for `--single`;
+  - a variant the install lacks stops the repack.
+- **Where they go.** Each set is a group, `koprulu-<set>.mpq`, apart with `--single` too. It is stored uncompressed, its files placed by the core's listing (`in` lines, as the movies' are), with the status `converted`. Each pack's head (about 290 KB a set) also goes into the core or root. [The format](formats/repack.md).
+- **Phones' sets.** `kp_hd_transcode` (moved out of `kp_hd_phone`) transcodes them:
+  - the packs into ETC2 and EAC, or into ASTC; the Arm encoder is now linked into `kp_convert_lib` when built with `KP_ASTC`, which `make convert-tool` turns on;
+  - the tilesets and water into ETC2 for both sets;
+  - the pages encoded on `kp_work`'s threads;
+  - each container cached once as `<BC SHA-256>-<etc2|astc>-t1.kpd` in `generated/cache/repack/`.
+- **`kp_hd_phone`** keeps `--report`, `--report-tiles` and `--selftest`; the selftest transcodes a small pack in memory.
+
+**Measurements** (Remastered 1.23.10, macOS on an M-series Mac, an empty cache):
+
+| Sets | Containers | Pages | Groups | Time | Peak memory |
+|---|---|---|---|---|---|
+| `hd2` | 15 | 50 | 648.8 MB | 16.7 s | 896 MB |
+| `hd2 hd` (`--single`) | 30 | 243 | 648.8 MB and 2,449.4 MB | 37 s | 2.6 GB |
+| `hd2-etc2 hd2-astc` | 30 | 100 | 606.9 MB and 545.4 MB | 131.6 s | 1.3 GB |
+
+The phones' run transcoded 21 containers: the tilesets and the water once for both sets.
+
+**The bundles** (`tools/product.sh`).
+- The HD sets a bundle carries, of those its repack holds:
+  - the web: `hd2`;
+  - the phones: `hd2-$KOPRULU_PHONE_BLOCKS`, `astc` by default and `etc2` on the iOS simulator;
+  - the computers: `hd2` and `hd`.
+- The bundles no longer stage `generated/hd/*/packs`, `tilesets` or `water.kpd`, and no longer transcode for phones.
+- The web lists the set's group in `web_sizes.txt` (`tools/web_hd_heads.py --ranged`). `ui.kpd` and `portraits.kpd` are still the converter's (C6).
+
+**Tests.**
+- **`test_hd`, synthetic:** `packer_keeps_a_group_together`, `packer_fills_only_the_open_pages`, `anim_head_and_frames`, `relations_of_images`, `page_keeps_the_lit_pages_layers`.
+- **`test_hd`, over the install (`KP_TEST_SCR`):**
+  - `packs_equal_the_converters`, sharded: every pack's HEAD and FRMS and each page's layers, HD2 and HD;
+  - `tilesets_and_water_equal_the_converters`.
+
+  The golden is `tests/golden/hd/converter.json` (private): the SHA-256 of each section and page layer that `converter hd` wrote, recorded before this stage removed it.
+- **`test_hd.repack_equals_the_converters`** (`KP_TEST_HD_REPACK`): a repack's BC sets, each pack opened from its head as the runtime opens it, against the same golden.
+- **`kp_hd_phone --selftest`:** a small pack through ETC2 and ASTC, opened and read back.
+- **`tools/ci.sh`:**
+  - `hd_glue.kps` and `hd_game.kps` over the install and over its repack, each run's log checked for the source it drew from;
+  - the repack's sets against the golden.
+
+**Verified.**
+- `test_hd` over the install, and over the `hd2` and `hd2 hd` repacks: byte for byte the converter's.
+- The product's HD scripts over Remastered's install and its repack: 0 failures (`tools/ci.sh`).
+- `hd_game.kps` on terran02 over the `hd2-etc2` set on macOS (decoded on the CPU): 0 failures.
+- The web bundle in the browser pane: terran02 drew its HD2 art lit (16 of 16 lit pages) from `koprulu-hd2.mpq`, its pages fetched by 32 Range requests (206).
+
+**Decisions taken in C5:**
+- **The packs are laid out at a mission's start** from the anims' heads. Their pages are built when the loader asks for them; C0's measurements left room for that.
+- **The packs' heads go in the core**, so a pack opens without its group and the web fetches only pages.
+- **A phone's ASTC set keeps its tiles and water in ETC2**, as `kp_hd_phone` did (ADR 0013's TODO on ASTC tiles).
+- **A repack's set is preferred over the install's anims** where both are open; the pages are the same.
+
+**Removed:**
+- `converter/emit/hd.py`'s packs, tilesets and water (it keeps `ui.kpd` and `portraits.kpd` until C6);
+- `converter/formats/anim.py` and their Python tests;
+- `kp_hd_phone`'s `etc2` and `astc` modes, and CI's check of its symbols;
+- `tools/product.sh`'s phone transcoding (`stage_hd_phone`, `transcode_hd`);
+- the runtime's reads of `generated/hd/<variant>/packs/`, `tilesets/` and `water.kpd`.
+
+**Open after C5:**
+- The `hd2 hd` repack peaks at 2.6 GB of memory; not profiled.
+- The anims' read with a cold disk cache is still not measured.
+- While the pick looks for a set, `kp_res_raw_place` notes the packs it asks about among the files read, so a `--res-log` lists them before any page is read.
+- The ASTC set is not drawn anywhere yet: the computers' build has no ASTC decoder. The Fold7 run is C7's.
+- `generated/hd/<variant>/packs/`, `tilesets/` and `water.kpd` stay on disk where the converter wrote them. Nothing reads them but `tools/ci.sh`'s ASan parse of `generated/*.kpd`; remove them by hand.

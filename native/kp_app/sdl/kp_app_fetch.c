@@ -91,6 +91,20 @@ KpFetch *kp_fetch_start(const char *path, uint32_t offset, uint32_t size)
 	return f;
 }
 
+KpFetch *kp_fetch_done(uint8_t *data, size_t size)
+{
+	KpFetch *f;
+	if (!data) return NULL;
+	if (!(f = (KpFetch *)calloc(1, sizeof *f))) {
+		free(data);
+		return NULL;
+	}
+	f->data = data;
+	f->size = size;
+	f->state = KP_FETCH_DONE;
+	return f;
+}
+
 int kp_fetch_state(const KpFetch *f) { return f ? f->state : KP_FETCH_FAILED; }
 
 int kp_fetch_whole_file(const KpFetch *f) { return f ? f->whole_file : 0; }

@@ -1,5 +1,5 @@
 /*
- * StarCraft: Remastered's HD containers (ADR 0013, stages R3 and R4a; converter/emit/hd.py): the HD packs (kind HDPK)
+ * StarCraft: Remastered's HD containers (ADR 0013, stages R3 and R4a; ADR 0019, stage C5): the HD packs (kind HDPK)
  * beside the SD packs, frame for frame, opened from their first bytes (their pages are read one at a time,
  * kp_hd_cache.c), their layers' codecs and blocks; the HD tilesets (kind HDTS) and the water's normal maps. What the
  * renderer makes of them is kp_hd_render.c's: kp_hd_phone, which transcodes the phones' packs, links this file and the

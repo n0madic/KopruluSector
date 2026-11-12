@@ -6,6 +6,8 @@
 
 #include "kp_present.h"
 
+#include <string.h>
+
 /* Opens a TrueType font: 0, or -1 when the bytes are none (stbtt_InitFont alone reads out of bounds then; kp_vtext.c). */
 struct stbtt_fontinfo;
 int kp_ttf_open(struct stbtt_fontinfo *info, const uint8_t *ttf, size_t size);
@@ -20,5 +22,8 @@ size_t kp_present_head_size(const uint8_t *first, size_t n, size_t file_size, co
 #define KP_HD_FRAME_RECORD 14
 /* A square of s texels' BC1 or ETC2 bytes: an HD tile's, a water normal map's */
 #define KP_HD_TILE_BC1(s) ((size_t)(s) * (size_t)(s) / 2)
+
+/* Whether a grpmeta label (an atlas's name or pack) is s. */
+static inline int kp_label_is(const KpLabel *l, const char *s) { return l->size == strlen(s) && memcmp(l->text, s, l->size) == 0; }
 
 #endif

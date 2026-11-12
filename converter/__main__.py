@@ -90,14 +90,14 @@ def _scr_manifest(args: argparse.Namespace) -> int:
 
 
 def _hd(args: argparse.Namespace) -> int:
-    """StarCraft: Remastered's HD art for the HD renderer (generated/hd/<variant>/; ADR 0013)."""
+    """StarCraft: Remastered's HD interface art and portraits (generated/hd/<variant>/; ADR 0013; the world: ADR 0019)."""
     from .casc.source import ScrSource
     from .emit import hd, hd_ui
 
     with ScrSource(args.scr, Profile.load(args.profile)) as source:
         portraits = None  # written once, linked into the other variant (both take HD2's clips)
         for variant in (hd.VARIANTS if args.variant == "all" else (args.variant,)):
-            portraits = hd.generate(source, source.storage, Path(args.out), variant, portraits)["portraits"]
+            portraits = hd.generate(source, Path(args.out), variant, portraits)["portraits"]
         hd_ui.write_console(source, Path(args.out))
     return 0
 
@@ -163,7 +163,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--scr", help="a StarCraft: Remastered install: also write the text tables")
     p.add_argument("--out", default="generated")
     p.set_defaults(func=_scr_manifest)
-    p = sub.add_parser("hd", help="write StarCraft: Remastered's HD art for the HD renderer")
+    p = sub.add_parser("hd", help="write StarCraft: Remastered's HD interface art and portraits for the HD renderer")
     p.add_argument("--scr", required=True, help="a StarCraft: Remastered install (.build.info and Data/)")
     p.add_argument("--variant", choices=("hd2", "hd", "all"), default="all")
     p.add_argument("--out", default="generated")
