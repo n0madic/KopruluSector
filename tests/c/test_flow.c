@@ -61,6 +61,7 @@ typedef struct {
 	double now;
 	/* what the host was asked */
 	int quits, profile_saves, syncs, builds, frees, world_frames, ticks, restarts, stops, palettes_set, interfaces;
+	int music_track, music_playing; /* the music as the host's mixer has it: the last track asked for, still on */
 	int32_t gamma;
 	int world;               /* a world stands */
 	int fail_world;          /* the next world's build fails */
@@ -221,11 +222,20 @@ static int host_pointer(void *ctx, int32_t *x, int32_t *y)
 	return KP_HUD_POINTER_NONE;
 }
 
+/* The music as the SDL host's mixer plays it: a track's command starts it (the one before dropped), a stop ends it;
+ * stop_sounds leaves it to the interface. */
 static void host_sounds(void *ctx, const KpUiSoundCommand *c, size_t n)
 {
-	(void)ctx;
-	(void)c;
-	(void)n;
+	Host *H = (Host *)ctx;
+	size_t k;
+	for (k = 0; k < n; k++) {
+		if (c[k].type == KP_UI_SOUND_MUSIC) {
+			H->music_track = c[k].sound;
+			H->music_playing = 1;
+		} else if (c[k].type == KP_UI_SOUND_MUSIC_STOP) {
+			H->music_playing = 0;
+		}
+	}
 }
 
 static void host_stop_sounds(void *ctx) { ((Host *)ctx)->stops++; }
@@ -560,6 +570,16 @@ static void missions_number_the_catalog_and_place_the_scenarios(KpT *T)
 	kp_t_ok(T, kp_data_find(c, "terran/terran01") == NULL, "a name is no key");
 }
 
+/* The music's tracks (the MUSI rows): the title's, the protoss room's, the protoss games' three. */
+enum { MUSIC_TITLE = 22, MUSIC_PROTOSS_ROOM = 12, MUSIC_PROTOSS_GAME_FIRST = 7, MUSIC_PROTOSS_GAME_LAST = 9 };
+
+static void music_is(Host *H, int first, int last, const char *what)
+{
+	kp_t_ok(H->T, H->music_playing && H->music_track >= first && H->music_track <= last,
+		"%s: the music plays track %d..%d (track %d, %s)", what, first, last, H->music_track,
+		H->music_playing ? "playing" : "stopped");
+}
+
 /* A campaign mission of the glue waits in its ready room (its game paused, the glue's music stopped); Start brings
  * the console of the same interface and runs the game on the host's clock. */
 static void room_start_plays_the_game_in_the_glues_console(KpT *T)
@@ -571,12 +591,15 @@ static void room_start_plays_the_game_in_the_glues_console(KpT *T)
 	ui = H->f.ui;
 	stops = H->stops;
 	start_from_menu(H, EXPANSION_PROTOSS01);
-	kp_t_ok(T, H->stops > stops, "the glue's music stopped for the game's");
+	kp_t_ok(T, H->stops > stops, "the glue's sounds stopped for the game's");
 	kp_t_ok(T, H->f.has_run && H->f.run.mission == mission_row(H, EXPANSION_PROTOSS01), "a run of its campaign");
 	kp_t_eq(T, H->f.glue_room, PROTOSS_ROOM, "the room's state kept for the game's restart");
 	frames(H, 50);
 	kp_t_eq(T, H->ticks, 0, "no steps in the room");
+	music_is(H, MUSIC_PROTOSS_ROOM, MUSIC_PROTOSS_ROOM, "the room");
 	room_start(H);
+	frame(H);
+	music_is(H, MUSIC_PROTOSS_GAME_FIRST, MUSIC_PROTOSS_GAME_LAST, "the game (RunGame stops the room's)");
 	kp_t_ok(T, H->f.ui == ui, "the glue's interface runs the console");
 	kp_t_eq(T, kp_flow_glue_active(&H->f), 0, "no glue screen over the game");
 	kp_t_eq(T, H->f.fixed_screen, 0, "the game's screen");
@@ -717,6 +740,9 @@ static void room_cancel_leaves_no_game(KpT *T)
 	in_menus(H, KP_GLUE_EXPANSION_CAMPAIGN, "the room's Cancel");
 	kp_t_eq(T, H->frees >= 1, 1, "the world freed");
 	kp_t_ok(T, H->f.ui->game == NULL, "the interface keeps no game");
+	frame(H);
+	music_is(H, MUSIC_TITLE, MUSIC_TITLE, "the room's Cancel (0x460ee0)");
+	kp_t_eq(T, H->f.ui->music.track, MUSIC_TITLE, "the interface's track the host's");
 }
 
 /* The victory's answer: the campaign advances (the profile kept), the score screen, then its Continue starts the next
@@ -1846,6 +1872,8 @@ static void save_is_written_and_the_glue_loads_it_before_the_first_frame(KpT *T)
 	game_event(H, KP_EVENT_GAME_EXIT, EXIT_QUIT_MISSION, NULL);
 	frame(H);
 	in_menus(H, KP_GLUE_EXPANSION_CAMPAIGN, "Quit Mission");
+	frame(H);
+	music_is(H, MUSIC_TITLE, MUSIC_TITLE, "the menus after the game");
 	builds = H->builds;
 	H->restarts = 0;
 	H->f.ui->menus.save_choice = 0;
@@ -1856,6 +1884,8 @@ static void save_is_written_and_the_glue_loads_it_before_the_first_frame(KpT *T)
 	kp_t_eq(T, H->f.session->loads, 1, "the save loaded in the same frame");
 	kp_t_eq(T, H->restarts, 1, "the first frame shows the loaded state");
 	kp_t_eq_str(T, H->last_log, "loaded flowsave", NULL);
+	frame(H);
+	music_is(H, MUSIC_PROTOSS_GAME_FIRST, MUSIC_PROTOSS_GAME_LAST, "the loaded game after the menus' title");
 }
 
 /* A load in the game of another mission's save starts that mission's game, which loads it too. */

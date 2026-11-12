@@ -103,7 +103,7 @@ typedef struct {
 	void (*canvas)(void *ctx, KpCanvas *c);
 	void (*cursor)(void *ctx, KpUi *ui);
 	int (*pointer)(void *ctx, int32_t *x, int32_t *y);
-	/* the sound: the interface's commands, every sound stopped */
+	/* the sound: the interface's commands; the sounds stopped (not the music: its track and stop are the commands') */
 	void (*sounds)(void *ctx, const KpUiSoundCommand *c, size_t n);
 	void (*stop_sounds)(void *ctx);
 	/* the screen's palette (RGB, 256 entries) and the gamma of the HD interface's art */

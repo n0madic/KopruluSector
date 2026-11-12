@@ -168,7 +168,7 @@ static int host_pointer(void *ctx, int32_t *x, int32_t *y)
 
 static void host_sounds(void *ctx, const KpUiSoundCommand *c, size_t n) { kp_audio_commands((KpApp *)ctx, c, n); }
 
-static void host_stop_sounds(void *ctx) { kp_audio_stop_all(&((KpApp *)ctx)->audio); }
+static void host_stop_sounds(void *ctx) { kp_audio_stop_effects(&((KpApp *)ctx)->audio); }
 
 static void host_palette(void *ctx, const uint8_t *rgb) { kp_gfx_palette(((KpApp *)ctx)->gfx, rgb); }
 

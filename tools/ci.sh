@@ -45,7 +45,8 @@
 #     checks (play_1..5.kps: box selection, right clicks, the terrain, the fog and the palette pass against their CPU
 #     twins), the video options (video.kps: clicked through, the art following them), a save (save.kps: made during a
 #     transmission, loaded in its game and from its file, the saved view and minimap in the load's frame and its
-#     trigger wait ending), the touch layer (touch.kps: terran01 played by synthetic fingers) and, with KOPRULU_SCR,
+#     trigger wait ending), the touch layer (touch.kps: terran01 played by synthetic fingers), the music (music.kps: the
+#     title's after a ready room's Cancel and a quit mission, the game's after the room's Start and a load) and, with KOPRULU_SCR,
 #     the HD art (hd_glue.kps, hd_game.kps on each race: the glue's screens and the game's screens and menus with no SD
 #     pixel where HD art exists, over Remastered's install, the world's packs laid out from its anims and the
 #     interface's frames by the placement table, and over its repack's sets and interface groups; each language's walk
@@ -512,8 +513,8 @@ if [ -n "${KOPRULU_APP:-}" ]; then
   fi
   # the checks' scripts (stages SC5, SC6): a check's line ("SPIKE check ...", "fog check", "palette check") and the
   # run's last line and exit code say how it went
-  step "product checks' scripts: the video options, the touch layer, a save's loads"
-  for name in video touch save; do
+  step "product checks' scripts: the video options, the touch layer, a save's loads, the music's tracks"
+  for name in video touch save music; do
     app_script "$name" 0 "$APP"
   done
   [ -s build/script/video/kept.png ]

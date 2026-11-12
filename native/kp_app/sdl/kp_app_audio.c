@@ -422,12 +422,18 @@ void kp_audio_commands(KpApp *a, const KpUiSoundCommand *commands, size_t n)
 	}
 }
 
-void kp_audio_stop_all(KpAudio *au)
+void kp_audio_stop_effects(KpAudio *au)
 {
 	int k;
 	if (!au->mixer) return;
 	for (k = 0; k < KP_APP_CHANNELS; k++) MIX_StopTrack(au->channels[k], 0);
 	for (k = 0; k < KP_APP_STREAMS; k++) MIX_StopTrack(au->streams[k], 0);
+}
+
+void kp_audio_stop_all(KpAudio *au)
+{
+	if (!au->mixer) return;
+	kp_audio_stop_effects(au);
 	drop_music(au);
 	if (au->cine) MIX_StopTrack(au->cine, 0);
 	au->has_track = 0;

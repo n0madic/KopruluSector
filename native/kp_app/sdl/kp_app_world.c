@@ -55,7 +55,7 @@ void kp_world_free(KpApp *a)
 	KpAppWorld *w = &a->world;
 	int k;
 	if (!w->active) return;
-	kp_audio_stop_all(&a->audio);
+	kp_audio_stop_effects(&a->audio); /* the game's sounds; its music the interface's (EndGame 0x443db0) */
 	kp_audio_mission(a);
 	if (a->gfx) {
 		kp_gfx_hd(a->gfx, 0);

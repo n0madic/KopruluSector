@@ -801,6 +801,7 @@ static KpGlueEvent poll(KpGlue *g)
 			g->room_opened = 1;
 		} else if (g->room_opened) {
 			g->screen = KP_GLUE_NONE;
+			kp_ui_ready_room_end(ui);
 			ev.kind = ui->result == RESULT_START ? KP_GLUE_ROOM_START : KP_GLUE_ROOM_CANCEL;
 		}
 	} else if (g->screen == KP_GLUE_SCORE) {

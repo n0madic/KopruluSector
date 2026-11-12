@@ -317,6 +317,8 @@ static void options_to_ui(const KpFlow *f, KpUi *ui)
 	kp_ui_apply_volumes(ui); /* a profile's silence closes the music before its first track */
 }
 
+static void sounds(KpFlow *f);
+
 /* A new interface over the data's (ADR 0018). */
 static KpUi *new_interface(KpFlow *f, char *why, size_t why_size)
 {
@@ -342,6 +344,7 @@ static int start_hud(KpFlow *f, int from_save, char *err, size_t err_size)
 		}
 		console_art(f, ui);
 		f->host.interface(f->host.ctx, ui);
+		if (f->ui) sounds(f); /* the old interface's last commands (its music's stop at the game's end) before it goes */
 		kp_ui_free(f->ui);
 		f->ui = ui;
 		interface_host(f, ui);
@@ -450,7 +453,7 @@ static int build_scene(KpFlow *f, char *err, size_t err_size)
 	} else if (start_hud(f, 0, err, err_size) != 0) {
 		return -1;
 	}
-	f->host.stop_sounds(f->host.ctx); /* the glue's own music stops for the game's */
+	f->host.stop_sounds(f->host.ctx); /* the glue's sounds; its music ends by RunGame's stop (kp_ui_music_start_game) */
 	return 0;
 }
 

@@ -797,6 +797,16 @@ int32_t kp_ui_ready_room_continue(KpUi *ui)
 	return open_room(ui);
 }
 
+void kp_ui_ready_room_end(KpUi *ui)
+{
+	/* RunTerranReadyRoom 0x461420 and its twins after the dialog's loop: Start (0x65) leaves the music to RunGame
+	 * 0x443f40, Skip Tutorial (0x13) to the next room; any other result (Cancel 0xe, an exit) calls 0x460ee0:
+	 * StopMusicFadeOut 0x46f040, then PlayMusicTrack(0x16) */
+	if (ui->result == RESULT_START || ui->result == ID_SKIP) return;
+	kp_ui_music_stop(ui);
+	kp_ui_music_play(ui, MUSIC_TITLE);
+}
+
 void kp_ui_ready_room_idle(KpUi *ui)
 {
 	/* PollBriefingReady 0x461120 offline: a network turn step every 250 ms of idle events (0x476b20; the turns come

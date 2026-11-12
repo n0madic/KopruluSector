@@ -1711,6 +1711,9 @@ const uint8_t *kp_ui_glue_palette(KpUi *ui, uint32_t *serial);
 int kp_ui_ready_room_open(KpUi *ui, int race);
 /* The room after its establishing text closed: its dialog, -1 while the text runs (also the room's dialog once open). */
 int32_t kp_ui_ready_room_continue(KpUi *ui);
+/* The room's run once its dialog closed, by ui->result: but for Start (101) and Skip Tutorial (19), the room's music
+ * stopped and the title's again (0x460ee0), so the menus after it have their music. */
+void kp_ui_ready_room_end(KpUi *ui);
 void kp_ui_ready_room_idle(KpUi *ui);
 /* One network turn step of the room (0x476c00 from PollBriefingReady; the idle event's every 250 ms). */
 void kp_ui_ready_room_turn(KpUi *ui);

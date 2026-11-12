@@ -205,13 +205,15 @@ void kp_ui_music_tick(KpUi *ui)
 
 void kp_ui_music_start_game(KpUi *ui)
 {
-	/* LoadConsoleSkinAndPickMusic 0x443680's track and RunGame 0x445310's PlayMusicTrack */
+	/* RunGame 0x443f40's StopMusicFadeOut first (the ready room's or the menus' track ends there), then
+	 * LoadConsoleSkinAndPickMusic 0x443680's track and RunGame 0x445310's PlayMusicTrack */
 	static const uint8_t KEYS[2][RACES] = { { 12, 1, 22 }, { 49, 40, 32 } }; /* 0x50334c, 0x503350 */
 	KpUiMusic *m = mu(ui);
 	KpGame *g = ui->game;
 	int race = (int)g->players.race[g->local_player];
 	int64_t key = kp_scalar(g, KP_MISSION_INDEX);
 	uint16_t track;
+	kp_ui_music_stop(ui);
 	m->volume = option_volume(ui);
 	if (race < 0 || race >= RACES) return;
 	track = (uint16_t)(1 + TRACKS_PER_RACE * race);

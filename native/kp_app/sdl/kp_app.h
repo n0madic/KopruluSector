@@ -380,6 +380,10 @@ void kp_app_sync_files(KpApp *a);
 int kp_audio_init(KpAudio *au);
 void kp_audio_free(KpAudio *au);
 void kp_audio_commands(KpApp *a, const KpUiSoundCommand *c, size_t n);
+/* The sounds' channels and streams stopped; the music is the interface's (kp_ui's track and its stop commands), so
+ * it plays on: a stream dropped behind the interface's back would leave it thinking its track plays. */
+void kp_audio_stop_effects(KpAudio *au);
+/* Everything stopped, the music and a movie's sound too (a movie's start, whose caller closes the interface's track). */
 void kp_audio_stop_all(KpAudio *au);
 /* A volume in hundredths of a decibel (-10000 and below silent) as a linear gain. */
 float kp_audio_gain(int32_t volume);
