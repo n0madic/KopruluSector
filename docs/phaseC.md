@@ -756,3 +756,29 @@ once (`kp_flow_init`), as RunMainLoop `0x4679b0` opens it after cinematics 0 and
   `title.pcx` the reader refuses), `test_hud.title_open_at_the_interfaces_end_is_freed` (what `kp_ui_title_free`
   leaves, checked without a sanitizer), `test_flow.first_start_plays_the_logo_and_the_intro_once` (the title after
   the intro and at once), `test_flow.the_language_is_chosen_in_the_main_menu` (no title after a language).
+
+## After C7: the phase's review (2026-11-12)
+
+A review of the whole phase's code (`6735450..a4f7525`) found these, now fixed:
+
+- **A pack that cannot be laid out crashed the repack.** `kp_hd_scr_layout` returned before `kp_hd_layout_build`
+  zeroed its result (an image past `images.dat`, an anim that does not read), and `kp_convert repack`'s `hd_write`
+  freed that uninitialized stack layout. The layout is now empty on every return
+  (`test_hd.layout_failure_leaves_it_empty`).
+- **The HD tiles and water are checked as the containers say.** `kp_hd_scr_tileset` took `HEAD`'s FourCC from the
+  last tile and accepted tiles in two block formats; it refuses them now. Each DDS image's header must have its
+  container entry's size (`dds_blocks`), which the tiles', masks' and normals' sizes are taken from; a smaller header
+  let the water masks be decoded past their blocks. `kp_hd_scr_water`'s message no longer depends on what `err` held
+  before.
+- **A failed repack leaves no archives behind.** `kp_repack_write` removes the output's `koprulu*.mpq` before it
+  writes; on a failure after that it now removes the ones it began, which had no listing and stood in for a repack.
+- **`kp_res_raw_place`** falls back to the install for a listed entry whose group is not open, as `kp_res_raw_read`
+  reads it; an Ogg of a WAV still has no place (`kp_res.h`).
+- **The rest:** the consoles' art reports running out of memory instead of reading as "the install has none"
+  (`kp_hd_ui_scr_console`); `kp_convert manifest` fails instead of writing the movies without their palettes when out
+  of memory; `kp_convert scenarios` names a condition or an action that is not an object instead of crashing
+  (`test_convert.scenario_refuses_a_bad_spec`); `hd_pick` reads each set's pack head once for both of its passes
+  (`KP_HD_SCR_SETS`); dead variables in `kp_locale.c` removed; `kp_hd_ui_scr.c`'s `hd_name` is static.
+- **Not tested by a fixture:** the tiles' block formats, a DDS header against its entry and a failed repack's cleanup
+  are not exercised by a test (they need a damaged install or a repack that fails halfway); the install's own files
+  pass the new checks (`test_hd.tilesets_and_water_equal_the_converters`).

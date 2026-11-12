@@ -156,14 +156,19 @@ static int hd_takes(KpApp *a, int format, int strict, int any)
 static int hd_pick(KpApp *a, const char *variant, int any, KpHdPick *out)
 {
 	const char *suffix;
-	int v = kp_hd_scr_variant_of(variant), strict, k;
+	int v = kp_hd_scr_variant_of(variant), strict, k, formats[KP_HD_SCR_SETS];
 	if (!a->res || v < 0) return 0;
+	for (k = 0; (suffix = kp_hd_scr_set_suffix(k, NULL)) != NULL; k++) { /* each set's head read once for both passes */
+		char set[sizeof out->set];
+		snprintf(set, sizeof set, "%s%s", variant, suffix);
+		formats[k] = repack_format(a, set);
+	}
 	for (strict = 1; strict >= 0; strict--) {
 		for (k = 0; (suffix = kp_hd_scr_set_suffix(k, NULL)) != NULL; k++) {
 			memset(out, 0, sizeof *out);
 			snprintf(out->set, sizeof out->set, "%s%s", variant, suffix);
 			out->variant = v;
-			out->format = repack_format(a, out->set);
+			out->format = formats[k];
 			if (out->format >= 0 && hd_takes(a, out->format, strict, any)) return 1;
 		}
 		memset(out, 0, sizeof *out);

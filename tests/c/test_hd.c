@@ -144,6 +144,36 @@ static void relations_of_images(KpT *T)
 	kp_t_eq(T, kp_anim_relations(rel, 12, &owners, &count, &e), -1, "not whole records");
 }
 
+/* A layout that fails before it is built (an image past images.dat) is left empty, so kp_hd_layout_free frees nothing
+ * the caller did not give it (kp_convert repack's hd_write frees it on every failure). */
+static void layout_failure_leaves_it_empty(KpT *T)
+{
+	static const uint8_t PACK[] = "units";
+	KpAtlas atlases[2];
+	KpGrpEntry grps[2];
+	KpGrpMeta g;
+	KpHdLayout l, empty;
+	int32_t owner_of[2] = { -1, 5 }; /* entry 1 draws image 5 of the 3 there are */
+	KpError e;
+	memset(atlases, 0, sizeof atlases);
+	memset(grps, 0, sizeof grps);
+	memset(&g, 0, sizeof g);
+	atlases[1].pack.text = PACK;
+	atlases[1].pack.size = (uint32_t)strlen((const char *)PACK);
+	grps[1].atlas = 1;
+	g.atlases = atlases;
+	g.grps = grps;
+	g.atlas_count = 1;
+	g.grp_count = 1;
+	memset(&l, 0xa5, sizeof l); /* the caller's stack: not zero */
+	memset(&empty, 0, sizeof empty);
+	e.msg[0] = 0;
+	kp_t_eq(T, kp_hd_scr_layout(NULL, NULL, &g, owner_of, KP_HD_SCR_HD2, "units", NULL, 3, &l, &e), -1, "refused");
+	kp_t_ok(T, strstr(e.msg, "past images.dat") != NULL, "its reason: %s", e.msg);
+	kp_t_ok(T, memcmp(&l, &empty, sizeof l) == 0, "the layout is left empty");
+	kp_hd_layout_free(&l);
+}
+
 /* --- a page's blocks --- */
 
 /* Two images' sheets of 8 x 4 texels (2 x 1 blocks), each layer's blocks filled with one byte. */
@@ -636,6 +666,7 @@ static const KpTest TESTS[] = {
 	{ "packer_fills_only_the_open_pages", packer_fills_only_the_open_pages, 0 },
 	{ "anim_head_and_frames", anim_head_and_frames, 0 },
 	{ "relations_of_images", relations_of_images, 0 },
+	{ "layout_failure_leaves_it_empty", layout_failure_leaves_it_empty, 0 },
 	{ "page_keeps_the_lit_pages_layers", page_keeps_the_lit_pages_layers, 0 },
 	{ "packs_equal_the_converters", packs_equal_the_converters, PACK_SHARDS },
 	{ "tilesets_and_water_equal_the_converters", tilesets_and_water_equal_the_converters, 0 },

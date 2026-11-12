@@ -953,6 +953,7 @@ int kp_repack_write(KpRes *res, const KpRepackConfig *c, KpRepackReport *rep, ch
 	KpBuf head, ranges;
 	Hd hd;
 	int count = 0, group_count = 0, k, at, rc = -1, threads = c->threads > 0 ? c->threads : kp_work_processors();
+	int written = 0; /* the output's koprulu*.mpq replaced by this repack's */
 	memset(rep, 0, sizeof *rep);
 	memset(&hd, 0, sizeof hd);
 	kp_buf_init(&head);
@@ -1001,6 +1002,7 @@ int kp_repack_write(KpRes *res, const KpRepackConfig *c, KpRepackReport *rep, ch
 	if (!group_of(groups, &group_count, "", c->single, err, err_size)) goto done; /* the root, even with no file */
 	if (kp_fs_mkdirs(c->out, err, err_size) != 0 || kp_fs_remove_matching(c->out, "koprulu", ".mpq", err, err_size) < 0)
 		goto done;
+	written = 1;
 	if (c->cache && kp_fs_mkdirs(c->cache, err, err_size) != 0) goto done;
 	for (k = 0; k < group_count; k++) {
 		char path[PATH];
@@ -1085,6 +1087,10 @@ done:
 	for (k = 0; groups && k < group_count; k++) {
 		if (groups[k].mpq) kp_mpq_close(groups[k].mpq);
 		kp_buf_free(&groups[k].lines);
+	}
+	if (rc != 0 && written) { /* no archives without their listing left for --data to find */
+		char why[256];
+		if (kp_fs_remove_matching(c->out, "koprulu", ".mpq", why, sizeof why) < 0) say(c, why);
 	}
 	kp_buf_free(&head);
 	kp_buf_free(&ranges);

@@ -671,6 +671,8 @@ static void scenario_refuses_a_bad_spec(KpT *T)
 		{ "{\"triggers\": [{\"owners\": [0], \"actions\": [{\"type\": \"fly\"}]}]}", "unknown action type" },
 		{ "{\"triggers\": [{\"owners\": [0], \"conditions\": [{\"type\": \"always\", \"speed\": 2}]}]}", "unknown field" },
 		{ "{\"triggers\": [{\"conditions\": []}]}", "no owners" },
+		{ "{\"triggers\": [{\"owners\": [0], \"conditions\": [[\"always\"]]}]}", "condition 0: not an object" },
+		{ "{\"triggers\": [{\"owners\": [0], \"actions\": [7]}]}", "action 0: not an object" },
 	};
 	static const uint8_t BASE[] = { 'U', 'N', 'I', 'T', 0, 0, 0, 0, 'T', 'R', 'I', 'G', 0, 0, 0, 0 };
 	size_t k;

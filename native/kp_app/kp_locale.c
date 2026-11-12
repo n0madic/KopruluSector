@@ -651,7 +651,7 @@ static size_t nul_marks(const uint8_t *t, size_t n)
  * which it is (with_nuls), in place. */
 static void with_nuls(const uint8_t *base, size_t bn, uint8_t *text, size_t tn)
 {
-	size_t k, b = 0, seen = 0;
+	size_t k, b = 0;
 	for (k = 0; k < tn; k++) {
 		if (text[k] != 0 && text[k] != KP_SCR_TBL_NUL_IN_XML) continue;
 		while (b < bn && base[b] != 0 && base[b] != KP_SCR_TBL_NUL_IN_XML) b++;
@@ -659,9 +659,7 @@ static void with_nuls(const uint8_t *base, size_t bn, uint8_t *text, size_t tn)
 			if (base[b] == 0) text[k] = 0;
 			b++;
 		}
-		seen++;
 	}
-	(void)seen;
 }
 
 /* A TBL's button text (a hotkey, then a mode byte) keeps its form: an ASCII hotkey, the base's mode. */
@@ -1285,12 +1283,11 @@ done:
 
 int kp_locale_held(const KpFiles *raw, const char *locale)
 {
-	char path[PATH], why[256] = "";
+	char path[PATH];
 	size_t got = 0;
 	uint64_t total = 0;
 	uint8_t *head;
 	KpError e;
-	(void)why;
 	snprintf(path, sizeof path, KP_LOCALE_PROBE, locale);
 	free(head = kp_files_head(raw, path, 4, &got, &total, &e));
 	return head != NULL;

@@ -166,6 +166,10 @@ static void conditions(Spec *s, uint8_t *record, const KpJson *list, long t)
 	for (j = 0; j < kp_json_len(list); j++) {
 		const KpJson *c = kp_json_at(list, j);
 		uint8_t *at = record + j * CONDITION_SIZE;
+		if (!c || c->type != KP_JSON_OBJECT) {
+			fail(s, "trigger %ld condition %d: not an object of fields", t, j);
+			return;
+		}
 		for (m = 0; m < kp_json_len(c); m++) {
 			const Field *f = field(CONDITION_FIELDS, (int)(sizeof CONDITION_FIELDS / sizeof CONDITION_FIELDS[0]), c->keys[m]);
 			int64_t v;
@@ -188,6 +192,10 @@ static void actions(Spec *s, uint8_t *record, const KpJson *list, long t)
 		const KpJson *a = kp_json_at(list, j);
 		const KpJson *script = kp_json_get(a, "script");
 		uint8_t *at = record + ACTIONS_OFFSET + j * ACTION_SIZE;
+		if (!a || a->type != KP_JSON_OBJECT) {
+			fail(s, "trigger %ld action %d: not an object of fields", t, j);
+			return;
+		}
 		for (m = 0; m < kp_json_len(a); m++) {
 			const Field *f;
 			int64_t v;

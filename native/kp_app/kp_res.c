@@ -1310,8 +1310,10 @@ int kp_res_raw_place(KpRes *r, const char *raw, KpResPlace *p)
 	const Entry *e;
 	memset(p, 0, sizeof *p);
 	normalize(raw, key, sizeof key);
-	if ((e = map_find(&r->raw, key)) != NULL) {
-		if (e->archive < 0 || e->head) return 0; /* its group not open (the web's: kp_res_raw_range), an Ogg of a WAV */
+	/* a listed entry whose group is not open (the web's: kp_res_raw_range) is the install's, as kp_res_raw_read reads
+	 * it */
+	if ((e = map_find(&r->raw, key)) != NULL && e->archive >= 0) {
+		if (e->head) return 0; /* an Ogg of a WAV: no place holds the WAV's bytes */
 		p->kind = KP_RES_SOURCE_REPACK;
 		snprintf(p->path, sizeof p->path, "%s", r->repack[e->archive].path);
 		mpq_name(key, p->name, sizeof p->name);

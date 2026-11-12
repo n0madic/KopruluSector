@@ -169,7 +169,8 @@ typedef struct {
 typedef struct KpResReader KpResReader;
 
 /* A raw name's place (as kp_res_raw_read would read it; noted among the files read): 1, or 0 when no open repack lists
- * it (its group not open: kp_res_raw_range) and the install does not hold it. */
+ * it (its group not open: kp_res_raw_range) and the install does not hold it, or an open repack keeps it as an Ogg
+ * of a WAV (its head: no place holds the WAV's bytes). */
 int kp_res_raw_place(KpRes *r, const char *raw, KpResPlace *p);
 /* A reader of places on one thread, through handles of its own (the last archive or install, and file, it read stay
  * open for the next read). */

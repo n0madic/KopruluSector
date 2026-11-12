@@ -485,12 +485,12 @@ static void grp_palettes(Entry **sorted, int count)
 }
 
 /* A movie of one palette is drawn with the PCX palette nearest it at the indices it draws, within the tolerance
- * (rebuild.py screen_palette: the first by SHA-256 of the nearest). */
-static void screen_palettes(Entry **sorted, int count)
+ * (rebuild.py screen_palette: the first by SHA-256 of the nearest). 0, or -1 out of memory. */
+static int screen_palettes(Entry **sorted, int count)
 {
 	const Entry **pcx;
 	int k, i, n = 0;
-	if (!(pcx = (const Entry **)malloc((size_t)(count ? count : 1) * sizeof *pcx))) return;
+	if (!(pcx = (const Entry **)malloc((size_t)(count ? count : 1) * sizeof *pcx))) return -1;
 	for (k = 0; k < count; k++)
 		if (sorted[k]->kind == KIND_PCX && sorted[k]->colours) pcx[n++] = sorted[k];
 	for (k = 0; k < count; k++) {
@@ -515,6 +515,7 @@ static void screen_palettes(Entry **sorted, int count)
 		if (at) snprintf(e->palette, sizeof e->palette, "%s", at);
 	}
 	free(pcx);
+	return 0;
 }
 
 static void row(KpBuf *b, const Entry *e)
@@ -607,7 +608,10 @@ char *kp_manifest_text(KpManifest *m, const char *profile_id, const char *commit
 	}
 	qsort(sorted, (size_t)n, sizeof *sorted, by_key);
 	grp_palettes(sorted, n);
-	screen_palettes(sorted, n);
+	if (screen_palettes(sorted, n) != 0) {
+		snprintf(err, err_size, "out of memory");
+		goto done;
+	}
 	kp_buf_printf(&b, "{\n \"comment\": \"The files profile %s's game reads from the 1.17 install: name, size, SHA-256 "
 		"(hashes only). kp_res checks a StarCraft: Remastered install against them (tools/defs_c.py compiles them); "
 		"written by kp_convert manifest DIR.\",\n \"profile\": ", profile_id);

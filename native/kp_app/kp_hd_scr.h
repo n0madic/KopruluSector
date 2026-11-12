@@ -42,7 +42,8 @@ const char *kp_hd_scr_variant_prefix(int variant);
 int kp_hd_scr_variant_of(const char *name);
 /* The suffix of a variant's k-th set's name in a repack, in the order the runtime prefers them where the context takes
  * their blocks ("" BC, "-astc", "-etc2"), and its pages' format (KP_HD_FORMAT_*; NULL: not wanted); NULL past the
- * last. */
+ * last (KP_HD_SCR_SETS of them). */
+#define KP_HD_SCR_SETS 3
 const char *kp_hd_scr_set_suffix(int k, int *format);
 /* A set's variant and pages' format by its name ("hd2-astc"): 0, or -1 when it names none. */
 int kp_hd_scr_set(const char *set, int *variant, int *format);

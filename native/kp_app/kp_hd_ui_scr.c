@@ -221,7 +221,10 @@ static int console_picture(const char *p)
  * (hd_ui.py SD_ONLY). */
 static int sd_only(const char *p) { return strcmp(base_name(p), "untab.pcx") == 0; }
 
-int kp_hd_ui_scr_hd_name(const char *path, size_t len, char *out, size_t size)
+/* Remastered's file for an SD interface file's path (without the variant's prefix): the command icons' and buttons',
+ * a race's dialog frame and console pictures under game/consoles/, else the same path as .dds.grp (a GRP) or .dds (a
+ * PCX). 0, or -1 for another kind of file or a name past out. */
+static int hd_name(const char *path, size_t len, char *out, size_t size)
 {
 	char p[KP_HD_UI_PATH + 8], stem[KP_HD_UI_PATH + 8];
 	const char *name, *race;
@@ -273,7 +276,7 @@ int kp_hd_ui_scr_classify(const char *path, size_t len, int variant, char *file,
 			return KP_HD_UI_SCR_CONSOLE;
 		}
 	}
-	if (kp_hd_ui_scr_hd_name(path, len, hd, sizeof hd) != 0) return KP_HD_UI_SCR_NONE;
+	if (hd_name(path, len, hd, sizeof hd) != 0) return KP_HD_UI_SCR_NONE;
 	if (sd_only(p)) return KP_HD_UI_SCR_KEPT_SD;
 	w = snprintf(file, size, "%s%s", kp_hd_scr_variant_prefix(variant), hd);
 	if (w <= 0 || (size_t)w >= size) return KP_HD_UI_SCR_NONE;
@@ -893,7 +896,8 @@ uint8_t *kp_hd_ui_scr_console(KpRes *r, KpResReader *h, const KpFiles *sd, size_
 		snprintf(path, sizeof path, "game\\%s.pcx", CONSOLES[race].stem);
 		ok = console_asset(&b, path, strlen(path), race) == 0;
 	}
-	if (end(&b, ok) != 0 || grow(&conw, &cap, 1) != 0) goto failed;
+	if (end(&b, ok) != 0) goto failed;
+	if (grow(&conw, &cap, 1) != 0) goto oom;
 	conw[0] = RACES;
 	for (race = 0; race < RACES; race++) {
 		int32_t first, count, pw, ph;

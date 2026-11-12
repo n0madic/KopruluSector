@@ -37,7 +37,7 @@ static const char *const TILESET_FILES[KP_TILESETS] = { "badlands", "platform", 
 static const struct {
 	const char *suffix;
 	int format;
-} SETS[] = { { "", KP_HD_FORMAT_BC }, { "-astc", KP_HD_FORMAT_ASTC }, { "-etc2", KP_HD_FORMAT_ETC2 } };
+} SETS[KP_HD_SCR_SETS] = { { "", KP_HD_FORMAT_BC }, { "-astc", KP_HD_FORMAT_ASTC }, { "-etc2", KP_HD_FORMAT_ETC2 } };
 
 const char *kp_hd_scr_variant_name(int variant) { return VARIANTS[variant].name; }
 int32_t kp_hd_scr_variant_scale(int variant) { return VARIANTS[variant].scale; }
@@ -182,6 +182,7 @@ int kp_hd_scr_layout(KpRes *r, KpResReader *h, const KpGrpMeta *g, const int32_t
 	KpAnim *anims, int32_t image_count, KpHdLayout *out, KpError *err)
 {
 	uint32_t a, e;
+	memset(out, 0, sizeof *out); /* kp_hd_layout_free's on every return */
 	for (a = 1; a <= g->atlas_count; a++) {
 		if (g->atlases[a].pack.size != strlen(pack) || memcmp(g->atlases[a].pack.text, pack, g->atlases[a].pack.size) != 0) continue;
 		for (e = 1; e <= g->grp_count; e++) {
@@ -209,6 +210,7 @@ static int dds_blocks(const KpScrDdsEntry *d, const char *what, char fourcc[5], 
 	fourcc[4] = 0;
 	*h = (int32_t)kp_le_u32(d->dds + 12);
 	*w = (int32_t)kp_le_u32(d->dds + 16);
+	if (*w != (int32_t)d->width || *h != (int32_t)d->height) return fail(err, what, "a DDS header of another size than its entry");
 	step = fourcc[3] == '1' ? TEAM_BLOCK : DIFFUSE_BLOCK;
 	*n = (size_t)((*w + BLOCK - 1) / BLOCK) * (size_t)((*h + BLOCK - 1) / BLOCK) * step;
 	if (d->size - DDS_HEADER < *n) return fail(err, what, "HD sheet truncated");
@@ -450,11 +452,18 @@ uint8_t *kp_hd_scr_tileset(KpRes *r, int variant, int tileset, size_t *size_out,
 		const uint8_t *body;
 		size_t bytes;
 		int32_t w, h;
+		char tile_fourcc[5];
 		if ((int32_t)entries[k].width != size || (int32_t)entries[k].height != size) {
 			fail(err, name, "tiles of more than one size");
 			goto done;
 		}
-		if (dds_blocks(&entries[k], name, fourcc, &body, &bytes, &w, &h, err) != 0) goto done;
+		if (dds_blocks(&entries[k], name, tile_fourcc, &body, &bytes, &w, &h, err) != 0) goto done;
+		if (k == 0) {
+			memcpy(fourcc, tile_fourcc, sizeof tile_fourcc);
+		} else if (strcmp(tile_fourcc, fourcc) != 0) { /* HEAD names one block format for every tile */
+			fail(err, name, "tiles in more than one block format");
+			goto done;
+		}
 		if (put(&tile, body, bytes) != 0) {
 			fail(err, name, "out of memory");
 			goto done;
@@ -509,9 +518,12 @@ uint8_t *kp_hd_scr_water(KpRes *r, int variant, size_t *size_out, KpError *err)
 			const uint8_t *body;
 			size_t bytes;
 			int32_t w, h;
-			if (dds_blocks(&entries[j], name, fourcc, &body, &bytes, &w, &h, err) != 0
-				|| (int32_t)entries[j].width != size || (int32_t)entries[j].height != size || strcmp(fourcc, "DXT1") != 0) {
-				if (!err->msg[0] || strstr(err->msg, name) == NULL) fail(err, name, "a frame of another size or other blocks");
+			int bad = dds_blocks(&entries[j], name, fourcc, &body, &bytes, &w, &h, err) != 0;
+			if (!bad && ((int32_t)entries[j].width != size || (int32_t)entries[j].height != size || strcmp(fourcc, "DXT1") != 0)) {
+				fail(err, name, "a frame of another size or other blocks");
+				bad = 1;
+			}
+			if (bad) {
 				free(file);
 				free(entries);
 				goto done;
