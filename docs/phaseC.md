@@ -60,7 +60,7 @@ The converter becomes `kp_convert`, in C, sharing its builders with the runtime.
 
 **Open after C0:**
 - The encoders' generic C build (`generic-enc`) is not compared with the SIMD builds' bytes.
-- Not measured yet: the anims' read with a cold cache (C5; still open after it), the glyphs on the Fold7 (C3), the language group on the web (C7). Measured after C7 ([below](#after-c7-the-open-items-2026-11-12)), but for the glyphs on the Fold7.
+- Not measured yet: the anims' read with a cold cache (C5; still open after it), the glyphs on the Fold7 (C3), the language group on the web (C7). Measured after C7 ([below](#after-c7-the-open-items-2026-11-12)); the glyphs on the Fold7 bounded by C7's log.
 - On Linux with GCC 15.2, `tests/c/test_res.c`'s `dir_path` tripped `-Werror=restrict` at `-O3`: a false overlap between two members of one structure, older than phase C. Resolved in C1: the folder is the test's own string (`kp_t_temp_dir`).
 - `kp_test` did not build for Windows (`mkdir` with a mode, among others). Resolved in C1: it builds with mingw-w64 and runs under Wine.
 
@@ -195,7 +195,7 @@ Each is cached as `<sha256>-q3-s<serial>-speech.ogg`. From `/Applications/StarCr
 
 **Open after C3:**
 - `generated/locale/` from the Python converter stays on disk where it was written; nothing reads it (remove it by hand). Deleted after C7.
-- The glyphs' time on the Fold7 is not measured (no device attached); C7's device run covers the language with its speech. Still open after C7: the start logs the time now.
+- The glyphs' time on the Fold7 is not measured (no device attached); C7's device run covers the language with its speech. After C7: at most 73 ms with the language's text, from C7's log; the start logs the time now.
 - The web carries no language group yet (C7). Resolved after C7: fetched whole when wanted.
 
 ## C4 as built (2026-11-12)
@@ -425,7 +425,7 @@ The phones' run transcoded 21 containers: the tilesets and the water once for bo
 - the runtime's reads of `generated/hd/<variant>/packs/`, `tilesets/` and `water.kpd`.
 
 **Open after C5:**
-- The `hd2 hd` repack peaks at 2.6 GB of memory; not profiled. Measured after C7: 1.2 to 2.9 GB from run to run, during the HD sets.
+- The `hd2 hd` repack peaks at 2.6 GB of memory; not profiled. Measured after C7: 1.2 to 2.9 GB from run to run, during the HD sets; `kp_convert`'s own allocations peak at 826 MB every run, the rest is what macOS's allocator keeps after they are freed.
 - The anims' read with a cold disk cache is still not measured. Measured after C7: about twice the warm layout.
 - While the pick looks for a set, `kp_res_raw_place` notes the packs it asks about among the files read, so a `--res-log` lists them before any page is read.
 - The ASTC set is not drawn anywhere yet: the computers' build has no ASTC decoder. The Fold7 run is C7's.
@@ -558,18 +558,21 @@ run again once the screen is on.
 **Measured** (Remastered 1.23.10, macOS on an M-series Mac):
 - **The repack's peak memory** (`/usr/bin/time -l`, the caches full): the default (`hd2 hd`, every language) 1.2 to
   2.9 GB over six runs, 48 to 52 s, `--single` or not alike; `hd2` alone with ruRU 0.9 GB in 22 s. The peak comes while
-  the HD sets are built (the resident size sampled against the archive being written); why it differs by 1.6 GB from
-  run to run is not known.
+  the HD sets are built (the resident size sampled against the archive being written). Why it differs from run to run:
+  not `kp_convert`'s allocations. Their live bytes, counted by an interposed `malloc`/`calloc`/`realloc`/`free`
+  (`malloc_size` of each block, `DYLD_INSERT_LIBRARIES` given through `env`, since SIP strips it from `/usr/bin/time`'s
+  children), peak at 824 to 826 MB in each of ten runs: the HD sets are built on one thread, the same allocations in
+  the same order, and the encoders' threads add 2 MB at most. The peak footprint was 1.11 to 1.21 GB in those runs,
+  2.2 GB in one of the others; what lies above the live bytes is memory macOS's allocator holds after a free and gives
+  back when it decides to. A cold disk cache does not change it (1.15 and 1.20 GB).
 - **The anims with a cold disk cache** (the CASC files' pages dropped by `msync(MS_INVALIDATE)` over a read-only
   mapping, no root needed): terran02's packs laid out in 261 ms in HD2 and 282 ms in HD, against 137 and 138 ms warm;
   the interface's layout 82 against 75 ms (HD2), 102 against 83 ms (HD).
 - **The glyphs** (175 characters, the five supplements and `VFNT`) in 30 ms on the Mac; the log says it at each start
-  (`glyphs of L: N characters in T ms`; `language L:` lines are refusals, which `tools/ci.sh` fails on).
+  (`glyphs of L: N characters in T ms`; `language L:` lines are refusals, which `tools/ci.sh` fails on). On the Fold7
+  at most 73 ms with the language's text: C7's run there logged `speech of ruRU: 592 voices` at 56.150 and the
+  mission's TIME at 56.223, the text built, the glyphs rasterized and the flow started between them (its APK came
+  before the time was logged, and the phone stayed locked through two waits of 30 and 60 minutes for a run of its own).
 - **A start from the install** to the main menu: about 0.95 s from the window, of it the consoles' art 81 ms.
 
-**Still open:**
-- Why the repack's peak memory varies between runs.
-- The glyphs' time on the Fold7: the phone stayed locked through two waits of 30 and 60 minutes. The APK installed
-  from C7's run logs it; with the phone unlocked, `adb logcat -c`, then
-  `adb shell am start -S -n com.koprulusector.game/org.libsdl.app.SDLActivity --es args "'--locale ruRU'"`, and
-  `adb logcat -d -s SDL:V SDL/APP:V | grep glyphs` gives it.
+**Still open:** none of the items above.

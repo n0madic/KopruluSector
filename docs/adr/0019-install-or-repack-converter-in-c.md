@@ -107,7 +107,7 @@ Not measured at C0:
 - the glyphs' time on the Fold7;
 - reading the language group on the web.
 
-The stages that use them (C3, C5, C7) measure them. After C7 ([phase C](../phaseC.md#after-c7-the-open-items-2026-11-12)): the anims with a cold disk cache take about twice the warm layout (261 against 137 ms, HD2 on terran02); the glyphs 30 ms on the Mac (the Fold7's still open; the start logs it); the web fetches a language's group whole when the language is the start's or chosen.
+The stages that use them (C3, C5, C7) measure them. After C7 ([phase C](../phaseC.md#after-c7-the-open-items-2026-11-12)): the anims with a cold disk cache take about twice the warm layout (261 against 137 ms, HD2 on terran02); the glyphs 30 ms on the Mac, at most 73 ms with the language's text on the Fold7 (C7's log); the web fetches a language's group whole when the language is the start's or chosen.
 
 ## Consequences
 
