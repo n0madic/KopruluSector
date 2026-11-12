@@ -656,6 +656,10 @@ file the runtime starts to read is in it without a twin in Python (the design ap
   any copy of the release will do (the executable checked).
 - **CI:** `kp_convert manifest "$KOPRULU_ORIGINAL" --check` after `verify`: a loader that starts or stops reading a file
   fails until the manifest is written again.
+- **On every desktop:** Linux arm64 (GCC 15.2 in the image of `tools/native/linux.Dockerfile`, every target built) and
+  Windows x86-64 (mingw-w64, `kp_convert.exe` under Wine) write the same manifest from the reference install as macOS
+  (`--check`: 18.8 s and 15.7 s, against 13 s on the Mac), and pass `test_res` and `test_convert` (Linux also
+  `test_kp_ui.text_matches_the_original_probes` and `test_ui_data` over the install).
 - **The Python writer is gone:** `write_manifest`, `palette_groups`, `damaged_entries` and `rebuild.describe` with its
   helpers (`describe_pcx`, `uncompressed_grp_layout`, `screen_palette`). `RecordingSource` records the names read;
   `tools/research/scr_manifest.py` writes `defs/campaign/packs-*.json` and `defs/scr/texts-*.json` alone, both byte
