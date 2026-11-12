@@ -745,6 +745,7 @@ int kp_trace_file_parse(KpTraceFile *f, char *text, const char *const *header_wo
 		}
 		if (k < f->header_count) {
 			f->header[k] = strtoll(rest, NULL, 10);
+			f->header_seen |= 1u << k;
 			continue;
 		}
 		f->records = (KpTraceRecord *)kp_grow(f->records, f->count, &cap, sizeof *f->records);
@@ -768,7 +769,7 @@ int64_t kp_trace_header(const KpTraceFile *f, const char *word, int64_t fallback
 {
 	int k;
 	for (k = 0; k < f->header_count; k++) {
-		if (strcmp(f->header_words[k], word) == 0) return f->header[k];
+		if (strcmp(f->header_words[k], word) == 0) return (f->header_seen >> k & 1u) ? f->header[k] : fallback;
 	}
 	return fallback;
 }

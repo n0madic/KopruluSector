@@ -42,8 +42,7 @@ typedef struct KpUiData {
 	KpUiBytes fonts[KP_UI_FNT_FONTS]; /* fonts.kpd F8..F16X: the decoded FNT and one NUL */
 	KpUiBytes font_rows;         /* TFGM */
 	/* fonts.kpd TFNT: the title screen's colour rows, which InitTitleScreen 0x4b5450 loads with title.pcx (GFIL) for
-	 * its loading text (InitTitleLoadingText 0x4b5300, colour table 2). TODO: the title screen (CreateTitleScreen
-	 * 0x4b5570, rez\titledlg.bin) is not drawn yet; these rows are carried for it. */
+	 * its loading text (InitTitleLoadingText 0x4b5300, colour table 2; kp_ui_title.c). */
 	KpUiBytes title_font_rows;
 	KpUiBytes tbl[KP_UI_TBLS];   /* strings.kpd: STAT, NETW, GLUA, GHST, TIPS, HELP in UTF-8 */
 	KpUiBytes sounds;            /* sounds.kpd SFX: u16 count, KP_UI_SOUND_RECORD bytes a sound */

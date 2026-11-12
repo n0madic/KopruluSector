@@ -683,5 +683,50 @@ twin is equal to it.
 (`0x4b5450`) loads it with `title.pcx` (`LoadFontColorTable`) for the loading text; Python's `fonts.kpd` carried it as
 `TFNT`, but the interface data in C did not read it. It reads it now beside the title's picture
 (`KpUiData.title_font_rows`, 40 bytes, `kp_ui_data.c` `fonts`), and `test_kp_ui.text_matches_the_original_probes`
-takes the title's bank from it. The title screen itself (`CreateTitleScreen` `0x4b5570`) is not drawn yet: a `TODO:`
-in `kp_ui_data.h`.
+takes the title's bank from it. The title screen itself came next (below).
+
+## After C7: the title screen (2026-11-12)
+
+The start shows the original's title screen before the main menu: after the first start's intro (`THEN_TITLE`) or at
+once (`kp_flow_init`), as RunMainLoop `0x4679b0` opens it after cinematics 0 and 24.
+
+- **`kp_ui_title.c`** (atlas P39, P40): CreateTitleScreen `0x4b5570` loads `rez\titledlg.bin` in the glue's font set;
+  its procedure `0x4b5500` runs InitTitleScreen `0x4b5450` (`glue\title\title.pcx` as the dialog's image with its
+  palette, the colour rows of `tFont.pcx`, music 22 with its fade in, the cursor hidden) and InitTitleLoadingText
+  `0x4b5300` (child −10's rectangle copied from the picture twice, the text drawn into one in font slot 2, centred,
+  colour row 2; timer 1 every 500 ms); TitleBlinkTimer `0x4b55d0` shows the copies by turns while the application is
+  active, DrawTitleBackground `0x4b5550` draws them opaque; DestroyTitleScreen `0x4b54c0` deletes the timer and frees
+  them; DestroyTitleDialog `0x4b55b0` closes the dialog and sets the theme to −1 (the next screen's palette comes with
+  it). `kp_ui_title_open`, `kp_ui_title_close`, `kp_ui_title_is_open` (IsTitleScreenOpen `0x4b5540`).
+- **The glue** (`native/kp_app/kp_hud.c`): `kp_glue_title` opens it as `KP_GLUE_TITLE`; it stands 1500 ms, RunGlueLoop
+  `0x457510`'s `Sleep(1500)` after the images loaded under it (here they loaded before the window), with no
+  interface timer and no idle work, the input dropped and the music's fade in running; then `kp_glue_menus` opens the
+  main menu, closing the title first as RunGlueLoop does at each entry, whatever opens the menus.
+  The main menu opens at once when the title cannot (no `title.pcx`). In the product the loading text stays shown:
+  the original blinks it only while its load pumps the messages, so on a fast machine it stands as here.
+- **Scripts:** `titledlg` is a dialog's name (`wait screen titledlg`); `tests/scripts/*.kps` pass as before (a run of
+  `wait screen titledlg`, `shot`, `wait screen gluMain` checked by hand: the title, then the main menu).
+- **The HD interface:** Remastered's `glue/title/title.dds` (HD2 1706 × 960, wide) is drawn anew: its luminance
+  gradients correlate 0.046 with the SD picture's, under `same_picture`'s 0.5, so `kp_convert hd-ui-table` leaves it
+  out and the title is the SD picture, as for the other pictures drawn anew.
+- **Tests:** `test_hud.title_blinks_like_the_original` (the dialog, its picture and palette, track 22, the hidden cursor,
+  the text's bitmaps against the picture under child −10, the blink at +501 and +1002 ms, none while inactive, nothing
+  left after the close), `test_hud.glue_title_stands_before_the_main_menu` (the input dropped, the title until 1500 ms,
+  then the main menu with track 22 playing), `test_hud.title_open_at_the_interfaces_end_is_freed` (an interface
+  freed with its title open: `kp_ui_free` has freed the controls before `kp_ui_title_free`, which frees the title's
+  own memory and leaves the dialog; destroying it there freed its bitmap twice, as `test_flow`'s flows freed during
+  the title showed).
+- **The menus' oracle** (`tools/menus_check.py`, not in `tools/ci.sh`) starts at the title when the run has it:
+  `kp_oracle menus_replay` opens it at the original's tick (the header word `title`), runs its blink at the original's
+  timer passes and closes it where the original's DestroyTitleDialog deleted its timer, then opens the main menu at
+  `start`. On both recorded menu runs the title's capture `glue00-0` is equal pixel for pixel and so is its palette,
+  and its timer records (23,029 to 23,217 records) are equal; the 8 and 9 differences of the remake's own labels are
+  the same lines as before. One pixel and one palette entry changed in the capture are reported.
+- **Found on the way:** `kp_trace_header` returned 0 for a header word the file lacks instead of its fallback, so the
+  replay without a title opened one; it returns the fallback now (`result_replay`'s `exit`, −1 when absent, is no
+  longer compared as 0).
+- **Departures from the original:** the window closes during the title (the original's MainWindowProc ignores
+  `SC_CLOSE` while IsTitleScreenOpen); the input during the title is dropped (the original's `Sleep` leaves it queued
+  for the main menu); the low-memory mode's text (child −11, `0x66fd30`) is not modelled, as kp_ui has no such mode.
+  `TODO:` RunGlueLoop sleeps the same 1500 ms at every entry, after a game too; the flow enters the glue at once
+  there (`kp_hud.h`).

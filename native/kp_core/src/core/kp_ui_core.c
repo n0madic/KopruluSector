@@ -142,6 +142,7 @@ KpUi *kp_ui_new_data(const KpUiData *d, char *err, size_t err_size)
 	ui->briefing.dialog = -1;
 	ui->briefing.current = -1;
 	ui->credits.dialog = ui->credits.current = -1;
+	ui->title.dialog = ui->title.text = -1;
 	ui->portrait.control = ui->portrait.dialog = -1;
 	/* no console before kp_ui_hud_create (kp_ui_dispatch tells its dialogs apart) */
 	ui->minimap.control = ui->minimap.dialog = ui->hud.textbox = ui->status.panel = ui->card.dialog = -1;
@@ -241,6 +242,8 @@ KpUi *kp_ui_new_data(const KpUiData *d, char *err, size_t err_size)
 	}
 	ui->game_rows = d->font_rows.data;
 	ui->game_rows_size = d->font_rows.size;
+	ui->title_rows = d->title_font_rows.data;
+	ui->title_rows_size = d->title_font_rows.size;
 	for (i = 0; i < KP_UI_FNT_FONTS; i++) {
 		if (d->fonts[i].data == NULL) {
 			fail(err, err_size, "the interface's data lacks a font");
@@ -298,6 +301,7 @@ void kp_ui_free(KpUi *ui)
 	kp_ui_score_free(ui);
 	kp_ui_menus_free(ui);
 	kp_ui_credits_free(ui);
+	kp_ui_title_free(ui);
 	kp_ui_glue_free(ui);
 	free(ui->timers.trace);
 	kp_ui_glyph_log_free(&ui->glyph_log);

@@ -996,6 +996,15 @@ typedef struct {
 	uint8_t palette[1024];
 } KpUiCredits;
 
+/* The title screen (title.cpp, kp_ui_title.c): rez\titledlg.bin over glue\title\title.pcx while the start loads. */
+typedef struct {
+	int32_t dialog;               /* 0x6c46f4: -1 none */
+	int32_t text;                 /* the loading text's control (child -10), -1 none */
+	KpUiSurface shown, blank;     /* 0x6c46e4, 0x6c46ec: the background under the text with the text drawn, without */
+	uint32_t toggle;              /* 0x6c46f8 */
+	KpUiSurface background;       /* title.pcx, the dialog's image */
+} KpUiTitle;
+
 typedef void (*KpUiSoundHook)(KpUi *ui, int event);
 /* A control's or a tooltip's (control -1) text that did not fit its clip (kp_ui_draw_text stopped at `at`): the width
  * report of a language (localization's stage L3) listens; NULL, nothing is told. */
@@ -1022,6 +1031,8 @@ struct KpUi {
 	size_t font_file_sizes[KP_UI_FNT_FONTS];
 	const uint8_t *game_rows;        /* tFontGam.pcx, 192 bytes */
 	size_t game_rows_size;
+	const uint8_t *title_rows;       /* glue\title\tFont.pcx, KP_UI_TITLE_FONT_ROWS bytes */
+	size_t title_rows_size;
 	const uint8_t *fonts[KP_UI_FONTS];
 	size_t font_sizes[KP_UI_FONTS];
 	KpUiText text;
@@ -1150,6 +1161,7 @@ struct KpUi {
 	KpUiGlue glue;
 	KpUiBriefing briefing;
 	KpUiCredits credits;
+	KpUiTitle title;
 	const uint8_t *establishing;     /* ui.kpd ESTB: 0x4ebba8's {name, mission key} and the finale 0x4ebda8 last */
 	size_t establishing_size;
 	KpUiSoundHook ui_sound;          /* 0x6ce664: the controls' sound hook (SetControlSoundHook 0x4c3750) */
@@ -1738,6 +1750,19 @@ int32_t kp_ui_credits_epilog_open(KpUi *ui, int expansion);
 int kp_ui_credits_epilog_close(KpUi *ui);
 const char *kp_ui_establishing_text(KpUi *ui, uint16_t mission, int finale);
 void kp_ui_credits_free(KpUi *ui);
+/* The title screen (kp_ui_title.c). CreateTitleScreen 0x4b5570: rez\titledlg.bin over glue\title\title.pcx with its
+ * palette, tFont.pcx's colour rows, the title's music, the cursor hidden, the loading text shown and its 500 ms
+ * blink (TitleBlinkTimer 0x4b55d0, while the application is active); the dialog's number or -1 (a part missing).
+ * The original keeps it while the start loads and through RunGlueLoop 0x457510's Sleep (KP_UI_GLUE_SLEEP_MS, no
+ * timer runs there); DestroyTitleDialog 0x4b55b0 then destroys it (its timer and bitmaps) before the main menu. */
+#define KP_UI_TITLE_MUSIC 22
+#define KP_UI_GLUE_SLEEP_MS 1500
+int32_t kp_ui_title_open(KpUi *ui);
+void kp_ui_title_close(KpUi *ui);
+/* IsTitleScreenOpen 0x4b5540. */
+int kp_ui_title_is_open(const KpUi *ui);
+/* The title's own memory at kp_ui_free, after the controls (an open title's dialog is not destroyed). */
+void kp_ui_title_free(KpUi *ui);
 /* The portrait's pieces the briefing shares (kp_ui_portrait.c): ResolveUnitPortrait 0x4a65d0 and the movie of a
  * portdata row's variant (NULL when absent). */
 uint16_t kp_ui_resolve_portrait(KpUi *ui, int64_t type);

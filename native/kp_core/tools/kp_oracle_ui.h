@@ -166,6 +166,7 @@ typedef struct {
 	char *text;
 	const char *header_words[8];
 	int64_t header[8];
+	unsigned header_seen; /* bit k: the file has header_words[k] */
 	int header_count;
 	KpTraceRecord *records;
 	int count;
@@ -174,6 +175,7 @@ typedef struct {
 /* Parses a replay file (text owned by the parse); header_words ends with NULL. */
 int kp_trace_file_parse(KpTraceFile *f, char *text, const char *const *header_words, KpError *err);
 void kp_trace_file_free(KpTraceFile *f);
+/* The header's number, or fallback when the file does not have it. */
 int64_t kp_trace_header(const KpTraceFile *f, const char *word, int64_t fallback);
 
 /* The streams compared (each a list of lines). */

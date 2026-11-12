@@ -115,7 +115,7 @@ static const char *const UNITS[UNIT_COUNT] = { "worker", "main", "group" };
 static const char *const DIALOGS[] = { "abrtmenu", "credits", "gamemenu", "gluCmpgn", "gluExpCmpgn", "gluGameMode",
 	"gluHist", "gluLoad", "gluLogin", "gluMain", "gluPEdit", "gluPOk", "gluPOkCancel", "gluScore", "glurdyp", "glurdyt",
 	"glurdyz", "help", "helpmenu", "language", "lmission", "loadgame", "objctdlg", "ok", "okcancel", "options", "quit",
-	"quit2mnu", "quitrepl", "restart", "savegame", "snd_dlg", "spd_dlg", "tips_dlg", "video", "wait", "wmission" };
+	"quit2mnu", "quitrepl", "restart", "savegame", "snd_dlg", "spd_dlg", "tips_dlg", "titledlg", "video", "wait", "wmission" };
 static const char *const CONSOLE_DIALOGS[] = { "minimap", "ptextbox", "ttextbox", "ztextbox", "stat_f10", "statbtnp",
 	"statbtnt", "statbtnz", "statdata", "statlb", "statport", "statres" };
 #define CONSOLE_FIRST ((int)(sizeof DIALOGS / sizeof DIALOGS[0]))

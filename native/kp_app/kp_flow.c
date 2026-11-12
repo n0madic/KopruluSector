@@ -768,7 +768,7 @@ static void score_next(KpFlow *f)
 
 /* The cinematics (ADR 0015) a glue step plays before it goes on, and what goes on: the mission to start, the menu to
  * open, the score screen's next step, the epilog (its state the run's expansion byte). */
-enum { THEN_NONE, THEN_MISSION, THEN_MENUS, THEN_NEXT, THEN_EPILOG };
+enum { THEN_NONE, THEN_MISSION, THEN_MENUS, THEN_NEXT, THEN_EPILOG, THEN_TITLE };
 /* View Intro's and the first start's: Blizzard's logo, then the Brood War intro */
 static const int INTRO[2] = { KP_APP_CINE_LOGO, KP_APP_CINE_EXPANSION_INTRO };
 
@@ -788,6 +788,9 @@ static void cine_continue(KpFlow *f)
 		break;
 	case THEN_EPILOG:
 		kp_glue_epilog(&f->glue, f->cine_then.state);
+		break;
+	case THEN_TITLE:
+		kp_glue_title(&f->glue, now_ms(f));
 		break;
 	default:
 		break;
@@ -1516,7 +1519,7 @@ static void start_over(KpFlow *f)
 
 /* The first start (RunMainLoop 0x4679b0: the options' bit 0x800 cleared, then cinematics 0 and 24 before the glue): the
  * logo and the intro once the pack has them, the profile written at once (a start without the pack keeps them for one
- * with it); not for the checks and --cine-play's movies. 1 when the flow goes on from them (the main menu after). */
+ * with it); not for the checks and --cine-play's movies. 1 when the flow goes on from them (the title after). */
 static int first_start(KpFlow *f)
 {
 	uint32_t *options = &f->profile->options;
@@ -1526,7 +1529,7 @@ static int first_start(KpFlow *f)
 	*options &= ~KP_UI_OPTION_EXPANSION_INTRO;
 	f->host.save_profile(f->host.ctx);
 	say(f, "glue: the first start's intro");
-	cine_then(f, INTRO, 2, 0, THEN_MENUS, 0, KP_GLUE_MAIN);
+	cine_then(f, INTRO, 2, 0, THEN_TITLE, 0, KP_GLUE_MAIN);
 	return 1;
 }
 
@@ -1605,8 +1608,8 @@ int kp_flow_init(KpFlow *f, char *err, size_t err_size)
 	f->glue.cinematics = f->host.cine_has(f->host.ctx, KP_APP_CINE_LOGO)
 		|| f->host.cine_has(f->host.ctx, KP_APP_CINE_EXPANSION_INTRO);
 	if (first_start(f)) return 0;
-	kp_glue_menus(&f->glue, KP_GLUE_MAIN);
-	say(f, "glue: the main menu");
+	kp_glue_title(&f->glue, now_ms(f));
+	say(f, f->glue.screen == KP_GLUE_TITLE ? "glue: the title" : "glue: the main menu");
 	return 0;
 }
 

@@ -683,10 +683,23 @@ void kp_glue_free(KpGlue *g)
 
 void kp_glue_menus(KpGlue *g, int state)
 {
+	kp_ui_title_close(g->ui); /* RunGlueLoop 0x457510's DestroyTitleDialog 0x4b55b0 at each entry (none: nothing) */
 	characters(g->ui, g->profile);
 	kp_ui_menus_enter(g->ui, state);
 	g->screen = KP_GLUE_MENUS;
 	g->has_composed = 0; /* the shared canvas may hold a game's frame */
+}
+
+void kp_glue_title(KpGlue *g, uint32_t now_ms)
+{
+	g->ui->now = now_ms;
+	if (kp_ui_title_open(g->ui) < 0) {
+		kp_glue_menus(g, KP_GLUE_MAIN);
+		return;
+	}
+	g->screen = KP_GLUE_TITLE;
+	g->title_until = now_ms + KP_UI_GLUE_SLEEP_MS;
+	g->has_composed = 0;
 }
 
 void kp_glue_epilog(KpGlue *g, int expansion)
@@ -790,6 +803,8 @@ static KpGlueEvent poll(KpGlue *g)
 			kp_ui_menus_enter(ui, m->state);
 			ev.kind = KP_GLUE_PROFILE;
 		}
+	} else if (g->screen == KP_GLUE_TITLE) {
+		if ((int32_t)(ui->now - g->title_until) >= 0) kp_glue_menus(g, KP_GLUE_MAIN); /* the Sleep over: state 0 */
 	} else if (g->screen == KP_GLUE_CREDITS) {
 		if (kp_ui_credits_game_close(ui)) kp_glue_menus(g, ui->menus.state); /* the main menu again */
 	} else if (g->screen == KP_GLUE_EPILOG) {
@@ -823,8 +838,12 @@ KpGlueEvent kp_glue_frame(KpGlue *g, int32_t w, int32_t h, uint32_t now_ms, int 
 	int32_t bottom = -1, d;
 	int draws, k;
 	ui->now = now_ms;
-	kp_ui_tick(ui, now_ms);
-	idle(ui);
+	if (g->screen == KP_GLUE_TITLE) {
+		kp_ui_music_tick(ui); /* RunGlueLoop's Sleep: no timer, no idle work, but the music's fade in (kp_glue_title) */
+	} else {
+		kp_ui_tick(ui, now_ms);
+		idle(ui);
+	}
 	ev = poll(g);
 	draws = kp_ui_present(ui);
 	for (d = ui->open; d >= 0; d = ui->controls[d].next) bottom = d; /* the screen: the open list's last */
@@ -862,6 +881,7 @@ void kp_glue_input(KpGlue *g, int event, int32_t lx, int32_t ly)
 	KpUiEvent e;
 	g->buttons = kp_hud_buttons(g->buttons, event);
 	kp_ui_set_keys(ui, ui->input.keys[0], ui->input.keys[1], ui->input.keys[2], g->buttons);
+	if (g->screen == KP_GLUE_TITLE) return; /* the title takes no input (RunGlueLoop's Sleep) */
 	memset(&e, 0, sizeof e);
 	e.type = (uint16_t)event;
 	e.x = (int16_t)(lx - g->place_x);

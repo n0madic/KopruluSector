@@ -630,9 +630,30 @@ static void free_game(KpOracleGame *og)
 	free(og);
 }
 
+/* The capture's palette (its .pal beside the indices) against the glue's: the entries' channels that differ. */
+static int64_t palette_differences(const KpTraceCapture *cap, const KpUi *ui)
+{
+	char path[600];
+	size_t size, n = strlen(cap->path);
+	uint8_t *theirs;
+	int64_t differ = 0;
+	int k, c;
+	if (n > 4 && strcmp(cap->path + n - 4, ".raw") == 0) snprintf(path, sizeof path, "%.*s.pal", (int)(n - 4), cap->path);
+	else snprintf(path, sizeof path, "%s", cap->path);
+	theirs = kp_cli_read(path, &size);
+	for (k = 0; k < 256; k++) {
+		for (c = 0; c < 3; c++) {
+			if ((size_t)(4 * k + c) >= size || theirs[4 * k + c] != ui->glue.palette[4 * k + c]) differ++;
+		}
+	}
+	free(theirs);
+	return differ;
+}
+
 /* --- menus_replay --- */
 
 #define ROOM_STATE_FIRST 7 /* glue states 7..9: the ready rooms (terran, zerg, protoss) */
+#define TITLE_REF "rez\\titledlg.bin#" /* a record of the title's dialog or its controls */
 static int room_race(int state) { return state == 7 ? 1 : state == 8 ? 0 : state == 9 ? 2 : -1; }
 
 typedef struct {
@@ -687,6 +708,10 @@ static void menus_captures(Menus *m, int64_t before)
 				if (kp_trace_compare_pixels(cap, bitmap_pixel, &b, 0, 0, s->w - 1, s->h - 1, getenv("ROOM_DUMP")) > 0) {
 					g->pixel_differences++;
 				}
+			}
+			if (bottom == ui->title.dialog && palette_differences(cap, ui) > 0) { /* title.pcx's, set by InitTitleScreen */
+				fprintf(stderr, "%s: the title's palette differs\n", cap->name);
+				g->pixel_differences++;
 			}
 		}
 	}
@@ -746,14 +771,14 @@ static void menus_follow(Menus *m)
 
 int kp_cli_menus_replay(int argc, char **argv)
 {
-	static const char *const WORDS[] = { "start", NULL };
+	static const char *const WORDS[] = { "start", "title", NULL };
 	Menus *m;
 	Glue *g;
 	KpUi *ui;
 	Progress *progress_at;
 	uint32_t *seeds;
 	int k, seed_count = 0, run = 0, last_ev = -1, status;
-	int64_t page_tick = -1, differences;
+	int64_t page_tick = -1, differences, start, title;
 	int dumped = 0;
 	if (argc < 1) return kp_cli_fail("usage: menus_replay MENUS.txt");
 	m = (Menus *)calloc(1, sizeof *m);
@@ -805,15 +830,25 @@ int kp_cli_menus_replay(int argc, char **argv)
 			}
 		}
 	}
-	ui->now = (uint32_t)kp_trace_header(&g->file, "start", 0);
-	kp_ui_menus_enter(ui, 0);
+	/* the title (CreateTitleScreen 0x4b5570) when the run has it, until RunGlueLoop 0x457510's DestroyTitleDialog
+	 * 0x4b55b0: its loading text's timer deleted; then the main menu at the tick of its first timer */
+	start = kp_trace_header(&g->file, "start", 0);
+	title = kp_trace_header(&g->file, "title", -1);
+	ui->now = (uint32_t)(title >= 0 ? title : start);
+	if (title >= 0 && kp_ui_title_open(ui) < 0) return kp_cli_fail("ui: the title: %s", ui->error);
+	if (title < 0) kp_ui_menus_enter(ui, 0);
 	take(g);
 	for (k = 0; k < g->file.count; k++) {
 		const KpTraceRecord *r = &g->file.records[k];
 		int64_t tick = record_tick(r);
 		m->at = k;
 		if (tick >= 0) menus_captures(m, tick);
-		if (strcmp(r->word, "pass") == 0) {
+		if (strcmp(r->word, "del") == 0 && kp_ui_title_is_open(ui) && strncmp(r->rest, TITLE_REF, strlen(TITLE_REF)) == 0) {
+			kp_ui_title_close(ui);
+			ui->now = (uint32_t)start;
+			kp_ui_menus_enter(ui, 0);
+			take(g);
+		} else if (strcmp(r->word, "pass") == 0) {
 			const char *dump_at = getenv("DUMP_AT");
 			if (dump_at && first_number(r->rest) >= strtoll(dump_at, NULL, 10) && !dumped) {
 				int32_t order[KP_UI_TIMERS];
@@ -865,25 +900,6 @@ int kp_cli_menus_replay(int argc, char **argv)
 }
 
 /* --- room_replay --- */
-
-static int64_t palette_differences(const KpTraceCapture *cap, const KpUi *ui)
-{
-	char path[600];
-	size_t size, n = strlen(cap->path);
-	uint8_t *theirs;
-	int64_t differ = 0;
-	int k, c;
-	if (n > 4 && strcmp(cap->path + n - 4, ".raw") == 0) snprintf(path, sizeof path, "%.*s.pal", (int)(n - 4), cap->path);
-	else snprintf(path, sizeof path, "%s", cap->path);
-	theirs = kp_cli_read(path, &size);
-	for (k = 0; k < 256; k++) {
-		for (c = 0; c < 3; c++) {
-			if ((size_t)(4 * k + c) >= size || theirs[4 * k + c] != ui->glue.palette[4 * k + c]) differ++;
-		}
-	}
-	free(theirs);
-	return differ;
-}
 
 static void room_captures(Glue *g, int64_t before)
 {

@@ -162,7 +162,7 @@ uint16_t kp_hud_buttons(uint16_t buttons, int event);
 
 /* --- the glue's screens --- */
 
-enum { KP_GLUE_NONE, KP_GLUE_MENUS, KP_GLUE_ROOM, KP_GLUE_SCORE, KP_GLUE_CREDITS, KP_GLUE_EPILOG };
+enum { KP_GLUE_NONE, KP_GLUE_MENUS, KP_GLUE_ROOM, KP_GLUE_SCORE, KP_GLUE_CREDITS, KP_GLUE_EPILOG, KP_GLUE_TITLE };
 #define KP_GLUE_MAIN 0
 #define KP_GLUE_CAMPAIGN 6
 #define KP_GLUE_LOAD_SCREEN 13 /* its Back goes to the campaign menu it came from */
@@ -189,6 +189,7 @@ typedef struct {
 	int screen; /* KP_GLUE_* */
 	int cinematics; /* the host plays cinematics: View Intro is KP_GLUE_INTRO (else the main menu opens again) */
 	int room_opened;
+	uint32_t title_until; /* KP_GLUE_TITLE: the clock the title closes at */
 	int32_t composed_w, composed_h, composed_bottom; /* the screen composed: its size, its bottom dialog */
 	uint32_t composed_serial;                        /* and the palette's serial (the margins) */
 	int has_composed;
@@ -201,6 +202,13 @@ typedef struct {
 void kp_glue_init(KpGlue *g, KpUi *ui, KpProfile *profile, uint32_t now_ms);
 void kp_glue_free(KpGlue *g);
 void kp_glue_menus(KpGlue *g, int state);
+/* The title screen of the start (RunMainLoop 0x4679b0, after the first start's cinematics): it stands
+ * KP_UI_GLUE_SLEEP_MS as the original's through RunGlueLoop 0x457510's Sleep after the images loaded under it (here
+ * they loaded before the window), no interface timer running, the input dropped; then the main menu. The music's fade
+ * in runs: the original's load pumps the messages for longer than the fade's 180 ms. The main menu at once when the
+ * title cannot open. TODO: RunGlueLoop sleeps the same 1500 ms at every entry, after a game too (before the score
+ * screen or the menus); the flow enters the glue at once there. */
+void kp_glue_title(KpGlue *g, uint32_t now_ms);
 /* The campaign's epilog (mode 9, RunCampaignEpilog 0x414ef0): the expansion's or the original's text, then its
  * credits, then the main menu (RunMainLoop 0x4679b0: glue state 0); the main menu at once when it cannot open. */
 void kp_glue_epilog(KpGlue *g, int expansion);

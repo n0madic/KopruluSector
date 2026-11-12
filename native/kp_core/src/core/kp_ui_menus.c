@@ -25,7 +25,6 @@
 #define STATE_LOAD 13
 #define STATE_EXP_CAMPAIGN 22
 #define DIALOG_TRANSLUCENT 0x40000u
-#define TITLE_MUSIC 22
 #define LIST_FLAG 0x20000u
 /* the gluAll and network.tbl strings */
 #define STR_VERSION_FORMAT 3    /* gluAll "%s" */
@@ -706,7 +705,7 @@ static int main_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 		hide_unsupported_labels(ui, self, UNSUPPORTED, 2);
 		kp_ui_glue_activate(ui, self, THEME_MAIN);
 		(void)base(ui, d, e);
-		if (!ui->music.playing) kp_ui_music_play(ui, TITLE_MUSIC);
+		if (!ui->music.playing) kp_ui_music_play(ui, KP_UI_TITLE_MUSIC);
 		return 1;
 	}
 	case KP_UI_POST_LOAD: {
@@ -1287,7 +1286,7 @@ static int campaign_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 		static const int16_t UNSUPPORTED[2] = { ID_CAMPAIGN_CUSTOM, ID_CAMPAIGN_REPLAY };
 		hide_unsupported_labels(ui, self, UNSUPPORTED, 2);
 		kp_ui_glue_activate(ui, self, THEME_CAMPAIGN);
-		if (!ui->music.playing) kp_ui_music_play(ui, TITLE_MUSIC);
+		if (!ui->music.playing) kp_ui_music_play(ui, KP_UI_TITLE_MUSIC);
 		break;
 	}
 	case KP_UI_CLOSE: { /* OnCampaignMenuButton 0x453d90, the expansion's 0x458be0 */

@@ -3493,7 +3493,8 @@ static void free_glue(void *p)
 	free(p);
 }
 
-static Glue *glue(KpT *T)
+/* The glue over a new interface and profile, no screen yet. */
+static Glue *glue_bare(KpT *T)
 {
 	Glue *G = (Glue *)calloc(1, sizeof *G);
 	kp_t_ok(T, G != NULL, "out of memory");
@@ -3508,8 +3509,15 @@ static Glue *glue(KpT *T)
 	kp_t_ok(T, G->glue != NULL, "out of memory");
 	G->now = 1000;
 	kp_glue_init(G->glue, G->ui, G->profile, G->now);
-	kp_glue_menus(G->glue, KP_GLUE_MAIN);
 	kp_t_defer(T, free_glue, G->glue);
+	return G;
+}
+
+/* The glue on its main menu. */
+static Glue *glue(KpT *T)
+{
+	Glue *G = glue_bare(T);
+	kp_glue_menus(G->glue, KP_GLUE_MAIN);
 	return G;
 }
 
@@ -4067,6 +4075,107 @@ static void show_credits_begins_with_the_remake(KpT *T)
 	wait_for(G, "rez\\glumain.bin", 2000);
 }
 
+/* The title screen (title.cpp): rez\titledlg.bin over title.pcx with its palette, the title's music, no cursor; the
+ * loading text's two bitmaps (InitTitleLoadingText 0x4b5300: the background under the text, one with the text drawn);
+ * TitleBlinkTimer 0x4b55d0 every 500 ms by turns, not while the application is inactive; DestroyTitleDialog 0x4b55b0
+ * takes its timer and bitmaps. */
+static void title_blinks_like_the_original(KpT *T)
+{
+	enum { TEXT_ID = -10, LEFT = 220, TOP = 400, W = 200, H = 20, OPEN = 1000, PERIOD = 500 };
+	KpUi *ui;
+	const KpUiFile *f;
+	const KpUiTitle *t;
+	char name[128];
+	int32_t k, x, y;
+	int differ = 0, same_palette = 1;
+	if (!kp_t_ready(T, "test_hud.title_blinks_like_the_original", GLUE_FILES)) return;
+	ui = interface(T);
+	t = &ui->title;
+	ui->now = OPEN;
+	kp_t_ok(T, kp_ui_title_open(ui) >= 0, "the title opens: %s", ui->error);
+	kp_t_eq(T, strcmp(kp_t_ui_bin(ui, ui->open, name, sizeof name), "rez\\titledlg.bin"), 0, "rez\\titledlg.bin on top");
+	kp_t_ok(T, kp_ui_title_is_open(ui), "IsTitleScreenOpen");
+	kp_t_eq(T, ui->music.track, KP_UI_TITLE_MUSIC, "the title's music");
+	kp_t_ok(T, ui->cursor_hidden, "the cursor hidden");
+	f = kp_ui_glue_file(ui, "glue\\title\\title.pcx");
+	kp_t_ok(T, f != NULL && ui->controls[t->dialog].image == t->background.pixels, "title.pcx the dialog's image");
+	for (k = 0; k < 256; k++) {
+		if (memcmp(ui->glue.palette + 4 * k, f->data + f->size - 768 + 3 * k, 3) != 0) same_palette = 0;
+	}
+	kp_t_ok(T, same_palette, "title.pcx's palette the glue's");
+	k = t->text;
+	kp_t_ok(T, k >= 0 && ui->controls[k].id == TEXT_ID && (ui->controls[k].flags & KP_UI_VISIBLE), "the loading text shown");
+	kp_t_eq(T, t->shown.w, W, "the bitmaps the text's width");
+	kp_t_eq(T, t->blank.h, H, "and height");
+	for (y = 0; y < H; y++) {
+		for (x = 0; x < W; x++) {
+			uint8_t under = t->background.pixels[(TOP + y) * t->background.w + LEFT + x];
+			kp_t_eq(T, t->blank.pixels[y * W + x], under, "the plain bitmap the background under the text");
+			differ += t->shown.pixels[y * W + x] != under;
+		}
+	}
+	kp_t_ok(T, differ > 0, "the other with the text drawn on it");
+	kp_ui_tick(ui, OPEN + PERIOD);
+	kp_t_eq(T, t->toggle, 0, "no blink at 500 ms (a timer fires past its period)");
+	kp_ui_tick(ui, OPEN + PERIOD + 1);
+	kp_t_ok(T, t->toggle == 1 && ui->controls[k].image == t->shown.pixels, "the text's bitmap after 500 ms");
+	kp_ui_tick(ui, OPEN + 2 * PERIOD + 2);
+	kp_t_ok(T, t->toggle == 0 && ui->controls[k].image == t->blank.pixels, "the plain one after 500 ms more");
+	ui->inactive = 1;
+	kp_ui_tick(ui, OPEN + 3 * PERIOD + 3);
+	kp_t_ok(T, t->toggle == 0 && ui->controls[k].image == t->blank.pixels, "no blink while the application is inactive");
+	ui->inactive = 0;
+	kp_ui_title_close(ui);
+	kp_t_ok(T, !kp_ui_title_is_open(ui) && ui->open < 0, "DestroyTitleDialog: no dialog");
+	kp_t_ok(T, t->shown.pixels == NULL && t->blank.pixels == NULL && t->background.pixels == NULL, "its bitmaps freed");
+	kp_t_eq(T, kp_ui_tick(ui, OPEN + 10 * PERIOD), 0, "and its timers gone");
+}
+
+/* The start's title (kp_glue_title): KP_UI_GLUE_SLEEP_MS on the screen with no timer running (the blink stands, as
+ * through RunGlueLoop 0x457510's Sleep), the input dropped, the music going on; then the main menu, the title's music
+ * still playing (the main menu starts it only when none plays). */
+static void glue_title_stands_before_the_main_menu(KpT *T)
+{
+	Glue *G;
+	KpUi *ui;
+	char name[128];
+	uint32_t opened;
+	if (!kp_t_ready(T, "test_hud.glue_title_stands_before_the_main_menu", GLUE_FILES)) return;
+	G = glue_bare(T);
+	ui = G->ui;
+	opened = G->now;
+	kp_glue_title(G->glue, G->now);
+	kp_t_eq(T, G->glue->screen, KP_GLUE_TITLE, "the title");
+	glue_frame(G);
+	kp_t_eq(T, strcmp(top(G, name, sizeof name), "rez\\titledlg.bin"), 0, "its dialog on the screen");
+	glue_key(G, 'x');
+	kp_glue_input(G->glue, KP_UI_LEFT_DOWN, 320, 300);
+	kp_glue_input(G->glue, KP_UI_LEFT_UP, 320, 300);
+	while (G->now + 16 - opened < KP_UI_GLUE_SLEEP_MS) glue_frame(G);
+	kp_t_eq(T, G->glue->screen, KP_GLUE_TITLE, "it stands until the Sleep's end");
+	kp_t_eq(T, ui->title.toggle, 0, "no blink: no timer runs");
+	kp_t_ok(T, kp_ui_title_is_open(ui) && !G->has_last, "the input changed nothing");
+	glue_frame(G);
+	kp_t_eq(T, G->glue->screen, KP_GLUE_MENUS, "then the menus");
+	kp_t_ok(T, !kp_ui_title_is_open(ui), "the title destroyed");
+	wait_for(G, "rez\\glumain.bin", 200);
+	kp_t_ok(T, ui->music.playing && ui->music.track == KP_UI_TITLE_MUSIC, "the title's music goes on in the main menu");
+	kp_t_eq(T, ui->menus.state, KP_GLUE_MAIN, "the main menu (the dropped key opened nothing)");
+}
+
+/* An interface freed with its title open (a flow freed during the start's title): the title frees its own memory, the
+ * dialog's bitmap is freed once, with the other controls. */
+static void title_open_at_the_interfaces_end_is_freed(KpT *T)
+{
+	KpUi *ui;
+	if (!kp_t_ready(T, "test_hud.title_open_at_the_interfaces_end_is_freed", GLUE_FILES)) return;
+	ui = interface(T);
+	ui->now = 1000;
+	kp_t_ok(T, kp_ui_title_open(ui) >= 0, "the title opens: %s", ui->error);
+	kp_t_ok(T, ui->title.shown.pixels != NULL && ui->title.background.pixels != NULL, "its bitmaps and picture");
+	/* the deferred free_interface frees it open */
+}
+
 /* Whether the script text[0..size) ends with the glue file name's bytes. */
 static int ends_with_file(KpUi *ui, const char *text, size_t size, const char *name)
 {
@@ -4576,6 +4685,9 @@ static const KpTest TESTS[] = {
 	{ "flag_portrait_takes_its_owners_colour", flag_portrait_takes_its_owners_colour, 0 },
 	{ "glue_load_screen_deletes_and_loads", glue_load_screen_deletes_and_loads, 0 },
 	{ "glue_cursor_keeps_its_colours_on_every_theme", glue_cursor_keeps_its_colours_on_every_theme, 0 },
+	{ "title_blinks_like_the_original", title_blinks_like_the_original, 0 },
+	{ "glue_title_stands_before_the_main_menu", glue_title_stands_before_the_main_menu, 0 },
+	{ "title_open_at_the_interfaces_end_is_freed", title_open_at_the_interfaces_end_is_freed, 0 },
 	{ "glue_closing_a_screen_leaves_no_ghost", glue_closing_a_screen_leaves_no_ghost, 0 },
 	{ "glue_overlays_take_their_pixels_from_the_images", glue_overlays_take_their_pixels_from_the_images, 0 },
 	{ "glue_menus_start_a_campaign_mission", glue_menus_start_a_campaign_mission, 0 },

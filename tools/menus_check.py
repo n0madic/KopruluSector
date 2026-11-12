@@ -3,10 +3,12 @@
 `python -m sc_emulator menus DIR` (menus.py) records the original's screens driven by their hotkeys (the main menu,
 the game mode, a new ID on the login screen, the expansion campaign menu, a ready room, the load screen, back to Exit)
 with the input log (DIR/menus/input.jsonl) and the glue captures (DIR/screens). kp_oracle menus_replay opens the
-main menu at the tick the original did and follows kp_ui's glue loop (kp_ui_menus_enter, kp_ui_menus_poll; a ready
-room for a mission) with the original's input and timer passes; the UI timer records, the movies, the flic buttons'
-frames, the menus' CRT draws and every capture (the screen's dialog with its popups composited) must equal the
-original's. Exit status 1 when they differ.
+title (rez\titledlg.bin, when the run starts with it) at the tick the original did, runs its loading text's blink and
+the idle events of the start's load, closes it where RunGlueLoop 0x457510's DestroyTitleDialog deleted its timer,
+opens the main menu at the tick the original did and follows kp_ui's glue loop (kp_ui_menus_enter, kp_ui_menus_poll; a
+ready room for a mission) with the original's input and timer passes; the UI timer records, the movies, the flic
+buttons' frames, the menus' CRT draws and every capture (the screen's dialog with its popups composited; the title's
+palette too) must equal the original's. Exit status 1 when they differ.
 
 Usage (the emulator's venv): python3 tools/menus_check.py --root DIR
 """
@@ -24,25 +26,30 @@ import room_check  # noqa: E402
 
 log = logging.getLogger("menus_check")
 MAIN_MENU = "rez\\gluMain.bin"
+TITLE = "rez\\titledlg.bin"
 ROOM_STATES = (7, 8, 9)  # the glue states of the ready rooms (Terran, Zerg, Protoss)
 
 
 def menus_lines(path: Path) -> tuple[list[str], list[dict]]:
-    """The records from the main menu's first timer on, as kp_oracle room_replay's lines; a glue state change is a line
-    "glue STATE" before the record that has it."""
-    owners, records, started, glue = {}, [], False, None
+    """The records from the title's first timer on (the main menu's when the run has no title), as kp_oracle
+    room_replay's lines: "title TICK" when it has one, "start TICK" the main menu's first timer; a glue state change is
+    a line "glue STATE" before the record that has it."""
+    owners, records, started, glue, title, start = {}, [], False, None, None, None
     for line in path.read_text().splitlines():
         r = json.loads(line)
         if "owner" in r:
             owners[r["owner"]] = r["ref"]
             continue
-        if not started:
-            if "tset" in r and owners.get(r["tset"][0], [None])[0] == MAIN_MENU:
-                started = True
-            else:
-                continue
-        records.append(r)
-    lines = [f"start {records[0]['t']}"] if records else []
+        bin_name = owners.get(r["tset"][0], [None])[0] if "tset" in r else None
+        if bin_name == TITLE and title is None and start is None:
+            title, started = r["t"], True
+        if bin_name == MAIN_MENU and start is None:
+            start, started = r["t"], True
+        if started:
+            records.append(r)
+    if start is None:
+        return [], []
+    lines = ([f"title {title}"] if title is not None else []) + [f"start {start}"]
     glue_at = [None]
 
     def new_room(r: dict) -> bool:
