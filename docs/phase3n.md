@@ -229,7 +229,7 @@ a category of the original that the dump no longer prints counts as a difference
 is refused);
 `kp_bench ROOT REPLAY [RUNS]` times the object steps. `tools/native/build.sh` builds both for the desktop,
 `tools/ci.sh` replays every scenario, and `tools/native/android_bench.sh [SCENARIO [RUNS]]` builds them with the
-Android NDK and runs them on the phone through adb.
+Android NDK and runs them on the phone through adb (`--glyphs LOCALE [RUNS]` times a language's glyphs since phase C).
 
 Result on 2026-10-13, Galaxy Z Fold7 (`bench_200`, 200 units, 760 steps): `kp_replay` equals the original at every
 step on the phone (also `marine_group`, `rescue_fog`); `kp_bench` over 10 runs: mean 0.096 ms, median 0.057 ms, p99

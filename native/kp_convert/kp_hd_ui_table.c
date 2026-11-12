@@ -243,7 +243,7 @@ static double *gradients(const uint8_t *rgba, int32_t w, int32_t h)
 static uint8_t *logical(const uint8_t *rgba, int32_t w, int32_t h, int32_t scale)
 {
 	int32_t lw = w / scale, lh = h / scale, x, y, dx, dy, c;
-	uint8_t *out = (uint8_t *)malloc((size_t)lw * (size_t)lh * 4 + 1);
+	uint8_t *out = (uint8_t *)calloc((size_t)lw * (size_t)lh * 4 + 1, 1); /* zeroed: an image narrower than scale has none */
 	if (!out) return NULL;
 	for (y = 0; y < lh; y++) {
 		for (x = 0; x < lw; x++) {

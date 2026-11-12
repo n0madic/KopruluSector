@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 #ifdef _WIN32
 #include <direct.h>
@@ -15,7 +16,6 @@
 #include <windows.h>
 #else
 #include <dirent.h>
-#include <sys/stat.h>
 #include <unistd.h>
 #endif
 
@@ -33,7 +33,7 @@ static int make_dir(const char *path)
 int kp_fs_size(const char *path, uint64_t *size)
 {
 #ifdef _WIN32
-	struct __stat64 st;
+	struct _stat64 st;
 	if (_stat64(path, &st) != 0) return -1;
 #else
 	struct stat st;

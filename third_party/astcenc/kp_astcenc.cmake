@@ -15,3 +15,9 @@ list(TRANSFORM KP_ASTC_SOURCES APPEND .cpp)
 add_library(kp_astcenc STATIC ${KP_ASTC_SOURCES})
 target_compile_features(kp_astcenc PRIVATE cxx_std_14)
 target_compile_options(kp_astcenc PRIVATE -w)
+# Invariance, as the encoder's own CMake sets it by default (ASTCENC_INVARIANCE, Source/cmake_core.cmake): no fused
+# multiply-adds and no errno from the math functions, so that compilers and processors write the same blocks (without
+# these, macOS's clang, Linux's GCC on arm64 and mingw on x86-64 wrote three different hd2-astc sets; with them macOS
+# and Windows write the same, Linux's GCC 3 blocks of about 28 million apart).
+target_compile_options(kp_astcenc PRIVATE -ffp-contract=off -fno-math-errno
+	$<$<CXX_COMPILER_ID:Clang,AppleClang>:-fno-unsafe-math-optimizations>)

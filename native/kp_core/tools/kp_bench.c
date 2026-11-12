@@ -1,8 +1,11 @@
 /*
  * kp_bench ROOT REPLAY [RUNS]: the simulation step time of a native game (plan §10: a step within 4 ms on the target
  * device, none above 8 ms) over a scenario's replay (kp_oracle export_replay): the wall time of each object step
- * (CLOCK_MONOTONIC), the mean, median, 99th percentile and maximum over RUNS runs, and the slowest steps. Built for the
- * phone with the Android NDK (tools/native/android_bench.sh) and for the desktop by CMakeLists.txt.
+ * (CLOCK_MONOTONIC), the mean, median, 99th percentile and maximum over RUNS runs, and the slowest steps.
+ * kp_bench --glyphs DATA LOCALE [RUNS]: the language's glyphs as each start rasterizes them (kp_locale_glyphs over the
+ * language's text, ADR 0019, stage C3) from DATA (an install, or a folder of koprulu*.mpq with the language's group):
+ * the minimum, median and maximum over RUNS runs, and the text's build before them.
+ * Built for the phone with the Android NDK (tools/native/android_bench.sh) and for the desktop by CMakeLists.txt.
  */
 #define _POSIX_C_SOURCE 199309L
 #include <setjmp.h>
@@ -11,9 +14,13 @@
 #include <string.h>
 #include <time.h>
 
+#include "kp_data.h"
+#include "kp_locale.h"
+#include "kp_res.h"
 #include "kp_runner.h"
 
 #define SLOWEST 8
+#define GLYPH_RUNS_MAX 1000
 
 static double now_ms(void)
 {
@@ -28,19 +35,82 @@ static int by_value(const void *a, const void *b)
 	return x < y ? -1 : x > y;
 }
 
+/* kp_bench --glyphs DATA LOCALE [RUNS] (argv past "--glyphs") */
+static int glyphs(int argc, char **argv)
+{
+	const char *dirs[1];
+	char why[600];
+	int runs = argc > 2 ? atoi(argv[2]) : 1, k, rc = 2, codes = 0;
+	double times[GLYPH_RUNS_MAX], t0, text_ms;
+	KpResConfig config;
+	KpRes *res;
+	KpData d;
+	KpLocale l;
+	KpError err;
+	if (argc < 2 || runs < 1 || runs > GLYPH_RUNS_MAX) {
+		fprintf(stderr, "usage: kp_bench --glyphs DATA LOCALE [RUNS] (RUNS 1 to %d)\n", GLYPH_RUNS_MAX);
+		return 2;
+	}
+	dirs[0] = argv[0];
+	memset(&config, 0, sizeof config);
+	if (!(res = kp_res_open(dirs, 1, &config, why, sizeof why))) {
+		fprintf(stderr, "kp_bench: %s\n", why);
+		return 2;
+	}
+	if (kp_data_build(&d, res, NULL, 0, NULL, 0, &err) != 0) {
+		fprintf(stderr, "kp_bench: %s\n", err.msg);
+		kp_res_close(res);
+		return 2;
+	}
+	t0 = now_ms();
+	if (kp_locale_build(&l, &d.ui, &d.raw, argv[1], &err) != 0) {
+		fprintf(stderr, "kp_bench: %s\n", err.msg);
+		goto done;
+	}
+	text_ms = now_ms() - t0;
+	for (k = 0; k < runs; k++) {
+		KpLocaleGlyphs g;
+		KpLocaleFound found;
+		int built;
+		memset(&found, 0, sizeof found);
+		t0 = now_ms();
+		built = kp_locale_glyphs(&g, &d.ui, &d.raw, &l, &found, &err);
+		times[k] = now_ms() - t0;
+		kp_locale_found_free(&found);
+		if (built <= 0) {
+			fprintf(stderr, "kp_bench: %s: %s\n", argv[1], built < 0 ? err.msg : "the data holds no TrueType fonts");
+			kp_locale_free(&l);
+			goto done;
+		}
+		codes = g.code_count;
+		kp_locale_glyphs_free(&g);
+	}
+	kp_locale_free(&l);
+	qsort(times, (size_t)runs, sizeof *times, by_value);
+	printf("kp_bench glyphs %s: %d runs, %d characters; min %.1f ms, median %.1f ms, max %.1f ms (the text before them "
+		"in %.1f ms)\n", argv[1], runs, codes, times[0], times[runs / 2], times[runs - 1], text_ms);
+	rc = 0;
+done:
+	kp_data_free(&d);
+	kp_res_close(res);
+	return rc;
+}
+
 int main(int argc, char **argv)
 {
 	KpReplay r;
 	KpError err;
 	uint8_t *text;
 	size_t size;
-	int runs = argc > 3 ? atoi(argv[3]) : 1, run_k, k, units = 0;
-	volatile int count = 0; /* set after the setjmp below (-Wclobbered) */
+	int run_k, k, units = 0;
+	/* set after the setjmp below, or read after it (GCC's -Wclobbered) */
+	volatile int count = 0, runs = argc > 3 ? atoi(argv[3]) : 1;
 	double *times, *sorted;
 	volatile double sum = 0;
 	int64_t *at;
+	if (argc > 1 && strcmp(argv[1], "--glyphs") == 0) return glyphs(argc - 2, argv + 2);
 	if (argc < 3 || runs < 1) {
-		fprintf(stderr, "usage: kp_bench ROOT REPLAY [RUNS]\n");
+		fprintf(stderr, "usage: kp_bench ROOT REPLAY [RUNS] | kp_bench --glyphs DATA LOCALE [RUNS]\n");
 		return 2;
 	}
 	text = kp_read_file(argv[2], &size);

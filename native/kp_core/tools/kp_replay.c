@@ -59,7 +59,8 @@ int main(int argc, char **argv)
 	KpTry t;
 	uint8_t *text;
 	size_t size;
-	int64_t step, print_step = argc > 3 ? atoll(argv[3]) : 0;
+	int64_t step;
+	volatile int64_t print_step = argc > 3 ? atoll(argv[3]) : 0; /* read after the setjmp below (GCC's -Wclobbered) */
 	volatile int bad = 0, steps = 0, compared = 0; /* set after the setjmp below (-Wclobbered) */
 	int at = 0;
 	if (argc < 3) {

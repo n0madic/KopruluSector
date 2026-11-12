@@ -239,7 +239,7 @@ if(KP_CXX_CHECK AND KP_TOOLS)
 	add_custom_command(OUTPUT ${KP_CXX_STAMP}
 		COMMAND ${CMAKE_CXX_COMPILER} -std=c++11 -fsyntax-only -x c++ ${KP_WARNINGS} -DKP_CPP_CHECK ${KP_CXX_HOST_DEFS}
 			-I${KP_CORE_DIR}/src/core -I${KP_CORE_DIR}/src/defs -I${KP_PRESENT_DIR} -I${KP_APP_DIR} -I${KP_TOOLS_DIR} -I${KP_TESTS_DIR} -I${KP_GFX_DIR}
-			-I${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb -isystem ${KP_STORM_DIR}/src -isystem ${KP_VPX_DIR} -isystem ${KP_NESTEGG_DIR}/include ${KP_CXX_ASTC_INCLUDE} ${KP_CXX_ENCODERS_INCLUDE} ${KP_CXX_SOURCES}
+			-I${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb -isystem ${KP_STORM_DIR}/src -isystem ${KP_ZLIB_DIR} -isystem ${KP_VPX_DIR} -isystem ${KP_NESTEGG_DIR}/include ${KP_CXX_ASTC_INCLUDE} ${KP_CXX_ENCODERS_INCLUDE} ${KP_CXX_SOURCES}
 		COMMAND ${CMAKE_COMMAND} -E touch ${KP_CXX_STAMP}
 		DEPENDS ${KP_CXX_SOURCES} ${KP_CXX_HEADERS}
 		COMMENT "Checking the C sources as C++11"

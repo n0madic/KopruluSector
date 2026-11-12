@@ -29,7 +29,8 @@
 #   KOPRULU_SCR=<StarCraft: Remastered install dir> classifies the manifest's files on that install
 #     (scdata/tests/test_scr_source.py) and, with KOPRULU_ORIGINAL, compares Remastered's DAT tables and
 #     scripts with the profile's (scdata/tests/test_casc.py); it also checks every string of each language the
-#     install holds (kp_convert locale-check, its reports in generated/reports; ADR 0019, stage C3), test_locale and
+#     install holds (kp_convert locale-check, its reports in generated/reports; ADR 0019, stage C3) and builds ruRU's
+#     glyphs with the device bench (kp_bench --glyphs, tools/native/android_bench.sh --glyphs on a phone), test_locale and
 #     test_speech build the languages from the install's files (stages C2 and C3), and KOPRULU_APP's product runs each
 #     language with its speech, from the install and from its repack's language groups;
 #   KOPRULU_APP=1 builds the product for macOS (tools/product.sh macos debug, needs generated/ and its repack,
@@ -247,6 +248,10 @@ if [ -n "${KOPRULU_SCR:-}" ]; then
   # a string refused fails the step (its first ones printed); the product's runs below play the languages it lists
   step "the languages: every string of each language the install holds (kp_convert locale-check; ADR 0019, stage C3)"
   logged build/locale_check.log 8 build/cmake/kp_convert locale-check "$KOPRULU_SCR" --out generated
+  # the device bench's glyphs (kp_bench --glyphs, as tools/native/android_bench.sh --glyphs times them on a phone)
+  step "the glyphs' bench: ruRU's glyphs built from the install as each start builds them (kp_bench --glyphs)"
+  logged build/glyphs_bench.log 1 build/cmake/kp_bench --glyphs "$KOPRULU_SCR" ruRU 3
+  grep -qE '^kp_bench glyphs ruRU: 3 runs, [0-9]{3} characters; min ' build/glyphs_bench.log
   # the HD interface's placement table made again from the install is the committed one (ADR 0019, stage C6: a
   # Remastered update that changes its interface art fails here; the new table is kp_convert hd-ui-table's)
   step "the HD interface's placement table is the install's (kp_convert hd-ui-table; ADR 0019, stage C6)"

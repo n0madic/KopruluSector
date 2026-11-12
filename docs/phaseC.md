@@ -60,7 +60,7 @@ The converter becomes `kp_convert`, in C, sharing its builders with the runtime.
 
 **Open after C0:**
 - The encoders' generic C build (`generic-enc`) is not compared with the SIMD builds' bytes.
-- Not measured yet: the anims' read with a cold cache (C5; still open after it), the glyphs on the Fold7 (C3), the language group on the web (C7). Measured after C7 ([below](#after-c7-the-open-items-2026-11-12)); the glyphs on the Fold7 bounded by C7's log.
+- Not measured yet: the anims' read with a cold cache (C5; still open after it), the glyphs on the Fold7 (C3), the language group on the web (C7). Measured after C7 ([below](#after-c7-the-open-items-2026-11-12)).
 - On Linux with GCC 15.2, `tests/c/test_res.c`'s `dir_path` tripped `-Werror=restrict` at `-O3`: a false overlap between two members of one structure, older than phase C. Resolved in C1: the folder is the test's own string (`kp_t_temp_dir`).
 - `kp_test` did not build for Windows (`mkdir` with a mode, among others). Resolved in C1: it builds with mingw-w64 and runs under Wine.
 
@@ -154,7 +154,8 @@ Each is cached as `<sha256>-q3-s<serial>-speech.ogg`. From `/Applications/StarCr
 - **A difference without an exception is logged in the app, refused in the oracle**: a player keeps the language's TIME, the goldens keep their strictness.
 
 **Open after C2:**
-- The Ogg bytes still differ by processor (C1); the listings are equal.
+- The Ogg bytes still differ by processor (C1); the listings are equal. Explained after C7: by build (the compiler
+  and its math library), not by processor.
 - Remastered's repack logs six `cannot size locales/enUS/...: CascLib error 1007` lines (enUS lines of `expterran/terran02` and `terran05b` offline in this install), not looked into. Resolved after C7: `ERROR_FILE_OFFLINE`, the install's enUS speech not downloaded; said once, in words.
 - The full `kp_test` under Wine stopped with a stack overflow (`___chkstk_ms`). The cause is `test_session`'s tests: each puts two `KpProfile`s (1.26 MB each) on the main thread's stack, and mingw gives that thread 2 MB, where macOS and Linux give 8 MB. The app keeps its profile inside `KpApp`, not on the stack. With the executable's stack reserve raised to 8 MB, all 25 tests pass. The link flag comes with C3. `test_save` stopped there too, with no output; under 8 MB it runs on.
 
@@ -195,7 +196,7 @@ Each is cached as `<sha256>-q3-s<serial>-speech.ogg`. From `/Applications/StarCr
 
 **Open after C3:**
 - `generated/locale/` from the Python converter stays on disk where it was written; nothing reads it (remove it by hand). Deleted after C7.
-- The glyphs' time on the Fold7 is not measured (no device attached); C7's device run covers the language with its speech. After C7: at most 73 ms with the language's text, from C7's log; the start logs the time now.
+- The glyphs' time on the Fold7 is not measured (no device attached); C7's device run covers the language with its speech. Measured after C7: 46 ms (`tools/native/android_bench.sh --glyphs ruRU`).
 - The web carries no language group yet (C7). Resolved after C7: fetched whole when wanted.
 
 ## C4 as built (2026-11-12)
@@ -425,7 +426,7 @@ The phones' run transcoded 21 containers: the tilesets and the water once for bo
 - the runtime's reads of `generated/hd/<variant>/packs/`, `tilesets/` and `water.kpd`.
 
 **Open after C5:**
-- The `hd2 hd` repack peaks at 2.6 GB of memory; not profiled. Measured after C7: 1.2 to 2.9 GB from run to run, during the HD sets; `kp_convert`'s own allocations peak at 826 MB every run, the rest is what macOS's allocator keeps after they are freed.
+- The `hd2 hd` repack peaks at 2.6 GB of memory; not profiled. Measured after C7: 1.2 to 2.9 GB from run to run, during the HD sets; `kp_convert`'s own allocations peak at 826 MB every run, the rest is libmalloc's cache of freed large blocks (0.76 GB with `MallocLargeCache=0`), larger after the machine's memory was under pressure.
 - The anims' read with a cold disk cache is still not measured. Measured after C7: about twice the warm layout.
 - While the pick looks for a set, `kp_res_raw_place` notes the packs it asks about among the files read, so a `--res-log` lists them before any page is read.
 - The ASTC set is not drawn anywhere yet: the computers' build has no ASTC decoder. The Fold7 run is C7's.
@@ -550,10 +551,45 @@ run again once the screen is on.
     (a new profile's), Blizzard's logo fetched by its range: 171 of 171 frames decoded, 171 pictures shown;
   - `hd_game.kps` on terran02: 159 steps, 0 failures, the world from `koprulu-hd2.mpq` and the interface from
     `koprulu-ui-hd2.mpq` by ranges.
+- **The device bench times the glyphs** (`kp_bench --glyphs DATA LOCALE [RUNS]`: the data built from an install or
+  a repack, the language's text, then `kp_locale_glyphs` RUNS times; the minimum, median and maximum).
+  `tools/native/android_bench.sh --glyphs LOCALE [RUNS]` repacks `KOPRULU_SCR` with `--hd none --locales LOCALE` and
+  runs it on the phone over the core and the language's group; `tools/ci.sh` runs it over the install (ruRU, 3 runs).
+  The script wakes the phone's screen itself right before the timed runs (`KEYCODE_WAKEUP`, the power key's: a locked
+  phone stays locked), since a dozing phone stops the CPU for 150 to 200 ms at a time; it refused to run with the
+  screen off before, and the screen went off while the files were pushed. What a run pushed (the data: 50 to 120 MB)
+  is removed from the phone after it, the repack written for it from the disk. Its step bench ran on the Fold7 again,
+  first since stage D8c: `bench_200` equal to the original at all 761 steps, mean 0.096 ms, max 0.961 ms.
 - **The consoles' art from an install: 164 to 81 ms.** Most of it was `art_cells`' nearest-colour search over the 127
   colours for each cell; a mean colour seen before now takes its answer from a small table (`nearest`, 4,096 entries),
   and the console's SD PCX is read once (`kp_files_pcx_pixels`). `CONW` stays equal to the converter's
   (`test_hd.ui_equals_the_converters`). What is left is reading the DDS files (about 43 ms) and decoding them.
+- **`kp_convert` writes the movies and the HD sets on Linux and Windows too.** Each repacked the 1.17 install and
+  Remastered (`--hd hd2,hd,hd2-astc,hd2-etc2 --locales none`) with a cache of its own; the listings compared with
+  macOS's, archive by archive and line by line:
+  - Linux arm64 (GCC 15.2 in the image of `tools/native/linux.Dockerfile`; Remastered as an APFS clone in the
+    repository, since Docker shares no `/Applications`): 1.17 in 241 s, Remastered in 299 s;
+  - Windows x86-64 (mingw-w64, `kp_convert.exe` under Wine): 1.17 in 352 s, Remastered in 330 s;
+  - equal: every SD file, the `hd2`, `hd` and `hd2-etc2` sets, both interfaces' `ui.kpd`, the 621 portraits and
+    `CONW`; the 28 transcoded movies' VP9 packets (`ffmpeg -f framemd5` per stream);
+  - not equal: the Vorbis bytes, the speech's and the movies' sound alike (1,668 of the 1.17 install's 2,236 Oggs
+    apart from macOS's, 50 between Linux and Windows): they follow the build, the compiler and its math library, not
+    the processor (Linux and Windows agree on most though one is arm64 and the other x86-64; macOS built with
+    `-ffp-contract=off` is as far from both as before). The sound is as good on each: terran2's against its SMK's,
+    21.36 dB from all three. A listing's Ogg line keeps the WAV's digest, so the listings stay comparable.
+- **The phones' ASTC set is the same on every desktop.** The three wrote three different `hd2-astc` sets: the encoder
+  was built without the flags of its own invariant build (`ASTCENC_INVARIANCE`, on by default in its CMake), which
+  its documentation says make every compiler and processor write the same blocks. `kp_astcenc.cmake` sets them now
+  (`-ffp-contract=off -fno-math-errno`, and `-fno-unsafe-math-optimizations` for clang), and the transcodings' cache
+  takes `t2` (`KP_HD_TRANSCODE_SETTINGS`). macOS and Windows then write the same set, byte for byte; Linux's GCC
+  differs in 3 of its 16-byte blocks (1 in `effects`, 2 in `protoss`; of about 28 million). The quality is the
+  same: `kp_hd_phone --report` on zerg's page 2 gives ADR 0013's 34.46 / 43.72 / 29.87 dB for 4 x 4.
+- **The tools build whole on Linux and Windows again.** Building every target there (not only `kp_test` and
+  `kp_convert`) found four breaks: on Windows `kp_fs_size`'s `_stat64` without `<sys/stat.h>`, a maybe-uninitialized
+  buffer in `kp_hd_ui_table.c` (`logical`, now zeroed) and `zlib.h` missing from the C++ check (the bundled zlib's
+  folder is passed now); with GCC 15 `-Wclobbered` in `kp_bench.c` and `kp_replay.c` (a value read after `setjmp`,
+  now `volatile` as those set after it were). Both cross builds take `-DKP_ASTC=ON`: without it `repack` refuses the
+  `hd2-astc` set. Neither build is in `tools/ci.sh` (GitHub's runs build Linux with Ubuntu's GCC).
 
 **Measured** (Remastered 1.23.10, macOS on an M-series Mac):
 - **The repack's peak memory** (`/usr/bin/time -l`, the caches full): the default (`hd2 hd`, every language) 1.2 to
@@ -562,17 +598,29 @@ run again once the screen is on.
   not `kp_convert`'s allocations. Their live bytes, counted by an interposed `malloc`/`calloc`/`realloc`/`free`
   (`malloc_size` of each block, `DYLD_INSERT_LIBRARIES` given through `env`, since SIP strips it from `/usr/bin/time`'s
   children), peak at 824 to 826 MB in each of ten runs: the HD sets are built on one thread, the same allocations in
-  the same order, and the encoders' threads add 2 MB at most. The peak footprint was 1.11 to 1.21 GB in those runs,
-  2.2 GB in one of the others; what lies above the live bytes is memory macOS's allocator holds after a free and gives
-  back when it decides to. A cold disk cache does not change it (1.15 and 1.20 GB).
+  the same order, and the encoders' threads add 2 MB at most. What lies above them is libmalloc's cache of freed large
+  blocks: `vmmap -summary` during the HD sets shows 703 MB of "Malloc Large (empty)" beside 703 MB of live "Malloc
+  Large", and with `MallocLargeCache=0` the peak footprint is 0.76 GB (`MallocDeferredReclaim=0`,
+  `MallocAggressiveMadvise=1`, `MallocXzoneHugeCacheSize=0` and `MallocXzoneSegmentDeallocate=1` change nothing). How
+  much the cache keeps follows the machine's memory: 1.11 to 1.21 GB footprint in ten runs on a quiet machine, 1.7 to
+  2.6 GB in the runs during and after a pressure episode (`memory_pressure -p 20`, or a CI run just ended), the same
+  826 MB live in each. A cold disk cache does not change it (1.15 and 1.20 GB). Nothing to fix in `kp_convert`: the
+  cache is freed memory, which macOS takes back under pressure.
 - **The anims with a cold disk cache** (the CASC files' pages dropped by `msync(MS_INVALIDATE)` over a read-only
   mapping, no root needed): terran02's packs laid out in 261 ms in HD2 and 282 ms in HD, against 137 and 138 ms warm;
   the interface's layout 82 against 75 ms (HD2), 102 against 83 ms (HD).
 - **The glyphs** (175 characters, the five supplements and `VFNT`) in 30 ms on the Mac; the log says it at each start
   (`glyphs of L: N characters in T ms`; `language L:` lines are refusals, which `tools/ci.sh` fails on). On the Fold7
-  at most 73 ms with the language's text: C7's run there logged `speech of ruRU: 592 voices` at 56.150 and the
-  mission's TIME at 56.223, the text built, the glyphs rasterized and the flow started between them (its APK came
-  before the time was logged, and the phone stayed locked through two waits of 30 and 60 minutes for a run of its own).
+  46 ms: the medians of two series of 15 runs of `kp_bench --glyphs` 45.9 and 45.4 ms (41.7 to 59.7 ms; the text
+  before them 11.6 and 12.0 ms), by `tools/native/android_bench.sh --glyphs ruRU 15` over a repack's core and ruRU's
+  group, the phone locked. C7's run
+  there had bounded it before: 73 ms between `speech of ruRU: 592 voices` and the mission's TIME in its log, the text,
+  the glyphs and the rest of the flow's start in them.
 - **A start from the install** to the main menu: about 0.95 s from the window, of it the consoles' art 81 ms.
 
-**Still open:** none of the items above.
+**Still open:**
+- `hd2-astc` from Linux's GCC differs from macOS's and Windows's in 3 blocks. Not found why: the encoder's NEON
+  operations are exact IEEE ones (division, square root, rounding, conversions), its logarithms and powers its own
+  polynomials, and the thread count is the same (14); a second run on Linux wrote the same
+  set, so it is the build's, not a race.
+- `kp_convert manifest` (the TODO in `tools/research/scr_manifest.py`): its design waits for approval.
