@@ -277,9 +277,17 @@ static int cmd_extract(int argc, char **argv)
 	if (argc != 3) return -1;
 	if (!(res = open_sources((const char *const *)argv, 1, &shown))) return 2;
 	b = kp_res_read(res, argv[1], &size, &st, err, sizeof err);
-	if (!b && !err[0]) { /* a Remastered file by its CASC name: the install's, or a repack's language group's */
-		b = kp_res_raw_read(res, argv[1], &size, err, sizeof err);
-		st = KP_RES_REMASTERED;
+	if ((!b && !err[0]) || st == KP_RES_UNLISTED) {
+		/* not a 1.17 file: a Remastered file by its CASC name (the install's, or a repack's language group's), before
+		 * the copy an unlisted name finds under a prefix ("unit/wirefram/wirefram.dds.grp" is HD's, SD/'s the SD one) */
+		size_t raw_size = 0;
+		uint8_t *raw = kp_res_raw_read(res, argv[1], &raw_size, b ? NULL : err, b ? 0 : sizeof err);
+		if (raw) {
+			free(b);
+			b = raw;
+			size = raw_size;
+			st = KP_RES_REMASTERED;
+		}
 	}
 	if (!b) {
 		fprintf(stderr, "kp_convert: %s\n", err[0] ? err : "no such file");
@@ -501,7 +509,8 @@ static int cmd_repack(int argc, char **argv)
 		for (i = 0; i < rep->group_count; i++) {
 			int k;
 			for (k = 0; strcmp(rep->groups[k].file, groups[i]) != 0; k++) {}
-			printf("%s: %d files, %.1f MB\n", groups[i], rep->groups[k].files, (double)rep->groups[k].bytes / 1e6);
+			printf("%s: %d files, %.1f MB (%.1f MB of files)\n", groups[i], rep->groups[k].files,
+				(double)rep->groups[k].archive / 1e6, (double)rep->groups[k].bytes / 1e6);
 			files += rep->groups[k].files;
 		}
 		printf("%s: %d files (", c.out, files);
@@ -697,6 +706,40 @@ static void take_findings(KpLocaleFound *to, KpLocaleFound *from)
 
 static int cmp_names(const void *a, const void *b) { return strcmp(*(const char *const *)a, *(const char *const *)b); }
 
+/* Whether the language has its own copy of a script of the base's */
+static int script_translated(const KpLocale *l, const KpUiFile *f)
+{
+	int k;
+	for (k = 0; k < l->script_count; k++)
+		if (l->scripts[k].path_len == f->path_len && memcmp(l->scripts[k].path, f->path, f->path_len) == 0) return 1;
+	return 0;
+}
+
+/* The base's scripts (kp_locale_script) the language translates, or (translated 0) keeps the base's of: a JSON array
+ * of their names, sorted. */
+static void script_names(KpBuf *b, const KpUiFiles *glue, const KpLocale *l, int translated)
+{
+	char (*names)[PATH] = (char (*)[PATH])malloc((size_t)(glue->count + 1) * sizeof *names);
+	const char **order = (const char **)malloc((size_t)(glue->count + 1) * sizeof *order);
+	int n = 0, k;
+	kp_buf_printf(b, "[");
+	for (k = 0; names && order && k < glue->count; k++) {
+		const KpUiFile *f = &glue->files[k];
+		if (!kp_locale_script(f) || script_translated(l, f) != translated) continue;
+		snprintf(names[n], PATH, "%.*s", (int)f->path_len, f->path);
+		order[n] = names[n];
+		n++;
+	}
+	if (n) qsort(order, (size_t)n, sizeof *order, cmp_names);
+	for (k = 0; k < n; k++) {
+		kp_buf_printf(b, "%s", k ? ", " : "");
+		json_string(b, order[k]);
+	}
+	kp_buf_printf(b, "]");
+	free(order);
+	free(names);
+}
+
 /* A language's report (the Python converter's form until stage C3): its problems' count, -1 when it was not built. */
 static int locale_report(const KpData *d, const char *locale, const char *out)
 {
@@ -708,7 +751,7 @@ static int locale_report(const KpData *d, const char *locale, const char *out)
 	KpLocaleFound missions_found, glyphs_found;
 	KpError e;
 	KpBuf b;
-	char path[PATH], err[MESSAGE], (*names)[PATH];
+	char path[PATH], err[MESSAGE];
 	int k, first = 1, problems, glyphs;
 	if (kp_locale_build(&l, &d->ui, &d->raw, locale, &e) != 0) {
 		fprintf(stderr, "kp_convert: %s\n", e.msg);
@@ -731,20 +774,11 @@ static int locale_report(const KpData *d, const char *locale, const char *out)
 	}
 	kp_buf_printf(&b, "\n },\n \"dialogs\": {\"translated\": %d, \"kept\": %d, \"layout\": %d, \"bytes\": %llu},\n",
 		l.dialogs_translated, l.dialogs_kept, l.dialogs_laid_out, (unsigned long long)l.pool_size);
-	kp_buf_printf(&b, " \"scripts\": {\"translated\": [");
-	if (l.script_count > 0 && (names = (char (*)[PATH])malloc((size_t)l.script_count * sizeof *names)) != NULL) {
-		const char **order = (const char **)malloc((size_t)l.script_count * sizeof *order);
-		for (k = 0; k < l.script_count; k++) snprintf(names[k], PATH, "%.*s", (int)l.scripts[k].path_len, l.scripts[k].path);
-		for (k = 0; order && k < l.script_count; k++) order[k] = names[k];
-		if (order) qsort(order, (size_t)l.script_count, sizeof *order, cmp_names);
-		for (k = 0; k < l.script_count; k++) {
-			kp_buf_printf(&b, "%s", k ? ", " : "");
-			json_string(&b, order ? order[k] : names[k]);
-		}
-		free(order);
-		free(names);
-	}
-	kp_buf_printf(&b, "], \"base\": %d},\n \"missions\": {", l.scripts_left);
+	kp_buf_printf(&b, " \"scripts\": {\"translated\": ");
+	script_names(&b, &d->ui.glue, &l, 1);
+	kp_buf_printf(&b, ", \"base\": ");
+	script_names(&b, &d->ui.glue, &l, 0);
+	kp_buf_printf(&b, "},\n \"missions\": {");
 	for (k = 0; k < d->mission_count; k++) {
 		const KpDataMission *entry = &d->missions[k];
 		const char *name = entry->key + sizeof MISSIONS - 1;

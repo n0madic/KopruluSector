@@ -839,7 +839,7 @@ static int casc_candidates(const char *key, char names[][KP_RES_NAME], int cap)
 static uint8_t *read_casc(KpRes *r, const char *key, int exact, size_t *size, KpResStatus *status, char *source)
 {
 	char names[CASC_MOVED_COUNT + 2 * CASC_PREFIX_COUNT][KP_RES_NAME];
-	int n = casc_candidates(key, names, (int)(sizeof names / sizeof names[0])), k, fallback = -1;
+	int n = casc_candidates(key, names, (int)(sizeof names / sizeof names[0])), k, fallback = -1, offline = -1;
 	const KpDefsInput *in = kp_defs_input(r->profile, key);
 	uint8_t *kept = NULL;
 	size_t kept_size = 0;
@@ -848,8 +848,15 @@ static uint8_t *read_casc(KpRes *r, const char *key, int exact, size_t *size, Kp
 		size_t got = 0;
 		uint8_t *b = kp_casc_read(r->casc, names[k], &got, why, sizeof why), *rebuilt;
 		if (!b) {
-			/* named but not installed locally (kp_res_casc_exact's donors are probed quietly) */
-			if (why[0] && !exact) say(r, "res: %s%s", why, NULL);
+			/* named but not downloaded (an install holds only its languages' files): said once below, when no
+			 * other candidate is the 1.17 file; unreadable otherwise (kp_res_casc_exact's donors probed quietly) */
+			if (why[0] && !exact) {
+				if (!kp_casc_held(r->casc, names[k])) {
+					if (offline < 0) offline = k;
+				} else {
+					say(r, "res: %s%s", why, NULL);
+				}
+			}
 			continue;
 		}
 		if (!in || matches(b, got, in)) {
@@ -876,6 +883,9 @@ static uint8_t *read_casc(KpRes *r, const char *key, int exact, size_t *size, Kp
 			free(b);
 		}
 	}
+	if (offline >= 0 && !map_find(&r->seen, key))
+		say(r, "res: %s may be the 1.17 file: not downloaded in this install (its language's files are not), not read",
+			names[offline], NULL);
 	/* a listed file no copy reaches: rebuilt from Remastered's own formats, before its copy is taken as it is */
 	if (in && r->scr && !exact) {
 		uint8_t *made = kp_res_scr_remake(r, r->scr, r->casc, key, in, size, status, source);

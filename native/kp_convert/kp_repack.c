@@ -933,6 +933,7 @@ static int finish(Group *groups, int count, const char *root, const char *head, 
 			snprintf(rep->groups[rep->group_count].file, sizeof rep->groups[0].file, "%s", g->file);
 			rep->groups[rep->group_count].files = g->files;
 			rep->groups[rep->group_count].bytes = g->bytes;
+			if (kp_fs_size(path, &rep->groups[rep->group_count].archive) != 0) rep->groups[rep->group_count].archive = 0;
 			rep->group_count++;
 		}
 	}

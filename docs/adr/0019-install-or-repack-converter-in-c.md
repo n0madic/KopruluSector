@@ -107,7 +107,7 @@ Not measured at C0:
 - the glyphs' time on the Fold7;
 - reading the language group on the web.
 
-The stages that use them (C3, C5, C7) measure them.
+The stages that use them (C3, C5, C7) measure them. After C7 ([phase C](../phaseC.md#after-c7-the-open-items-2026-11-12)): the anims with a cold disk cache take about twice the warm layout (261 against 137 ms, HD2 on terran02); the glyphs 30 ms on the Mac (the Fold7's still open; the start logs it); the web fetches a language's group whole when the language is the start's or chosen.
 
 ## Consequences
 
@@ -161,7 +161,7 @@ The stages that use them (C3, C5, C7) measure them.
   - where a console's centre piece lies (`place_piece`).
 
   It writes `defs/scr/hd-ui-bw-1.17.0.1.json`, committed and compiled as `SHUI`. An HD file is named by its CASC content key, not by a SHA-256: the index holds the key, so nothing is read. A file whose key is not the table's stays SD, with a log line that names the command. `tools/ci.sh` makes the table again and compares.
-- **From an install.** At start the runtime lays a variant's `ui.kpd` out by the table, from the DDS headers alone, in 70 to 77 ms. It reads and decodes a frame when the canvas first shows it, and builds the consoles' `CONW` in 164 ms. The portraits are Remastered's WebM, found by their own names.
+- **From an install.** At start the runtime lays a variant's `ui.kpd` out by the table, from the DDS headers alone, in 70 to 77 ms. It reads and decodes a frame when the canvas first shows it, and builds the consoles' `CONW` in 164 ms (81 ms after C7). The portraits are Remastered's WebM, found by their own names.
 - **The repack.**
   - A group per variant, `koprulu-ui-<variant>.mpq`, holds its `ui.kpd` (HD2's 35.9 MB, HD's 144.0 MB), read by ranges, with its head in the core.
   - `koprulu-portraits.mpq` holds the portraits' WebM under their raw names (72.8 MB).

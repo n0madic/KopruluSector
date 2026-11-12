@@ -79,6 +79,8 @@ typedef struct {
 	int files_wait;          /* a mission's files: on their way this many more asks (the web's repack group) */
 	int files_fail;          /* then they cannot be had */
 	int files_asks;
+	int language_away;       /* with_language's ruRU behind a group not there yet (the web's): this many more asks */
+	int language_asks;
 } Host;
 
 /* --- the host --- */
@@ -127,6 +129,18 @@ static int host_mission_files(void *ctx, const KpDataMission *m, char *err, size
 		return -1;
 	}
 	return 1;
+}
+
+/* A language's files: ruRU's while language_away are a group's on its way, there after that many asks */
+static int host_language_files(void *ctx, const char *locale, int fetch, char *err, size_t err_size)
+{
+	Host *H = (Host *)ctx;
+	(void)err;
+	(void)err_size;
+	if (H->language_away == 0 || strcmp(locale, "ruRU") != 0) return 1;
+	if (!fetch) return 0;
+	H->language_asks++;
+	return --H->language_away == 0;
 }
 
 /* The world of the game started: only its tileset, for the console's map. */
@@ -306,6 +320,7 @@ static Host *new_host(KpT *T)
 	h->sync_files = host_sync_files;
 	h->quit = host_quit;
 	h->mission_files = host_mission_files;
+	h->language_files = host_language_files;
 	h->world_build = host_world_build;
 	h->world_free = host_world_free;
 	h->world_frame = host_world_frame;
@@ -950,7 +965,7 @@ static int control_shown(Host *H, int id)
 static int shown(const Host *H, const char *name)
 {
 	if (strncmp(name, LOCALES, sizeof LOCALES - 1) != 0) return 1;
-	return strncmp(name, ONLY, sizeof ONLY - 1) == 0 && !(H->no_speech && strncmp(name, SPEECH, sizeof SPEECH - 1) == 0);
+	return !H->language_away && strncmp(name, ONLY, sizeof ONLY - 1) == 0 && !(H->no_speech && strncmp(name, SPEECH, sizeof SPEECH - 1) == 0);
 }
 
 static uint8_t *language_read(void *ctx, const char *name, size_t *size, char *err, size_t err_size)
@@ -1060,6 +1075,57 @@ static void the_language_is_chosen_in_the_main_menu(KpT *T)
 	H->flags.autotest = 1;
 	init(H);
 	kp_t_eq_str(T, H->f.flags->locale, "", "a check: the base's");
+}
+
+/* A language whose files a group not there yet holds (the web's repack, fetched beside the page): listed with its
+ * text and speech; the start's waits for them (kp_flow_languages_ready, asked each frame before kp_flow_init), and one
+ * chosen in the main menu stops the glue at the choice until they came, then the flow starts over in it. */
+static void a_language_waits_for_its_group(KpT *T)
+{
+	Host *H = new_host(T);
+	int k;
+	if (!H) return;
+	with_language(H);
+	H->profile.options &= ~KP_UI_OPTION_EXPANSION_INTRO;
+	snprintf(H->flags.system_locales, sizeof H->flags.system_locales, "ru_RU");
+	H->language_away = 3;
+	kp_t_eq(T, kp_flow_languages_ready(&H->f), 0, "ruRU's group on its way");
+	kp_t_eq_str(T, H->f.flags->locale, "ruRU", "the system's, listed before its files came");
+	kp_t_eq_str(T, H->f.flags->speech, "ruRU", "its speech too");
+	kp_t_ok(T, strstr(H->last_log, "waiting for their files") != NULL, "said: %s", H->last_log);
+	kp_t_eq(T, kp_flow_languages_ready(&H->f), 1, "they came");
+	kp_t_eq(T, H->language_asks, 3, "the text's and the speech's asked, then the text's");
+	init(H);
+	wait_for(H, "rez\\glumain.bin", MENU_FRAMES);
+	kp_t_eq_str(T, control_text(H, LANGUAGE_BUTTON), "z\x04Я\x01зык", "in the language");
+	kp_t_ok(T, H->f.locale.speech != NULL, "its speech's records");
+	/* chosen in the main menu */
+	H = new_host(T);
+	with_language(H);
+	H->profile.options &= ~KP_UI_OPTION_EXPANSION_INTRO;
+	snprintf(H->flags.system_locales, sizeof H->flags.system_locales, "en_US");
+	H->language_away = 1000;
+	kp_t_eq(T, kp_flow_languages_ready(&H->f), 1, "the base's: nothing to wait for");
+	init(H);
+	wait_for(H, "rez\\glumain.bin", MENU_FRAMES);
+	kp_t_ok(T, control_shown(H, LANGUAGE_BUTTON), "Language: ruRU listed");
+	click(H, LANGUAGE_BUTTON);
+	wait_for(H, "koprulu\\language.bin", MENU_FRAMES);
+	click(H, LANGUAGE_TEXT);
+	kp_t_eq_str(T, control_text(H, LANGUAGE_TEXT), "Русский", NULL);
+	click(H, LANGUAGE_OK);
+	for (k = 0; k < MENU_FRAMES && H->language_asks == 0; k++) frame(H);
+	kp_t_eq(T, H->language_asks, 1, "its files asked for");
+	kp_t_ok(T, strstr(H->last_log, "waiting for their files") != NULL, "said: %s", H->last_log);
+	frames(H, 3);
+	kp_t_eq(T, H->language_asks, 4, "asked again each frame");
+	kp_t_eq(T, H->language_changes, 0, "the glue stopped at the choice");
+	H->language_away = 1;
+	frame(H);
+	kp_t_eq(T, H->language_changes, 1, "they came: the flow started over");
+	kp_t_eq_str(T, H->f.flags->locale, "ruRU", NULL);
+	wait_for(H, "rez\\glumain.bin", MENU_FRAMES);
+	kp_t_eq_str(T, control_text(H, LANGUAGE_BUTTON), "z\x04Я\x01зык", "in the language");
 }
 
 /* The speech (stage L5): with a language's speech installed the popup's speech row shows, the speech starts as the
@@ -2824,6 +2890,7 @@ static const KpTest TESTS[] = {
 	{ "languages_match_the_systems_names", languages_match_the_systems_names, 0 },
 	{ "the_language_is_chosen_in_the_main_menu", the_language_is_chosen_in_the_main_menu, 0 },
 	{ "the_speech_is_chosen_apart_from_the_text", the_speech_is_chosen_apart_from_the_text, 0 },
+	{ "a_language_waits_for_its_group", a_language_waits_for_its_group, 0 },
 	{ "history_cinematic_goes_on_from_its_row", history_cinematic_goes_on_from_its_row, 0 },
 	{ "campaign_end_plays_its_cinematics_then_the_epilog", campaign_end_plays_its_cinematics_then_the_epilog, 0 },
 	{ "history_cinematic_at_the_campaigns_end_plays_the_epilog", history_cinematic_at_the_campaigns_end_plays_the_epilog,

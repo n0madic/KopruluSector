@@ -122,6 +122,10 @@ typedef struct {
 	/* whether a mission's files are there (the web fetches its repack's group first: kp_res_group_wanted): 1 they are,
 	 * 0 on their way (the flow asks again each frame), -1 they cannot be had (the reason in err); NULL: always there */
 	int (*mission_files)(void *ctx, const KpDataMission *m, char *err, size_t err_size);
+	/* whether a language's files (its texts and speech) are there (the web fetches its repack's group first): 1 they
+	 * are, or nothing names them; 0 not yet, a group of the data names them (with fetch: on their way, the flow asks
+	 * again each frame); -1 they cannot be had (the reason in err); NULL: always there */
+	int (*language_files)(void *ctx, const char *locale, int fetch, char *err, size_t err_size);
 } KpFlowHost;
 
 typedef struct KpFlow {
@@ -140,7 +144,8 @@ typedef struct KpFlow {
 	KpLocaleGlyphs glyphs;
 	uint8_t *speech_sounds;
 	KpUiLanguages languages;
-	int language_chosen;
+	int language_chosen;  /* the flow starts over in it once its files are there */
+	int language_waiting; /* for them (said once) */
 	const uint8_t *console_art; /* console.kpd (kp_ui_set_console_art), or NULL */
 	size_t console_art_size;
 	KpProfile *profile;    /* loaded; the host's save_profile writes it */
@@ -218,6 +223,10 @@ typedef struct KpFlow {
 /* The flow over its host and data (set in f before): the interface and the video options; --mission's game, or the
  * glue's main menu. 0, else -1 with err. */
 int kp_flow_init(KpFlow *f, char *err, size_t err_size);
+/* The start's languages chosen (read_locale's choice: --locale's, the glue's profile's or system's) and whether their
+ * files are there, which the host asks each frame before kp_flow_init until they are: 1, else 0 while they are on their
+ * way (host.language_files: the web fetches their groups); one that cannot be had is 1 too (said: the base's parts). */
+int kp_flow_languages_ready(KpFlow *f);
 /* A frame: the glue's screen or the game's (its steps on the host's clock, its console), the saves asked for. */
 void kp_flow_frame(KpFlow *f);
 void kp_flow_free(KpFlow *f);

@@ -48,7 +48,8 @@
 
 typedef struct {
 	KpApp app;
-	int ready;    /* the data loaded and the flow started (the web waits for its files first) */
+	int loaded;   /* the data loaded (the web waits for its files first) */
+	int ready;    /* the flow started too (the web fetches its languages' groups first) */
 	int failed;
 	int code;     /* the exit code a script's refusal leaves (KP_SCRIPT_EXIT_*), 0 none */
 	double next_frame; /* when the frame limit lets the next frame be shown */
@@ -258,13 +259,21 @@ static void system_locales(KpAppFlags *f)
 	SDL_Log("languages: the system's %s", f->system_locales[0] ? f->system_locales : "(none)");
 }
 
-static int start(Main *m)
+/* The data, the sound and the movies */
+static int start_data(Main *m)
 {
 	KpApp *a = &m->app;
 	system_locales(&a->flags);
 	if (kp_app_res_open(a, m->error, sizeof m->error) != 0 || kp_app_load_data(a, m->error, sizeof m->error) != 0) return -1;
 	kp_audio_init(&a->audio);
 	kp_app_cine_open(a);
+	return 0;
+}
+
+/* The flow over the data (its languages' files there), the developer's tools, --cine-play's movies */
+static int start_flow(Main *m)
+{
+	KpApp *a = &m->app;
 	if (kp_app_flow_init(a, m->error, sizeof m->error) != 0) return -1;
 	if (kp_dev_init(a) != 0) return -1;
 	if (a->flags.cine_play[0]) { /* the numbers of --cine-play, played before the first screen */
@@ -550,6 +559,21 @@ static void present(Main *m)
 	SDL_GL_SwapWindow(m->app.window);
 }
 
+/* The start's failure: said (a script's refusal, a message box where someone can close it); the program ends */
+static SDL_AppResult start_failed(Main *m)
+{
+	KpApp *a = &m->app;
+	m->failed = 1;
+	SDL_Log("%s", m->error);
+	if (a->script) { /* its mission is checked here, against the loaded list */
+		kp_dev_line("script: %s", m->error);
+		m->code = KP_SCRIPT_EXIT_REFUSED;
+	}
+	/* nobody is there to close it: the run would wait forever */
+	if (!a->flags.headless) SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, KP_APP_TITLE, m->error, a->window);
+	return SDL_APP_FAILURE;
+}
+
 SDL_AppResult SDL_AppIterate(void *appstate)
 {
 	Main *m = (Main *)appstate;
@@ -558,18 +582,16 @@ SDL_AppResult SDL_AppIterate(void *appstate)
 #ifdef __EMSCRIPTEN__
 		if (!EM_ASM_INT(return Module.kp_synced;)) return SDL_APP_CONTINUE;
 #endif
-		m->ready = 1;
-		if (start(m) != 0) {
-			m->failed = 1;
-			SDL_Log("%s", m->error);
-			if (a->script) { /* its mission is checked here, against the loaded list */
-				kp_dev_line("script: %s", m->error);
-				m->code = KP_SCRIPT_EXIT_REFUSED;
-			}
-			/* nobody is there to close it: the run would wait forever */
-			if (!a->flags.headless) SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, KP_APP_TITLE, m->error, a->window);
-			return SDL_APP_FAILURE;
+		if (!m->loaded) {
+			m->loaded = 1;
+			if (start_data(m) != 0) return start_failed(m);
 		}
+		if (!kp_app_flow_languages(a)) { /* the web fetches the start's language: asked again on the next frame */
+			kp_app_groups_frame(a);
+			return SDL_APP_CONTINUE;
+		}
+		m->ready = 1;
+		if (start_flow(m) != 0) return start_failed(m);
 	}
 	if (frame_skipped(m)) return SDL_APP_CONTINUE;
 	kp_app_clock_frame(a);

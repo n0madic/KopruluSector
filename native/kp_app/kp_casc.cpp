@@ -16,7 +16,11 @@ struct KpCascFile {
 
 static void reason(char *err, size_t err_size, const char *what, const char *name)
 {
-	if (err_size) snprintf(err, err_size, "%s %s: CascLib error %u", what, name, (unsigned)GetCascError());
+	if (!err_size) return;
+	if (GetCascError() == ERROR_FILE_OFFLINE) /* named, its bytes not downloaded: a language the install does not hold */
+		snprintf(err, err_size, "%s is not downloaded in this install", name);
+	else
+		snprintf(err, err_size, "%s %s: CascLib error %u", what, name, (unsigned)GetCascError());
 }
 
 KpCasc *kp_casc_open(const char *root, char *err, size_t err_size)

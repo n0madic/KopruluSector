@@ -1236,7 +1236,7 @@ void kp_flow_frame(KpFlow *f)
 		}
 		f->palette_clock = t;
 	}
-	if (f->language_chosen) start_over(f);
+	if (f->language_chosen) start_over(f); /* the glue stopped at the choice: nothing else goes on while it waits */
 }
 
 /* --- the languages (ADR 0016) --- */
@@ -1248,6 +1248,19 @@ static void free_locale(KpFlow *f)
 	free(f->speech_sounds);
 	f->speech_sounds = NULL;
 	memset(&f->locale, 0, sizeof f->locale);
+}
+
+/* host.language_files' answer for a language (1 for the base's, or with no host's answer): with fetch its group asked
+ * for, and one that cannot be had said (1: its parts are the base's) */
+static int language_files(KpFlow *f, const char *id, int fetch)
+{
+	char err[256];
+	int rc;
+	if (!f->host.language_files || !id[0] || strcmp(id, KP_LOCALE_BASE) == 0) return 1;
+	err[0] = 0;
+	rc = f->host.language_files(f->host.ctx, id, fetch, err, sizeof err);
+	if (rc < 0 && fetch) say(f, "language %s: %s", id, err);
+	return rc < 0 && fetch ? 1 : rc;
 }
 
 /* Whether the data has a language's speech (KP_DATA_SPEECH_MARKER: Remastered's languages not downloaded have none) */
@@ -1270,7 +1283,7 @@ static void list_languages(KpFlow *f)
 	KpUiLanguages *l = &f->languages;
 	const KpDefsTable *t = kp_defs_table(f->data->raw.profile, "LANG");
 	size_t at = 1;
-	int k;
+	int k, fetched;
 	memset(l, 0, sizeof *l);
 	l->text = l->speech = l->chosen_text = l->chosen_speech = -1;
 	if (t == NULL || t->size < 1) return;
@@ -1291,8 +1304,10 @@ static void list_languages(KpFlow *f)
 		memcpy(name, t->data + at + 2 + id_n, name_n);
 		name[name_n] = 0;
 		at += 2 + id_n + name_n;
-		l->list[l->count].text = strcmp(id, KP_LOCALE_BASE) == 0 || kp_locale_held(&f->data->raw, id);
-		l->list[l->count].speech = strcmp(id, KP_LOCALE_BASE) == 0 || has_speech(f, id);
+		/* a language whose files a group not there yet holds (the web's) has both */
+		fetched = language_files(f, id, 0) == 0;
+		l->list[l->count].text = strcmp(id, KP_LOCALE_BASE) == 0 || fetched || kp_locale_held(&f->data->raw, id);
+		l->list[l->count].speech = strcmp(id, KP_LOCALE_BASE) == 0 || fetched || has_speech(f, id);
 		l->count++;
 	}
 }
@@ -1414,13 +1429,29 @@ static void read_glyphs(KpFlow *f)
 {
 	KpLocaleFound found;
 	KpError e;
-	int k;
+	int k, rc;
+	double t0 = f->host.clock_ms ? f->host.clock_ms() : 0;
 	memset(&found, 0, sizeof found);
-	if (kp_locale_glyphs(&f->glyphs, &f->data->ui, &f->data->raw, f->text.locale[0] ? &f->text : NULL, &found, &e) < 0) {
-		say(f, "language %s: %s; the fonts' own glyphs", f->flags->locale, e.msg);
+	rc = kp_locale_glyphs(&f->glyphs, &f->data->ui, &f->data->raw, f->text.locale[0] ? &f->text : NULL, &found, &e);
+	if (rc < 0) say(f, "language %s: %s; the fonts' own glyphs", f->flags->locale, e.msg);
+	else if (rc > 0 && f->host.clock_ms) { /* rasterized at each start (ADR 0019, stage C3): its time on a phone */
+		say(f, "glyphs of %s: %d characters in %.1f ms", f->flags->locale, f->glyphs.code_count, f->host.clock_ms() - t0);
 	}
 	for (k = 0; k < found.problem_count; k++) say(f, "language %s: %s", f->flags->locale, found.problems[k]);
 	kp_locale_found_free(&found);
+}
+
+/* The languages listed and the start's text and speech chosen: --locale's, or the glue's (the checks and --mission keep
+ * the base's) */
+static void choose_languages(KpFlow *f)
+{
+	int glue = f->flags->locale[0] == 0 && !keeps_originals(f) && f->flags->mission[0] == 0;
+	memset(&f->languages, 0, sizeof f->languages);
+	if (f->flags->locale[0] != 0 || glue) {
+		list_languages(f);
+		choose_language(f);
+		choose_speech(f);
+	}
 }
 
 /* The language (ADR 0016; ADR 0019, stage C3): the glue's start chooses it and the speech among the languages the data
@@ -1428,14 +1459,8 @@ static void read_glyphs(KpFlow *f)
  * leaves the base's, with one line. The checks and --mission keep the base's text with the original fonts. */
 static void read_locale(KpFlow *f)
 {
-	int glue = f->flags->locale[0] == 0 && !keeps_originals(f) && f->flags->mission[0] == 0;
 	free_locale(f);
-	memset(&f->languages, 0, sizeof f->languages);
-	if (f->flags->locale[0] != 0 || glue) {
-		list_languages(f);
-		choose_language(f);
-		choose_speech(f);
-	}
+	choose_languages(f);
 	read_speech(f);
 	if (f->flags->locale[0] == 0) return;
 	read_text(f);
@@ -1459,7 +1484,16 @@ static void languages_to_ui(KpFlow *f, KpUi *ui)
 static void start_over(KpFlow *f)
 {
 	const KpUiLanguages *l = &f->ui->menus.languages;
+	const char *text = l->chosen_text >= 0 ? l->list[l->chosen_text].id : f->profile->text_locale;
+	const char *speech = l->chosen_speech >= 0 ? l->list[l->chosen_speech].id : f->profile->speech_locale;
 	char err[256];
+	int text_there = language_files(f, text, 1), speech_there = language_files(f, speech, 1);
+	if (!text_there || !speech_there) { /* asked again each frame; the glue stopped at the choice */
+		if (!f->language_waiting) say(f, "glue: the language %s, the speech %s: waiting for their files", text, speech);
+		f->language_waiting = 1;
+		return;
+	}
+	f->language_waiting = 0;
 	f->language_chosen = 0;
 	if (l->chosen_text >= 0) snprintf(f->profile->text_locale, sizeof f->profile->text_locale, "%s", l->list[l->chosen_text].id);
 	if (l->chosen_speech >= 0) {
@@ -1504,6 +1538,22 @@ void kp_flow_toggle_subtitles(KpFlow *f)
 int kp_flow_subtitles(const KpFlow *f)
 {
 	return f->ui != NULL && (f->ui->options & KP_UI_OPTION_SUBTITLES) != 0;
+}
+
+int kp_flow_languages_ready(KpFlow *f)
+{
+	int text, speech;
+	if (!f->host.language_files) return 1;
+	if (!f->language_waiting) choose_languages(f); /* once: read_locale's choice, made again there */
+	text = language_files(f, f->flags->locale, 1);
+	speech = language_files(f, f->flags->speech, 1);
+	if (text && speech) {
+		f->language_waiting = 0;
+		return 1;
+	}
+	if (!f->language_waiting) say(f, "language %s, speech %s: waiting for their files", f->flags->locale, f->flags->speech);
+	f->language_waiting = 1;
+	return 0;
 }
 
 int kp_flow_init(KpFlow *f, char *err, size_t err_size)

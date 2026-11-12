@@ -30,6 +30,19 @@ static int make_dir(const char *path)
 #endif
 }
 
+int kp_fs_size(const char *path, uint64_t *size)
+{
+#ifdef _WIN32
+	struct __stat64 st;
+	if (_stat64(path, &st) != 0) return -1;
+#else
+	struct stat st;
+	if (stat(path, &st) != 0) return -1;
+#endif
+	*size = (uint64_t)st.st_size;
+	return 0;
+}
+
 int kp_fs_mkdirs(const char *path, char *err, size_t err_size)
 {
 	char p[KP_FS_PATH];

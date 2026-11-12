@@ -67,11 +67,12 @@ typedef struct {
 	int dialogs_translated, dialogs_kept, dialogs_laid_out;
 	KpUiFile *scripts;    /* the language's rez\*.txt, by the base's paths, each malloc'd */
 	int script_count;
-	int scripts_left;     /* the base's scripts the language has none of */
 	int subtitles;        /* the movies whose subtitles read */
 	KpLocaleFound found;
 } KpLocale;
 
+/* Whether a file of the base's glue is a script a language may translate (rez\\*.txt: the credits, the epilogues). */
+int kp_locale_script(const KpUiFile *f);
 /* Whether raw holds the language's strings (KP_LOCALE_PROBE). */
 int kp_locale_held(const KpFiles *raw, const char *locale);
 /* The language over the base d (its profile's rules): 0, the parts that do not fit kept the base's and named in

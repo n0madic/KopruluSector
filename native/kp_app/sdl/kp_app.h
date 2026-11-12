@@ -460,6 +460,9 @@ void kp_hd_ui_free(KpApp *a);
 KpRect kp_world_view(const KpApp *a);
 
 /* kp_app_flow.c: the flow's host over SDL (kp_flow.h has the flow) */
+/* Whether the start's language and speech have their files (kp_flow_languages_ready; the web fetches their repack's
+ * group): 0 asked again each frame before kp_app_flow_init. */
+int kp_app_flow_languages(KpApp *a);
 /* The flow over the loaded data: the profile, the interface, --mission's game or the glue's main menu. */
 int kp_app_flow_init(KpApp *a, char *err, size_t err_size);
 void kp_app_flow_frame(KpApp *a);

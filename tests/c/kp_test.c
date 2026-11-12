@@ -19,6 +19,7 @@
 #else
 #include <dirent.h>
 #include <sys/stat.h>
+#include <unistd.h>
 #endif
 
 static const KpSuite *const SUITES[] = {
@@ -418,11 +419,11 @@ static void remove_tree(const char *path)
 			if (strcmp(e->d_name, ".") == 0 || strcmp(e->d_name, "..") == 0) continue;
 			snprintf(p, sizeof p, "%s/%s", path, e->d_name);
 			if (lstat(p, &st) == 0 && S_ISDIR(st.st_mode)) remove_tree(p);
-			else remove(p);
+			else unlink(p);
 		}
 		closedir(d);
 	}
-	remove(path);
+	rmdir(path); /* not remove(): musl's (wasm) takes a folder for rmdir only when unlink says EISDIR, macOS says EPERM */
 #endif
 }
 

@@ -54,18 +54,24 @@ int kp_files_wav(const KpFiles *f, const char *name, KpWavInfo *w, KpError *err)
 	return rc == 0 ? 1 : 0;
 }
 
-uint8_t *kp_files_pcx(const KpFiles *f, const char *name, int32_t *w, int32_t *h, KpError *err)
+uint8_t *kp_files_pcx_pixels(const uint8_t *data, size_t size, int32_t *w, int32_t *h)
 {
-	size_t size;
-	uint8_t *data = kp_files_need(f, name, &size, err), *px = NULL;
-	if (!data) return NULL;
+	uint8_t *px = NULL;
 	if (kp_ui_pcx(data, size, w, h, NULL, 0) != 0 || *w <= 0 || *h <= 0
 		|| !(px = (uint8_t *)malloc((size_t)*w * (size_t)*h))
 		|| kp_ui_pcx(data, size, w, h, px, (size_t)*w * (size_t)*h) != 0) {
-		snprintf(err->msg, sizeof err->msg, "%s: not a PCX the game reads", name);
 		free(px);
-		px = NULL;
+		return NULL;
 	}
+	return px;
+}
+
+uint8_t *kp_files_pcx(const KpFiles *f, const char *name, int32_t *w, int32_t *h, KpError *err)
+{
+	size_t size;
+	uint8_t *data = kp_files_need(f, name, &size, err), *px;
+	if (!data) return NULL;
+	if (!(px = kp_files_pcx_pixels(data, size, w, h))) snprintf(err->msg, sizeof err->msg, "%s: not a PCX the game reads", name);
 	free(data);
 	return px;
 }

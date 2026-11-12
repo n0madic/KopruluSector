@@ -26,7 +26,8 @@
 # groups (koprulu-locale-<id>.mpq, kp_convert repack from StarCraft: Remastered) with KOPRULU_LOCALES=auto|none|<ids>:
 # auto, the default, stages every language group of the repack; none stages none, the game in its base language; a
 # list ("ruRU deDE") stages those, each of which the repack must hold. The computers and phones carry them; the web
-# carries none yet. Bundles go to
+# lays them beside the page and fetches a language's group whole when the language is the start's or chosen in the
+# main menu. Bundles go to
 # dist/product/<platform> (KOPRULU_DIST: another folder for <platform>, such as a second bundle of another
 # conversion); the converter's output (generated/, or KOPRULU_GENERATED: another --out directory, such as a
 # conversion from StarCraft: Remastered alone, whose repack is generated/repack-single or generated/repack of it)
@@ -116,13 +117,10 @@ if [ -n "$HD_GROUPS" ] && [ -f "$GENERATED/$REPACK/koprulu-portraits.mpq" ]; the
 fi
 echo "product: HD sets${HD_GROUPS:- none}${UI_GROUPS:+, interface$UI_GROUPS} (the repack's of $HD_SETS: kp_convert repack --hd from StarCraft: Remastered)" >&2
 # the files of the repack a bundle carries (relative to $GENERATED): the cinematics' groups KOPRULU_CINEMATICS
-# stages; the HD sets' groups of the platform and their interface's; the languages' groups (their texts and speech) KOPRULU_LOCALES stages,
-# not to the web
-# TODO: the web fetches a language's group when the language is chosen
+# stages; the HD sets' groups of the platform and their interface's; the languages' groups (their texts and speech) KOPRULU_LOCALES stages
 GENERATED_DIR="$(cd "$GENERATED" && pwd)"
 LANGUAGE_GROUPS="" # each name with a space before it (repack_files looks for " NAME ")
 LOCALES="${KOPRULU_LOCALES:-auto}"
-if [ "$PLATFORM" = web ]; then LOCALES=none; fi
 case "$LOCALES" in
   auto) for group in "$GENERATED_DIR/$REPACK"/koprulu-locale-*.mpq; do
       if [ -f "$group" ]; then LANGUAGE_GROUPS="$LANGUAGE_GROUPS $(basename "$group")"; fi
@@ -192,7 +190,8 @@ stage_data() {
 }
 
 # The web's groups beside the page (stage R4b; a server with Range requests: tools/web_serve.py): the repack's groups
-# but its core, fetched whole (ADR 0018, stage D8b), the cinematics' by each movie's range (ADR 0019, stage C4), the
+# but its core, fetched whole (ADR 0018, stage D8b; the languages' when one is wanted: kp_app_flow_languages), the
+# cinematics' by each movie's range (ADR 0019, stage C4), the
 # HD set's by each page's (stage C5), the interface's by each frame's and the portraits' by each clip's (stage C6);
 # web_sizes.txt (stage_data) names the ranged ones and their sizes.
 stage_web_fetched() {

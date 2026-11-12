@@ -16,6 +16,8 @@ extern "C" {
 int kp_fs_mkdirs(const char *path, char *err, size_t err_size);
 /* A file's bytes, malloc'd (NUL terminated past *size), or NULL: err empty when there is no such file. */
 uint8_t *kp_fs_read(const char *path, size_t *size, char *err, size_t err_size);
+/* A file's size in bytes: 0, or -1 when there is no such file. */
+int kp_fs_size(const char *path, uint64_t *size);
 /* The bytes written to path through a file beside it renamed over it (a reader never sees half a file): 0, or -1. */
 int kp_fs_write(const char *path, const void *data, size_t size, char *err, size_t err_size);
 /* kp_fs_write unless path holds those bytes already: 1 written, 0 the same, -1 with the reason. */

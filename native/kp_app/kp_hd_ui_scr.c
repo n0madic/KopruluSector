@@ -796,18 +796,36 @@ uint8_t *kp_hd_ui_scr_rgba(const KpHdUiScr *s, KpResReader *h, int32_t frame, Kp
 
 /* --- the consoles' art (CONW) --- */
 
+#define NEAREST_BITS 12 /* art_cells' nearest colours kept by mean colour: a console's cells repeat a few */
+
+/* The place in the race's colours of the nearest to (r, g, b), the first of the nearest. */
+static int nearest(const uint8_t (*rgb)[3], int colours, int32_t r, int32_t g, int32_t b)
+{
+	int32_t best_d = INT32_MAX;
+	int best = 0, i;
+	for (i = 0; i < colours; i++) {
+		int32_t dr = rgb[i][0] - r, dg = rgb[i][1] - g, db = rgb[i][2] - b, d = dr * dr + dg * dg + db * db;
+		if (d < best_d) {
+			best_d = d;
+			best = i;
+		}
+	}
+	return best;
+}
+
 /* An RGBA image of PLAN_SCALE at one CONW texel per logical pixel (hd_ui.py art_cells): 0 none, else 1 + the place in
  * the race's colours of the nearest to the texels' colour (their alpha-weighted mean), KP_UI_CONSOLE_FRINGE where they
- * cover less than half. */
+ * cover less than half. A mean seen before takes its nearest from a small table (the search over 127 colours was most
+ * of the consoles' build at start); without memory for it each is searched. */
 static void art_cells(const uint8_t *rgba, int32_t w, int32_t h, const uint8_t (*rgb)[3], int colours, uint8_t *out)
 {
 	const int32_t s = PLAN_SCALE;
-	int32_t x, y, dx, dy, c, i;
+	uint32_t *seen = (uint32_t *)calloc((size_t)1 << NEAREST_BITS, sizeof *seen); /* 1, the mean's 24 bits, its 7 */
+	int32_t x, y, dx, dy, c;
 	for (y = 0; y < h / s; y++) {
 		for (x = 0; x < w / s; x++) {
-			uint32_t acc[3] = { 0, 0, 0 }, alpha = 0;
-			int best = 0;
-			int64_t best_d = -1;
+			uint32_t acc[3] = { 0, 0, 0 }, alpha = 0, mean, key, *slot;
+			int best;
 			for (dy = 0; dy < s; dy++) {
 				for (dx = 0; dx < s; dx++) {
 					const uint8_t *t = rgba + ((size_t)(y * s + dy) * (size_t)w + (size_t)(x * s + dx)) * 4;
@@ -817,20 +835,19 @@ static void art_cells(const uint8_t *rgba, int32_t w, int32_t h, const uint8_t (
 			}
 			out[(size_t)y * (size_t)(w / s) + (size_t)x] = 0;
 			if (!alpha) continue;
-			for (i = 0; i < colours; i++) {
-				int64_t d = 0;
-				for (c = 0; c < 3; c++) {
-					int64_t v = (int64_t)rgb[i][c] - (int64_t)(acc[c] / alpha);
-					d += v * v;
-				}
-				if (best_d < 0 || d < best_d) {
-					best_d = d;
-					best = i;
-				}
+			mean = (acc[0] / alpha) << 16 | (acc[1] / alpha) << 8 | acc[2] / alpha;
+			key = 1u << 24 | mean;
+			slot = seen ? &seen[(mean * 2654435761u) >> (32 - NEAREST_BITS)] : NULL;
+			if (slot && *slot >> 7 == key) {
+				best = (int)(*slot & 0x7f);
+			} else {
+				best = nearest(rgb, colours, (int32_t)(mean >> 16), (int32_t)(mean >> 8 & 0xff), (int32_t)(mean & 0xff));
+				if (slot) *slot = key << 7 | (uint32_t)best;
 			}
 			out[(size_t)y * (size_t)(w / s) + (size_t)x] = (uint8_t)((1 + best) | (alpha < 128u * s * s ? KP_UI_CONSOLE_FRINGE : 0));
 		}
 	}
+	free(seen);
 }
 
 /* A tile's first copy's left column in the console PCX (logical; hd_ui.py tile_origin), over its piece at piece_x. */
@@ -891,14 +908,13 @@ uint8_t *kp_hd_ui_scr_console(KpRes *r, KpResReader *h, const KpFiles *sd, size_
 			goto failed;
 		}
 		/* its colours: the most used indices of its PCX but 0, by count (then index) */
-		if (!(pixels = kp_files_pcx(sd, path, &pw, &ph, err))) goto failed;
-		if (!(raw = kp_files_need(sd, path, &i, err)) || kp_scr_pcx_palette(raw, i, palette) != 0) {
-			if (raw) fail(err, path, "no palette");
-			free(raw);
-			free(pixels);
+		if (!(raw = kp_files_need(sd, path, &i, err))) goto failed;
+		pixels = kp_scr_pcx_palette(raw, i, palette) == 0 ? kp_files_pcx_pixels(raw, i, &pw, &ph) : NULL;
+		free(raw);
+		if (!pixels) {
+			fail(err, path, "not a PCX with a palette");
 			goto failed;
 		}
-		free(raw);
 		memset(counts, 0, sizeof counts);
 		for (i = 0; i < (size_t)pw * (size_t)ph; i++) counts[pixels[i]]++;
 		free(pixels);

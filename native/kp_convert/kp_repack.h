@@ -104,7 +104,8 @@ typedef struct {
 	struct {
 		char file[64];
 		int files;
-		uint64_t bytes; /* stored */
+		uint64_t bytes;   /* its files' as stored, before the archive's compression */
+		uint64_t archive; /* the archive's on the disk */
 	} groups[KP_REPACK_GROUPS];
 	int statuses[KP_RES_STATUS_COUNT];
 	int missing, damaged;

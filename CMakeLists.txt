@@ -217,7 +217,7 @@ file(GLOB KP_TEST_SOURCES CONFIGURE_DEPENDS ${KP_TESTS_DIR}/*.c)
 add_executable(kp_test ${KP_TEST_SOURCES})
 kp_target(kp_test CXX)
 target_include_directories(kp_test PRIVATE ${KP_TESTS_DIR})
-target_link_libraries(kp_test PRIVATE kp_oracle_lib kp_app_core kp_gfx_passes) # kp_app_core's zlib: test_original's PNGs too
+target_link_libraries(kp_test PRIVATE kp_oracle_lib kp_gfx_passes) # kp_app_core (zlib for test_original's PNGs too) through the oracle's
 if(KP_ENCODERS) # test_encoders, test_convert: kp_vpx is the build with VP9's encoder then
 	target_compile_definitions(kp_test PRIVATE KP_ENCODERS=1)
 	target_link_libraries(kp_test PRIVATE kp_convert_lib)

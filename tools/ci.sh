@@ -59,7 +59,11 @@
 #     (generated/repack-single/koprulu-cinematics*.mpq) and runs the cine check (every cinematic decoded to its end,
 #     the first pictures also drawn by the GPU); unset or none (the default here, whatever product.sh's auto would
 #     take), the products are built without them (the player and its suite, over libvpx, are in every build);
-#   KOPRULU_WEB=1 builds the product for the web (tools/product.sh web debug, needs emcmake);
+#   KOPRULU_WEB=1 builds the product for the web (tools/product.sh web debug, needs emcmake); with KOPRULU_SCR also a
+#     web bundle over Remastered's repack in groups (kp_convert repack --hd hd2 --locales ruRU into build/web_scr), run
+#     in a headless Chrome (tools/web_run.py; KOPRULU_CHROME names another): ruRU's group fetched whole before the
+#     glue starts in it, the first start's movie fetched by its range and decoded to its end, and hd_game.kps on
+#     terran02 over the HD2 art's pages, frames and portraits fetched by their ranges;
 #   KOPRULU_ANDROID=1 builds the APK and runs the play scripts, the autotest, the touch script and the frame benchmark
 #     on the attached, unlocked phone: only for the changes that need a real phone (docs/phaseS.md, "Device runs");
 #   KOPRULU_CAPTURES=<dir> with KOPRULU_ORIGINAL composes the full-game emulator's captured frames
@@ -685,6 +689,37 @@ fi
 if [ -n "${KOPRULU_WEB:-}" ]; then
   step "product (web, debug)"
   KOPRULU_CINEMATICS="$CINEMATICS" tools/product.sh web debug >/dev/null
+  if [ -n "${KOPRULU_SCR:-}" ]; then
+    # Remastered's repack in groups beside the page (ADR 0019), the page in a headless Chrome: a language's group
+    # fetched whole (kp_app_flow_languages), a movie by its range (kp_app_cine.c), the HD2 art's pages, interface
+    # frames and portraits by theirs (kp_app_hd.c, kp_app_hd_ui.c); a run's console in build/web_<name>.log
+    step "the web over Remastered's repack in groups (headless Chrome): ruRU's group, a movie, the HD2 art"
+    rm -rf build/web_scr
+    mkdir -p build/web_scr/scenarios build/web_scr/viewer # a debug bundle's test scenarios: none here
+    logged build/repack_web_scr.log 1 build/cmake/kp_convert repack "$KOPRULU_SCR" --hd hd2 --locales ruRU \
+      --out build/web_scr/repack
+    KOPRULU_GENERATED=build/web_scr KOPRULU_CINEMATICS=hd2 KOPRULU_LOCALES=ruRU KOPRULU_DIST=build/web_scr/dist \
+      tools/product.sh web debug >/dev/null
+    web_run() { # NAME UNTIL ARG...: the bundle's page until a console line matches UNTIL
+      local name="$1" until="$2"
+      shift 2
+      "$PYTHON" tools/web_run.py build/web_scr/dist/web "build/web_$name.log" --until "$until" --seconds 300 -- "$@"
+    }
+    # a new profile (the browser's is the run's own): the glue starts with the first start's intro, Blizzard's logo first
+    web_run language '^cinematics: [^ ]+ ended after ' --locale ruRU
+    grep -qE '^data: fetching koprulu-locale-ruru\.mpq$' build/web_language.log
+    grep -qE '^language ruRU, speech ruRU: waiting for their files$' build/web_language.log
+    grep -qE '^speech of ruRU: [0-9]+ voices$' build/web_language.log
+    grep -E '^cinematics: [^ ]+ ended after ' build/web_language.log
+    sed -nE 's/^cinematics: [^ ]+ ended after .*; ([0-9]+) of ([0-9]+) frames decoded, ([0-9]+) pictures shown$/\1 \2 \3/p' \
+      build/web_language.log | awk '$1 == $2 && $3 > 0 { ok = 1 } END { exit !ok }' # every frame, pictures shown
+    web_run hd_game '^SPIKE script hd_game: [0-9]+ steps, [0-9]+ failures$' --script generated/scripts/hd_game.kps --script-out /tmp/hd_game \
+      --mission terran/terran02
+    grep -E '^SPIKE script hd_game: [0-9]+ steps, [0-9]+ failures$' build/web_hd_game.log
+    grep -qE '^SPIKE script hd_game: [0-9]+ steps, 0 failures$' build/web_hd_game.log
+    grep -qE "Remastered's hd2 art \(" build/web_hd_game.log
+    grep -qE "Remastered's hd2 interface art \(" build/web_hd_game.log
+  fi
 fi
 
 if [ -n "${KOPRULU_ANDROID:-}" ]; then

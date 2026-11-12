@@ -235,10 +235,23 @@ static int host_mission_files(void *ctx, const KpDataMission *m, char *err, size
 	return kp_app_group(a, file, err, err_size);
 }
 
-int kp_app_flow_init(KpApp *a, char *err, size_t err_size)
+/* A language's files: there unless its repack's group is not open yet (the web's, fetched beside the page: kp_app_group;
+ * without fetch, 0 tells there is one to fetch) */
+static int host_language_files(void *ctx, const char *locale, int fetch, char *err, size_t err_size)
+{
+	KpApp *a = (KpApp *)ctx;
+	char prefix[64], file[KP_APP_GROUP_FILE];
+	snprintf(prefix, sizeof prefix, "locales/%s/", locale);
+	if (!kp_res_group_wanted(a->res, prefix, file, sizeof file)) return 1;
+	return fetch ? kp_app_group(a, file, err, err_size) : 0;
+}
+
+/* The flow's host, data and profile (once, before its languages are asked for or it starts) */
+static void flow_setup(KpApp *a)
 {
 	KpFlow *f = &a->flow;
 	KpFlowHost *h = &f->host;
+	if (h->ctx == a) return;
 	kp_app_load_profile(a);
 	h->ctx = a;
 	h->now = host_now;
@@ -268,6 +281,7 @@ int kp_app_flow_init(KpApp *a, char *err, size_t err_size)
 	h->exists = host_exists;
 	h->language = host_language;
 	h->mission_files = host_mission_files;
+	h->language_files = host_language_files;
 	f->flags = &a->flags;
 	f->data = &a->data;
 	f->identity = &a->identity;
@@ -278,7 +292,18 @@ int kp_app_flow_init(KpApp *a, char *err, size_t err_size)
 #ifdef __EMSCRIPTEN__
 	f->exit_to_menu = 1; /* the page goes on with the main menu */
 #endif
-	return kp_flow_init(f, err, err_size);
+}
+
+int kp_app_flow_languages(KpApp *a)
+{
+	flow_setup(a);
+	return kp_flow_languages_ready(&a->flow);
+}
+
+int kp_app_flow_init(KpApp *a, char *err, size_t err_size)
+{
+	flow_setup(a);
+	return kp_flow_init(&a->flow, err, err_size);
 }
 
 void kp_app_flow_frame(KpApp *a) { kp_flow_frame(&a->flow); }

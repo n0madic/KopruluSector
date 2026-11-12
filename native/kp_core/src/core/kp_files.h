@@ -36,6 +36,8 @@ uint8_t *kp_files_head(const KpFiles *f, const char *name, size_t want, size_t *
 /* A WAV's header (kp_wav_info) from its first bytes, the whole file when its data chunk starts later: 1 parsed, 0 present
  * but refused by the original's parser, -1 absent, -2 an error in err. */
 int kp_files_wav(const KpFiles *f, const char *name, KpWavInfo *w, KpError *err);
+/* A PCX's pixels (w * h palette indices, malloc'd): NULL when it is not one the game reads. */
+uint8_t *kp_files_pcx_pixels(const uint8_t *data, size_t size, int32_t *w, int32_t *h);
 /* A PCX the data needs, its pixels decoded (kp_ui_pcx), malloc'd, *w by *h: NULL with the reason. */
 uint8_t *kp_files_pcx(const KpFiles *f, const char *name, int32_t *w, int32_t *h, KpError *err);
 /* SBmpLoadImage into a `want`-byte buffer (kpd._pcx_prefix): a PCX's first `want` pixel bytes, row-major, into out; 0,

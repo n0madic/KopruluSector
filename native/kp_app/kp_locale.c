@@ -1193,6 +1193,11 @@ static void check_tags(Build *b, const char *name, const uint8_t *t, size_t n)
 	}
 }
 
+int kp_locale_script(const KpUiFile *f)
+{
+	return f->path_len >= 8 && same_nocase(f->path, "rez\\", 4) && same_nocase(f->path + f->path_len - 4, ".txt", 4);
+}
+
 static void build_scripts(Build *b)
 {
 	KpLocale *l = b->l;
@@ -1207,15 +1212,10 @@ static void build_scripts(Build *b)
 		char path[PATH], name[PATH];
 		uint8_t *data;
 		size_t size = 0;
-		if (f->path_len < 8 || !same_nocase(f->path, "rez\\", 4)
-			|| !same_nocase(f->path + f->path_len - 4, ".txt", 4))
-			continue;
+		if (!kp_locale_script(f)) continue;
 		snprintf(name, sizeof name, "%.*s", (int)f->path_len, f->path);
 		snprintf(path, sizeof path, REZ "%s", b->locale, name + 4);
-		if (!(data = read_raw(b, path, &size, 0))) {
-			l->scripts_left++;
-			continue;
-		}
+		if (!(data = read_raw(b, path, &size, 0))) continue; /* the base's is played */
 		if (!kp_text_valid_utf8(data, size)) {
 			problem(&l->found, "%s: not UTF-8", name);
 			free(data);

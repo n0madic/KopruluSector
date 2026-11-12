@@ -26,7 +26,7 @@ Not included: multiplayer, Battle.net, replays and custom (UMS) maps.
 
 | What | For |
 |---|---|
-| Python 3.10+ with [Pillow](https://pypi.org/project/Pillow/) (optional) | no part of the game or of its data ([ADR 0019](docs/adr/0019-install-or-repack-converter-in-c.md)): the web build's server (`tools/web_serve.py`), the compiled tables' generator (`tools/defs_c.py`), the research tools and their readers (`tools/research/scdata`), the oracles and the checks of `tools/ci.sh` that use them (`python3 -m pip install Pillow`) |
+| Python 3.10+ with [Pillow](https://pypi.org/project/Pillow/) (optional) | no part of the game or of its data ([ADR 0019](docs/adr/0019-install-or-repack-converter-in-c.md)): the web build's server (`tools/web_serve.py`) and its runs in a headless Chrome (`tools/web_run.py`), the compiled tables' generator (`tools/defs_c.py`), the research tools and their readers (`tools/research/scdata`), the oracles and the checks of `tools/ci.sh` that use them (`python3 -m pip install Pillow`) |
 | [StormLib](https://github.com/ladislav-zezula/StormLib) (`brew install stormlib`, Debian/Ubuntu `libstorm-dev`) | the research tools and their tests, which read the 1.17 install's MPQ archives. `kp_convert` and the game build their own from the sources `tools/toolchain/fetch.sh` downloads. `KOPRULU_STORMLIB` names the library when the loader does not find it (on Windows `StormLib.dll` or `storm.dll`) |
 | GNU make (optional) | the shortcuts of the [Makefile](#quick-start-with-make) |
 | FFmpeg (`ffmpeg`, `ffprobe` on the `PATH`) (optional) | research only: the golden of the 1.17 movies' decodes (`tools/oracle/export_smk_ffmpeg.py`, which `tools/ci.sh` checks when FFmpeg is there) and the research readers' Remastered movies. The game decodes, and `kp_convert` encodes, the movies, sounds, music and speech with their own libraries |
@@ -179,7 +179,7 @@ What goes into a bundle is chosen by environment variables. Each defaults to eve
 | Variable | Values | Meaning |
 |---|---|---|
 | `KOPRULU_CINEMATICS` | `auto`, `none`, `sd`, `hd2`, `both` | the repack's cinematics groups (`auto`: HD2 if the repack has it, else SD) |
-| `KOPRULU_LOCALES` | `auto`, `none`, `"ruRU deDE"` | the languages: the repack's language groups (`auto`: each it has; not on the web yet) |
+| `KOPRULU_LOCALES` | `auto`, `none`, `"ruRU deDE"` | the languages: the repack's language groups (`auto`: each it has; the web fetches one when its language is the start's or chosen) |
 | `KOPRULU_PHONE_BLOCKS` | `astc`, `etc2` | the texture format of a phone's HD art: the repack's set `hd2-astc` or `hd2-etc2`. ASTC is the default. Use ETC2 for devices without ASTC, which otherwise draw the original art |
 | `KOPRULU_GENERATED` | a folder | the converter's output, if it is not `generated/` |
 | `KOPRULU_DIST` | a folder | where the bundles go instead of `dist/product/`, such as a second bundle of another conversion |
@@ -198,7 +198,9 @@ What goes into a bundle is chosen by environment variables. Each defaults to eve
   python3 tools/web_serve.py --dir dist/product/web --port 8793
   ```
 
-  Then open `http://localhost:8793/`.
+  Then open `http://localhost:8793/`. A language's group is fetched whole when the language is the start's or is
+  chosen in the main menu. `tools/web_run.py BUNDLE LOG --until REGEX -- ARGS` runs the page in a headless Chrome and
+  keeps its console lines (`tools/ci.sh` checks the web that way).
 - **Android:** install the APK with `adb install -r dist/product/android/KopruluSector.apk`. The data is packed inside the APK.
 - **iOS:** the build is unsigned. Sign it in Xcode (`build/app-ios`) to install it on a device, or run the `ios-sim`
   build in the Simulator.

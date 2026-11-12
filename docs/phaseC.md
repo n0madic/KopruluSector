@@ -60,7 +60,7 @@ The converter becomes `kp_convert`, in C, sharing its builders with the runtime.
 
 **Open after C0:**
 - The encoders' generic C build (`generic-enc`) is not compared with the SIMD builds' bytes.
-- Not measured yet: the anims' read with a cold cache (C5; still open after it), the glyphs on the Fold7 (C3), the language group on the web (C7).
+- Not measured yet: the anims' read with a cold cache (C5; still open after it), the glyphs on the Fold7 (C3), the language group on the web (C7). Measured after C7 ([below](#after-c7-the-open-items-2026-11-12)), but for the glyphs on the Fold7.
 - On Linux with GCC 15.2, `tests/c/test_res.c`'s `dir_path` tripped `-Werror=restrict` at `-O3`: a false overlap between two members of one structure, older than phase C. Resolved in C1: the folder is the test's own string (`kp_t_temp_dir`).
 - `kp_test` did not build for Windows (`mkdir` with a mode, among others). Resolved in C1: it builds with mingw-w64 and runs under Wine.
 
@@ -110,9 +110,9 @@ A command writes a file only when its bytes change, and says how many it wrote.
 - **`kp_res_raw_stream_open` waits for its consumer**, the HD page thread of C5. `extract` reads a raw CASC name through `kp_res_raw_read`.
 
 **Open after C1:**
-- The old `generated/cache/repack-ogg/` is not read any more; it can be deleted by hand.
+- The old `generated/cache/repack-ogg/` is not read any more; it can be deleted by hand. Deleted after C7.
 - For C3: the languages' second escaping (a quote `\"`, a backslash `\\\\`; `rebuild.LANGUAGE_ESCAPES`, undone since 2026-11-12) goes into `kp_locale.c` with the rest of the XML values' rules.
-- macOS's linker warns of `libkp_app_core.a` given twice when it links `kp_test`; harmless.
+- macOS's linker warns of `libkp_app_core.a` given twice when it links `kp_test`; harmless. Resolved after C7: `kp_test` links it once, through the oracle's library.
 
 ## C2 as built (2026-11-12)
 
@@ -155,7 +155,7 @@ Each is cached as `<sha256>-q3-s<serial>-speech.ogg`. From `/Applications/StarCr
 
 **Open after C2:**
 - The Ogg bytes still differ by processor (C1); the listings are equal.
-- Remastered's repack logs six `cannot size locales/enUS/...: CascLib error 1007` lines (enUS lines of `expterran/terran02` and `terran05b` offline in this install), not looked into.
+- Remastered's repack logs six `cannot size locales/enUS/...: CascLib error 1007` lines (enUS lines of `expterran/terran02` and `terran05b` offline in this install), not looked into. Resolved after C7: `ERROR_FILE_OFFLINE`, the install's enUS speech not downloaded; said once, in words.
 - The full `kp_test` under Wine stopped with a stack overflow (`___chkstk_ms`). The cause is `test_session`'s tests: each puts two `KpProfile`s (1.26 MB each) on the main thread's stack, and mingw gives that thread 2 MB, where macOS and Linux give 8 MB. The app keeps its profile inside `KpApp`, not on the stack. With the executable's stack reserve raised to 8 MB, all 25 tests pass. The link flag comes with C3. `test_save` stopped there too, with no output; under 8 MB it runs on.
 
 ## C3 as built (2026-11-12)
@@ -173,7 +173,7 @@ Each is cached as `<sha256>-q3-s<serial>-speech.ogg`. From `/Applications/StarCr
 
 **The interface takes structures.** `KpUiLocale` holds the parts as pointers (`tbl`, `dlgs`, `pool`, `files`, `supplements`, `vector_fonts`, `speech`), not containers; `kp_ui_set_locale` checks each against the base as before. The cinematics keep the pack's own index (`KpAppCine.pack`) and lay the language's `SUBS` over a copy before each run and check (`kp_cine_subs_overlay` over the bytes). The overlay readers are gone: `KP_FLOW_LOCALE_FILES`, `overlay_parse`, `LOCS`, the kinds' and schemas' defines.
 
-**`kp_convert locale-check DIR [--locale L|all] [--out DIR]`** builds every part of each language a source holds, the 64 missions' strings and the glyphs, and writes `<out>/reports/locale-<loc>.json` in the converter's form (tables, dialogs, scripts, missions, subtitles, glyphs, exceptions, mended, problems); any problem exits 1. From `/Applications/StarCraft`: deDE, frFR, plPL, ruRU, 0 problems, the reports equal the Python converter's but `scripts.base`, a count where it was a list. One language takes 1.3 s from the install, 0.7 s from the repack.
+**`kp_convert locale-check DIR [--locale L|all] [--out DIR]`** builds every part of each language a source holds, the 64 missions' strings and the glyphs, and writes `<out>/reports/locale-<loc>.json` in the converter's form (tables, dialogs, scripts, missions, subtitles, glyphs, exceptions, mended, problems); any problem exits 1. From `/Applications/StarCraft`: deDE, frFR, plPL, ruRU, 0 problems, the reports equal the Python converter's but `scripts.base`, a count where it was a list (a list again after C7). One language takes 1.3 s from the install, 0.7 s from the repack.
 
 **The repack's language groups hold the texts.** `kp_convert repack` from Remastered adds to each `koprulu-locale-<loc>.mpq` exactly the files the runtime reads for the language: `kp_locale_names` runs `kp_locale_held`, `kp_locale_build` and `kp_locale_mission` for each catalog mission over a `KpFiles` that records each name, so no list is kept apart. The core gets the TrueType pair (the base's vector fonts need it too). The groups grow by about 0.15 MB each (deDE 78.6 MB, frFR 71.5 MB, plPL 73.8 MB, ruRU 70.8 MB), `koprulu.mpq` by 1 MB (132.2 MB). A group written at C2 holds no texts: the language's text stays the base's.
 
@@ -181,7 +181,7 @@ Each is cached as `<sha256>-q3-s<serial>-speech.ogg`. From `/Applications/StarCr
 
 **The tools.**
 - `tools/ci.sh`: `kp_convert locale-check` over `KOPRULU_SCR` replaces `converter locale`, and its list drives the product's language runs: each language's menu from the install and from Remastered's repack, terran01 with its speech (`--data . --data "$KOPRULU_SCR" --locale LOC`). `test_locale.the_languages_equal_the_converters` runs again over the repack, beside `test_speech`'s two.
-- `tools/product.sh`: `KOPRULU_LOCALES` picks the repack's language groups (`auto`: each it has); `generated/locale/` and `glyphs.kpd` are no longer staged; the web carries none (`TODO`).
+- `tools/product.sh`: `KOPRULU_LOCALES` picks the repack's language groups (`auto`: each it has); `generated/locale/` and `glyphs.kpd` are no longer staged; the web carries none (`TODO`; since the after-C7 work it does).
 - `Makefile`: `locale-check` replaces `locale` and `fnt-tool`.
 
 **Windows' stack.** Every executable on Windows links an 8 MB main-thread stack (`KP_STACK_BYTES` in `CMakeLists.txt`, macOS's and Linux's; mingw's default is 2 MB), the open item of C2: under Wine `test_session`, `test_save`, `test_locale`, `test_cine`, `test_flow` and `test_convert` pass, 141 tests.
@@ -194,9 +194,9 @@ Each is cached as `<sha256>-q3-s<serial>-speech.ogg`. From `/Applications/StarCr
 - **`kp_locale_names` records the reads** rather than listing names, so the repack holds what the runtime reads and nothing else.
 
 **Open after C3:**
-- `generated/locale/` from the Python converter stays on disk where it was written; nothing reads it (remove it by hand).
-- The glyphs' time on the Fold7 is not measured (no device attached); C7's device run covers the language with its speech.
-- The web carries no language group yet (C7).
+- `generated/locale/` from the Python converter stays on disk where it was written; nothing reads it (remove it by hand). Deleted after C7.
+- The glyphs' time on the Fold7 is not measured (no device attached); C7's device run covers the language with its speech. Still open after C7: the start logs the time now.
+- The web carries no language group yet (C7). Resolved after C7: fetched whole when wanted.
 
 ## C4 as built (2026-11-12)
 
@@ -237,8 +237,8 @@ Each is cached as `<sha256>-q3-s<serial>-speech.ogg`. From `/Applications/StarCr
 - **The run waits for a movie** (`KP_CINE_LOAD_WAIT`) rather than the host blocking: the web's fetch is asynchronous.
 
 **Open after C4:**
-- `generated/video/` from the Python converter stays on disk where it was written; nothing reads it (remove it by hand), nor `generated/cache/repack-ogg/` (the Python repack's cache) and `generated/cache/repack-vorbis/` (C1's, `generated/cache/repack/` since C4).
-- The web's movies are not covered by `tools/ci.sh` (checked in the browser pane by hand); `--cine-check` cannot run there.
+- `generated/video/` from the Python converter stays on disk where it was written; nothing reads it (remove it by hand), nor `generated/cache/repack-ogg/` (the Python repack's cache) and `generated/cache/repack-vorbis/` (C1's, `generated/cache/repack/` since C4). Deleted after C7.
+- The web's movies are not covered by `tools/ci.sh` (checked in the browser pane by hand); `--cine-check` cannot run there. Resolved after C7: a headless Chrome plays the first start's movie by its range in `tools/ci.sh`.
 - The fixture movies (`cine0.webm`, `cine1.webm`) are still made by FFmpeg (C7).
 
 
@@ -332,7 +332,7 @@ Each is cached as `<sha256>-q3-s<serial>-speech.ogg`. From `/Applications/StarCr
 
 **Open after C6:**
 - `generated/hd/`, `generated/data/console.kpd`, `generated/locale/` and `generated/video/` stay on disk where the Python converter wrote them. Nothing reads them; remove them by hand.
-- The consoles' art from an install costs 164 ms at every start; it could move to a thread.
+- The consoles' art from an install costs 164 ms at every start; it could move to a thread. After C7: 81 ms, the nearest colours cached.
 - Phones from the interface groups are not run yet (C7's Fold7 run).
 
 ## C5 as built (2026-11-12)
@@ -425,8 +425,8 @@ The phones' run transcoded 21 containers: the tilesets and the water once for bo
 - the runtime's reads of `generated/hd/<variant>/packs/`, `tilesets/` and `water.kpd`.
 
 **Open after C5:**
-- The `hd2 hd` repack peaks at 2.6 GB of memory; not profiled.
-- The anims' read with a cold disk cache is still not measured.
+- The `hd2 hd` repack peaks at 2.6 GB of memory; not profiled. Measured after C7: 1.2 to 2.9 GB from run to run, during the HD sets.
+- The anims' read with a cold disk cache is still not measured. Measured after C7: about twice the warm layout.
 - While the pick looks for a set, `kp_res_raw_place` notes the packs it asks about among the files read, so a `--res-log` lists them before any page is read.
 - The ASTC set is not drawn anywhere yet: the computers' build has no ASTC decoder. The Fold7 run is C7's.
 - `generated/hd/<variant>/packs/`, `tilesets/` and `water.kpd` stay on disk where the converter wrote them. Nothing reads them but `tools/ci.sh`'s ASan parse of `generated/*.kpd`; remove them by hand.
@@ -510,5 +510,66 @@ run again once the screen is on.
 **Open after C7:**
 - `generated/hd/`, `generated/locale/`, `generated/video/`, `generated/data/console.kpd` and
   `generated/cache/repack-ogg` stay on disk where the Python converter and C1 wrote them; nothing reads them. Remove them
-  by hand.
+  by hand. Deleted after C7.
 - `kp_convert manifest` (see above).
+
+## After C7: the open items (2026-11-12)
+
+**Closed.**
+- **The tests clean up after themselves under wasm too.** `kp_t_temp_dir`'s folders stayed under `build/` when the
+  suites ran in wasm under node: musl's `remove()` takes a folder for `rmdir` only when `unlink` says `EISDIR`, and
+  macOS says `EPERM`. `remove_tree` (`tests/c/kp_test.c`) now unlinks files and `rmdir`s folders itself.
+- **The stale outputs are deleted:** `generated/hd/`, `generated/locale/`, `generated/video/`,
+  `generated/data/console.kpd`, `generated/cache/repack-ogg/` and `repack-vorbis/`, the stages' scratch builds under
+  `build/`.
+- **macOS's duplicate-library warning:** `kp_test` links `kp_oracle_lib` and `kp_gfx_passes` alone; `kp_app_core` (and
+  zlib for `test_original`'s PNGs) comes through the oracle's library.
+- **CascLib's 1007 lines** were `ERROR_FILE_OFFLINE`: the install names enUS's speech of `expterran/terran02` and
+  `terran05b` but has not downloaded it, while a differing `SD/` copy of the same files is read. `kp_casc_open_file`
+  says "not downloaded in this install"; `read_casc` says it once per file, only when no other candidate was read.
+- **The repack's sizes:** a group's line gives the archive's size on the disk and its files' before the compression
+  (`koprulu-core.mpq: 3187 files, 46.7 MB (63.9 MB of files)` for the web's repack of Remastered;
+  a group's `archive` in `KpRepackReport`, `kp_fs_size`). Before, the line gave the files' bytes alone, which read as the archive's.
+- **`kp_convert extract`** of a Remastered name no manifest lists (`HD2/unit/cmdicons/wirefram.dds.grp`) writes the
+  raw file (`kp_res_raw_read`), not the 1.17 rebuild of a name that happens to match.
+- **`locale-check`'s `scripts.base`** is the list of the scripts a language keeps the base's for (`script_names`), as
+  `scripts.translated` is, the Python converter's form; `kp_locale_script` names a script a language may translate.
+- **The web carries the language groups.** `tools/product.sh` stages them beside the page, fetched whole when wanted:
+  the host's `language_files` (`kp_app_flow.c`, through `kp_res_group_wanted` and `kp_app_group`) tells the flow whether
+  a language's files are there. A language whose group is beside the page is listed with its text and speech; the
+  start's language and speech wait for their group before the flow starts (`kp_flow_languages_ready`, asked by
+  `SDL_AppIterate` each frame before `kp_app_flow_init`), and one chosen in the main menu stops the glue at the choice
+  until it came (`start_over`). A group that cannot be had leaves the base's parts, with a line.
+  `test_flow.a_language_waits_for_its_group`.
+- **`tools/ci.sh` checks the web's language, movie and HD** (`KOPRULU_WEB` with `KOPRULU_SCR`):
+  `kp_convert repack --hd hd2 --locales ruRU` into `build/web_scr` (22 s with the caches), the debug bundle over it, and
+  three runs in a headless Chrome by `tools/web_run.py` (the page served with byte ranges on a port of its own, the
+  app's arguments by `?args=`, the console's lines into `build/web_<name>.log` until one matches; a profile of its own,
+  removed after; `--force-device-scale-factor=2`, since the HD art wants two pixels a logical one):
+  - `--locale ruRU`: ruRU's group fetched before the glue starts, its 592 voices, and the first start's intro
+    (a new profile's), Blizzard's logo fetched by its range: 171 of 171 frames decoded, 171 pictures shown;
+  - `hd_game.kps` on terran02: 159 steps, 0 failures, the world from `koprulu-hd2.mpq` and the interface from
+    `koprulu-ui-hd2.mpq` by ranges.
+- **The consoles' art from an install: 164 to 81 ms.** Most of it was `art_cells`' nearest-colour search over the 127
+  colours for each cell; a mean colour seen before now takes its answer from a small table (`nearest`, 4,096 entries),
+  and the console's SD PCX is read once (`kp_files_pcx_pixels`). `CONW` stays equal to the converter's
+  (`test_hd.ui_equals_the_converters`). What is left is reading the DDS files (about 43 ms) and decoding them.
+
+**Measured** (Remastered 1.23.10, macOS on an M-series Mac):
+- **The repack's peak memory** (`/usr/bin/time -l`, the caches full): the default (`hd2 hd`, every language) 1.2 to
+  2.9 GB over six runs, 48 to 52 s, `--single` or not alike; `hd2` alone with ruRU 0.9 GB in 22 s. The peak comes while
+  the HD sets are built (the resident size sampled against the archive being written); why it differs by 1.6 GB from
+  run to run is not known.
+- **The anims with a cold disk cache** (the CASC files' pages dropped by `msync(MS_INVALIDATE)` over a read-only
+  mapping, no root needed): terran02's packs laid out in 261 ms in HD2 and 282 ms in HD, against 137 and 138 ms warm;
+  the interface's layout 82 against 75 ms (HD2), 102 against 83 ms (HD).
+- **The glyphs** (175 characters, the five supplements and `VFNT`) in 30 ms on the Mac; the log says it at each start
+  (`glyphs of L: N characters in T ms`; `language L:` lines are refusals, which `tools/ci.sh` fails on).
+- **A start from the install** to the main menu: about 0.95 s from the window, of it the consoles' art 81 ms.
+
+**Still open:**
+- Why the repack's peak memory varies between runs.
+- The glyphs' time on the Fold7: the phone stayed locked through two waits of 30 and 60 minutes. The APK installed
+  from C7's run logs it; with the phone unlocked, `adb logcat -c`, then
+  `adb shell am start -S -n com.koprulusector.game/org.libsdl.app.SDLActivity --es args "'--locale ruRU'"`, and
+  `adb logcat -d -s SDL:V SDL/APP:V | grep glyphs` gives it.
