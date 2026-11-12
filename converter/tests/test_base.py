@@ -57,5 +57,3 @@ class OriginalTest(unittest.TestCase):
         assert len(loaded.missions) == 64 and next(iter(loaded.missions)) == "terran/tutorial"
         first = loaded.missions["terran/terran01"]
         assert first.strs and len(first.trig) % 2400 == 0 and len(first.mbrf) % 2400 == 0
-        assert all(m.sounds == tuple(sorted(set(m.sounds), key=m.sounds.index)) for m in loaded.missions.values())
-        assert any(m.sounds for m in loaded.missions.values())

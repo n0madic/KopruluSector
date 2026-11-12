@@ -758,21 +758,14 @@ static void locale_glyphs(KpUi *ui, const uint8_t *data, size_t size)
 	kp_kpf_free(&c);
 }
 
-/* The speech's sound records (stage L5): the durations of its voices, the base's sound count; a refusal goes to
- * ui->speech_problem. */
-static void locale_speech(KpUi *ui, const uint8_t *data, size_t size)
+/* The speech's sound records (ADR 0019, stage C2: kp_ui_data_speech_sounds), the durations of its voices: the base's
+ * sound count; a refusal goes to ui->speech_problem. */
+static void locale_speech(KpUi *ui, const uint8_t *sfx, size_t size)
 {
-	KpKpf c;
-	const KpKpfSection *sfx;
-	if (locale_pack(ui, &c, data, size, SPEECH_PACK, KP_UI_DATA_SOUNDS_KIND, KP_UI_DATA_SOUNDS_SCHEMA) != 0) return;
-	sfx = kp_kpf_find(&c, "SFX ");
-	if (sfx == NULL || sfx->size < 2 || kp_le_u16(sfx->data) != (uint32_t)ui->sound_count
-		|| 2 + KP_UI_SOUND_RECORD * (size_t)ui->sound_count > sfx->size) {
+	if (size < 2 || kp_le_u16(sfx) != (uint32_t)ui->sound_count || 2 + KP_UI_SOUND_RECORD * (size_t)ui->sound_count > size)
 		locale_refused(ui, SPEECH_PACK, "no SFX of the base's sound count");
-	} else {
-		ui->sounds = sfx->data + 2;
-	}
-	kp_kpf_free(&c);
+	else
+		ui->sounds = sfx + 2;
 }
 
 void kp_ui_set_locale(KpUi *ui, const KpUiLocale *locale)

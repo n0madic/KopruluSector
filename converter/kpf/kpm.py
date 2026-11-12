@@ -1,5 +1,5 @@
-"""The mission helpers of the languages' overlays and the survey: the `.kpm` kind (`MISN`) a language's or a speech
-pack's mission overlay carries (emit/locale.py: STRS; emit/speech.py: TRIG, MBRF), the map strings, the WAV strings of
+"""The mission helpers of the languages' overlays and the survey: the `.kpm` kind (`MISN`) a language's mission overlay
+carries (emit/locale.py: STRS), the map strings, the WAV strings of
 the triggers and the mission's sounds as the game finds them, and MPAK's payload (tools/defs_c.py).
 
 The runtime builds a mission from its CHK (ADR 0018, kp_mission_from_files); the terrain state it derives has its

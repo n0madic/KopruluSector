@@ -160,10 +160,8 @@ class World:
         fonts = pack(kpd.FONTS_KIND, kpd.FONTS_SCHEMA)
         for f in kpd.font_defs()["fonts"]:
             fonts.add(f["section"], font_image())
-        sounds = pack(kpd.SOUNDS_KIND, kpd.SOUNDS_SCHEMA)
-        sounds.add("SFX ", struct.pack("<H", 0))
-        mission = Mission(str_section(MAP_ROWS), chk_trigger([(WAV_ACTION, 2)]) + next_scenario_trigger(3), b"", ())
-        return Base(PROFILE, HASH, strings, ui, fonts, sounds, {MISSION: mission})
+        mission = Mission(str_section(MAP_ROWS), chk_trigger([(WAV_ACTION, 2)]) + next_scenario_trigger(3), b"")
+        return Base(PROFILE, HASH, strings, ui, fonts, {MISSION: mission})
 
     def extensions(self) -> dict:
         root = {"type": dialog.TYPE_CONTAINER, "id": 0, "flags": 0, "rect": [0, 0, 640, 480]}

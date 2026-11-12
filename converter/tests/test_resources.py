@@ -1,5 +1,4 @@
-"""Resource pieces of the SDL runtime (converter/kpf/resources.py, docs/formats/packs.md): the page packer, the MSND round
-trip, grpmeta AFRM and the tileset SHET sheet; with KOPRULU_ORIGINAL the stock tilesets' sheets against the terrain CRCs."""
+"""Resource pieces of the SDL runtime (docs/formats/packs.md): the page packer, grpmeta AFRM and the tileset SHET sheet; with KOPRULU_ORIGINAL the stock tilesets' sheets against the terrain CRCs."""
 from __future__ import annotations
 
 import os
@@ -14,7 +13,7 @@ from converter import raster
 from converter.emit import pages
 from converter.formats import grp, tileset
 from converter.formats.palette import TILESETS
-from converter.kpf import container, dump, fixtures, kpd, resources
+from converter.kpf import container, dump, fixtures, kpd
 
 ORIGINAL = os.environ.get("KOPRULU_ORIGINAL")
 PROFILE = "bw-1.17.0.1"
@@ -24,16 +23,6 @@ PROFILE = "bw-1.17.0.1"
 
 def _label(s: bytes, pos: int) -> tuple[str, int]:
     return s[pos + 1:pos + 1 + s[pos]].decode("latin1"), pos + 1 + s[pos]
-
-
-def read_sounds(payload: bytes) -> list[tuple[int, bytes]]:
-    out, pos = [], 2
-    for _ in range(struct.unpack_from("<H", payload)[0]):
-        sid, size = struct.unpack_from("<HI", payload, pos)
-        out.append((sid, payload[pos + 6:pos + 6 + size]))
-        pos += 6 + size
-    assert pos == len(payload)
-    return out
 
 
 def read_afrm(data: bytes) -> list[int]:
@@ -119,13 +108,6 @@ class ResourcesTest(unittest.TestCase):
         assert [e.atlas for e in gs.grps] == ["terran", "zerg", "terran"]
         assert read_afrm(data) == [0, 0, 4]
         assert "3 GRP entries, first frames in their atlas [0, 0, 4]" in dump.dump(data)
-
-    def test_mission_sound_round_trip(self):
-        sounds = [(1, b"b"), (0, b"a")]
-        m = container.parse(resources.build_mission_sounds(sounds, profile_id=PROFILE, data_set_hash=bytes(32)).to_bytes())
-        assert m.kind == resources.MISSION_SOUNDS_KIND and read_sounds(m.section("SNDS").payload) == sorted(sounds)
-        empty = container.parse(resources.build_mission_sounds([], profile_id=PROFILE, data_set_hash=bytes(32)).to_bytes())
-        assert empty.section("SNDS").payload == b"\0\0"
 
     def test_tileset_sheet(self):
         cv5, vx4, _, vf4 = fixtures.fixture_tileset()

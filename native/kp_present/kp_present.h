@@ -352,14 +352,7 @@ typedef struct {
 	uint16_t page, x, y, w, h;
 } KpPackFrame;
 
-typedef struct {
-	uint16_t id;
-	const uint8_t *ogg;
-	uint32_t size;
-} KpPackSound;
-
-/* A pack (kp_pack_build: its pages apart) or a sounds container (kp_mission_sounds_load: points into the caller's
- * bytes); owned arrays. */
+/* A pack (kp_pack_build: its pages apart); owned arrays. */
 typedef struct {
 	int atlas_count;
 	KpPackAtlas *atlases;
@@ -367,17 +360,11 @@ typedef struct {
 	const uint8_t *frames; /* FRMS records, 10 bytes each */
 	int page_count;
 	uint16_t page_w, page_h;
-	int sound_count;
-	KpPackSound *sounds;
 	uint8_t *owned; /* kp_pack_build: the FRMS records */
 } KpPack;
 
 void kp_pack_free(KpPack *p);
 void kp_pack_frame(const KpPack *p, uint32_t i, KpPackFrame *out);
-/* A sound of a pack or of a mission's sounds (kind MSND): the OGG of id, or NULL. */
-const KpPackSound *kp_pack_sound(const KpPack *p, uint32_t id);
-/* A mission's sounds container (kind MSND: the SNDS section only). */
-int kp_mission_sounds_load(KpPack *p, const uint8_t *data, size_t size, const char *name, KpError *err);
 
 /* A rectangle's place on the pages (kp_pages_pack). */
 typedef struct {

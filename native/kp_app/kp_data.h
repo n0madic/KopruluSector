@@ -45,8 +45,12 @@ typedef struct {
 	int catalog;
 } KpDataMission;
 
+/* A language's speech in the data (ADR 0019, stage C2): Remastered's advisor's first line, the locale's */
+#define KP_DATA_SPEECH_MARKER "locales/%s/Assets/sound/Terran/advisor/TAdUpd00.wav"
+
 typedef struct {
 	KpFiles files; /* over the caller's KpRes */
+	KpFiles raw;   /* Remastered's own files by their CASC names over it (kp_res_raw_files: a language's speech) */
 	KpDat dat;     /* the data set's DAT; a game takes a copy of it */
 	KpHostShared shared;
 	KpPalettes palettes;

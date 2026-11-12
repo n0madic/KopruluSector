@@ -1,17 +1,12 @@
-# Resource packs and mission sounds
+# Resource packs
 
-The graphics a mission loads ([ADR 0004](../adr/0004-resource-packs.md)) and a language's spoken lines. Since [ADR 0018](../adr/0018-original-data-at-run-time.md) the runtime packs a mission's GRPs into pages when it starts (`kp_pack_build`, `native/kp_present/kp_packs.c`, stage D5) by the rules below, and reads the sounds and the music from their WAVs and Oggs through `kp_res` (the music streamed). Since stage D8d the converter writes no `PACK` or `MUSC` container; `MSND` is a language's speech's ([ADR 0016](../adr/0016-localization.md)). Every container below is a [Koprulu container](container.md).
+The graphics a mission loads ([ADR 0004](../adr/0004-resource-packs.md)). Since [ADR 0018](../adr/0018-original-data-at-run-time.md) the runtime packs a mission's GRPs into pages when it starts (`kp_pack_build`, `native/kp_present/kp_packs.c`, stage D5) by the rules below, and reads the sounds and the music from their WAVs and Oggs through `kp_res` (the music streamed). Since stage D8d the converter writes no `PACK` or `MUSC` container, and since [ADR 0019](../adr/0019-install-or-repack-converter-in-c.md)'s stage C2 no `MSND` (a language's speech, now read from its own files: [the repack](repack.md)). Every container below is a [Koprulu container](container.md).
 
 - **Pack membership:** `converter/packs.py`, compiled into the runtime (`tools/defs_c.py`). GRP geometry, atlas names per GRP and each GRP's first frame within its atlas: [`grpmeta.kpd`](kpd.md#grpmetakpd-schema-1)'s layout, which `kp_grpmeta_from_files` builds.
 - **Packer:** `kp_packs.c`; its reference is `converter/emit/pages.py` (`tests/c/test_present.c` places frames as it does).
 - **Dump:** `python3 -m converter dump FILE`.
 
 All integers are little-endian.
-
-| Path under `generated/` | Kind | Content |
-|---|---|---|
-| `speech/<loc>/missions/<campaign>/<mission>_sounds.kpd` | `MSND` | a language's spoken lines of the mission (`converter speech`, ADR 0016), by the base's sound index; a line the language lacks is not there, and the base's sound plays |
-| `speech/<loc>/units.kpd` | `MSND` | a language's unit voices, keyed by sfx id (only the ids it has); the app looks a voice up here before the base's sounds |
 
 ## The packs' pages
 
@@ -20,10 +15,6 @@ All integers are little-endian.
 **Pages.** Every page of every pack is 2048 × 2048, so the runtime can put the pages of all loaded packs into one texture array. A texel is the palette index, 0 transparent; every texel outside the frames is 0. The runtime reads texels by integer coordinates, so frames have no padding, extrusion, rotation or trimming. Pack pages have no opacity mask: a GRP that draws an opaque index 0 is refused (`OpaqueZeroError`; ADR 0003; no stock GRP does). Portrait atlases are not part of the packs.
 
 **Packer** (skyline, `SKY1` version 1). The distinct frame images are sorted by height, then width (both descending), then by first use. Each goes to the first page where it fits, at the skyline position with the lowest top edge, ties to the lowest x; an image that fits no page opens a new one. The same inputs give the same pages.
-
-## `MSND` (schema 1)
-
-`SNDS`: u16 count; per sound, sorted by key: u16 key, u32 size, the OGG bytes (`oggenc -q 3`, a stream serial fixed per output path; `converter/emit/sound.py` `OggCache`). A mission's are keyed by the mission's sound index: entry i is sound index i of the mission's [`WAVS`](kpm.md#wavs) (the WAV string's position in string-id order); `units.kpd`'s by sfx id.
 
 ## Stock contents
 

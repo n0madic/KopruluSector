@@ -3,6 +3,7 @@
 #ifndef KP_DEFS_H
 #define KP_DEFS_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 /* A file of the input manifest: its name normalized (lower case, '/' separators), its size and SHA-256 (hex). */
@@ -56,5 +57,12 @@ const KpDefsInput *kp_defs_input(const KpDefsProfile *p, const char *normalized)
 const KpDefsTable *kp_defs_table(const KpDefsProfile *p, const char *fourcc);
 /* Whether a sorted list of normalized names holds a name. */
 int kp_defs_listed(const char *const *names, int count, const char *normalized);
+/* A compiled names table (tools/defs_c.py names_table: u16 count; per name u8 length, its bytes): its count, or -1 when t
+ * is NULL or broken. */
+int kp_defs_names_count(const KpDefsTable *t);
+/* Its index-th name (index below its count), *size bytes, not NUL-terminated. */
+const uint8_t *kp_defs_name_at(const KpDefsTable *t, int index, size_t *size);
+/* Whether the profile's names table of that fourcc holds name (its bytes exactly). */
+int kp_defs_names_has(const KpDefsProfile *p, const char *fourcc, const char *name);
 
 #endif

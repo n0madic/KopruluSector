@@ -110,6 +110,16 @@ void kp_ui_data_free(KpUiData *d);
 /* The music's lengths (MUSL) read again from files (the old bytes stay d's until kp_ui_data_free): for tracks whose
  * files came after d was built (the web's music group, fetched after the start; ADR 0018). 0, or -1 with err. */
 int kp_ui_data_music_lengths(KpUiData *d, const KpFiles *files, KpError *err);
+/* A language's file for an original sound's path ("sound\\terran\\...wav", a scenario's "campaign\\...wav"; ADR 0019,
+ * stage C2): Remastered's of the same name under the language's assets, "locales/<locale>/Assets/", its ".wav" (any
+ * case) replaced by suffix, '/' apart. 0, or -1 when out is too small. */
+int kp_ui_data_speech_path(const char *locale, const char *path, const char *suffix, char *out, size_t size);
+/* A language's voices' records over d's SFX (the interface's talking durations): a malloc'd copy of d->sounds
+ * (*size bytes, its u16 count first) in which each sound whose language file raw holds (kp_ui_data_speech_path with
+ * ".wav", Remastered's names: kp_res_raw_files) is recorded from that file's header, *voices of them. A file that
+ * cannot be read keeps the base's record, the first such named in err (err->msg "" none). NULL out of memory. */
+uint8_t *kp_ui_data_speech_sounds(const KpUiData *d, const KpFiles *raw, const char *locale, size_t *size, int *voices,
+	KpError *err);
 /* A table of the executable's the interface reads (STLY, ESTB, VOLT, MUSI, ACCL, BTNS): the profile's compiled table;
  * NULL without it. */
 const uint8_t *kp_ui_data_table(const KpUiData *d, const char *fourcc, uint32_t *size);

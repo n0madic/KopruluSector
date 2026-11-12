@@ -1194,11 +1194,11 @@ struct KpUi {
 };
 
 /* A language's overlay packs (ADR 0016), any of them NULL: generated/locale/<loc>/strings.kpd and ui.kpd,
- * generated/locale/glyphs.kpd, the speech's sounds.kpd. The bytes must outlive the interface. */
+ * generated/locale/glyphs.kpd, and the speech's sound records. The bytes must outlive the interface. */
 typedef struct {
 	const uint8_t *strings, *ui, *glyphs;
 	size_t strings_size, ui_size, glyphs_size;
-	const uint8_t *speech; /* generated/speech/<loc>/sounds.kpd: SFX, the speech's sounds' records (stage L5) */
+	const uint8_t *speech; /* the speech's SFX (u16 count, the records: kp_ui_data_speech_sounds; ADR 0019, stage C2) */
 	size_t speech_size;
 } KpUiLocale;
 

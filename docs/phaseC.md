@@ -12,7 +12,7 @@ The converter becomes `kp_convert`, in C, sharing its builders with the runtime.
 |---|---|---|
 | C0 | ADR 0019; libogg, libvorbis with vorbisenc and libvpx's VP9 encoder built for the host's tools (`KP_ENCODERS`); the spikes | done 2026-11-11 |
 | C1 | `kp_convert`: `repack`, `verify`, `digests`, `extract` (`kp_data_probe` folded in), `icon`, `scenarios`, `terrain`, on macOS, Linux and Windows; the Makefile, README, `tools/product.sh` and `tools/ci.sh` on `kp_convert`; `manifest`, the listing v3 and `kp_res_raw_stream_open` moved to the stages that need them | done 2026-11-11 |
-| C2 | Speech: the lines and voices of `locales/<loc>/Assets/` played as they are, TIME merged from the language's CHK when a mission loads; the repack's language group recompressed; the speech overlays go | |
+| C2 | Speech: the lines and voices of `locales/<loc>/Assets/` played as they are, TIME merged from the language's CHK when a mission loads; the repack's language group recompressed; the speech overlays go | done 2026-11-12 |
 | C3 | Language texts: `kp_locale.c` (the six tables, dialogs by `defs/l10n`, `rez\*.txt`, the maps' STR, subtitles, the glyphs at start, VFNT from TTF); `kp_convert locale-check`; the text overlays and `glyphs.kpd` go | |
 | C4 | Cinematics: the 1.17 SMK transcoded to VP9 and Vorbis in our own WebM by `kp_convert repack`; Remastered's WebM as they are; `CINE` and FFmpeg go | |
 | C5 | The HD world: `kp_anim.c`, `images.rel`, the grouped packer, the HD page thread over anim; `HDTS`/`HDWA` from the originals; `HDPK`/`HDTS`/`HDWA` in the `hd2`/`hd` groups | |
@@ -72,7 +72,7 @@ The converter becomes `kp_convert`, in C, sharing its builders with the runtime.
 |---|---|---|
 | `verify DIR...` | every manifest file read through `kp_res`, the statuses and time by kind; exact and derived files checked to the byte; a 1.17 install's `StarCraft.exe` by its SHA-256 (`executable_sha256`, compiled in by `tools/defs_c.py`) | `kp_data_probe`, `converter verify` |
 | `digests DIR --out PATH` | each manifest file's name, status and SHA-256 | `kp_data_probe --digests` |
-| `extract DIR NAME OUT` | a file as `kp_res` reads it, or a Remastered file by its CASC name (`kp_res_casc_file`) | `converter extract`, `scr-extract` |
+| `extract DIR NAME OUT` | a file as `kp_res` reads it, or a Remastered file by its CASC name (`kp_res_raw_read`) | `converter extract`, `scr-extract` |
 | `repack DIR [--single] [--wav] [--res-log] [--cache] [--threads]` | `kp_repack.c`: the groups or one `koprulu.mpq`, StormLib's writer; a WAV as Ogg Vorbis (`kp_ogg.c`, libvorbisenc at `-q 3`, the CRC-32 of the name as the serial) on every core (`kp_work.c`), each kept in `generated/cache/repack-vorbis/<sha>-q3-s<serial>.ogg` | `converter repack` (oggenc) |
 | `scenarios DIR` | `kp_scenario.c`: each spec of `tests/scenarios/` rewrites its base CHK (OWNR, UNIT, THG2, MBRF, TRIG, STR, MRGN, PTEC); `index.txt` with the packs of the profile's compiled `SPAK` | `converter scenarios` |
 | `terrain DIR` | the eight tilesets' megatile CRCs | `converter terrain` |
@@ -105,11 +105,56 @@ A command writes a file only when its bytes change, and says how many it wrote.
 **Decisions taken in C1:**
 - **`manifest` stays `converter scr-manifest` until C7.** It records what the Python conversion reads, so it goes with that conversion. It now also records the test scenarios' packs (`defs/campaign/packs-bw-1.17.0.1.json`, `scenarios`), compiled as `SPAK`. Its run dropped `rez\video.bin` from the input manifest: nothing has read it since our own Video Options dialog replaced it (2026-10-27).
 - **`scr-compare`, `scr-digests` and `dump` stay in Python until C7**: they check the Python readers, which go then.
-- **The listing stays `koprulu repack 2` until C2**: v3's raw names come with the language group, the first files that need them.
+- **The listing stays `koprulu repack 2` until C2**: v3's raw names come with the language group, the first files that need them. Done in C2.
 - **The bundles carry no `kp_convert`.** A bundle is the converter's output, its repack; a player with an install points `--data` at the install, which needs no conversion. `kp_convert` builds and runs on each desktop on its own (README: mingw-w64 for Windows).
-- **`kp_res_raw_stream_open` waits for its consumer**, the HD page thread of C5. `extract` reads a raw CASC name through `kp_res_casc_file`.
+- **`kp_res_raw_stream_open` waits for its consumer**, the HD page thread of C5. `extract` reads a raw CASC name through `kp_res_raw_read`.
 
 **Open after C1:**
 - The old `generated/cache/repack-ogg/` is not read any more; it can be deleted by hand.
 - For C3: the languages' second escaping (a quote `\"`, a backslash `\\\\`; `rebuild.LANGUAGE_ESCAPES`, undone since 2026-11-12) goes into `kp_locale.c` with the rest of the XML values' rules.
 - macOS's linker warns of `libkp_app_core.a` given twice when it links `kp_test`; harmless.
+
+## C2 as built (2026-11-12)
+
+**Remastered's own files by their CASC names** (`kp_res`). The listing is `koprulu repack 3`: a file of Remastered's own, which no manifest lists, is listed with the status `remastered` under its CASC name, lower case with `/`. `kp_res_raw_read`, `kp_res_raw_head`, `kp_res_raw_held` and `kp_res_raw_files` (a `KpFiles` over them) read such a name from the repack first (its size checked, a CHK's SHA-256 too; a copy that differs is logged and the install's read), else from the CASC install, case-insensitively and with either separator. The reads are recorded in `--res-log` as `remastered`, with the repack's file or `CASC` as the source. They replace `kp_res_casc_file` and `kp_res_casc_held` (the portraits, the cinematics, `kp_convert extract`). `KpData.raw` holds them for the app and the oracle.
+
+**The mission's TIME** (`kp_host_game_speech`). When a campaign mission loads, the language's map `locales/<loc>/Assets/campaign/<c>/<m>/staredit/scenario.chk` is read, checked as a CHK and its `TRIG` and `MBRF` merged into a copy of the mission's (`time_merged`, the Python converter's rule):
+- an action alike but for its TIME (+0x0C) takes the language's;
+- an action that differs in more keeps the mission's whole;
+- a record that differs in its conditions, flags or actions is counted, and the first named.
+
+The profile's `SPEX` (`tools/defs_c.py`, from `defs/l10n/locales.json`'s `speech`) names the missions where that is Remastered's own fix (`expterran/terran03` in each language); elsewhere the app logs the difference and plays the merged records, the oracle refuses them. `LANG` (the languages, the base's first) is compiled from the same file. A map of another size, or a damaged one, leaves the mission's own triggers with a log line. A save keeps the merged copies, as before (`a_save_keeps_its_speech`).
+
+**Lines and voices played as they are.** A mission's spoken line is the language's `.ogg` of the WAV string's path (`kp_ui_data_speech_path`), streamed by SDL3_mixer; a unit voice is the language's `.wav` of sfxdata's path, decoded as the base's are. A name the language lacks, or holds empty (Remastered's silent stand-ins), plays the base's. Changing the speech drops the decoded voices. The interface's talking and response durations come from each voice's WAV header (`kp_ui_data_speech_sounds`: the base's SFX records with the language's where it has the file). The speech's packs are gone from the app: `kp_pack_sound`, `kp_mission_sounds_load`, the world's mission sounds. A language has speech when the data holds its marker voice, `locales/<loc>/Assets/sound/Terran/advisor/TAdUpd00.wav` (`KP_DATA_SPEECH_MARKER`). The flow logs `speech of <loc>: <mission>: N actions' TIME` and `speech of <loc>: N voices`.
+
+**The oracle** takes the speech's locale (`KP_SPEECH`) and its source (`KP_SPEECH_DATA`: an install or a repack with the language's group; `tools/state_check.py --speech LOC --speech-data DIR`, default `KOPRULU_SCR`). It refuses a mission without the map, or one that differs in more than TIME without an exception. `tools/research/sc_emulator/speech.py` merges the same records for the original's game, from the 1.17 map and the language's map in the install (`play ... --speech LOC:CAMPAIGN/MISSION --scr DIR`). Its records equal the Python overlays' `TRIG` for all 64 missions of the four languages.
+
+**The repack's language groups.** `kp_convert repack` from Remastered writes `koprulu-locale-<loc>.mpq` for each language the install holds (the `LANG` entries after the base whose marker voice it holds), or those `--locales` names (`none`: none). The groups stay apart even with `--single`, so a bundle carries only its languages. A group holds each catalog mission's map and lines and sfxdata's voices. `kp_ogg_speech` re-encodes a sound only when the result is smaller:
+- mono (the channels averaged);
+- 44,100 Hz halved to 22,050 Hz through a 65-tap Blackman-windowed sinc;
+- `-q 3`, the CRC-32 of the name as the serial;
+- a line (Ogg Vorbis, decoded by libvorbis) replaced by its Ogg;
+- a voice (WAV, 8, 16 or 24 bits: deDE keeps five at 24) stored as `ogg` with its WAV's header, for the durations.
+
+Each is cached as `<sha256>-q3-s<serial>-speech.ogg`. From `/Applications/StarCraft`: 6,782 lines and voices encoded, 278.5 MB stored for 1,390.4 MB read, in 37 s with the cache empty; 2,118 names the install lacks or holds empty are left out. The groups: deDE 78.4 MB, frFR 71.4 MB, plPL 73.6 MB, ruRU 70.6 MB (the Python speech: 76, 69, 71 and 69 MB at oggenc's 22,050 Hz); `koprulu.mpq` 131.1 MB.
+
+**Equal to the Python converter.** Before `converter speech` went, its output was recorded in `tests/golden/speech/converter.json`: the SHA-256 of each mission's merged `TRIG` and `MBRF` and of each language's SFX table. The C equals it for the four languages' 64 missions and SFX, read from the install and from the repack (`test_speech.the_speech_equals_the_converters`, `the_speech_sound_records_replace_the_bases`). `campaign_plays_with_the_speech_equal_the_original` replays the 71 plays of `tests/golden/oracle/plays-ruRU` with the speech read from the install, its goldens unchanged.
+
+**The tools.**
+- `tools/ci.sh` no longer converts the speech. Each language's product run reads it from the install (`--data . --data "$KOPRULU_SCR" --speech LOC`) and must log terran01's TIME. The C suites read it from `KP_TEST_SCR`, and two of `test_speech`'s tests run again over Remastered's repack.
+- `tools/product.sh`: `KOPRULU_SPEECH` is gone. A staged language (`KOPRULU_LOCALES`) brings its repack group on the computers and phones; the web carries none.
+- `Makefile`: the `speech` target and `SPEECH` are gone.
+- `test_flow.the_speech_is_chosen_apart_from_the_text` reads ruRU's files from `KP_TEST_SCR`.
+
+**Removed:** `converter speech`, `converter/emit/speech.py`, `converter/emit/packs.py`, `MSND` (`resources.build_mission_sounds`), the base's sounds in `converter/base.py`, their tests; the speech overlays (`generated/speech/`, `generated/sounds/speech/`, deleted locally).
+
+**Decisions taken in C2:**
+- **The voices keep their WAV header in the listing**, as the base's sounds do, so the durations need no decode. The lines need none: the game times them by the triggers' TIME.
+- **The web carries no language group yet.** It would fetch the group when the language is chosen; that comes with C3, whose texts go into the same group (`TODO` in `tools/product.sh`). Until C2 `KOPRULU_SPEECH=ruRU` could preload ruRU's speech on the web (220 to 292 MB, never by default); until C3 the web has no speech.
+- **A difference without an exception is logged in the app, refused in the oracle**: a player keeps the language's TIME, the goldens keep their strictness.
+
+**Open after C2:**
+- The Ogg bytes still differ by processor (C1); the listings are equal.
+- Remastered's repack logs six `cannot size locales/enUS/...: CascLib error 1007` lines (enUS lines of `expterran/terran02` and `terran05b` offline in this install), not looked into.
+- The full `kp_test` under Wine stopped with a stack overflow (`___chkstk_ms`). The cause is `test_session`'s tests: each puts two `KpProfile`s (1.26 MB each) on the main thread's stack, and mingw gives that thread 2 MB, where macOS and Linux give 8 MB. The app keeps its profile inside `KpApp`, not on the stack. With the executable's stack reserve raised to 8 MB, all 25 tests pass. The link flag comes with C3. `test_save` stopped there too, with no output; under 8 MB it runs on.
+

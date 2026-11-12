@@ -1068,8 +1068,8 @@ static void res_reads_the_remastered_install(KpT *T)
 	free(b);
 	kp_t_eq(T, (int64_t)strlen(kp_res_text_locale(r)), 4, "its text locale: %s", kp_res_text_locale(r));
 	snprintf(err, sizeof err, "locales/%s/Assets/Smk/starintr.srt", kp_res_text_locale(r));
-	kp_t_ok(T, kp_res_casc_held(r, err), "it holds that language's files: %s", err);
-	kp_t_ok(T, !kp_res_casc_held(r, "locales/xxXX/Assets/Smk/starintr.srt"), "not a name of the storage");
+	kp_t_ok(T, kp_res_raw_held(r, err), "it holds that language's files: %s", err);
+	kp_t_ok(T, !kp_res_raw_held(r, "locales/xxXX/Assets/Smk/starintr.srt"), "not a name of the storage");
 }
 
 /* A .build.info's text locale: the active row's first Tags group with "text?" and a locale */

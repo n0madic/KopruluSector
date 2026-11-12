@@ -3,8 +3,8 @@
  * original's eight channels (kp_ui_sound.c); this plays its commands through SDL3_mixer. A channel's new sound stops
  * the one it held. The original data's files play (ADR 0018, stage D5): sfxdata's WAVs (a repack's as Ogg Vorbis where
  * that was smaller), a trigger's WAV the scenario's by its string, the music MUSI names streamed from its archive; a
- * language's speech (the converted data's, ADR 0016) before them: its voices by sfx id, its mission's lines by the
- * WAVS index.
+ * language's speech before them (ADR 0019, stage C2): Remastered's files of the same names under its assets, read
+ * from the install or a repack's language group (kp_res_raw_read), its voices' WAVs and its lines' Ogg Vorbis.
  * DirectSound's volume (hundredths of a decibel) and pan become exact gains: a pan of +2000 attenuates the left side by
  * 20 dB.
  */
@@ -58,57 +58,34 @@ static void drop_music(KpAudio *au)
 	MIX_SetTrackAudio(au->music, NULL);
 }
 
-static void drop_speech(KpAudio *au)
+/* The decoded trigger WAVs and the speech's lines' bytes they stream from */
+static void drop_wavs(KpAudio *au)
 {
-	kp_pack_free(&au->speech);
-	free(au->speech_bytes);
-	au->speech_bytes = NULL;
-	au->speech_tried = 0;
+	int k;
+	free_audio(au->wavs, KP_APP_WAVS);
+	for (k = 0; k < KP_APP_WAVS; k++) {
+		free(au->wav_bytes[k]);
+		au->wav_bytes[k] = NULL;
+	}
 }
 
 void kp_audio_free(KpAudio *au)
 {
 	if (au->mixer) MIX_DestroyMixer(au->mixer); /* its tracks with it, the music's stream too */
 	free_audio(au->sfx, KP_APP_SFX);
-	free_audio(au->wavs, KP_APP_WAVS);
-	drop_speech(au);
+	drop_wavs(au);
 	MIX_Quit();
 	memset(au, 0, sizeof *au);
 }
 
-static MIX_Audio *load(KpAudio *au, const uint8_t *ogg, uint32_t size, int predecode)
+/* A sound's bytes decoded whole (a WAV or a repack's Ogg Vorbis: short; freed here), what for the log; NULL with a
+ * line when the mixer refuses them. */
+static MIX_Audio *decoded(KpApp *a, uint8_t *bytes, size_t size, const char *what)
 {
-	if (!ogg || size == 0) return NULL;
-	return MIX_LoadAudio_IO(au->mixer, SDL_IOFromConstMem(ogg, size), predecode, true);
-}
-
-/* The chosen speech's voices, none for the base's or when its file is missing (one line). A change of the speech drops
- * the voices read and the sfx decoded from them. */
-static const KpPack *speech_pack(KpApp *a)
-{
-	KpAudio *au = &a->audio;
-	const char *id = a->flags.speech;
-	if (strcmp(au->speech_id, id) != 0) {
-		free_audio(au->sfx, KP_APP_SFX);
-		drop_speech(au);
-		snprintf(au->speech_id, sizeof au->speech_id, "%s", id);
-	}
-	if (id[0] == 0 || strcmp(id, KP_LOCALE_BASE) == 0) return NULL;
-	if (!au->speech_bytes && !au->speech_tried) {
-		char path[64];
-		size_t n = 0;
-		KpError e;
-		au->speech_tried = 1;
-		snprintf(path, sizeof path, "generated/speech/%s/units.kpd", id);
-		if ((au->speech_bytes = kp_app_read(a, path, &n)) == NULL) {
-			SDL_Log("audio: speech %s: no %s, the base's voices", id, path);
-		} else if (kp_mission_sounds_load(&au->speech, au->speech_bytes, n, path, &e) != 0) {
-			SDL_Log("audio: %s, the base's voices", e.msg);
-			free(au->speech_bytes);
-			au->speech_bytes = NULL;
-		}
-	}
-	return au->speech_bytes ? &au->speech : NULL;
+	MIX_Audio *audio = MIX_LoadAudio_IO(a->audio.mixer, SDL_IOFromConstMem(bytes, size), true, true);
+	if (!audio) SDL_Log("audio: %s: %s", what, SDL_GetError());
+	free(bytes);
+	return audio;
 }
 
 /* An original file read through kp_res (ADR 0018, stage D5), decoded whole: the sounds' WAVs are short (a missing one
@@ -118,29 +95,51 @@ static MIX_Audio *load_file(KpApp *a, const char *path)
 	char err[KP_ERROR_SIZE];
 	size_t size = 0;
 	uint8_t *bytes = kp_res_read(a->res, path, &size, NULL, err, sizeof err);
-	MIX_Audio *audio;
 	if (!bytes) {
 		if (err[0]) SDL_Log("audio: %s", err);
 		return NULL;
 	}
-	audio = MIX_LoadAudio_IO(a->audio.mixer, SDL_IOFromConstMem(bytes, size), true, true);
-	if (!audio) SDL_Log("audio: %s: %s", path, SDL_GetError());
-	free(bytes);
-	return audio;
+	return decoded(a, bytes, size, path);
+}
+
+/* The chosen speech's file for an original sound's path (kp_ui_data_speech_path: Remastered's of the same name under
+ * the language's assets with `suffix` for its ".wav"), read through kp_res (the install's or a repack's language
+ * group). NULL for the base's speech or when the data lacks it (a line Remastered keeps empty, its silent stand-in,
+ * too: the original's plays). */
+static uint8_t *speech_file(KpApp *a, const char *path, const char *suffix, size_t *size, char *raw, size_t raw_size)
+{
+	const char *id = a->flags.speech;
+	char err[KP_ERROR_SIZE];
+	uint8_t *bytes;
+	if (id[0] == 0 || strcmp(id, KP_LOCALE_BASE) == 0 || kp_ui_data_speech_path(id, path, suffix, raw, raw_size) != 0) return NULL;
+	if (!(bytes = kp_res_raw_read(a->res, raw, size, err, sizeof err))) {
+		if (err[0]) SDL_Log("audio: %s", err);
+		return NULL;
+	}
+	if (*size == 0) {
+		free(bytes);
+		return NULL;
+	}
+	return bytes;
 }
 
 /* The sound of an sfx id: the speech's voice, else the original data's file (sfxdata's path), decoded on first play and
- * kept until the world ends. */
+ * kept until the world ends; a change of the speech drops the decoded sfx. */
 static MIX_Audio *sfx(KpApp *a, uint32_t id)
 {
 	KpAudio *au = &a->audio;
-	const KpPack *speech;
-	const KpPackSound *s;
+	const char *path;
+	char raw[KP_APP_FILE_NAME + 32];
+	size_t size = 0;
+	uint8_t *voice;
 	if (id >= KP_APP_SFX || id >= a->data.ui.sound_path_count) return NULL;
-	speech = speech_pack(a); /* a change of the speech drops the decoded sfx first */
-	if (au->sfx[id]) return au->sfx[id];
-	if (speech && (s = kp_pack_sound(speech, id)) != NULL) au->sfx[id] = load(au, s->ogg, s->size, 1);
-	else if (a->data.ui.sound_paths[id]) au->sfx[id] = load_file(a, a->data.ui.sound_paths[id]);
+	if (strcmp(au->speech_id, a->flags.speech) != 0) {
+		free_audio(au->sfx, KP_APP_SFX);
+		snprintf(au->speech_id, sizeof au->speech_id, "%s", a->flags.speech);
+	}
+	if (au->sfx[id] || !(path = a->data.ui.sound_paths[id])) return au->sfx[id];
+	if ((voice = speech_file(a, path, ".wav", &size, raw, sizeof raw)) != NULL) au->sfx[id] = decoded(a, voice, size, raw);
+	if (!au->sfx[id]) au->sfx[id] = load_file(a, path);
 	return au->sfx[id];
 }
 
@@ -286,8 +285,10 @@ static SDL_IOStream *track_stream(KpApp *a, int k, int *loops)
 	return res_io(a->res, path);
 }
 
-/* A trigger's WAV: the mission's WAVS index of its string id; the speech's line of that index (the world's
- * mission_sounds: generated/speech/<loc>/missions/), else the file the string names in the scenario's directory. */
+/* A trigger's WAV: the mission's WAVS index of its string id; the file the string names in the scenario's directory,
+ * the chosen speech's line of that name before it (Remastered's Ogg Vorbis, streamed from its bytes as it plays). The
+ * index is the WAV string's position (kp_mission.c WAVS), the CHK's alone, so every source gives the same, a repack
+ * that leaves a damaged copy out too (issue #2; test_chk compares the two installs'). */
 static MIX_Audio *wav(KpApp *a, uint32_t string_id)
 {
 	KpAudio *au = &a->audio;
@@ -298,15 +299,21 @@ static MIX_Audio *wav(KpApp *a, uint32_t string_id)
 		const KpMissionSound *s = &m->sounds[k];
 		if (s->string_id == string_id && s->index < KP_APP_WAVS) {
 			const KpDataMission *entry = a->flow.current >= 0 ? &a->data.missions[a->flow.current] : NULL;
-			const KpPackSound *ps;
-			char path[KP_APP_FILE_NAME];
+			char path[KP_APP_FILE_NAME], raw[KP_APP_FILE_NAME + 32];
+			size_t size = 0;
+			uint8_t *line;
 			if (au->wavs[s->index]) return au->wavs[s->index];
-			if (a->world.mission_sounds_bytes && (ps = kp_pack_sound(&a->world.mission_sounds, s->index)) != NULL) {
-				au->wavs[s->index] = load(au, ps->ogg, ps->size, 0);
-			} else if (entry && entry->directory[0]
-				&& kp_mission_sound_path(m, entry->directory, string_id, path, sizeof path) == 1) {
-				au->wavs[s->index] = load_file(a, path);
+			if (!entry || !entry->directory[0] || kp_mission_sound_path(m, entry->directory, string_id, path, sizeof path) != 1)
+				return NULL;
+			if ((line = speech_file(a, path, ".ogg", &size, raw, sizeof raw)) != NULL) {
+				if ((au->wavs[s->index] = MIX_LoadAudio_IO(au->mixer, SDL_IOFromConstMem(line, size), false, true)) != NULL) {
+					au->wav_bytes[s->index] = line;
+				} else {
+					SDL_Log("audio: %s: %s", raw, SDL_GetError());
+					free(line);
+				}
 			}
+			if (!au->wavs[s->index]) au->wavs[s->index] = load_file(a, path);
 			return au->wavs[s->index];
 		}
 	}
@@ -317,7 +324,7 @@ static MIX_Audio *wav(KpApp *a, uint32_t string_id)
  * decodes again what it plays). */
 void kp_audio_mission(KpApp *a)
 {
-	free_audio(a->audio.wavs, KP_APP_WAVS);
+	drop_wavs(&a->audio);
 	free_audio(a->audio.sfx, KP_APP_SFX);
 }
 

@@ -180,17 +180,6 @@ def _locale(args: argparse.Namespace) -> int:
     return 0
 
 
-def _speech(args: argparse.Namespace) -> int:
-    """A language's speech: its missions' TIME, spoken lines and unit voices (generated/speech/; ADR 0016)."""
-    from . import base
-    from .casc.source import ScrSource
-    from .emit import speech
-
-    with ScrSource(args.scr, Profile.load(args.profile)) as source:
-        speech.generate(source.storage, base.load(source), args.locale, Path(args.out))
-    return 0
-
-
 def _dump(args: argparse.Namespace) -> int:
     from .kpf.dump import dump
 
@@ -282,11 +271,6 @@ def main(argv: list[str] | None = None) -> int:
                    help="the language, such as ruRU (defs/l10n/locales.json), or all: each the install holds")
     p.add_argument("--out", default="generated")
     p.set_defaults(func=_locale)
-    p = sub.add_parser("speech", help="write a language's speech: its missions' TIME, spoken lines and unit voices")
-    p.add_argument("--scr", required=True, help="a StarCraft: Remastered install holding the language")
-    p.add_argument("--locale", required=True, help="the language, such as ruRU (defs/l10n/locales.json)")
-    p.add_argument("--out", default="generated")
-    p.set_defaults(func=_speech)
     p = sub.add_parser("dump", help="print a Koprulu container")
     p.add_argument("file")
     p.add_argument("--section")

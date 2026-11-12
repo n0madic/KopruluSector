@@ -47,7 +47,7 @@ void kp_host_shared_free(KpHostShared *sh);
 typedef struct {
 	KpGameData data;
 	uint8_t *text; /* a language's overlay of the mission's strings (owned; kp_host_game_text) */
-	uint8_t *speech; /* a language's overlay of the mission's TRIG and MBRF (owned; kp_host_game_speech) */
+	uint8_t *speech; /* the mission's TRIG and MBRF with a language's TIME (owned; kp_host_game_speech) */
 	KpRngGame rng;
 	KpRngCrt crt;
 	uint8_t *cv5, *vf4; /* its tileset's original CV5 and VF4 (owned; kp_host_game_tileset_files) */
@@ -71,12 +71,22 @@ int kp_host_game_tileset_files(KpHostGame *hg, const KpFiles *files, KpError *er
  * game. -1 with the error (the mission's own text stays) when it is corrupt, of another kind or schema than a mission
  * or has other strings than the mission. */
 int kp_host_game_text(KpHostGame *hg, uint8_t *overlay, size_t size, KpError *err);
-/* A language's speech over a loaded game, before its start: the MISN overlay's TRIG and MBRF (ADR 0016, stage L5: the
- * mission's records with the language's TIME, which a transmission waits), taken and freed with the game. -1 with the
- * error (the mission's own triggers stay) when it is corrupt, of another kind or schema than a mission, not of the
- * mission's sizes or of records that differ from the mission's in more than their actions' TIME (a speech of other
- * data). */
-int kp_host_game_speech(KpHostGame *hg, uint8_t *overlay, size_t size, KpError *err);
+/* A language's speech over a loaded game, before its start (ADR 0019, stage C2): the TIME of its map's triggers and
+ * briefing (a transmission's and a wait's milliseconds), the language's scenario KP_HOST_SPEECH_MAP read through raw
+ * (Remastered's names: kp_res_raw_files) and merged into a copy of the mission's records, taken and freed with the
+ * game. 1 merged, 0 when raw has no such map (the mission's own TIME), -1 with the error when it is damaged or refused
+ * or its TRIG and MBRF are not of the mission's sizes (the mission's own triggers stay). Records that differ in more
+ * than TIME keep the mission's and are counted: the profile's SPEX lists the missions where those are Remastered's own
+ * fixes. */
+#define KP_HOST_SPEECH_MAP "locales/%s/Assets/campaign/%s/staredit/scenario.chk" /* the locale, "terran/terran01" */
+typedef struct {
+	int times;     /* the actions whose TIME the language's changed */
+	int differ;    /* the records that differ from the mission's in more than TIME */
+	int excepted;  /* the profile's SPEX lists the mission for the locale */
+	char first[48]; /* the first such record, "TRIG record 12" */
+} KpHostSpeech;
+int kp_host_game_speech(KpHostGame *hg, const KpFiles *raw, const char *locale, const char *mission, KpHostSpeech *out,
+	KpError *err);
 /* Starts the loaded game over the CV5 and VF4 of kp_host_game_tileset_files at the seed and expansion; -1 with the
  * error, hg released. */
 int kp_host_game_start(KpHostGame *hg, uint32_t seed, int expansion, const KpHostOpts *opts, KpError *err);

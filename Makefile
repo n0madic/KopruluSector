@@ -14,7 +14,6 @@ VARIANT  ?= release
 HD       ?= hd2
 CINE     ?= hd2
 LOCALE   ?= all
-SPEECH   ?=
 PORT     ?= 8793
 ARGS     ?=
 BUILD_DIR ?= build/app
@@ -34,7 +33,7 @@ PLATFORMS := macos web android ios ios-sim linux windows
 
 .DEFAULT_GOAL := help
 .PHONY: help convert convert-remastered remastered-extras check-source check-sc check-scr verify repack console \
-	scenarios terrain icon hd cinematics locale speech convert-tool fnt-tool toolchain app run test serve \
+	scenarios terrain icon hd cinematics locale convert-tool fnt-tool toolchain app run test serve \
 	install-android clean $(PLATFORMS)
 
 help:
@@ -48,18 +47,18 @@ help:
 	@echo "  make convert SCR=DIR         the repack, the test scenarios, the terrain checks and the console's"
 	@echo "                               pieces from Remastered"
 	@echo "  make repack SC=DIR|SCR=DIR   the original files the game reads: OUT/repack (groups: the phones, the"
-	@echo "                               web) and OUT/repack-single (one koprulu.mpq: the computers)"
+	@echo "                               web) and OUT/repack-single (one koprulu.mpq: the computers); from"
+	@echo "                               Remastered a group per language it holds (its speech)"
 	@echo "  make console SCR=DIR         the console's pieces OUT/data/console.kpd from Remastered's art"
 	@echo "  make scenarios SC=DIR|SCR=DIR  the test scenarios' CHKs OUT/scenarios/ (tests, the oracle's tools)"
 	@echo "  make terrain SC=DIR|SCR=DIR    the terrain checks' CRCs OUT/viewer/ (koprulu --autotest)"
 	@echo "  make convert-remastered SCR=DIR"
-	@echo "                               all of the above from Remastered plus its HD art, cinematics, languages"
-	@echo "                               and SPEECH"
+	@echo "                               all of the above from Remastered plus its HD art, cinematics and"
+	@echo "                               languages"
 	@echo "  make hd SCR=DIR [HD=hd2|hd|all]"
 	@echo "  make cinematics SCR=DIR [CINE=sd|hd2|all]"
 	@echo "  make cinematics SC=DIR       the 1.17 movies transcoded into the SD set (FFmpeg with libvpx-vp9)"
 	@echo "  make locale SCR=DIR [LOCALE=all|ruRU|deDE|frFR|plPL]"
-	@echo "  make speech SCR=DIR SPEECH=\"ruRU deDE\""
 	@echo ""
 	@echo "Build a bundle into dist/product/<platform>/ [VARIANT=release|debug]:"
 	@echo "  make macos | windows | linux | web | android | ios | ios-sim"
@@ -73,7 +72,7 @@ help:
 	@echo "  make clean                   remove build/ and dist/ (keeps $(OUT)/)"
 	@echo ""
 	@echo "The converted data goes to OUT (now $(OUT)). The bundles take what was converted; KOPRULU_CINEMATICS,"
-	@echo "KOPRULU_LOCALES, KOPRULU_SPEECH and KOPRULU_PHONE_BLOCKS narrow it (see README.md)."
+	@echo "KOPRULU_LOCALES and KOPRULU_PHONE_BLOCKS narrow it (see README.md)."
 
 # --- Conversion ---------------------------------------------------------------------------------------------------
 
@@ -118,9 +117,6 @@ ifneq ($(CINE),none)
 	$(MAKE) cinematics
 endif
 	$(MAKE) locale
-ifneq ($(strip $(SPEECH)),)
-	$(MAKE) speech
-endif
 
 verify: check-sc convert-tool
 	$(KP_CONVERT) verify "$(SC)"
@@ -155,13 +151,6 @@ endif
 
 locale: check-scr fnt-tool
 	$(CONVERTER) locale --scr "$(SCR)" --locale $(LOCALE) --out "$(OUT)"
-
-speech: check-scr
-	@if [ -z "$(strip $(SPEECH))" ]; then echo "make: speech needs SPEECH=\"ruRU ...\"" >&2; exit 2; fi
-	@set -e; for loc in $(SPEECH); do \
-		echo "$(CONVERTER) speech --scr \"$(SCR)\" --locale $$loc --out \"$(OUT)\""; \
-		$(CONVERTER) speech --scr "$(SCR)" --locale $$loc --out "$(OUT)"; \
-	done
 
 convert-tool: toolchain
 	cmake -S . -B $(TOOLS_DIR) -G Ninja -DCMAKE_BUILD_TYPE=Release

@@ -31,6 +31,7 @@ int kp_data_build(KpData *d, KpRes *res, const KpUiFile *vector_fonts, int vecto
 {
 	memset(d, 0, sizeof *d);
 	kp_res_files(res, &d->files);
+	kp_res_raw_files(res, &d->raw);
 	if (!d->files.profile) {
 		snprintf(err->msg, sizeof err->msg, "the original data has no compiled profile");
 		return -1;

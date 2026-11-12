@@ -24,10 +24,11 @@ or `runs` campaign missions run idle with a dump at every step (tests/golden/ora
 `chains` the games of the campaign chains (tests/golden/oracle/chains; --only takes a chain or a game), `plays` the
 scripted wins of the campaign rows (tests/golden/oracle/plays); --root defaults to the kind's emulator output.
 --speech LOC: plays the emulator ran with a language's speech (emu/plays-LOC, tests/golden/oracle/plays-LOC), Koprulu
-lays generated/speech/LOC's overlays.
+takes the TIME of the language's maps in --speech-data (a StarCraft: Remastered install or a repack with the language's
+group; default KOPRULU_SCR).
 
 Usage: python3 tools/state_check.py [--kind initial|scenarios|runs|chains|plays] [--root STATES]
-       [--only terran-m02,...] [--step N|A-B|A-B/K|all|all/K] [--write-golden] [--speech LOC]
+       [--only terran-m02,...] [--step N|A-B|A-B/K|all|all/K] [--write-golden] [--speech LOC [--speech-data DIR]]
 """
 from __future__ import annotations
 
@@ -87,11 +88,10 @@ KINDS = {
     "chains": (CHAIN_ROOT, CHAIN_GOLDEN),
     "plays": (PLAY_ROOT, PLAY_GOLDEN),
 }
-# A language's speech (`play ... --speech OVERLAY`, sc_emulator/speech.py, localization's stage L5): the plays the
+# A language's speech (`play ... --speech LOC:MISSION`, sc_emulator/speech.py, localization's stage L5): the plays the
 # emulator ran with the language's TIME go to EMU_ROOT/plays-<loc>, their goldens to tests/golden/oracle/plays-<loc>,
-# and Koprulu lays the speech's overlays (KP_SPEECH, kp_oracle_chain_opts).
+# and Koprulu takes the TIME of the language's maps (KP_SPEECH, KP_SPEECH_DATA, kp_oracle_chain_opts; ADR 0019).
 SPEECH_KINDS = ("plays",)
-SPEECH_MISSIONS = "generated/speech/{locale}/missions/"
 RUN_KINDS = ("runs", "chains", "plays")  # campaign missions: their goldens name the mission's key, missions/<name>
 SHOW = 6
 
@@ -483,7 +483,10 @@ def main() -> int:
     ap.add_argument("--step", default="1", help='object steps: N, A-B, A-B/K or "all" (1 = game start)')
     ap.add_argument("--write-golden", action="store_true")
     ap.add_argument("--speech", default="", help="a language whose speech the plays ran with (sc_emulator play "
-                    "--speech): its dumps, its goldens and its overlays laid by Koprulu")
+                    "--speech): its dumps, its goldens and its maps' TIME taken by Koprulu")
+    ap.add_argument("--speech-data", default=os.environ.get("KOPRULU_SCR", ""),
+                    help="where Koprulu reads the language's maps: a StarCraft: Remastered install or a repack with the "
+                    "language's group (default: KOPRULU_SCR)")
     a = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     index = missions()
@@ -496,7 +499,9 @@ def main() -> int:
                                 golden.with_name(f"{golden.name}-{a.speech}"))
         if a.write_golden:
             golden.mkdir(parents=True, exist_ok=True)
-        os.environ["KP_SPEECH"] = SPEECH_MISSIONS.format(locale=a.speech)
+        if not a.speech_data:
+            ap.error("--speech needs --speech-data or KOPRULU_SCR")
+        os.environ["KP_SPEECH"], os.environ["KP_SPEECH_DATA"] = a.speech, a.speech_data
     root = a.root or default_root
     runs = [(d, d.name) for d in sorted(root.iterdir())]
     if a.kind == "chains":  # root/<chain>/<k>-m<mission> (the menus before the first game log into pre-game)

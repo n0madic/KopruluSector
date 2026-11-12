@@ -70,7 +70,10 @@ def built_tables() -> list[tuple[str, bytes]]:
     container's CYCL). Stage D4: the CHK loader tables (CHKL, chk.loader_section) and each campaign mission's packs
     (MPAK: u16 count; per mission by its lowercased directory u8 length, the directory, its PACK payload). Stage D7: the
     cinematics an install's movies are played as (CINM, cinematics_smk.catalog_section). Stage C1 (ADR 0019): each test
-    scenario's packs for kp_convert scenarios' index (SPAK: as MPAK, by the scenario's name).
+    scenario's packs for kp_convert scenarios' index (SPAK: as MPAK, by the scenario's name). Stage C2: the languages
+    (LANG, defs/l10n/locales.json's in its order, the base's first: u8 count; per language u8 length and its ID, u8
+    length and its own name in UTF-8) and the missions whose language's triggers may differ from the base's in more than
+    TIME (SPEX, its `speech`: a names table of "<locale> <campaign>/<mission>").
     """
     from converter import missions
     from converter.emit import cinematics_smk
@@ -104,6 +107,10 @@ def built_tables() -> list[tuple[str, bytes]]:
     out.append(("SPAK", struct.pack("<H", len(packs)) + b"".join(bytes([len(n)]) + n + kpm.packs_payload(p)
                                                                for n, p in packs)))
     out.append(("CINM", cinematics_smk.catalog_section()))
+    l10n = json.loads((ROOT / "defs/l10n/locales.json").read_text(encoding="utf-8"))
+    out.append(("LANG", bytes([len(l10n["locales"])]) + b"".join(
+        bytes([len(i)]) + i + bytes([len(n)]) + n for i, n in ((r["id"].encode(), r["name"].encode()) for r in l10n["locales"]))))
+    out.append(("SPEX", names_table([f"{e['locale']} {e['mission']}" for e in l10n.get("speech", ())])))
     return out
 
 
@@ -225,6 +232,7 @@ def render_header() -> str:
         "#ifndef KP_DEFS_H",
         "#define KP_DEFS_H",
         "",
+        "#include <stddef.h>",
         "#include <stdint.h>",
         "",
         "/* A file of the input manifest: its name normalized (lower case, '/' separators), its size and SHA-256 (hex). */",
@@ -278,6 +286,13 @@ def render_header() -> str:
         "const KpDefsTable *kp_defs_table(const KpDefsProfile *p, const char *fourcc);",
         "/* Whether a sorted list of normalized names holds a name. */",
         "int kp_defs_listed(const char *const *names, int count, const char *normalized);",
+        "/* A compiled names table (tools/defs_c.py names_table: u16 count; per name u8 length, its bytes): its count, or -1 when t",
+        " * is NULL or broken. */",
+        "int kp_defs_names_count(const KpDefsTable *t);",
+        "/* Its index-th name (index below its count), *size bytes, not NUL-terminated. */",
+        "const uint8_t *kp_defs_name_at(const KpDefsTable *t, int index, size_t *size);",
+        "/* Whether the profile's names table of that fourcc holds name (its bytes exactly). */",
+        "int kp_defs_names_has(const KpDefsProfile *p, const char *fourcc, const char *name);",
         "",
         "#endif",
         "",

@@ -20,10 +20,9 @@
 # development checks, --autotest and --script; a phone reads them from its assets). The languages
 # (python3 -m converter locale; ADR 0016) with KOPRULU_LOCALES=auto|none|<ids>: auto, the default, stages every
 # language converted (generated/locale/<id>) and the glyphs' pack; none stages none, the game in its base language
-# with the base's vector fonts; a list ("ruRU deDE") stages those, each of which must have been converted. The speech
-# (python3 -m converter speech) with KOPRULU_SPEECH=auto|none|<ids> the same way (generated/speech/<id>, with the
-# glyphs' pack, which lists the languages and replaces the vector fonts); auto stages every speech converted when
-# languages are staged, none on the web, whose page preloads its data, nor beside KOPRULU_LOCALES=none. Bundles go to
+# with the base's vector fonts; a list ("ruRU deDE") stages those, each of which must have been converted. A staged
+# language's speech is its repack group (koprulu-locale-<id>.mpq, kp_convert repack from StarCraft: Remastered; ADR
+# 0019, stage C2), which the computers and phones carry; the web carries none yet. Bundles go to
 # dist/product/<platform> (KOPRULU_DIST: another folder for <platform>, such as a second bundle of another
 # conversion); the converter's output (generated/, or KOPRULU_GENERATED: another --out directory, such as a
 # conversion from StarCraft: Remastered alone, whose repack is generated/repack-single or generated/repack of it)
@@ -96,25 +95,6 @@ case "$LOCALES" in
 esac
 echo "product: languages ${LOCALES:-none} (KOPRULU_LOCALES)" >&2
 
-SPEECH="${KOPRULU_SPEECH:-auto}"
-case "$SPEECH" in
-  auto) SPEECH=""
-    if [ "$PLATFORM" != web ] && [ -n "$LOCALES" ]; then # the glyphs' pack it needs comes with the languages
-      for d in "$GENERATED"/speech/*/; do
-        if [ -f "$d/units.kpd" ]; then SPEECH="$SPEECH $(basename "$d")"; fi
-      done
-    fi
-    SPEECH="${SPEECH# }" ;;
-  none) SPEECH="" ;;
-  *) for id in $SPEECH; do
-      if [ ! -f "$GENERATED/speech/$id/units.kpd" ] || [ ! -f "$GENERATED/locale/glyphs.kpd" ]; then
-        echo "product: no $GENERATED/speech/$id (python3 -m converter speech --scr DIR --locale $id)" >&2
-        exit 2
-      fi
-    done ;;
-esac
-echo "product: speech ${SPEECH:-none} (KOPRULU_SPEECH)" >&2
-
 # The repack (ADR 0018): a computer's one file, a phone's and the web's groups (each read or fetched when needed)
 case "$PLATFORM" in
   web|android|ios|ios-sim) REPACK=repack; REPACK_HINT="kp_convert repack DIR, make repack SC=DIR|SCR=DIR" ;;
@@ -124,11 +104,25 @@ if [ ! -f "$GENERATED/$REPACK/koprulu-core.mpq" ] && [ ! -f "$GENERATED/$REPACK/
   echo "product: no $GENERATED/$REPACK ($REPACK_HINT)" >&2
   exit 1
 fi
-# the files of the repack a bundle carries (relative to $GENERATED): the cinematics' group goes, the packs show them
+# the files of the repack a bundle carries (relative to $GENERATED): the cinematics' group goes, the packs show them;
+# a language's group (its speech) goes with the language (KOPRULU_LOCALES), not to the web
+# TODO: the web fetches a language's group when the language is chosen (stage C3, whose texts go into the group)
 GENERATED_DIR="$(cd "$GENERATED" && pwd)"
+LANGUAGE_GROUPS=""
+if [ "$PLATFORM" != web ]; then
+  for id in $LOCALES; do LANGUAGE_GROUPS="$LANGUAGE_GROUPS koprulu-locale-$(printf %s "$id" | tr '[:upper:]' '[:lower:]').mpq"; done
+fi
 repack_files() {
-  (cd "$GENERATED_DIR" && find "$REPACK" -name 'koprulu*.mpq' ! -name koprulu-cinematics.mpq | sort)
+  local f
+  (cd "$GENERATED_DIR" && find "$REPACK" -name 'koprulu*.mpq' ! -name koprulu-cinematics.mpq | sort) | while read -r f; do
+    case "$(basename "$f")" in
+      koprulu-locale-*) case "$LANGUAGE_GROUPS " in *" $(basename "$f") "*) echo "$f" ;; esac ;;
+      *) echo "$f" ;;
+    esac
+  done
 }
+speech="$(repack_files | sed -n 's/.*koprulu-locale-\(.*\)\.mpq$/\1/p' | tr '\n' ' ')"
+echo "product: speech ${speech:-none} (the staged languages' repack groups)" >&2
 
 # The data of a bundle under $STAGE/generated (hard links where the file system allows).
 stage_data() {
@@ -139,9 +133,8 @@ stage_data() {
       echo data/console.kpd # the console's pieces (Remastered's, whole: python3 -m converter console)
       # the web preloads the core, the other groups lie beside the page (stage_web_fetched)
       if [ "$PLATFORM" = web ]; then repack_files | grep '/koprulu-core\.mpq$'; else repack_files; fi
-      if [ -n "$LOCALES$SPEECH" ]; then echo locale/glyphs.kpd; fi # LOCS lists the languages
+      if [ -n "$LOCALES" ]; then echo locale/glyphs.kpd; fi # LOCS lists the languages
       for id in $LOCALES; do find "locale/$id" -name '*.kpd' -o -name '*.kpm'; done # each language's overlays
-      for id in $SPEECH; do find "speech/$id" -name '*.kpd' -o -name '*.kpm'; done   # each speech's
       if [ "$PLATFORM" != web ]; then # the web's head alone (web_hd_heads.py), the rest beside the page
         for v in $CINE_VARIANTS; do echo "video/cinematics-$v.kpd"; done
       fi

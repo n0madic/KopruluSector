@@ -1,9 +1,8 @@
 /*
  * The resource packs (docs/formats/packs.md; plan phase S, stage S3): a pack, packed from its GRPs when a mission
  * starts (kp_pack_build, kp_pages.c), holds its atlases' frame tables over its pages (the palette indices of
- * KP_PACK_PAGE_SIZE squared, 0 transparent); a sounds container (kind MSND: a language's speech) holds OGG sounds by
- * their id. The frame table puts every loaded atlas's frames behind one another: grpmeta's AFRM gives each GRP entry its
- * first frame within its atlas.
+ * KP_PACK_PAGE_SIZE squared, 0 transparent). The frame table puts every loaded atlas's frames behind one another:
+ * grpmeta's AFRM gives each GRP entry its first frame within its atlas.
  */
 #include "kp_present_internal.h"
 
@@ -12,54 +11,9 @@
 #include <string.h>
 
 #define FRAME_RECORD 10
-#define MSND_KIND "MSND"
-#define MSND_SCHEMA 1
-
-static int load_sounds(KpPack *p, const KpKpfSection *s, const char *name, KpError *err)
-{
-	size_t pos = 2;
-	int k, count;
-	if (s->size < 2) return kp_present_fail(err, name, "SNDS truncated");
-	count = (int)kp_le_u16(s->data);
-	p->sounds = (KpPackSound *)calloc((size_t)(count ? count : 1), sizeof *p->sounds);
-	if (!p->sounds) return kp_present_fail(err, name, "out of memory");
-	for (k = 0; k < count; k++) {
-		uint32_t size;
-		if (pos + 6 > s->size) return kp_present_fail(err, name, "SNDS truncated");
-		p->sounds[k].id = (uint16_t)kp_le_u16(s->data + pos);
-		size = kp_le_u32(s->data + pos + 2);
-		if (size > s->size - (pos + 6)) return kp_present_fail(err, name, "SNDS truncated");
-		p->sounds[k].ogg = s->data + pos + 6;
-		p->sounds[k].size = size;
-		pos += 6 + size;
-	}
-	p->sound_count = count;
-	return 0;
-}
-
-int kp_mission_sounds_load(KpPack *p, const uint8_t *data, size_t size, const char *name, KpError *err)
-{
-	KpKpf c;
-	KpKpfExpect expect;
-	const KpKpfSection *snds;
-	int rc = -1;
-	memset(p, 0, sizeof *p);
-	if (kp_kpf_parse(&c, data, size, name, 0, err) != 0) return -1;
-	memset(&expect, 0, sizeof expect);
-	expect.kind = MSND_KIND;
-	expect.schema_version = MSND_SCHEMA;
-	if (kp_kpf_check(&c, &expect, err) == 0 && (snds = kp_kpf_require(&c, "SNDS", err)) != NULL) {
-		rc = load_sounds(p, snds, name, err);
-	}
-	kp_kpf_free(&c);
-	if (rc != 0) kp_pack_free(p);
-	return rc;
-}
-
 void kp_pack_free(KpPack *p)
 {
 	free(p->atlases);
-	free(p->sounds);
 	free(p->owned);
 	memset(p, 0, sizeof *p);
 }
@@ -72,18 +26,6 @@ void kp_pack_frame(const KpPack *p, uint32_t i, KpPackFrame *out)
 	out->y = (uint16_t)kp_le_u16(r + 4);
 	out->w = (uint16_t)kp_le_u16(r + 6);
 	out->h = (uint16_t)kp_le_u16(r + 8);
-}
-
-const KpPackSound *kp_pack_sound(const KpPack *p, uint32_t id)
-{
-	int lo = 0, hi = p->sound_count - 1;
-	while (lo <= hi) { /* sorted by id */
-		int mid = (lo + hi) / 2;
-		if (p->sounds[mid].id == id) return &p->sounds[mid];
-		if (p->sounds[mid].id < id) lo = mid + 1;
-		else hi = mid - 1;
-	}
-	return NULL;
 }
 
 /* --- the frame table --- */

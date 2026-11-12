@@ -15,7 +15,7 @@ The sections that hold the executable's tables rather than the install's files (
 | `fonts.kpd` | `FONT` | in memory (the languages' base); the C suites' fixture |
 | `ui.kpd` | `UI  ` | in memory (the languages' base); a language's overlay; the C suites' fixture |
 | `console.kpd` | `CONW` | written (from a Remastered install: `console`, `hd`; `converter/emit/hd_ui.py`) |
-| `sounds.kpd` | `SNDS` | in memory (the speech's base); a speech's overlay; the C suites' fixture |
+| `sounds.kpd` | `SNDS` | in memory; the C suites' fixture |
 | `portraits.kpd` | `PORT` | in memory (the manifest's reads); the C suites' fixture |
 | `grpmeta.kpd` | `GRPM` | in memory (the manifest's reads) |
 | `campaign.kpd` | `CAMP` | in memory (the manifest's reads; `converter/campaign.py`) |
@@ -263,16 +263,9 @@ A zero skip plots even mask 0; a positive skip plots only a nonzero mask inside 
 | `<loc>/cinematics.kpd` | `CINE` | `SUBS` with one row per movie of the original's table (`defs/campaign/cinematics.json`), a clip's by its id |
 | `<loc>/missions/<campaign>/<mission>.kpm` | `MISN` | `STRS` ([kpm](kpm.md)) |
 
-## `speech/`: a language's speech ([ADR 0016](../adr/0016-localization.md), stage L5)
+## `speech/`: a language's speech (removed in stage C2)
 
-`python3 -m converter speech --scr DIR --locale LOC` writes them under `generated/speech/<loc>/` (FFmpeg on the PATH). A loader refuses one of another kind, schema or size and the base stays (`kp_host_game_speech`, `kp_ui_set_locale`); a missing file leaves the base's with one line. The encoded OGGs stay under `generated/sounds/speech/<loc>/`, with the `OggCache`'s index `ogg.json` and `sources.json` in `generated/sounds/speech/` (`speech.Encoder`: each OGG's source digest and encoding), so an unchanged source is not decoded again; neither is staged.
-
-| File | Kind | Sections |
-|---|---|---|
-| `missions/<campaign>/<mission>.kpm` | `MISN` | `TRIG`, `MBRF` ([kpm](kpm.md)): the mission's records with the language's `TIME`, the same size |
-| `missions/<campaign>/<mission>_sounds.kpd` | `MSND` | the language's lines by the base's sound index ([packs](packs.md#msnd-schema-1)) |
-| `units.kpd` | `MSND` | the language's unit voices by sfx id |
-| `sounds.kpd` | `SNDS` | `SFX ` as the base's ([`sounds.kpd`](#soundskpd-schema-2)): the language's RIFF record for each sfx id it has, the base's for the others |
+`python3 -m converter speech` wrote a language's speech as overlays under `generated/speech/<loc>/` (stage L5 of [ADR 0016](../adr/0016-localization.md)): each mission's `TRIG` and `MBRF` with the language's `TIME` (`MISN`), its lines and the unit voices as `MSND`, and the language's `SFX ` records (`SNDS`). Since [ADR 0019](../adr/0019-install-or-repack-converter-in-c.md)'s stage C2 the runtime reads the language's own files from the install or the repack's language group instead ([the repack](repack.md)): the TIME from its maps (`kp_host_game_speech`), the lines and voices as they are, the records from the voices' WAV headers (`kp_ui_data_speech_sounds`).
 
 **A table of section schema 2.** u32 count (the base's), count u32 offsets from the section's start at `4 * id`, the rows in UTF-8 with their NUL. `stat_txt` in Russian is past u16's reach. Lookup as `0x4c13b0`.
 

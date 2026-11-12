@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import logging
 import sys
 import time
@@ -151,7 +152,8 @@ def cmd_play(a):
             old.unlink()
         if a.speech:  # before the dumps: step 1's must have the speech's TIME
             from . import speech
-            speech.install(s, Path(a.speech))
+            locale, _, mission = a.speech.partition(":")
+            speech.install(s, locale, mission, Path(a.scr))
         state.install(s, steps, out / "states")
         logs = install_logs(s, out)
         if a.screens or a.glue_ms:
@@ -288,8 +290,10 @@ def main(argv=None):
     pp.add_argument("--out-root", default="", help="output root instead of emu/campaign")
     pp.add_argument("--fog", default="", help="comma-separated frames of fog captures (sc_emulator/fogcap.py)")
     pp.add_argument("--fog-partial", action="store_true", help="capture the game's own partial redraws")
-    pp.add_argument("--speech", default="", help="a speech overlay of the mission (generated/speech/<loc>/missions/"
-                    "<c>/<m>.kpm): the triggers take its TIME (sc_emulator/speech.py)")
+    pp.add_argument("--speech", default="", help="LOC:CAMPAIGN/MISSION (ruRU:terran/terran01): the triggers take the "
+                    "TIME of the language's map in --scr (sc_emulator/speech.py)")
+    pp.add_argument("--scr", default=os.environ.get("KOPRULU_SCR", "/Applications/StarCraft"),
+                    help="the StarCraft: Remastered install --speech reads (default: KOPRULU_SCR)")
     pp.add_argument("--screens", default="", help="comma-separated frames of screen captures (sc_emulator/uiscreen.py)")
     pp.add_argument("--glue-ms", type=int, default=0, help="capture each glue screen this many virtual ms after it "
                     "opens (uiscreen.py)")

@@ -43,14 +43,10 @@ typedef struct {
 	int stream_next;
 	MIX_Audio *sfx[KP_APP_SFX];       /* decoded on first play */
 	MIX_Audio *wavs[KP_APP_WAVS];     /* the mission's trigger WAVs by WAVS index */
+	uint8_t *wav_bytes[KP_APP_WAVS];  /* a speech's line streamed from its bytes (the wav's: freed with it) */
 	int track, has_track;             /* the music's last track asked for (the scripts' music.track, music.playing) */
 	int64_t started, streamed;
-	/* the chosen speech's voices (generated/speech/<loc>/units.kpd, MSND by sfx id), looked up before the original
-	 * data's files; read on first use, dropped with the decoded sfx when the speech changes (ADR 0016, stage L5) */
-	char speech_id[8];
-	uint8_t *speech_bytes;
-	KpPack speech;
-	int speech_tried;
+	char speech_id[8];                /* the speech the decoded sfx are of (a change drops them) */
 } KpAudio;
 
 /* A mission's resource pack, packed from its GRPs (kp_pack_build): its frames and its pages (8-bit indices). */
@@ -171,8 +167,6 @@ typedef struct {
 	KpBars bars;
 	KpImagesPresenter presenter;
 	KpFogLayer fog;
-	KpPack mission_sounds;
-	uint8_t *mission_sounds_bytes;
 	/* StarCraft: Remastered's HD art (ADR 0013): its packs beside the SD ones (their first bytes; the pages streamed
 	 * into kp_gfx's slots: stage R4a), its frame table, the map's megatiles */
 	int hd_scale; /* HD pixels a logical pixel (2: HD2, 4: HD); 0 none */

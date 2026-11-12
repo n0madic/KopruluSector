@@ -55,6 +55,7 @@ typedef enum {
 	KP_RES_EQUIVALENT,    /* a PCX of the same pixels (another palette's bytes) */
 	KP_RES_COLOUR_EQUAL,  /* a PCX of the same colours */
 	KP_RES_APPROXIMATION, /* neither (lossy art, edited texts, a movie that stands in for its SMK) */
+	KP_RES_REMASTERED,    /* Remastered's own file by its CASC name (kp_res_raw_read), which no manifest lists */
 	KP_RES_STATUS_COUNT
 } KpResStatus;
 
@@ -120,11 +121,16 @@ void kp_res_files(KpRes *r, KpFiles *f);
 void kp_res_counts(const KpRes *r, int counts[KP_RES_STATUS_COUNT]);
 int kp_res_write_log(const KpRes *r, const char *path, char *err, size_t err_size);
 
-/* A Remastered install's own file by its CASC name ("HD2/portrait/tadvisor/tadfid00.webm": the HD art), unchecked: a
- * malloc'd copy, or NULL (err empty when the install is not Remastered's or has no such file). */
-uint8_t *kp_res_casc_file(KpRes *r, const char *casc_name, size_t *size, char *err, size_t err_size);
-/* Whether a Remastered install holds that file (named and downloaded: kp_casc_held). */
-int kp_res_casc_held(KpRes *r, const char *casc_name);
+/* Remastered's own files by their CASC names ("locales/ruRU/Assets/sound/terran/advisor/tadupd00.wav", any case, '/'
+ * or '\\'; ADR 0019, stage C2): a repack's copy (listed "remastered": its size checked, a CHK's SHA-256 too), else the
+ * Remastered install's, unchecked. A malloc'd copy, or NULL (err empty when no source has it). */
+uint8_t *kp_res_raw_read(KpRes *r, const char *raw, size_t *size, char *err, size_t err_size);
+/* Its first `want` bytes and size as kp_res_head (a repack's Ogg of a WAV: the WAV's header and size). */
+uint8_t *kp_res_raw_head(KpRes *r, const char *raw, size_t want, size_t *got, uint64_t *total, char *err, size_t err_size);
+/* Whether a repack lists the file or the Remastered install holds it (named and downloaded: kp_casc_held). */
+int kp_res_raw_held(KpRes *r, const char *raw);
+/* The core's reader over the raw names (kp_files.h): kp_res_raw_read and kp_res_raw_head over r, its profile. */
+void kp_res_raw_files(KpRes *r, KpFiles *f);
 /* A Remastered install's text locale ("deDE"; Remastered downloads that language's files), "" none. */
 const char *kp_res_text_locale(const KpRes *r);
 /* The text locale of a .build.info's text (NUL terminated) into out (5 bytes at least), "" none: of the non-empty lines
@@ -140,7 +146,7 @@ uint8_t *kp_res_casc_rebuild(const char *key, const char *casc_name, const uint8
 
 /* The repack's listing file and its first line */
 #define KP_RES_LISTING "(koprulu)"
-#define KP_RES_LISTING_MAGIC "koprulu repack 2"
+#define KP_RES_LISTING_MAGIC "koprulu repack 3"
 
 #ifdef __cplusplus
 }

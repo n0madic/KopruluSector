@@ -127,35 +127,17 @@ typedef struct {
 	size_t n;
 } Name;
 
-/* A compiled names table (tools/defs_c.py names_table: u16 count; per name u8 length, its bytes): the count, or -1. */
-static int names_count(const KpDefsTable *t)
-{
-	size_t at = 2;
-	int n, k;
-	if (!t || t->size < 2) return -1;
-	n = (int)kp_le_u16(t->data);
-	for (k = 0; k < n; k++) {
-		if (at + 1 > t->size || at + 1 + t->data[at] > t->size) return -1;
-		at += 1 + (size_t)t->data[at];
-	}
-	return n;
-}
-
 static Name name_at(const KpDefsTable *t, int index)
 {
 	Name r;
-	size_t at = 2;
-	int k;
-	for (k = 0; k < index; k++) at += 1 + (size_t)t->data[at];
-	r.n = t->data[at];
-	r.p = t->data + at + 1;
+	r.p = kp_defs_name_at(t, index, &r.n);
 	return r;
 }
 
 static const KpDefsTable *names_table(const KpFiles *f, const char *fourcc, int *count, KpError *err)
 {
 	const KpDefsTable *t = kp_defs_table(f->profile, fourcc);
-	if ((*count = names_count(t)) < 0) {
+	if ((*count = kp_defs_names_count(t)) < 0) {
 		snprintf(err->msg, sizeof err->msg, "ui data: no names table %s compiled for profile \"%s\"", fourcc, f->profile->id);
 		return NULL;
 	}
@@ -718,6 +700,21 @@ int kp_ui_data_music_lengths(KpUiData *d, const KpFiles *f, KpError *err)
 	return 0;
 }
 
+/* A sound's record from a WAV's header (kpd.sound_record): parsed (1) or refused by the original's parser (0). */
+static void sound_record(uint8_t *r, int parsed, const KpWavInfo *w)
+{
+	memset(r, 0, SOUND_RECORD);
+	kp_le_put16(r, parsed ? SOUND_PRESENT | SOUND_PARSED : SOUND_PRESENT);
+	if (!parsed) return; /* the original keeps the sound and never plays it */
+	kp_le_put16(r + 2, w->format_tag);
+	kp_le_put16(r + 4, w->channels);
+	kp_le_put32(r + 6, w->sample_rate);
+	kp_le_put32(r + 10, w->avg_bytes_per_sec);
+	kp_le_put16(r + 14, w->block_align);
+	kp_le_put16(r + 16, w->bits_per_sample);
+	kp_le_put32(r + 18, w->data_length);
+}
+
 /* sounds.kpd: SFX (a record per sfxdata.dat sound: "sound\" + its sfxdata.tbl entry), PACK, MUSL (MUSI's tracks). */
 static int sounds(KpUiData *d, const KpFiles *f, const KpDat *dat, KpError *err)
 {
@@ -757,19 +754,12 @@ static int sounds(KpUiData *d, const KpFiles *f, const KpDat *dat, KpError *err)
 		if ((got = kp_files_wav(f, path, &w, err)) == -2) goto done;
 		if (got < 0) continue;
 		pack[2 + k] = (uint8_t)sound_pack(path);
-		kp_le_put16(r, got ? SOUND_PRESENT | SOUND_PARSED : SOUND_PRESENT);
-		if (!got) continue; /* the original keeps the sound and never plays it */
+		sound_record(r, got, &w);
+		if (!got) continue; /* never played: no path */
 		if (!(paths[k] = (const char *)own(d, copy_text(path)))) {
 			fail(err, "out of memory");
 			goto done;
 		}
-		kp_le_put16(r + 2, w.format_tag);
-		kp_le_put16(r + 4, w.channels);
-		kp_le_put32(r + 6, w.sample_rate);
-		kp_le_put32(r + 10, w.avg_bytes_per_sec);
-		kp_le_put16(r + 14, w.block_align);
-		kp_le_put16(r + 16, w.bits_per_sample);
-		kp_le_put32(r + 18, w.data_length);
 	}
 	d->sounds.data = sfx;
 	d->sounds.size = 2 + (size_t)n * SOUND_RECORD;
@@ -782,6 +772,50 @@ static int sounds(KpUiData *d, const KpFiles *f, const KpDat *dat, KpError *err)
 done:
 	free(tbl);
 	return rc;
+}
+
+int kp_ui_data_speech_path(const char *locale, const char *path, const char *suffix, char *out, size_t size)
+{
+	size_t n = strlen(path), at;
+	int written;
+	if (n >= 4 && path[n - 4] == '.' && latin1_lower((uint8_t)path[n - 3]) == 'w' && latin1_lower((uint8_t)path[n - 2]) == 'a'
+		&& latin1_lower((uint8_t)path[n - 1]) == 'v')
+		n -= 4;
+	written = snprintf(out, size, "locales/%s/Assets/", locale);
+	if (written < 0 || (size_t)written >= size) return -1;
+	at = (size_t)written;
+	written = snprintf(out + at, size - at, "%.*s%s", (int)n, path, suffix);
+	if (written < 0 || (size_t)written >= size - at) return -1;
+	for (; out[at]; at++)
+		if (out[at] == '\\') out[at] = '/';
+	return 0;
+}
+
+uint8_t *kp_ui_data_speech_sounds(const KpUiData *d, const KpFiles *raw, const char *locale, size_t *size, int *voices,
+	KpError *err)
+{
+	uint8_t *out = (uint8_t *)malloc(d->sounds.size ? d->sounds.size : 1);
+	uint32_t k;
+	err->msg[0] = 0;
+	*voices = 0;
+	*size = d->sounds.size;
+	if (!out) return NULL;
+	memcpy(out, d->sounds.data, d->sounds.size);
+	for (k = 0; k < d->sound_path_count && 2 + (size_t)(k + 1) * SOUND_RECORD <= d->sounds.size; k++) {
+		char path[320];
+		KpWavInfo w;
+		KpError why;
+		int got;
+		if (!d->sound_paths[k] || kp_ui_data_speech_path(locale, d->sound_paths[k], ".wav", path, sizeof path) != 0) continue;
+		if ((got = kp_files_wav(raw, path, &w, &why)) == -2) {
+			if (!err->msg[0]) snprintf(err->msg, sizeof err->msg, "%s", why.msg);
+			continue;
+		}
+		if (got < 0) continue;
+		sound_record(out + 2 + (size_t)k * SOUND_RECORD, got, &w);
+		++*voices;
+	}
+	return out;
 }
 
 /* portraits.kpd ROWS and FILE (kpd.portrait_set): per portdata.dat row its idle and talking SMKs, "portrait\" + the

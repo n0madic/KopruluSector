@@ -38,24 +38,52 @@ static void say(KpFlow *f, const char *fmt, ...)
 
 static double now(KpFlow *f) { return f->host.now(f->host.ctx); }
 
-/* A language's overlay over the campaign mission just loaded (ADR 0016): its text (generated/locale/<loc>/missions/)
- * or its speech's triggers (generated/speech/<loc>/missions/, stage L5: the TIME a transmission waits), laid by `lay`
- * (which takes it); none for the base's, or a refused one, leaves the mission's, with one line naming `what` and `id`. */
-static void mission_overlay(KpFlow *f, const KpDataMission *entry, const char *root, const char *what, const char *id,
-	const char *own, int (*lay)(KpHostGame *, uint8_t *, size_t, KpError *))
+static const char MISSIONS[] = "missions/"; /* a campaign mission's key: "missions/" + its campaign and name */
+
+/* A language's text over the campaign mission just loaded (ADR 0016: generated/locale/<loc>/missions/), which
+ * kp_host_game_text takes; none for the base's, or a refused one, leaves the mission's, with one line. */
+static void mission_text(KpFlow *f, const KpDataMission *entry)
 {
-	static const char PREFIX[] = "missions/";
+	const char *id = f->flags->locale;
 	char path[256];
 	uint8_t *overlay;
 	size_t size = 0;
 	KpError e;
-	if (id[0] == 0 || strcmp(id, KP_LOCALE_BASE) == 0 || strncmp(entry->key, PREFIX, sizeof PREFIX - 1) != 0) return;
-	snprintf(path, sizeof path, "generated/%s/%s/missions/%s.kpm", root, id, entry->key + sizeof PREFIX - 1);
+	if (id[0] == 0 || strcmp(id, KP_LOCALE_BASE) == 0 || strncmp(entry->key, MISSIONS, sizeof MISSIONS - 1) != 0) return;
+	snprintf(path, sizeof path, "generated/locale/%s/missions/%s.kpm", id, entry->key + sizeof MISSIONS - 1);
 	if (!(overlay = f->host.read(f->host.ctx, path, &size))) {
-		say(f, "%s %s: no %s, the mission's own %s", what, id, path, own);
-	} else if (lay(&f->session->host, overlay, size, &e) != 0) {
-		say(f, "%s %s: %s: %s", what, id, path, e.msg);
+		say(f, "language %s: no %s, the mission's own text", id, path);
+	} else if (kp_host_game_text(&f->session->host, overlay, size, &e) != 0) {
+		say(f, "language %s: %s: %s", id, path, e.msg);
 	}
+}
+
+/* A language's speech over the campaign mission just loaded (ADR 0019, stage C2): the TIME of its map's triggers, which
+ * a transmission waits for its lines (the audio plays them in place of the scenario's WAVs). A map the data lacks or
+ * refuses leaves the mission's own, with one line; so does each record that differs in more than TIME, named unless
+ * the profile excepts the mission (defs/l10n/locales.json's speech: Remastered's own fixes). A success says "speech of". */
+static void mission_speech(KpFlow *f, const KpDataMission *entry)
+{
+	const char *id = f->flags->speech, *name = entry->key + sizeof MISSIONS - 1;
+	KpHostSpeech sp;
+	KpError e;
+	int rc;
+	if (id[0] == 0 || strcmp(id, KP_LOCALE_BASE) == 0 || strncmp(entry->key, MISSIONS, sizeof MISSIONS - 1) != 0) return;
+	if ((rc = kp_host_game_speech(&f->session->host, &f->data->raw, id, name, &sp, &e)) < 0) {
+		say(f, "speech %s: %s; the mission's own triggers", id, e.msg);
+		return;
+	}
+	if (rc == 0) {
+		say(f, "speech %s: the data has no map of %s, the mission's own triggers", id, name);
+		return;
+	}
+	if (sp.differ && !sp.excepted) {
+		say(f, "speech %s: %s: %d records differ from the mission's in more than TIME, the first %s: they keep the "
+			"mission's (defs/l10n/locales.json's speech lists a mission's own fixes)", id, name, sp.differ, sp.first);
+	} else if (!sp.differ && sp.excepted) {
+		say(f, "speech %s: %s: defs/l10n/locales.json's speech excepts it, but its triggers differ in TIME alone", id, name);
+	}
+	say(f, "speech of %s: %s: %d actions' TIME", id, name, sp.times);
 }
 
 static uint32_t now_ms(KpFlow *f) { return (uint32_t)(uint64_t)(now(f) * 1000); }
@@ -383,9 +411,8 @@ static int build_scene(KpFlow *f, char *err, size_t err_size)
 		f->has_run = entry->catalog && kp_campaign_run_of_mission(&f->data->campaign, entry->index, &f->run);
 	}
 	if (load_mission(f, entry, err, err_size) != 0) return -1;
-	mission_overlay(f, entry, "locale", "language", f->flags->locale, "text", kp_host_game_text);
-	/* a speech's triggers time its own lines, which the host plays in place of the scenario's WAVs */
-	mission_overlay(f, entry, "speech", "speech", f->flags->speech, "triggers", kp_host_game_speech);
+	mission_text(f, entry);
+	mission_speech(f, entry);
 	kp_session_start_defaults(&st);
 	st.seed = KP_APP_SEED;
 	st.mission_index = entry->index;
@@ -1213,7 +1240,7 @@ void kp_flow_frame(KpFlow *f)
 #define LOCALE_GLYPHS 0  /* f->locale_files: generated/locale/glyphs.kpd, <loc>/strings.kpd, <loc>/ui.kpd */
 #define LOCALE_STRINGS 1
 #define LOCALE_UI 2
-#define LOCALE_SPEECH 3  /* generated/speech/<loc>/sounds.kpd: the speech's durations */
+#define LOCALE_SPEECH 3  /* the speech's sound records (kp_ui_data_speech_sounds): its voices' durations */
 
 static void free_locale(KpFlow *f)
 {
@@ -1226,8 +1253,20 @@ static void free_locale(KpFlow *f)
 }
 
 /* generated/locale/glyphs.kpd's LOCS (u8 count; per language u8 length + ID, u8 length + its own name) as the languages,
- * each installed for the text when it is the base or has its strings, for the speech when it is the base or has its
- * voices. */
+ * each installed for the text when it is the base or has its strings, for the speech when it is the base or the data
+ * has its speech (KP_DATA_SPEECH_MARKER: Remastered's languages not downloaded have none). */
+static int has_speech(KpFlow *f, const char *id)
+{
+	char path[128];
+	size_t got = 0;
+	uint64_t total = 0;
+	uint8_t *head;
+	KpError e;
+	snprintf(path, sizeof path, KP_DATA_SPEECH_MARKER, id);
+	free(head = kp_files_head(&f->data->raw, path, 4, &got, &total, &e));
+	return head != NULL;
+}
+
 static void list_languages(KpFlow *f)
 {
 	KpUiLanguages *l = &f->languages;
@@ -1262,8 +1301,7 @@ static void list_languages(KpFlow *f)
 			at += 2 + id_n + name_n;
 			snprintf(path, sizeof path, "generated/locale/%s/strings.kpd", id);
 			l->list[l->count].text = strcmp(id, KP_LOCALE_BASE) == 0 || f->host.exists(f->host.ctx, path);
-			snprintf(path, sizeof path, "generated/speech/%s/units.kpd", id);
-			l->list[l->count].speech = strcmp(id, KP_LOCALE_BASE) == 0 || f->host.exists(f->host.ctx, path);
+			l->list[l->count].speech = strcmp(id, KP_LOCALE_BASE) == 0 || has_speech(f, id);
 			l->count++;
 		}
 	}
@@ -1335,16 +1373,30 @@ static void choose_speech(KpFlow *f)
 	snprintf(f->flags->speech, sizeof f->flags->speech, "%s", at >= 0 ? l->list[at].id : KP_LOCALE_BASE);
 }
 
-/* The speech's sound records (its voices' durations) for one that is not the base's; none leaves the base's, with one
- * line. The speech needs no glyphs: --speech alone reads it. */
+/* The speech's sound records (its voices' durations) for one that is not the base's (ADR 0019, stage C2: its voices
+ * from the data, locales/<loc>/Assets/); none leaves the base's, with one line. The speech needs no glyphs: --speech
+ * alone reads it. */
 static void read_speech(KpFlow *f)
 {
-	char path[128];
 	const char *speech = f->flags->speech;
+	size_t size = 0;
+	int voices = 0;
+	KpError e;
+	uint8_t *sfx;
 	if (speech[0] == 0 || strcmp(speech, KP_LOCALE_BASE) == 0) return;
-	snprintf(path, sizeof path, "generated/speech/%s/sounds.kpd", speech);
-	f->locale.speech = f->locale_files[LOCALE_SPEECH] = f->host.read(f->host.ctx, path, &f->locale.speech_size);
-	if (f->locale.speech == NULL) say(f, "speech %s: no %s", speech, path);
+	if (!(sfx = kp_ui_data_speech_sounds(&f->data->ui, &f->data->raw, speech, &size, &voices, &e))) {
+		say(f, "speech %s: out of memory, the base's voices", speech);
+		return;
+	}
+	if (e.msg[0]) say(f, "speech %s: %s; that voice's duration stays the base's", speech, e.msg);
+	if (voices == 0) {
+		say(f, "speech %s: the data has none of its voices, the base's voices", speech);
+		free(sfx);
+		return;
+	}
+	f->locale.speech = f->locale_files[LOCALE_SPEECH] = sfx;
+	f->locale.speech_size = size;
+	say(f, "speech of %s: %d voices", speech, voices);
 }
 
 /* The language's overlays (ADR 0016): the glyphs for any language, the text for one that is not the base's, the speech's

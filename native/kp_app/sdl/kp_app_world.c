@@ -67,8 +67,6 @@ void kp_world_free(KpApp *a)
 	free(w->afrm);
 	for (k = 0; k < w->pack_count; k++) free_pack(&w->packs[k]);
 	kp_lookups_free(&w->lookups);
-	kp_pack_free(&w->mission_sounds);
-	free(w->mission_sounds_bytes);
 	free(w->ids);
 	free(w->cells);
 	free(w->sheet);
@@ -374,7 +372,6 @@ static int build(KpApp *a, char *err, size_t err_size)
 	const KpGrpMeta *grp = kp_session_grp(a->flow.session);
 	const KpPack *packs[KP_APP_PACKS];
 	const char *names[KP_APP_PACKS];
-	char path[256];
 	KpError e;
 	int64_t bad;
 	Uint64 packed_at;
@@ -443,21 +440,6 @@ static int build(KpApp *a, char *err, size_t err_size)
 		return fail(err, err_size, "%s", e.msg);
 	}
 	kp_fog_layer_init(&w->fog);
-	/* the triggers' WAVs (a catalog mission's): the chosen speech's lines by WAVS index (ADR 0016, stage L5), else each
-	 * from the scenario's directory when it plays (kp_app_audio.c). The index is the WAV string's position (kp_mission.c
-	 * WAVS), the CHK's alone, so the base the speech was converted against (converter/base.py) and every source give
-	 * the same, a repack that leaves a damaged copy out too (issue #2; test_chk compares the two installs'). */
-	if (entry->catalog && a->flags.speech[0] != 0 && strcmp(a->flags.speech, KP_LOCALE_BASE) != 0) {
-		size_t n = 0;
-		snprintf(path, sizeof path, "generated/speech/%s/missions/%s_sounds.kpd", a->flags.speech, entry->name);
-		if (!(w->mission_sounds_bytes = kp_app_read(a, path, &n))) {
-			SDL_Log("speech %s: no %s, the mission's own WAVs", a->flags.speech, path);
-		} else if (kp_mission_sounds_load(&w->mission_sounds, w->mission_sounds_bytes, n, path, &e) != 0) {
-			SDL_Log("%s", e.msg);
-			free(w->mission_sounds_bytes);
-			w->mission_sounds_bytes = NULL;
-		}
-	}
 	kp_world_upload(a);
 	/* the screen palette: the tileset's with its cycles, in the gamma option */
 	{

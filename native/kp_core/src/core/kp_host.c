@@ -1,6 +1,7 @@
 /* A host's native game (kp_host.h). */
 #include "kp_host.h"
 
+#include "kp_chk.h"
 #include "kp_game_internal.h"
 
 #include <stdio.h>
@@ -143,50 +144,71 @@ int kp_host_game_text(KpHostGame *hg, uint8_t *overlay, size_t size, KpError *er
 	return rc;
 }
 
-/* Whether a speech's records are the mission's but for their actions' TIME (converter speech changes nothing else):
- * the index of the first record that differs in more, -1 none. */
-static int64_t differs_in_more_than_time(const uint8_t *own, const uint8_t *theirs, size_t size)
+/* The language's TIME over one section of trigger records (TRIG or MBRF; the Python converter's rule until stage C2,
+ * tools/research/sc_emulator/speech.py's for the original's game): an action alike but for its TIME takes the
+ * language's; one that differs in more keeps the mission's whole, and a record whose conditions, flags or actions
+ * differ in more is counted in out (the first named). The actions whose TIME changed. */
+static int time_merged(uint8_t *own, const uint8_t *theirs, size_t size, KpHostSpeech *out, const char *tag)
 {
+	const size_t tail = KP_TRIG_ACTIONS_AT + (size_t)KP_TRIG_ACTIONS * KP_TRIG_ACTION_SIZE;
 	size_t r;
-	int k;
+	int k, changed = 0;
 	for (r = 0; r + KP_TRIGGER_RECORD <= size; r += KP_TRIGGER_RECORD) {
-		size_t at = r;
+		uint8_t *rec = own + r;
+		const uint8_t *their = theirs + r;
+		int differs = memcmp(rec, their, KP_TRIG_ACTIONS_AT) != 0 || memcmp(rec + tail, their + tail, KP_TRIGGER_RECORD - tail) != 0;
 		for (k = 0; k < KP_TRIG_ACTIONS; k++) {
-			size_t time = r + KP_TRIG_ACTIONS_AT + (size_t)k * KP_TRIG_ACTION_SIZE + KP_ACTION_TIME;
-			if (memcmp(own + at, theirs + at, time - at) != 0) return (int64_t)(r / KP_TRIGGER_RECORD);
-			at = time + 4; /* the u32 TIME */
+			size_t at = KP_TRIG_ACTIONS_AT + (size_t)k * KP_TRIG_ACTION_SIZE, time = at + KP_ACTION_TIME;
+			if (memcmp(rec + at, their + at, KP_ACTION_TIME) != 0
+				|| memcmp(rec + time + 4, their + time + 4, KP_TRIG_ACTION_SIZE - KP_ACTION_TIME - 4) != 0) {
+				differs = 1;
+			} else if (memcmp(rec + time, their + time, 4) != 0) {
+				memcpy(rec + time, their + time, 4);
+				changed++;
+			}
 		}
-		if (memcmp(own + at, theirs + at, r + KP_TRIGGER_RECORD - at) != 0) return (int64_t)(r / KP_TRIGGER_RECORD);
+		if (differs && out->differ++ == 0) snprintf(out->first, sizeof out->first, "%s record %lld", tag, (long long)(r / KP_TRIGGER_RECORD));
 	}
-	return -1;
+	return changed;
 }
 
-int kp_host_game_speech(KpHostGame *hg, uint8_t *overlay, size_t size, KpError *err)
+int kp_host_game_speech(KpHostGame *hg, const KpFiles *raw, const char *locale, const char *mission, KpHostSpeech *out,
+	KpError *err)
 {
-	KpKpf c;
-	const KpKpfSection *trig, *mbrf;
+	char path[KP_ERROR_SIZE], why[KP_ERROR_SIZE], spec[KP_ERROR_SIZE];
 	KpBytes *triggers = &hg->data.mission.triggers, *briefing = &hg->data.mission.briefing;
-	int64_t trig_at = -1, mbrf_at = -1;
-	int rc = -1;
-	if (overlay_parse(&c, overlay, size, "mission speech", err) != 0) return -1;
-	trig = kp_kpf_find(&c, "TRIG");
-	mbrf = kp_kpf_find(&c, "MBRF");
-	if (trig == NULL || mbrf == NULL || trig->size != triggers->size || mbrf->size != briefing->size) {
-		snprintf(err->msg, sizeof err->msg, "mission speech: no TRIG and MBRF of the mission's sizes");
-	} else if ((trig_at = differs_in_more_than_time(triggers->data, trig->data, trig->size)) >= 0
-		|| (mbrf_at = differs_in_more_than_time(briefing->data, mbrf->data, mbrf->size)) >= 0) {
-		snprintf(err->msg, sizeof err->msg, "mission speech: %s record %lld differs from the mission's in more than TIME "
-			"(the speech is of other data)", trig_at >= 0 ? "TRIG" : "MBRF", (long long)(trig_at >= 0 ? trig_at : mbrf_at));
-	} else {
-		triggers->data = trig->data;
-		briefing->data = mbrf->data;
-		free(hg->speech);
-		hg->speech = overlay;
-		rc = 0;
+	const KpChkSection *trig, *mbrf;
+	KpChk chk;
+	uint8_t *bytes, *merged = NULL;
+	size_t size = 0;
+	memset(out, 0, sizeof *out);
+	snprintf(path, sizeof path, KP_HOST_SPEECH_MAP, locale, mission);
+	if (!(bytes = raw->read(raw->ctx, path, &size, why, sizeof why))) {
+		if (!why[0]) return 0;
+		snprintf(err->msg, sizeof err->msg, "%s", why);
+		return -1;
 	}
-	kp_kpf_free(&c);
-	if (rc != 0) free(overlay);
-	return rc;
+	if (kp_chk_read(&chk, bytes, size, raw->profile, 1, why, sizeof why) != 0) {
+		snprintf(err->msg, sizeof err->msg, "%s: %s", path, why);
+	} else if (!(trig = kp_chk_section(&chk, "TRIG")) || !(mbrf = kp_chk_section(&chk, "MBRF"))
+		|| trig->size != triggers->size || mbrf->size != briefing->size) {
+		snprintf(err->msg, sizeof err->msg, "%s: no TRIG and MBRF of the mission's sizes", path);
+	} else if (!(merged = (uint8_t *)malloc(triggers->size + briefing->size + 1))) {
+		snprintf(err->msg, sizeof err->msg, "%s: out of memory", path);
+	} else {
+		memcpy(merged, triggers->data, triggers->size);
+		memcpy(merged + triggers->size, briefing->data, briefing->size);
+		out->times = time_merged(merged, trig->data, trig->size, out, "TRIG");
+		out->times += time_merged(merged + triggers->size, mbrf->data, mbrf->size, out, "MBRF");
+		snprintf(spec, sizeof spec, "%s %s", locale, mission);
+		out->excepted = kp_defs_names_has(raw->profile, "SPEX", spec);
+		triggers->data = merged;
+		briefing->data = merged + triggers->size;
+		free(hg->speech);
+		hg->speech = merged;
+	}
+	free(bytes);
+	return merged ? 1 : -1;
 }
 
 int kp_host_game_start(KpHostGame *hg, uint32_t seed, int expansion, const KpHostOpts *opts, KpError *err)

@@ -260,7 +260,7 @@ static uint8_t *casc_clip(KpApp *a, const char *path, size_t len, uint32_t *size
 		for (i = 0; i < n && at + 1 < sizeof name; i++) name[at++] = path[i] == '\\' ? '/' : (char)SDL_tolower(path[i]);
 		name[at] = 0;
 		SDL_strlcat(name, ".webm", sizeof name);
-		b = kp_res_casc_file(a->res, name, &got, err, sizeof err);
+		b = kp_res_raw_read(a->res, name, &got, err, sizeof err);
 	}
 	*size = (uint32_t)got;
 	return b;

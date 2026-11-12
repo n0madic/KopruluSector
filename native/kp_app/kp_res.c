@@ -98,6 +98,7 @@ struct KpRes {
 	} groups[KP_RES_GROUPS]; /* the core's listing's */
 	int group_count;
 	Map listed;  /* the repacks' files */
+	Map raw;     /* the repacks' Remastered files by their CASC names (listed "remastered": kp_res_raw_read) */
 	KpResSourceKind install;
 	char install_dir[KP_RES_PATH];
 	Archive archives[KP_RES_ARCHIVES];
@@ -372,7 +373,7 @@ const char *kp_res_status_name(KpResStatus status)
 {
 	static const char *const NAMES[KP_RES_STATUS_COUNT] = {
 		"missing", "absent", "repacked", "exact", "derived", "differs", "unlisted", "refused", "error",
-		"equivalent", "colour-equal", "approximation",
+		"equivalent", "colour-equal", "approximation", "remastered",
 	};
 	return (unsigned)status < KP_RES_STATUS_COUNT ? NAMES[status] : "?";
 }
@@ -396,7 +397,7 @@ KpResSourceKind kp_res_detect(const char *dir, const KpDefsProfile *profile)
 static int listed_status(const char *word)
 {
 	static const KpResStatus LISTED[] = { KP_RES_EXACT, KP_RES_DERIVED, KP_RES_DIFFERS, KP_RES_UNLISTED,
-		KP_RES_EQUIVALENT, KP_RES_COLOUR_EQUAL, KP_RES_APPROXIMATION };
+		KP_RES_EQUIVALENT, KP_RES_COLOUR_EQUAL, KP_RES_APPROXIMATION, KP_RES_REMASTERED };
 	size_t k;
 	for (k = 0; k < sizeof LISTED / sizeof LISTED[0]; k++)
 		if (strcmp(word, kp_res_status_name(LISTED[k])) == 0) return (int)LISTED[k];
@@ -422,8 +423,9 @@ static int add_group(KpRes *r, const char *spec)
 
 /* A listing's file line into the repack table: "SHA256 SIZE STATUS NAME", or "SHA256 SIZE STATUS ogg WAV-SHA256
  * WAV-SIZE WAV-HEADER NAME" (the header in hexadecimal). An exact or derived file is the manifest's: its listed digest
- * (an Ogg's, its WAV's) is checked against the manifest's here, its size against the listing's when read. 0, or -1
- * for a line that is not a file's or does not hold. */
+ * (an Ogg's, its WAV's) is checked against the manifest's here, its size against the listing's when read. A
+ * "remastered" file is Remastered's own by its CASC name, into the raw table (no manifest lists it). 0, or -1 for a
+ * line that is not a file's or does not hold. */
 static int listed_file(KpRes *r, int archive, const char *line)
 {
 	char hex[2 * KP_SHA256_SIZE + 1], word[32], key[KP_RES_NAME];
@@ -472,7 +474,7 @@ static int listed_file(KpRes *r, int archive, const char *line)
 			return 0;
 		}
 	}
-	if (!(e = map_put(&r->listed, key))) {
+	if (!(e = map_put(status == KP_RES_REMASTERED ? &r->raw : &r->listed, key))) {
 		free(head);
 		return -1;
 	}
@@ -517,7 +519,7 @@ static int find_repack(const KpRes *r, const char *dir, const char *file, char *
 	return r->repack_file ? r->repack_file(r->repack_ctx, file, out, size) : 0;
 }
 
-/* A repack's listing: "koprulu repack 2", "profile ID", "source WHAT", "group FILE PREFIX" lines (the core's: its
+/* A repack's listing: "koprulu repack 3", "profile ID", "source WHAT", "group FILE PREFIX" lines (the core's: its
  * groups, those beside it, in dir or KpResConfig.repack_file's when dir is NULL, added), then a file a line
  * (listed_file). 0, or -1 with the reason (another profile, a broken listing), its lines then unapplied. */
 static int read_listing(KpRes *r, int archive, const char *dir, char *err, size_t err_size)
@@ -706,6 +708,7 @@ void kp_res_close(KpRes *r)
 	kp_casc_close(r->casc);
 	kp_res_scr_free(r->scr);
 	map_free(&r->listed);
+	map_free(&r->raw);
 	map_free(&r->seen);
 	free(r);
 }
@@ -962,17 +965,6 @@ int kp_res_exists(KpRes *r, const char *name)
 	return 0;
 }
 
-uint8_t *kp_res_casc_file(KpRes *r, const char *casc_name, size_t *size, char *err, size_t err_size)
-{
-	*size = 0;
-	if (!r->casc) {
-		if (err_size) err[0] = 0;
-		return NULL;
-	}
-	return kp_casc_read(r->casc, casc_name, size, err, err_size);
-}
-
-int kp_res_casc_held(KpRes *r, const char *casc_name) { return r->casc && kp_casc_held(r->casc, casc_name); }
 const char *kp_res_text_locale(const KpRes *r) { return r->text_locale; }
 
 uint8_t *kp_res_casc_exact(KpRes *r, const char *key, size_t *size)
@@ -1061,6 +1053,23 @@ KpResStream *kp_res_stream_open(KpRes *r, const char *name, uint64_t *size, char
 	return open_file(r, name, 1, size, err, err_size);
 }
 
+/* A repack's Ogg of a WAV, the WAV's header and size as listed: its first want bytes (NUL-terminated past them). */
+static uint8_t *ogg_head(const Entry *e, size_t want, size_t *got, uint64_t *total, char *err, size_t err_size)
+{
+	size_t n = e->head_size < want ? e->head_size : want;
+	uint8_t *b = (uint8_t *)malloc(n + 1);
+	if (!b) {
+		set_err(err, err_size, "out of memory");
+		return NULL;
+	}
+	memcpy(b, e->head, n);
+	b[n] = 0;
+	*got = n;
+	*total = e->wav_size;
+	if (err_size) err[0] = 0;
+	return b;
+}
+
 uint8_t *kp_res_head(KpRes *r, const char *name, size_t want, size_t *got, uint64_t *total, char *err, size_t err_size)
 {
 	KpResStream *s;
@@ -1070,18 +1079,8 @@ uint8_t *kp_res_head(KpRes *r, const char *name, size_t want, size_t *got, uint6
 	Entry *e;
 	*got = 0;
 	normalize(name, key, sizeof key);
-	if ((e = map_find(&r->listed, key)) != NULL && e->head) { /* a repack's Ogg of a WAV: the WAV's header */
-		n = e->head_size < want ? e->head_size : want;
-		if (!(b = (uint8_t *)malloc(n + 1))) {
-			set_err(err, err_size, "out of memory");
-			return NULL;
-		}
-		memcpy(b, e->head, n);
-		b[n] = 0;
-		*got = n;
-		*total = e->wav_size;
-		if (err_size) err[0] = 0;
-		seen(r, key, KP_RES_REPACKED, r->repack[e->archive].file);
+	if ((e = map_find(&r->listed, key)) != NULL && e->head) {
+		if ((b = ogg_head(e, want, got, total, err, err_size)) != NULL) seen(r, key, KP_RES_REPACKED, r->repack[e->archive].file);
 		return b;
 	}
 	if (!(s = open_file(r, name, 0, total, err, err_size))) return NULL;
@@ -1096,6 +1095,110 @@ uint8_t *kp_res_head(KpRes *r, const char *name, size_t want, size_t *got, uint6
 	*got = n;
 	kp_res_stream_close(s);
 	return b;
+}
+
+/* --- Remastered's own files by their CASC names (ADR 0019, stage C2) --- */
+
+/* A repack's raw entry as listed: its size (a CHK's SHA-256 too: a language's map times its game), NULL when it has
+ * none or its copy differs (logged: the install's is read). */
+static uint8_t *read_raw_repack(KpRes *r, const char *key, const Entry *e, size_t *size)
+{
+	char name[KP_RES_NAME], why[KP_RES_MESSAGE];
+	size_t got = 0;
+	uint8_t *b;
+	mpq_name(key, name, sizeof name);
+	b = kp_mpq_read(r->repack[e->archive].mpq, name, &got, why, sizeof why);
+	if (b && got == e->size && (!simulation_input(key) || digest_is(b, got, e->sha256))) {
+		*size = got;
+		return b;
+	}
+	free(b);
+	say(r, "res: %s in %s differs from its listing or cannot be read: the install's is read", name, r->repack[e->archive].name);
+	return NULL;
+}
+
+uint8_t *kp_res_raw_read(KpRes *r, const char *raw, size_t *size, char *err, size_t err_size)
+{
+	char key[KP_RES_NAME];
+	const Entry *e;
+	uint8_t *b;
+	*size = 0;
+	if (err_size) err[0] = 0;
+	normalize(raw, key, sizeof key);
+	if ((e = map_find(&r->raw, key)) != NULL && (b = read_raw_repack(r, key, e, size)) != NULL) {
+		seen(r, key, KP_RES_REMASTERED, r->repack[e->archive].file);
+		return b;
+	}
+	if (!r->casc || !(b = kp_casc_read(r->casc, raw, size, err, err_size))) return NULL;
+	seen(r, key, KP_RES_REMASTERED, "CASC");
+	return b;
+}
+
+/* The first want bytes of an open file of size total (NUL-terminated past them), or NULL with the reason. */
+static uint8_t *head_of(int (*read)(void *file, uint64_t offset, void *out, size_t size), void *file, const char *raw,
+	size_t want, uint64_t total, size_t *got, char *err, size_t err_size)
+{
+	size_t n = total < want ? (size_t)total : want;
+	uint8_t *b = (uint8_t *)malloc(n + 1);
+	if (!b || read(file, 0, b, n) != 0) {
+		if (err_size) snprintf(err, err_size, "%s: %s", raw, b ? "cannot be read" : "out of memory");
+		free(b);
+		return NULL;
+	}
+	b[n] = 0;
+	*got = n;
+	return b;
+}
+
+static int mpq_file_read(void *file, uint64_t offset, void *out, size_t size)
+{
+	return kp_mpq_file_read((KpMpqFile *)file, offset, out, size);
+}
+
+static int casc_file_read(void *file, uint64_t offset, void *out, size_t size)
+{
+	return kp_casc_file_read((KpCascFile *)file, offset, out, size);
+}
+
+uint8_t *kp_res_raw_head(KpRes *r, const char *raw, size_t want, size_t *got, uint64_t *total, char *err, size_t err_size)
+{
+	char key[KP_RES_NAME], name[KP_RES_NAME], why[KP_RES_MESSAGE];
+	const Entry *e;
+	uint8_t *b = NULL;
+	*got = 0;
+	*total = 0;
+	if (err_size) err[0] = 0;
+	normalize(raw, key, sizeof key);
+	if ((e = map_find(&r->raw, key)) != NULL) {
+		KpMpqFile *f;
+		if (e->head) {
+			if ((b = ogg_head(e, want, got, total, err, err_size)) != NULL) seen(r, key, KP_RES_REMASTERED, r->repack[e->archive].file);
+			return b;
+		}
+		mpq_name(key, name, sizeof name);
+		if ((f = kp_mpq_file_open(r->repack[e->archive].mpq, name, total, why, sizeof why)) != NULL && *total == e->size)
+			b = head_of(mpq_file_read, f, raw, want, *total, got, err, err_size);
+		kp_mpq_file_close(f);
+		if (b) {
+			seen(r, key, KP_RES_REMASTERED, r->repack[e->archive].file);
+			return b;
+		}
+		say(r, "res: %s in %s differs from its listing or cannot be read: the install's is read", name, r->repack[e->archive].name);
+		*total = 0;
+	}
+	if (r->casc) {
+		KpCascFile *f = kp_casc_file_open(r->casc, raw, total, err, err_size);
+		if (f && (b = head_of(casc_file_read, f, raw, want, *total, got, err, err_size)) != NULL) seen(r, key, KP_RES_REMASTERED, "CASC");
+		kp_casc_file_close(f);
+	}
+	return b;
+}
+
+int kp_res_raw_held(KpRes *r, const char *raw)
+{
+	char key[KP_RES_NAME];
+	normalize(raw, key, sizeof key);
+	return map_find(&r->raw, key) != NULL || (r->casc && kp_casc_held(r->casc, raw));
 }
 
 int kp_res_stream_read(KpResStream *s, uint64_t offset, void *out, size_t size)
@@ -1176,6 +1279,25 @@ void kp_res_files(KpRes *r, KpFiles *f)
 {
 	f->read = files_read;
 	f->head = files_head;
+	f->ctx = r;
+	f->profile = r->profile;
+}
+
+static uint8_t *raw_files_read(void *ctx, const char *name, size_t *size, char *err, size_t err_size)
+{
+	return kp_res_raw_read((KpRes *)ctx, name, size, err, err_size);
+}
+
+static uint8_t *raw_files_head(void *ctx, const char *name, size_t want, size_t *got, uint64_t *total, char *err,
+	size_t err_size)
+{
+	return kp_res_raw_head((KpRes *)ctx, name, want, got, total, err, err_size);
+}
+
+void kp_res_raw_files(KpRes *r, KpFiles *f)
+{
+	f->read = raw_files_read;
+	f->head = raw_files_head;
 	f->ctx = r;
 	f->profile = r->profile;
 }

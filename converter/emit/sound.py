@@ -1,5 +1,5 @@
-"""Deterministic WAV -> OGG conversion (`oggenc` with a fixed stream serial) for the pack, music and mission sound
-containers (converter/emit/packs.py).
+"""Deterministic WAV -> OGG conversion (`oggenc` with a fixed stream serial) for the 1.17 movies' sound
+(converter/emit/cinematics_smk.py).
 """
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from pathlib import Path
 from ..errors import ConverterError
 from .files import project_path, write_if_changed
 
-OGG_QUALITY = "3"  # oggenc -q; mono 22 kHz speech/effects
+OGG_QUALITY = "3"  # oggenc -q
 
 
 class SoundError(ConverterError, RuntimeError):

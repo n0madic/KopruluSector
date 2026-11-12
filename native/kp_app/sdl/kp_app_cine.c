@@ -370,7 +370,7 @@ static int original_has(void *ctx, int k)
 	HasMovie *h = (HasMovie *)ctx;
 	char name[128];
 	original_name(h->app, k, h->variant, name, sizeof name);
-	return h->app->cine.casc ? kp_res_casc_held(h->app->res, name) : kp_res_exists(h->app->res, name);
+	return h->app->cine.casc ? kp_res_raw_held(h->app->res, name) : kp_res_exists(h->app->res, name);
 }
 
 /* A Remastered movie's subtitles: the .srt of the app's language (--locale, the player's choice) when it has one but
@@ -392,8 +392,8 @@ static void original_subtitles(KpApp *a, KpCineMovie *m, const char *movie)
 		for (j = 0; j < k && strcmp(locales[j], locales[k]) != 0; j++) {}
 		if (j < k) continue; /* tried */
 		snprintf(name, sizeof name, SRT_FORMAT, locales[k], movie);
-		if (!kp_res_casc_held(a->res, name)) continue;
-		if (!(srt = kp_res_casc_file(a->res, name, &size, why, sizeof why))) {
+		if (!kp_res_raw_held(a->res, name)) continue;
+		if (!(srt = kp_res_raw_read(a->res, name, &size, why, sizeof why))) {
 			SDL_Log("cinematics: %s: %s", name, why);
 			continue;
 		}
@@ -416,7 +416,7 @@ static KpCineMovie *host_load(void *ctx, const KpCineClip *clip, KpError *err)
 	KpCineMovie *m;
 	original_name(a, clip->id, a->cine.run.index.variant, name, sizeof name);
 	if (a->cine.casc) {
-		data = kp_res_casc_file(a->res, name, &size, why, sizeof why);
+		data = kp_res_raw_read(a->res, name, &size, why, sizeof why);
 	} else {
 		KpResStatus st;
 		data = kp_res_read(a->res, name, &size, &st, why, sizeof why);

@@ -1428,68 +1428,6 @@ static void the_missions_texts_fit(KpT *T)
 	kp_t_eq(T, lc.fresh, 0, "missions' texts that do not fit, listed in " MISSION_WIDTHS_REPORT " of:%s", "<locale>", lc.languages);
 }
 
-#define SPEECH_SOUNDS "generated/speech/ruRU/sounds.kpd"
-
-static const char *const REAL_SPEECH_SOUNDS[] = { KP_T_DATA, SPEECH_SOUNDS, NULL };
-
-/* The durations of an interface's sounds that differ from another's. */
-static int durations_apart(const KpUi *a, const KpUi *b)
-{
-	int k, n = 0;
-	for (k = 0; k < a->sound_count; k++) n += kp_ui_sound_duration(a, (uint32_t)k) != kp_ui_sound_duration(b, (uint32_t)k);
-	return n;
-}
-
-/* The speech's sound records (stage L5) replace the base's: its voices' durations; a pack of another kind or another
- * sound count leaves the base's, told in ui->speech_problem (the speech's), not in the language's locale_problem. */
-static void speech_sound_records_replace_the_bases(KpT *T)
-{
-	KpUiLocale locale;
-	KpUi *own, *spoken, *refused;
-	const uint8_t *sfx;
-	uint8_t *fewer;
-	size_t sfx_size;
-	KpKpfOut section;
-	if (!kp_t_ready(T, "test_locale.speech_sounds", REAL_SPEECH_SOUNDS)) return;
-	own = real_ui(T);
-	spoken = real_ui(T);
-	memset(&locale, 0, sizeof locale);
-	locale.speech = kp_t_read(T, SPEECH_SOUNDS, &locale.speech_size);
-	kp_ui_set_locale(spoken, &locale);
-	kp_t_eq_str(T, spoken->speech_problem, "", "accepted");
-	kp_t_ok(T, durations_apart(own, spoken) > 0, "the speech's voices' durations");
-	/* another kind: a strings pack */
-	refused = real_ui(T);
-	memset(&section, 0, sizeof section);
-	section.fourcc = "STAT";
-	section.payload = (const uint8_t *)"\0";
-	section.size = 2;
-	locale.speech = pack(T, KP_UI_DATA_STRINGS_KIND, KP_UI_DATA_STRINGS_SCHEMA, &section, 1, &locale.speech_size);
-	kp_ui_set_locale(refused, &locale);
-	kp_t_ok(T, strstr(refused->speech_problem, "kind") != NULL, "%s", refused->speech_problem);
-	kp_t_eq_str(T, refused->locale_problem, "", "not the language's");
-	kp_t_eq(T, durations_apart(own, refused), 0, "the base's durations");
-	/* one sound fewer */
-	refused = real_ui(T);
-	locale.speech = kp_t_read(T, SPEECH_SOUNDS, &locale.speech_size);
-	sfx = kp_kpf_section(locale.speech, locale.speech_size, "SFX ", &sfx_size);
-	kp_t_ok(T, sfx != NULL && sfx_size >= 2, "the speech's SFX");
-	fewer = (uint8_t *)malloc(sfx_size);
-	if (fewer == NULL) kp_t_fail(T, "out of memory");
-	kp_t_defer(T, free, fewer);
-	memcpy(fewer, sfx, sfx_size);
-	put_u16(fewer, (uint32_t)own->sound_count - 1);
-	memset(&section, 0, sizeof section);
-	section.fourcc = "SFX ";
-	section.payload = fewer;
-	section.size = sfx_size;
-	section.schema_version = 1;
-	locale.speech = pack(T, KP_UI_DATA_SOUNDS_KIND, KP_UI_DATA_SOUNDS_SCHEMA, &section, 1, &locale.speech_size);
-	kp_ui_set_locale(refused, &locale);
-	kp_t_ok(T, strstr(refused->speech_problem, "sound count") != NULL, "%s", refused->speech_problem);
-	kp_t_eq(T, durations_apart(own, refused), 0, "the base's durations");
-}
-
 /* The atlas of the vector text with the language's fonts and the supplement's code points, at the largest scale a phone
  * or a Retina window asks for (ADR 0016's measure). */
 static void the_atlas_holds_the_supplement_at_scale_4(KpT *T)
@@ -1663,97 +1601,6 @@ static void mission_text_refusals_leave_the_missions_own(KpT *T)
 	kp_t_ok(T, s->g != NULL, "the game starts over a language's text");
 }
 
-#define SPEECH_MAP "missions/terran/terran01"
-
-static const char *const NEED_SPEECH_MAP[] = { SPEECH_MAP, NULL };
-
-/* A MISN file of the sections (fourcc, bytes) given, kind and schema as given, malloc'd. */
-static uint8_t *speech_overlay(KpT *T, const char *kind, uint32_t schema, const KpBytes *trig, const KpBytes *mbrf,
-	size_t *size)
-{
-	KpKpfOut sections[2];
-	uint8_t *file = NULL;
-	int n = 0;
-	memset(sections, 0, sizeof sections);
-	if (trig) {
-		sections[n].fourcc = "TRIG";
-		sections[n].payload = trig->data;
-		sections[n++].size = trig->size;
-	}
-	if (mbrf) {
-		sections[n].fourcc = "MBRF";
-		sections[n].payload = mbrf->data;
-		sections[n++].size = mbrf->size;
-	}
-	kp_t_eq(T, kp_kpf_build(kind, schema, 0, PROFILE, NULL, sections, n, &file, size), 0, "the overlay");
-	return file;
-}
-
-/* kp_host_game_speech (stage L5): a speech overlay of the mission's records but for their actions' TIME replaces both
- * (taken, a second frees the first); a damaged file, another kind or schema, a missing section, another size or a record
- * that differs in more than TIME leaves the mission's. */
-static void mission_speech_refusals_leave_the_missions_own(KpT *T)
-{
-	KpSession *s;
-	KpError e;
-	KpBytes trig, mbrf, shorter, other;
-	uint8_t *overlay, *changed;
-	size_t size;
-	const uint8_t *own_trig, *own_mbrf;
-	if (!kp_t_ready(T, "test_locale.mission_speech", NEED_SPEECH_MAP)) return;
-	s = loaded_game(T, SPEECH_MAP);
-	trig = s->host.data.mission.triggers;
-	mbrf = s->host.data.mission.briefing;
-	own_trig = trig.data;
-	own_mbrf = mbrf.data;
-	kp_t_ok(T, trig.size > 0 && mbrf.size > 0, "the mission's triggers and briefing");
-	shorter = trig;
-	shorter.size -= 2400;
-	/* a damaged file */
-	overlay = speech_overlay(T, KP_MISSION_KIND, KP_MISSION_SCHEMA, &trig, &mbrf, &size);
-	overlay[size - 3] ^= 0x55;
-	kp_t_eq(T, kp_host_game_speech(&s->host, overlay, size, &e), -1, "a damaged file");
-	/* another kind, another schema */
-	overlay = speech_overlay(T, "STRS", KP_MISSION_SCHEMA, &trig, &mbrf, &size);
-	kp_t_eq(T, kp_host_game_speech(&s->host, overlay, size, &e), -1, "another kind");
-	overlay = speech_overlay(T, KP_MISSION_KIND, KP_MISSION_SCHEMA + 1, &trig, &mbrf, &size);
-	kp_t_eq(T, kp_host_game_speech(&s->host, overlay, size, &e), -1, "another schema");
-	kp_t_ok(T, strstr(e.msg, "schema") != NULL, "%s", e.msg);
-	/* no MBRF, a TRIG of another size */
-	overlay = speech_overlay(T, KP_MISSION_KIND, KP_MISSION_SCHEMA, &trig, NULL, &size);
-	kp_t_eq(T, kp_host_game_speech(&s->host, overlay, size, &e), -1, "no MBRF");
-	overlay = speech_overlay(T, KP_MISSION_KIND, KP_MISSION_SCHEMA, &shorter, &mbrf, &size);
-	kp_t_eq(T, kp_host_game_speech(&s->host, overlay, size, &e), -1, "another size");
-	kp_t_ok(T, strstr(e.msg, "sizes") != NULL, "%s", e.msg);
-	/* records of other data: a byte other than an action's TIME differs (the last record's continuation byte) */
-	changed = (uint8_t *)malloc(trig.size);
-	if (changed == NULL) kp_t_fail(T, "out of memory");
-	kp_t_defer(T, free, changed);
-	memcpy(changed, trig.data, trig.size);
-	changed[trig.size - 1] ^= 1;
-	other.data = changed;
-	other.size = trig.size;
-	overlay = speech_overlay(T, KP_MISSION_KIND, KP_MISSION_SCHEMA, &other, &mbrf, &size);
-	kp_t_eq(T, kp_host_game_speech(&s->host, overlay, size, &e), -1, "a record of other data");
-	kp_t_ok(T, strstr(e.msg, "more than TIME") != NULL, "%s", e.msg);
-	kp_t_ok(T, s->host.data.mission.triggers.data == own_trig && s->host.data.mission.briefing.data == own_mbrf,
-		"the mission's own");
-	/* taken, and again: with another TIME in an action, then the same records (each frees the one before) */
-	overlay = speech_overlay(T, KP_MISSION_KIND, KP_MISSION_SCHEMA, &trig, &mbrf, &size);
-	kp_t_eq(T, kp_host_game_speech(&s->host, overlay, size, &e), 0, "%s", e.msg);
-	kp_t_ok(T, s->host.data.mission.triggers.data != own_trig && s->host.data.mission.briefing.data != own_mbrf, "taken");
-	kp_t_ok(T, memcmp(s->host.data.mission.triggers.data, own_trig, trig.size) == 0, "the overlay's records");
-	changed[trig.size - 1] ^= 1;
-	changed[CONDITIONS_SIZE + ACTION_TIME] ^= 1; /* the first trigger's first action's TIME */
-	overlay = speech_overlay(T, KP_MISSION_KIND, KP_MISSION_SCHEMA, &other, &mbrf, &size);
-	kp_t_eq(T, kp_host_game_speech(&s->host, overlay, size, &e), 0, "another TIME: %s", e.msg);
-	kp_t_ok(T, memcmp(s->host.data.mission.triggers.data, changed, trig.size) == 0, "the speech's TIME");
-	overlay = speech_overlay(T, KP_MISSION_KIND, KP_MISSION_SCHEMA, &s->host.data.mission.triggers, &mbrf, &size);
-	kp_t_eq(T, kp_host_game_speech(&s->host, overlay, size, &e), 0, "%s", e.msg);
-	start_game(T, s, SPEECH_MAP, 0);
-	kp_t_ok(T, s->g != NULL, "the game starts over a speech's triggers");
-}
-
 /* The state of a game after the steps, of the mission's own text or a language's overlay (taken). */
 static void run_mission(KpT *T, const char *path, uint8_t *overlay, size_t size, int expansion, int steps, KpStateCrcs *out)
 {
@@ -1875,10 +1722,8 @@ static const KpTest TESTS[] = {
 	{ "a_text_that_does_not_fit_is_told", a_text_that_does_not_fit_is_told, 0 },
 	{ "the_languages_texts_fit", the_languages_texts_fit, 0 },
 	{ "the_missions_texts_fit", the_missions_texts_fit, 0 },
-	{ "speech_sound_records_replace_the_bases", speech_sound_records_replace_the_bases, 0 },
 	{ "the_atlas_holds_the_supplement_at_scale_4", the_atlas_holds_the_supplement_at_scale_4, 0 },
 	{ "mission_text_refusals_leave_the_missions_own", mission_text_refusals_leave_the_missions_own, 0 },
-	{ "mission_speech_refusals_leave_the_missions_own", mission_speech_refusals_leave_the_missions_own, 0 },
 	{ "missions_with_the_languages_text_keep_their_state", missions_with_the_languages_text_keep_their_state, 6 },
 	{ "a_texts_time_counts_characters", a_texts_time_counts_characters, 0 },
 };

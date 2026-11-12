@@ -1,5 +1,5 @@
-"""Sound conversion (converter/emit/sound.py) and OGG naming (converter/emit/packs.py) on synthetic data; stock sound
-grouping with KOPRULU_ORIGINAL."""
+"""Sound conversion (converter/emit/sound.py, the 1.17 movies' sound) on synthetic data; stock sound grouping with
+KOPRULU_ORIGINAL."""
 from __future__ import annotations
 
 import os
@@ -8,7 +8,7 @@ import struct
 import unittest
 from unittest import mock
 
-from converter.emit import packs, sound
+from converter.emit import sound
 from converter.emit.files import ROOT
 from converter.kpf import fixtures
 
@@ -56,16 +56,6 @@ class PacksOutputTest(unittest.TestCase):
 
 
 class PacksTest(unittest.TestCase):
-    def test_names(self):
-        assert packs.ogg_name("sound\\Terran\\MARINE\\TMaDth00.wav", "sound\\") == "terran_marine_tmadth00.ogg"
-        assert packs.ogg_name("T0M21tad.wav", "") == "t0m21tad.ogg"
-
-    def test_mission_ogg_names(self):
-        d = "campaign\\terran\\terran01\\staredit\\wav\\"
-        names = packs.mission_ogg_names("terran/terran01", [d + "a\\x.wav", d + "b\\X.wav", d + "y.wav", d + "Y.WAV"])
-        assert names == {d + "a\\x.wav": "staredit_wav_a_x.ogg", d + "b\\X.wav": "staredit_wav_b_x.ogg",
-                         d + "y.wav": "y.ogg", d + "Y.WAV": "y.ogg"}
-
     @unittest.skipIf(not ORIGINAL, "KOPRULU_ORIGINAL not set")
     def test_stock_sound_packs(self):
         from converter import gamedata

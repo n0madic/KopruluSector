@@ -431,18 +431,57 @@ int64_t kp_oracle_mission_index(const char *root, const char *key)
 	return m ? m->index : 0;
 }
 
-/* The speech's overlay of a campaign mission (generated/speech/<loc>/missions/<campaign>/<name>.kpm) over the loaded
- * game (ADR 0016, stage L5). */
-static int lay_speech(KpOracleGame *og, const char *root, const char *key, const char *speech, KpError *err)
+/* The files a speech is read from (Remastered's names: kp_res_raw_files): the data root's, or (dir not NULL) those of
+ * the source in dir (an install, a repack with the language's group), opened once per process. */
+static const KpFiles *speech_files(const KpData *d, const char *dir, KpError *err)
+{
+	static struct SpeechSource {
+		struct SpeechSource *next;
+		char dir[512];
+		KpRes *res;
+		KpFiles raw;
+	} *sources;
+	struct SpeechSource *s;
+	KpResConfig config;
+	char why[600];
+	const char *dirs[1];
+	if (!dir || !dir[0]) return &d->raw;
+	for (s = sources; s; s = s->next) {
+		if (strcmp(s->dir, dir) == 0) return &s->raw;
+	}
+	if (!(s = (struct SpeechSource *)calloc(1, sizeof *s))) kp_out_of_memory();
+	snprintf(s->dir, sizeof s->dir, "%s", dir);
+	dirs[0] = dir;
+	memset(&config, 0, sizeof config);
+	if (!(s->res = kp_res_open(dirs, 1, &config, why, sizeof why))) {
+		free(s);
+		kp_error_set(err, "oracle: the speech's data: %s", why);
+		return NULL;
+	}
+	kp_res_raw_files(s->res, &s->raw);
+	s->next = sources;
+	sources = s;
+	return &s->raw;
+}
+
+/* A language's speech over the loaded campaign mission (ADR 0019, stage C2): its map's TIME, strictly (no map, or one
+ * that differs in more than TIME where the profile excepts none, is an error, as the converter's speech was). */
+static int lay_speech(KpOracleGame *og, const KpData *d, const char *key, const KpOracleOpts *opts, KpError *err)
 {
 	static const char MISSIONS[] = "missions/";
-	char overlay_path[512];
-	uint8_t *overlay;
-	size_t size;
+	const char *name = key + sizeof MISSIONS - 1;
+	const KpFiles *raw;
+	KpHostSpeech sp;
+	int rc;
 	if (strncmp(key, MISSIONS, sizeof MISSIONS - 1) != 0) return kp_error_set(err, "speech: %s is not a campaign mission", key);
-	snprintf(overlay_path, sizeof overlay_path, "%s%s.kpm", speech, key + sizeof MISSIONS - 1);
-	if (!(overlay = kp_read_under(root, overlay_path, &size, err))) return -1;
-	return kp_host_game_speech(og, overlay, size, err); /* takes the overlay */
+	if (!(raw = speech_files(d, opts->speech_data, err)) || (rc = kp_host_game_speech(og, raw, opts->speech, name, &sp, err)) < 0)
+		return -1;
+	if (rc == 0) return kp_error_set(err, "speech %s: the data has no map of %s", opts->speech, name);
+	if (sp.differ && !sp.excepted) {
+		return kp_error_set(err, "speech %s: %s: %d records differ from the mission's in more than TIME, the first %s",
+			opts->speech, name, sp.differ, sp.first);
+	}
+	return 0;
 }
 
 const KpDataMission *kp_oracle_mission(const char *root, const char *key, KpMission *m, KpError *err)
@@ -482,7 +521,7 @@ int kp_oracle_game_start(KpOracleGame *og, const char *root, const char *key, ui
 	d = kp_oracle_data(root, err);
 	if (kp_host_game_load_from(og, &d->shared, &d->dat, &m, opts->name ? opts->name : key, err) != 0) return -1;
 	if (kp_host_game_tileset_files(og, &d->files, err) != 0
-		|| (opts->speech && lay_speech(og, root, key, opts->speech, err) != 0)) {
+		|| (opts->speech && lay_speech(og, d, key, opts, err) != 0)) {
 		kp_host_game_free(og);
 		return -1;
 	}

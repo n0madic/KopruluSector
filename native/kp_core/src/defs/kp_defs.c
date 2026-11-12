@@ -47,3 +47,37 @@ int kp_defs_listed(const char *const *names, int count, const char *normalized)
 	}
 	return 0;
 }
+
+int kp_defs_names_count(const KpDefsTable *t)
+{
+	size_t at = 2;
+	int n, k;
+	if (!t || t->size < 2) return -1;
+	n = (int)(t->data[0] | t->data[1] << 8);
+	for (k = 0; k < n; k++) {
+		if (at + 1 > t->size || at + 1 + t->data[at] > t->size) return -1;
+		at += 1 + (size_t)t->data[at];
+	}
+	return n;
+}
+
+const uint8_t *kp_defs_name_at(const KpDefsTable *t, int index, size_t *size)
+{
+	size_t at = 2;
+	int k;
+	for (k = 0; k < index; k++) at += 1 + (size_t)t->data[at];
+	*size = t->data[at];
+	return t->data + at + 1;
+}
+
+int kp_defs_names_has(const KpDefsProfile *p, const char *fourcc, const char *name)
+{
+	const KpDefsTable *t = kp_defs_table(p, fourcc);
+	size_t want = strlen(name), size;
+	int n = kp_defs_names_count(t), k;
+	for (k = 0; k < n; k++) {
+		const uint8_t *at = kp_defs_name_at(t, k, &size);
+		if (size == want && memcmp(at, name, size) == 0) return 1;
+	}
+	return 0;
+}

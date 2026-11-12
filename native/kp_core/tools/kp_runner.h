@@ -126,9 +126,12 @@ void *kp_grow(void *data, int count, int *cap, size_t size);
 typedef struct {
 	KpHostOpts host;
 	const char *name; /* the mission's name, the default mission of save and load (NULL: its key) */
-	/* a speech's missions under the root ("generated/speech/<loc>/missions/"): a campaign mission's overlay there
-	 * (<campaign>/<name>.kpm) is laid over it before the start (kp_host_game_speech); NULL none */
+	/* a language's speech (ADR 0019, stage C2): its locale ("ruRU"), whose map's TIME a campaign mission takes before
+	 * its start (kp_host_game_speech; an error when the data has no map of it, or one that differs from the mission's
+	 * in more than TIME and the profile's SPEX does not except); NULL none */
 	const char *speech;
+	/* the source the speech is read from (an install, a repack with the language's group); NULL: the data root's */
+	const char *speech_data;
 } KpOracleOpts;
 
 /* opts with the defaults: the host's, the mission index looked up. */

@@ -16,20 +16,29 @@
  * runtime answers for the WAV's header (kp_res_head). A WAV the original's parser refuses, whose header is longer than
  * KP_REPACK_WAV_HEAD, or which the encoder does not take, stays a WAV.
  *
+ * A language's speech (ADR 0019, stage C2) goes in under Remastered's own names (kp_res_raw_read): for each campaign
+ * mission its map (the TIME of its lines, KP_HOST_SPEECH_MAP) and its lines (a WAV string's file under the language's
+ * assets, .ogg for .wav), and the voices of sfxdata's sounds (kp_ui_data_speech_path); a file the install lacks or
+ * keeps empty (Remastered's silent stand-ins) is left out, the runtime plays the base's there. A line or a voice goes
+ * in as Ogg Vorbis mono at 22,050 Hz (kp_ogg_speech) when that is smaller; a voice keeps its WAV header in the
+ * listing, as the base's sounds do.
+ *
  * Groups, for a build that fetches them when it needs them (the web): koprulu-core.mpq, what the program reads when it
  * starts; a group per mission directory, its CHK and speech (koprulu-<campaign>-<mission>.mpq); koprulu-music.mpq;
- * koprulu-cinematics.mpq. The core's listing names each group with the prefix of its names. A single repack is one
- * koprulu.mpq instead (the desktops), the cinematics still apart in their group, which its listing names.
+ * koprulu-cinematics.mpq; a language's speech, koprulu-locale-<locale>.mpq. The core's listing names each group with
+ * the prefix of its names. A single repack is one koprulu.mpq instead (the desktops), the cinematics and each
+ * language still apart in their groups, which its listing names (a bundle takes the languages it ships).
  *
  * The listing (a line each):
- *     koprulu repack 2
+ *     koprulu repack 3
  *     profile <id>
  *     source <1.17|remastered>
  *     group <file> <prefix>                          the core's: a group and the normalized prefix of its names
  *     <sha256> <size> <status> <name>
  *     <sha256> <size> <status> ogg <wav sha256> <wav size> <wav header, hex> <name>
  * The digest and size are the stored bytes'; <status> the source's (kp_res_status_name: exact, derived, differs,
- * equivalent, colour-equal, approximation, unlisted); <name> the normalized name with '\' separators.
+ * equivalent, colour-equal, approximation, unlisted; remastered: a Remastered file by its own name, which no manifest
+ * lists); <name> the normalized name with '\' separators.
  */
 #ifndef KP_REPACK_H
 #define KP_REPACK_H
@@ -55,6 +64,8 @@ typedef struct {
 	const char *cache;      /* the folder each WAV's Ogg Vorbis is kept in (<WAV SHA-256>-q3-s<serial>.ogg), NULL none */
 	const char *const *extra; /* names a run read unlisted (kp_res's log), the manifest's left out */
 	int extra_count;
+	const char *const *locales; /* the languages whose speech goes in ("ruRU"; the install's: kp_res_raw_read) */
+	int locale_count;
 	int threads;            /* the encoder's threads (0: the processors) */
 	void (*log)(void *ctx, const char *line); /* warnings (a WAV kept as it is), NULL none */
 	void *log_ctx;
@@ -72,11 +83,14 @@ typedef struct {
 	char missing_names[KP_REPACK_NAMES][KP_REPACK_NAME], damaged_names[KP_REPACK_NAMES][KP_REPACK_NAME];
 	int ogg, encoded;
 	uint64_t wav_bytes, ogg_bytes; /* the WAVs the Oggs replace, and the Oggs */
+	int speech, speech_absent;          /* a language's lines and voices re-encoded; its names the install lacks */
+	uint64_t speech_from, speech_bytes; /* the files the re-encoded ones replace, and they */
 } KpRepackReport;
 
 /* The group file of a normalized name and the prefix of its group's names into out and prefix: a mission directory's
  * "campaign/<campaign>/<mission>/" (koprulu-<campaign>-<mission>.mpq), "music/" (koprulu-music.mpq), "smk/"
- * (koprulu-cinematics.mpq); the core's is koprulu-core.mpq and "". */
+ * (koprulu-cinematics.mpq), a language's "locales/<locale>/" (koprulu-locale-<locale>.mpq, the locale in lower case);
+ * the core's is koprulu-core.mpq and "". */
 void kp_repack_group(const char *key, char *out, size_t size, char *prefix, size_t prefix_size);
 
 /* The repack of an install's files (res holds one install and no repack) into c->out: 0, or -1 with the reason (the

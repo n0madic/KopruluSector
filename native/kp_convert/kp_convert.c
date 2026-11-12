@@ -22,11 +22,13 @@
  *   icon DIR [--out generated]
  *       the game's icon for the product's bundles (kp_icon.h), from a 1.17 install's StarCraft.exe (the profile's, by
  *       its SHA-256): <out>/icon/ with icon-<size>.png, icon.ico, icon.icns and the ios/, web/ and android/res/ files
- *   repack DIR [--out DIR] [--single] [--wav] [--res-log FILE] [--cache DIR] [--threads N]
+ *   repack DIR [--out DIR] [--single] [--wav] [--res-log FILE] [--cache DIR] [--threads N] [--locales LIST]
  *       the koprulu*.mpq repack of an install (kp_repack.h): its groups into generated/repack, or with --single one
- *       koprulu.mpq (the cinematics' group beside it) into generated/repack-single; a WAV as Ogg Vorbis when that is
- *       smaller (--wav keeps the WAVs; each encoded once into --cache, generated/cache/repack-vorbis); --res-log: a
- *       run's kp_res log, the names it read unlisted go in too
+ *       koprulu.mpq (the cinematics' and the languages' groups beside it) into generated/repack-single; a WAV as Ogg
+ *       Vorbis when that is smaller (--wav keeps the WAVs; each encoded once into --cache,
+ *       generated/cache/repack-vorbis); --res-log: a run's kp_res log, the names it read unlisted go in too;
+ *       --locales: the languages whose speech goes in, each its koprulu-locale-<locale>.mpq ("ruRU,deDE"; "none";
+ *       by default every language of the profile but the base's whose speech the install holds)
  *   scenarios DIR [--specs tests/scenarios] [--out generated]
  *       the test scenarios (kp_scenario.h): <out>/scenarios/<name>.chk of each spec and their list
  *       <out>/scenarios/index.txt, a line each: name, base mission, tileset, width, height, resource packs ("a,b,c",
@@ -46,11 +48,13 @@
 
 #include "kp_campaign.h"
 #include "kp_chk.h"
+#include "kp_data.h"
 #include "kp_fs.h"
 #include "kp_icon.h"
 #include "kp_json.h"
 #include "kp_kpf.h"
 #include "kp_mission.h"
+#include "kp_ogg.h"
 #include "kp_present.h"
 #include "kp_repack.h"
 #include "kp_res.h"
@@ -64,6 +68,8 @@
 #define SHOWN_LINES 20 /* kp_res's log lines shown */
 #define SHOWN_FAILURES 5
 #define SHOWN_MISSING 10
+#define LOCALES_MAX 16
+#define LOCALE_ID 16
 
 /* The kinds of file the measurements are kept for: the game reads the core at its start and at a mission's, the
  * mission's speech with the mission, the music as it plays. */
@@ -254,9 +260,9 @@ static int cmd_extract(int argc, char **argv)
 	if (argc != 3) return -1;
 	if (!(res = open_sources((const char *const *)argv, 1, &shown))) return 2;
 	b = kp_res_read(res, argv[1], &size, &st, err, sizeof err);
-	if (!b && !err[0] && kp_res_install(res) == KP_RES_SOURCE_CASC) { /* a Remastered file by its CASC name */
-		b = kp_res_casc_file(res, argv[1], &size, err, sizeof err);
-		st = KP_RES_UNLISTED;
+	if (!b && !err[0]) { /* a Remastered file by its CASC name: the install's, or a repack's language group's */
+		b = kp_res_raw_read(res, argv[1], &size, err, sizeof err);
+		st = KP_RES_REMASTERED;
 	}
 	if (!b) {
 		fprintf(stderr, "kp_convert: %s\n", err[0] ? err : "no such file");
@@ -342,12 +348,56 @@ static int cmd_icon(int argc, char **argv)
 	return written < 0;
 }
 
+/* The languages whose speech a repack takes (stage C2): --locales' list (comma apart; "none" no language), else every
+ * language of the profile's LANG but the first (the base's) whose speech the install holds (KP_DATA_SPEECH_MARKER).
+ * Their count, or -1 with a line. */
+static int repack_locales(KpRes *res, const char *spec, char ids[LOCALES_MAX][LOCALE_ID], const char **out)
+{
+	const KpDefsTable *lang = kp_defs_table(kp_res_profile(res), "LANG");
+	int n = 0, k;
+	if (spec) {
+		const char *at = spec;
+		if (strcmp(spec, "none") == 0) return 0;
+		while (*at) {
+			size_t len = strcspn(at, ",");
+			if (len == 0 || len >= LOCALE_ID || n == LOCALES_MAX) {
+				fprintf(stderr, "kp_convert: --locales %s: a list of locales (\"ruRU,deDE\") or none\n", spec);
+				return -1;
+			}
+			snprintf(ids[n], LOCALE_ID, "%.*s", (int)len, at);
+			out[n] = ids[n];
+			n++;
+			at += len + (at[len] == ',');
+		}
+		return n;
+	}
+	if (lang && lang->size >= 1) {
+		size_t at = 1;
+		for (k = 0; k < lang->data[0] && at < lang->size; k++) {
+			size_t id_n = lang->data[at], name_n;
+			char marker[128];
+			if (at + 1 + id_n >= lang->size) break;
+			name_n = lang->data[at + 1 + id_n];
+			if (k > 0 && id_n < LOCALE_ID && n < LOCALES_MAX) {
+				snprintf(ids[n], LOCALE_ID, "%.*s", (int)id_n, (const char *)lang->data + at + 1);
+				snprintf(marker, sizeof marker, KP_DATA_SPEECH_MARKER, ids[n]);
+				if (kp_res_raw_held(res, marker)) {
+					out[n] = ids[n];
+					n++;
+				}
+			}
+			at += 2 + id_n + name_n;
+		}
+	}
+	return n;
+}
+
 static int cmd_repack(int argc, char **argv)
 {
 	KpRepackConfig c;
 	KpRepackReport *rep;
-	const char *dir = NULL, *res_log = NULL;
-	char err[MESSAGE], **extra = NULL, *log_text = NULL, groups[KP_REPACK_GROUPS][64];
+	const char *dir = NULL, *res_log = NULL, *locales_spec = NULL, *locales[LOCALES_MAX];
+	char err[MESSAGE], **extra = NULL, *log_text = NULL, groups[KP_REPACK_GROUPS][64], ids[LOCALES_MAX][LOCALE_ID];
 	int i, shown = 0, rc, files = 0, statuses_shown = 0;
 	KpRes *res;
 	memset(&c, 0, sizeof c);
@@ -360,6 +410,7 @@ static int cmd_repack(int argc, char **argv)
 		else if (strcmp(argv[i], "--res-log") == 0 && i + 1 < argc) res_log = argv[++i];
 		else if (strcmp(argv[i], "--cache") == 0 && i + 1 < argc) c.cache = argv[++i];
 		else if (strcmp(argv[i], "--threads") == 0 && i + 1 < argc) c.threads = atoi(argv[++i]);
+		else if (strcmp(argv[i], "--locales") == 0 && i + 1 < argc) locales_spec = argv[++i];
 		else if (argv[i][0] == '-' || dir) return -1;
 		else dir = argv[i];
 	}
@@ -372,11 +423,14 @@ static int cmd_repack(int argc, char **argv)
 		free(log_text);
 		return 2;
 	}
-	if (!(rep = (KpRepackReport *)malloc(sizeof *rep))) {
-		fprintf(stderr, "kp_convert: out of memory\n");
+	if ((c.locale_count = repack_locales(res, locales_spec, ids, locales)) < 0 || !(rep = (KpRepackReport *)malloc(sizeof *rep))) {
+		if (c.locale_count >= 0) fprintf(stderr, "kp_convert: out of memory\n");
+		free(extra);
+		free(log_text);
 		kp_res_close(res);
 		return 2;
 	}
+	c.locales = locales;
 	rc = kp_repack_write(res, &c, rep, err, sizeof err);
 	for (i = 0; i < rep->missing && i < SHOWN_MISSING && i < KP_REPACK_NAMES; i++)
 		fprintf(stderr, "not in the source, left out: %s\n", rep->missing_names[i]);
@@ -400,6 +454,13 @@ static int cmd_repack(int argc, char **argv)
 			if (rep->statuses[i]) printf("%s%d %s", statuses_shown++ ? ", " : "", rep->statuses[i], kp_res_status_name((KpResStatus)i));
 		printf("), %d WAVs as Ogg Vorbis (%.1f MB for %.1f MB), %d encoded\n", rep->ogg, (double)rep->ogg_bytes / 1e6,
 			(double)rep->wav_bytes / 1e6, rep->encoded);
+		if (c.locale_count > 0) {
+			printf("speech of");
+			for (i = 0; i < c.locale_count; i++) printf(" %s", locales[i]);
+			printf(": %d lines and voices as Ogg Vorbis at %d Hz (%.1f MB for %.1f MB), %d names the install lacks or keeps "
+				"empty (the base's)\n", rep->speech, KP_OGG_SPEECH_RATE, (double)rep->speech_bytes / 1e6,
+				(double)rep->speech_from / 1e6, rep->speech_absent);
+		}
 	}
 	free(rep);
 	free(extra);
@@ -634,7 +695,8 @@ static const struct {
 	{ "digests", "digests DIR --out PATH", cmd_digests },
 	{ "extract", "extract DIR NAME OUT", cmd_extract },
 	{ "icon", "icon DIR [--out DIR]", cmd_icon },
-	{ "repack", "repack DIR [--out DIR] [--single] [--wav] [--res-log FILE] [--cache DIR] [--threads N]", cmd_repack },
+	{ "repack", "repack DIR [--out DIR] [--single] [--wav] [--res-log FILE] [--cache DIR] [--threads N] [--locales LIST]",
+		cmd_repack },
 	{ "scenarios", "scenarios DIR [--specs DIR] [--out DIR]", cmd_scenarios },
 	{ "terrain", "terrain DIR [--out DIR]", cmd_terrain },
 };

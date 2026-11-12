@@ -73,7 +73,8 @@ typedef struct {
 	char saves[8][400];      /* the save files the test wrote */
 	int save_count;
 	int languages;           /* the languages' packs are there (else the data are a conversion of the 1.17 data's) */
-	int speech;              /* the speech's packs are there (converter speech) */
+	KpData speech_data;      /* the data with StarCraft: Remastered's ruRU files (with_speech) */
+	KpFiles install_raw, speech_raw;
 	int language_changes;
 	int files_wait;          /* a mission's files: on their way this many more asks (the web's repack group) */
 	int files_fail;          /* then they cannot be had */
@@ -90,13 +91,11 @@ static void host_log(void *ctx, const char *line)
 	snprintf(H->last_log, sizeof H->last_log, "%s", line);
 }
 
-/* A file of the data the host has: a language's packs and a speech's only for a test that wants them, and only ruRU's
- * of the languages the tree has converted (more may be there: the tests count on this one beside the base). */
+/* A file of the data the host has: a language's packs only for a test that wants them, and only ruRU's of the
+ * languages the tree has converted (more may be there: the tests count on this one beside the base). */
 static int has_file(const Host *H, const char *path)
 {
-	static const char LOCALE[] = "generated/locale/", SPEECH[] = "generated/speech/", GLYPHS[] = "generated/locale/glyphs.kpd",
-		ONLY[] = "ruRU/";
-	if (strncmp(path, SPEECH, sizeof SPEECH - 1) == 0) return H->speech && strncmp(path + sizeof SPEECH - 1, ONLY, sizeof ONLY - 1) == 0;
+	static const char LOCALE[] = "generated/locale/", GLYPHS[] = "generated/locale/glyphs.kpd", ONLY[] = "ruRU/";
 	if (strncmp(path, LOCALE, sizeof LOCALE - 1) != 0) return 1;
 	return H->languages && (strcmp(path, GLYPHS) == 0 || strncmp(path + sizeof LOCALE - 1, ONLY, sizeof ONLY - 1) == 0);
 }
@@ -1022,19 +1021,56 @@ static void the_language_is_chosen_in_the_main_menu(KpT *T)
 	kp_t_eq_str(T, H->f.flags->locale, "", "a check: the base's");
 }
 
+/* StarCraft: Remastered's files of ruRU alone (KpData.raw: the speech's, ADR 0019): the tests count on one language
+ * beside the base, as has_file does. */
+#define SPEECH_ONLY "locales/ruRU/"
+
+static uint8_t *speech_read(void *ctx, const char *name, size_t *size, char *err, size_t err_size)
+{
+	const KpFiles *raw = (const KpFiles *)ctx;
+	*size = 0;
+	if (err_size) err[0] = 0;
+	return strncmp(name, SPEECH_ONLY, sizeof SPEECH_ONLY - 1) == 0 ? raw->read(raw->ctx, name, size, err, err_size) : NULL;
+}
+
+static uint8_t *speech_head(void *ctx, const char *name, size_t want, size_t *got, uint64_t *total, char *err,
+	size_t err_size)
+{
+	const KpFiles *raw = (const KpFiles *)ctx;
+	*got = 0;
+	*total = 0;
+	if (err_size) err[0] = 0;
+	if (strncmp(name, SPEECH_ONLY, sizeof SPEECH_ONLY - 1) != 0) return NULL;
+	return raw->head ? raw->head(raw->ctx, name, want, got, total, err, err_size)
+		: raw->read(raw->ctx, name, got, err, err_size);
+}
+
+/* The host's data with the speech of the Remastered install KP_TEST_SCR (its ruRU files); skips the test without it. */
+static void with_speech(Host *H)
+{
+	kp_res_raw_files(kp_t_install(H->T, "KP_TEST_SCR"), &H->install_raw);
+	H->speech_raw = H->install_raw;
+	H->speech_raw.read = speech_read;
+	H->speech_raw.head = speech_head;
+	H->speech_raw.ctx = &H->install_raw;
+	H->speech_data = *H->data;
+	H->speech_data.raw = H->speech_raw;
+	H->data = H->f.data = &H->speech_data;
+}
+
 /* The speech (stage L5): with a language's speech installed the popup's speech row shows, the speech starts as the
  * text's language's and reads its sound records; its button takes the next installed, and OK keeps it in the profile
  * apart from the text's and starts the flow over in it (the base's: no records); --speech is taken over both, and the
  * checks keep the base's. */
 static void the_speech_is_chosen_apart_from_the_text(KpT *T)
 {
-	static const char *const NEED[] = { "generated/locale/glyphs.kpd", "generated/locale/ruRU/strings.kpd",
-		"generated/speech/ruRU/units.kpd", "generated/speech/ruRU/sounds.kpd", NULL };
+	static const char *const NEED[] = { "generated/locale/glyphs.kpd", "generated/locale/ruRU/strings.kpd", NULL };
 	Host *H;
 	int k;
 	if (!kp_t_ready(T, T->test, NEED)) return;
 	H = new_host(T);
-	H->languages = H->speech = 1;
+	with_speech(H);
+	H->languages = 1;
 	H->profile.options &= ~KP_UI_OPTION_EXPANSION_INTRO;
 	snprintf(H->flags.system_locales, sizeof H->flags.system_locales, "ru_RU");
 	init(H);
@@ -1058,7 +1094,8 @@ static void the_speech_is_chosen_apart_from_the_text(KpT *T)
 	kp_t_ok(T, H->f.locale.speech == NULL, "the base's speech: no records");
 	/* --speech over the profile's and the text's */
 	H = new_host(T);
-	H->languages = H->speech = 1;
+	with_speech(H);
+	H->languages = 1;
 	snprintf(H->profile.speech_locale, sizeof H->profile.speech_locale, "enUS");
 	snprintf(H->flags.speech, sizeof H->flags.speech, "ruRU");
 	snprintf(H->flags.system_locales, sizeof H->flags.system_locales, "en_US");
@@ -1067,7 +1104,8 @@ static void the_speech_is_chosen_apart_from_the_text(KpT *T)
 	kp_t_ok(T, H->f.locale.speech != NULL, "its sound records");
 	/* a check keeps the base's */
 	H = new_host(T);
-	H->languages = H->speech = 1;
+	with_speech(H);
+	H->languages = 1;
 	snprintf(H->flags.system_locales, sizeof H->flags.system_locales, "ru_RU");
 	H->flags.autotest = 1;
 	init(H);

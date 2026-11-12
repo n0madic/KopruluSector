@@ -843,12 +843,12 @@ static void scr_movies_split_as_the_packs(KpT *T)
 			int mark = kp_t_mark(T); /* each movie's buffers released after it */
 			if (!kp_t_mine(T, ++item)) continue;
 			snprintf(name, sizeof name, "%s%s.webm", FOLDER[v], ix->clips[k].name + 4);
-			webm = kp_res_casc_file(res, name, &size, why, sizeof why);
+			webm = kp_res_raw_read(res, name, &size, why, sizeof why);
 			kp_t_ok(T, webm != NULL, "%s: %s", name, why);
 			kp_t_defer(T, free, webm);
 			if (ix->subtitles[0]) {
 				snprintf(srt_name, sizeof srt_name, "locales/%s/Assets/Smk/%s.srt", ix->subtitles, ix->clips[k].name + 4);
-				if ((srt = kp_res_casc_file(res, srt_name, &srt_size, why, sizeof why)) != NULL) kp_t_defer(T, free, srt);
+				if ((srt = kp_res_raw_read(res, srt_name, &srt_size, why, sizeof why)) != NULL) kp_t_defer(T, free, srt);
 			}
 			movie_as_the_packs(T, ix, k, read_pack, &pf, webm, size, srt, srt_size, name);
 			kp_t_release(T, mark);

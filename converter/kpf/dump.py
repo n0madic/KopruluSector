@@ -292,7 +292,6 @@ DECODERS = {
               b"LOFS": _lofs, b"AFRM": _afrm},
     b"PACK": {b"ATLS": _pack_atls, b"FRMS": _pack_frms, b"PAGE": _pack_page, b"SNDS": _snds},
     b"MUSC": {b"TRKS": _trks},
-    b"MSND": {b"SNDS": _snds},
     kpm.KIND: {b"STRS": _strs, b"TRIG": _records(kpm.TRIGGER_SIZE), b"MBRF": _records(kpm.TRIGGER_SIZE)},
 }
 

@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include "kp_cine.h"
+#include "kp_data.h"
 #include "kp_fs.h"
 #include "kp_json.h"
 #include "kp_mpq.h"
@@ -18,15 +19,18 @@
 #define CORE "koprulu-core.mpq"
 #define MUSIC "koprulu-music.mpq"
 #define CINEMATICS "koprulu-cinematics.mpq"
+#define LOCALE_GROUP "koprulu-locale-" /* + the locale in lower case + ".mpq" */
+#define LOCALES "locales/"
 #define WINDOW 64 /* the files read, then encoded, at a time (the music's WAVs are 17 MB each) */
 #define SPARE_FILES 8 /* an archive's room past its files: the listing, (listfile) */
 #define PATH 1024
 #define NOTE 400
 
-/* A file to read: its name as the archive and the listing spell it, its normalized name, its movie (-1 none). */
+/* A file to read: its name as the archive and the listing spell it, its normalized name, its movie (-1 none), whether
+ * it is Remastered's own (a language's speech: kp_res_raw_read). */
 typedef struct {
 	char name[KP_REPACK_NAME], key[KP_REPACK_NAME];
-	int movie;
+	int movie, raw;
 } Read;
 
 /* A file of the window: as read, then as stored. */
@@ -40,6 +44,7 @@ typedef struct {
 	uint8_t wav_sha[KP_SHA256_SIZE];
 	size_t header_size; /* the WAV's header, data[0, header_size) */
 	int encoded;        /* the Ogg was encoded now (not the cache's) */
+	size_t speech_from; /* a language's line or voice re-encoded: the size it had (0: as it is) */
 	char note[NOTE];    /* why a WAV stays a WAV, logged in order */
 } Job;
 
@@ -90,6 +95,12 @@ void kp_repack_group(const char *key, char *out, size_t size, char *prefix, size
 		snprintf(out + o, size > o ? size - o : 0, ".mpq");
 		return;
 	}
+	if (strncmp(key, LOCALES, sizeof LOCALES - 1) == 0 && (at = strchr(key + sizeof LOCALES - 1, '/')) != NULL) {
+		size_t n = (size_t)(at - key) + 1;
+		snprintf(prefix, prefix_size, "%.*s", (int)n, key);
+		snprintf(out, size, LOCALE_GROUP "%.*s.mpq", (int)(n - sizeof LOCALES), key + sizeof LOCALES - 1);
+		return;
+	}
 	if (strncmp(key, "music/", 6) == 0) {
 		snprintf(out, size, MUSIC);
 		snprintf(prefix, prefix_size, "music/");
@@ -102,13 +113,13 @@ void kp_repack_group(const char *key, char *out, size_t size, char *prefix, size
 	}
 }
 
-/* The file's group in the repack: its own, or with single the root's (the cinematics' kept apart). */
+/* The file's group in the repack: its own, or with single the root's (the cinematics' and the languages' kept apart). */
 static Group *group_of(Group *groups, int *count, const char *key, int single, char *err, size_t err_size)
 {
 	char file[64], prefix[KP_REPACK_NAME];
 	int k;
 	kp_repack_group(key, file, sizeof file, prefix, sizeof prefix);
-	if (single && strcmp(file, CINEMATICS) != 0) {
+	if (single && strcmp(file, CINEMATICS) != 0 && strncmp(file, LOCALE_GROUP, sizeof LOCALE_GROUP - 1) != 0) {
 		snprintf(file, sizeof file, SINGLE);
 		prefix[0] = 0;
 	}
@@ -124,7 +135,7 @@ static Group *group_of(Group *groups, int *count, const char *key, int single, c
 	return &groups[(*count)++];
 }
 
-static int add_read(Read **reads, int *count, int *cap, const char *name, int movie)
+static int add_read(Read **reads, int *count, int *cap, const char *name, int movie, int raw)
 {
 	Read *r;
 	if (*count == *cap) {
@@ -138,6 +149,7 @@ static int add_read(Read **reads, int *count, int *cap, const char *name, int mo
 	normalize(name, r->key, sizeof r->key);
 	mpq_name(r->key, r->name, sizeof r->name);
 	r->movie = movie;
+	r->raw = raw;
 	return 0;
 }
 
@@ -149,7 +161,58 @@ static int listed(const Read *reads, int count, const char *key)
 	return 0;
 }
 
-/* The files to read, in order: the manifest's, the movies' (a 1.17 install's), the extra names the rest leave out. */
+/* A Remastered name of a language's speech, its folders with '/', once (a voice's file several sounds share). */
+static int add_raw(Read **reads, int *count, int *cap, int from, const char *name)
+{
+	char key[KP_REPACK_NAME];
+	normalize(name, key, sizeof key);
+	if (listed(*reads + from, *count - from, key)) return 0;
+	return add_read(reads, count, cap, key, -1, 1);
+}
+
+/* A language's speech (stage C2): each campaign mission's map and lines, then the voices of sfxdata's sounds, as the
+ * runtime reads them (kp_host_game_speech, kp_app_audio.c's speech_file). */
+static int speech_names(const KpData *d, const char *locale, Read **reads, int *count, int *cap, char *err, size_t err_size)
+{
+	static const char MISSIONS[] = "missions/";
+	char path[KP_REPACK_NAME];
+	int from = *count, k, n;
+	uint32_t s;
+	for (k = 0; k < d->mission_count; k++) {
+		const KpDataMission *entry = &d->missions[k];
+		KpMission m;
+		KpError e;
+		if (!entry->catalog || !entry->directory[0] || strncmp(entry->key, MISSIONS, sizeof MISSIONS - 1) != 0) continue;
+		snprintf(path, sizeof path, KP_HOST_SPEECH_MAP, locale, entry->key + sizeof MISSIONS - 1);
+		if (add_raw(reads, count, cap, from, path) != 0) goto memory;
+		if (kp_data_mission(d, entry, NULL, 0, &m, &e) != 0) {
+			snprintf(err, err_size, "%s: %s", entry->key, e.msg);
+			return -1;
+		}
+		for (n = 0; n < m.sound_count; n++) {
+			char wav[KP_REPACK_NAME];
+			if (kp_mission_sound_path(&m, entry->directory, m.sounds[n].string_id, wav, sizeof wav) != 1
+				|| kp_ui_data_speech_path(locale, wav, ".ogg", path, sizeof path) != 0)
+				continue;
+			if (add_raw(reads, count, cap, from, path) != 0) {
+				kp_mission_free(&m);
+				goto memory;
+			}
+		}
+		kp_mission_free(&m);
+	}
+	for (s = 0; s < d->ui.sound_path_count; s++) {
+		if (!d->ui.sound_paths[s] || kp_ui_data_speech_path(locale, d->ui.sound_paths[s], ".wav", path, sizeof path) != 0) continue;
+		if (add_raw(reads, count, cap, from, path) != 0) goto memory;
+	}
+	return 0;
+memory:
+	snprintf(err, err_size, "out of memory");
+	return -1;
+}
+
+/* The files to read, in order: the manifest's, the movies' (a 1.17 install's), the extra names the rest leave out, the
+ * languages' speech. */
 static Read *plan(KpRes *res, const KpRepackConfig *c, const KpCineCatalog *movies, int *count, char *err, size_t err_size)
 {
 	const KpDefsProfile *p = kp_res_profile(res);
@@ -157,11 +220,11 @@ static Read *plan(KpRes *res, const KpRepackConfig *c, const KpCineCatalog *movi
 	int cap = 0, k, a, manifest;
 	*count = 0;
 	for (k = 0; k < p->file_count; k++)
-		if (add_read(&reads, count, &cap, p->files[k].name, -1) != 0) goto memory;
+		if (add_read(&reads, count, &cap, p->files[k].name, -1, 0) != 0) goto memory;
 	for (k = 0; movies && k < movies->count; k++) {
 		char name[KP_REPACK_NAME];
 		snprintf(name, sizeof name, "smk\\%s.smk", movies->movies[k].name);
-		if (add_read(&reads, count, &cap, name, k) != 0) goto memory;
+		if (add_read(&reads, count, &cap, name, k, 0) != 0) goto memory;
 	}
 	manifest = *count;
 	for (k = 0; k < c->extra_count; k++) {
@@ -170,7 +233,23 @@ static Read *plan(KpRes *res, const KpRepackConfig *c, const KpCineCatalog *movi
 		for (a = 0; a < p->absent_count; a++)
 			if (strcmp(p->absent[a], key) == 0) break;
 		if (a < p->absent_count || listed(reads, manifest, key) || listed(reads + manifest, *count - manifest, key)) continue;
-		if (add_read(&reads, count, &cap, c->extra[k], -1) != 0) goto memory;
+		if (add_read(&reads, count, &cap, c->extra[k], -1, 0) != 0) goto memory;
+	}
+	if (c->locale_count > 0) {
+		KpData d;
+		KpError e;
+		if (kp_data_build(&d, res, NULL, 0, NULL, 0, &e) != 0) {
+			snprintf(err, err_size, "the languages' speech: %s", e.msg);
+			free(reads);
+			return NULL;
+		}
+		for (k = 0; k < c->locale_count; k++)
+			if (speech_names(&d, c->locales[k], &reads, count, &cap, err, err_size) != 0) break;
+		kp_data_free(&d);
+		if (k < c->locale_count) {
+			free(reads);
+			return NULL;
+		}
 	}
 	return reads;
 memory:
@@ -179,7 +258,51 @@ memory:
 	return NULL;
 }
 
-/* The Ogg Vorbis of a WAV from the cache, or encoded and kept there. */
+/* A language's line or voice (a raw job's .ogg or .wav) as Ogg Vorbis mono at 22,050 Hz from the cache, or encoded
+ * and kept there (<source SHA-256>-q3-s<serial>-speech.ogg), in its place when smaller: a voice's as a WAV's Ogg (its
+ * header listed), a line's as its bytes. */
+static void encode_speech(const KpRepackConfig *c, Job *j)
+{
+	KpWavInfo w;
+	char hex[2 * KP_SHA256_SIZE + 1], path[PATH], why[NOTE];
+	uint32_t serial = kp_ogg_serial(j->read->key);
+	size_t size = 0;
+	uint8_t *ogg = NULL;
+	int wav = ends_with(j->read->key, ".wav");
+	if (!wav && !ends_with(j->read->key, ".ogg")) return;
+	if (wav && (kp_wav_info(j->data, j->size, j->size, &w) != 0 || w.data_offset > KP_REPACK_WAV_HEAD)) return;
+	kp_sha256(j->data, j->size, j->wav_sha);
+	if (c->cache) {
+		kp_sha256_hex(j->wav_sha, hex);
+		snprintf(path, sizeof path, "%s/%s-q%d-s%u-speech.ogg", c->cache, hex, (int)(KP_OGG_QUALITY * 10.0f + 0.5f), serial);
+		ogg = kp_fs_read(path, &size, why, sizeof why);
+	}
+	if (!ogg) {
+		if (!(ogg = kp_ogg_speech(j->data, j->size, KP_OGG_QUALITY, serial, &size, why, sizeof why))) {
+			snprintf(j->note, sizeof j->note, "%s: kept as it is (%s)", j->read->name, why);
+			return;
+		}
+		j->encoded = 1;
+		if (c->cache && kp_fs_write(path, ogg, size, why, sizeof why) != 0)
+			snprintf(j->note, sizeof j->note, "%s: the Ogg Vorbis is not kept: %s", j->read->name, why);
+	}
+	if (size >= j->size) {
+		free(ogg);
+		return;
+	}
+	j->speech_from = j->size;
+	if (wav) {
+		j->ogg = ogg;
+		j->ogg_size = size;
+		j->header_size = w.data_offset;
+	} else {
+		free(j->data);
+		j->data = ogg;
+		j->size = size;
+	}
+}
+
+/* The Ogg Vorbis of a WAV from the cache, or encoded and kept there; a language's speech's (encode_speech). */
 static void encode(void *ctx, int k)
 {
 	Encoding *e = (Encoding *)ctx;
@@ -189,6 +312,10 @@ static void encode(void *ctx, int k)
 	uint32_t serial;
 	size_t size = 0;
 	uint8_t *ogg = NULL;
+	if (j->data && j->read->raw) {
+		encode_speech(e->c, j);
+		return;
+	}
 	if (!j->data || !ends_with(j->read->key, ".wav")) return;
 	if (kp_wav_info(j->data, j->size, j->size, &w) != 0 || w.data_offset > KP_REPACK_WAV_HEAD) return;
 	kp_sha256(j->data, j->size, j->wav_sha);
@@ -244,9 +371,16 @@ static int store(Group *g, Job *j, KpRepackReport *rep, char *err, size_t err_si
 		kp_sha256_hex(j->wav_sha, hex);
 		kp_buf_printf(&g->lines, " ogg %s %lu ", hex, (unsigned long)j->size);
 		for (i = 0; i < j->header_size; i++) kp_buf_printf(&g->lines, "%02x", j->data[i]);
-		rep->ogg++;
-		rep->wav_bytes += j->size;
-		rep->ogg_bytes += size;
+		if (!j->read->raw) {
+			rep->ogg++;
+			rep->wav_bytes += j->size;
+			rep->ogg_bytes += size;
+		}
+	}
+	if (j->speech_from) {
+		rep->speech++;
+		rep->speech_from += j->speech_from;
+		rep->speech_bytes += size;
 	}
 	kp_buf_printf(&g->lines, " %s\n", j->read->name);
 	g->files++;
@@ -360,7 +494,21 @@ int kp_repack_write(KpRes *res, const KpRepackConfig *c, KpRepackReport *rep, ch
 			char why[1400];
 			memset(j, 0, sizeof *j);
 			j->read = &reads[at + k];
-			j->data = kp_res_read(res, j->read->name, &j->size, &j->status, why, sizeof why);
+			if (j->read->raw) { /* a language's file: none, or an empty one (a silent stand-in), is the base's */
+				j->status = KP_RES_REMASTERED;
+				if (!(j->data = kp_res_raw_read(res, j->read->key, &j->size, why, sizeof why)) && !why[0]) {
+					rep->speech_absent++;
+					continue;
+				}
+				if (j->data && j->size == 0) {
+					free(j->data);
+					j->data = NULL;
+					rep->speech_absent++;
+					continue;
+				}
+			} else {
+				j->data = kp_res_read(res, j->read->name, &j->size, &j->status, why, sizeof why);
+			}
 			if (!j->data) {
 				if (j->status == KP_RES_REFUSED) {
 					snprintf(err, err_size, "%s", why);
