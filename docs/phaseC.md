@@ -806,9 +806,11 @@ data with no language beside the base, as the 1.17 install's.
   `new_host` now skips the test itself (`kp_t_need`, beside `kp_t_ready`), and its callers' 44 NULL checks are gone.
 - **The hosted CI's builds show their errors:** `tools/ci.sh` sent the native builds' output to `/dev/null`, so the
   hosted Linux job's failing build (since 2026-11-11) printed nothing; each build's output now goes to
-  `build/<name>_build.log`, its last 40 lines printed when it fails (`logged`). TODO: the hosted Linux build's
-  error itself, which the next hosted run prints: a clean clone of `d6791e9` builds every target locally on Ubuntu
-  24.04 x86-64 with GCC 13.3 and the workflow's packages (Docker, emulated) and on arm64 with GCC 15.2.
+  `build/<name>_build.log`, its last 40 lines printed when it fails (`logged`). The next hosted run printed it: the
+  C sources' check as C++11 (`kp_cxx_check`) with Ubuntu 24.04's g++ 13 refused `kp_locale.c`'s
+  `(const uint8_t[]){ ... }` ("taking address of temporary array"; clang++ and g++ 15 accept it, and the local
+  Linux image's `c++` was clang). The dialog name's length is written by `put_u8` now; every target builds with
+  Ubuntu 24.04's gcc and g++ 13.3 on x86-64.
 - **Checked:** the native suites over a 1.17 repack all pass; over Remastered's repack the five tests fail with that
   message and the rest pass; with no data and no goldens (`KP_TEST_PUBLIC=1`) all pass, the data's tests skipped;
   `test_res` and `test_convert` check the origin of an install, of a repack written from a 1.17 install, of a listing

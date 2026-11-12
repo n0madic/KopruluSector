@@ -362,6 +362,8 @@ static void put(Buf *b, const void *data, size_t n)
 	b->p[b->n] = 0;
 }
 
+static void put_u8(Buf *b, uint8_t v) { put(b, &v, 1); }
+
 static void put_u16(Buf *b, uint32_t v)
 {
 	uint8_t x[2];
@@ -1040,7 +1042,7 @@ static void build_dialogs(Build *b)
 		int have = their_dialog(b, dl, &theirs_out, &theirs);
 		if (have) own_count = theirs.widgets;
 		snprintf(name, sizeof name, "%.*s", (int)dl->name_len, (const char *)dl->name);
-		put(&out, (const uint8_t[]){ (uint8_t)dl->name_len }, 1);
+		put_u8(&out, (uint8_t)dl->name_len);
 		put(&out, dl->name, dl->name_len);
 		put_u16(&out, dl->widgets);
 		put_u16(&out, dl->smks);
