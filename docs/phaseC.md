@@ -730,3 +730,29 @@ once (`kp_flow_init`), as RunMainLoop `0x4679b0` opens it after cinematics 0 and
   for the main menu); the low-memory mode's text (child −11, `0x66fd30`) is not modelled, as kp_ui has no such mode.
   `TODO:` RunGlueLoop sleeps the same 1500 ms at every entry, after a game too; the flow enters the glue at once
   there (`kp_hud.h`).
+
+**The review's fixes (2026-11-12).**
+
+- **The input:** the keys and the text went past the title (the SDL host sends them through `kp_hud_key`, not
+  `kp_glue_input`): `kp_glue_key` and `kp_glue_text` drop them while it stands, as `kp_glue_input` drops the mouse;
+  the pointer's position is kept for the main menu's idle events.
+- **The Sleep counts from the title's first frame** (`KpGlue.title_timed`), not from `kp_flow_init`: a slow first
+  frame (the window, the art, the web's groups) took the title's time, or all of it.
+- **A language chosen** (`start_over`) goes back to the main menu at once (`KpFlow.language_restart`), as before the
+  title: the title is the start's.
+- **A title that cannot load its picture does not open** (`kp_ui_title_open` -1, closed again): before, it stood
+  1.5 s black and silent. DestroyTitleDialog closes the dialog as EndDialog `0x4c2b50` does for a modeless dialog
+  (`kp_ui_end_dialog`, shared with the glue's popups: its rectangle repainted, the pass aborted, then destroyed), and a
+  title destroyed some other way is no longer reported open.
+- **One PCX loader:** `kp_ui_load_picture` (the pixels as a picture, the old ones freed, the palette when asked)
+  serves the glue's backgrounds, the credits' pictures, the popups' images and the title; a glue background that fails
+  to load forgets its cached theme.
+- **The oracle** closes the title at DestroyTitleScreen's deletion of the loading text's timer alone
+  (`rez\titledlg.bin#4 1`, `KP_UI_TITLE_BLINK_TIMER`), compares the captures before the main menu's first tick with
+  the title first (its Sleep runs no timer, so they have no record of their own), and counts a title that never closed
+  as a difference. Both recorded runs: 8 and 9 differences, the same as before.
+- **Tests:** `test_hud.glue_title_stands_before_the_main_menu` (a key, Shift, text and the mouse dropped, the pointer
+  kept, 1500 ms from the first frame), `test_hud.glue_title_counts_from_its_first_frame` (a first frame 3 s late, a
+  `title.pcx` the reader refuses), `test_hud.title_open_at_the_interfaces_end_is_freed` (what `kp_ui_title_free`
+  leaves, checked without a sanitizer), `test_flow.first_start_plays_the_logo_and_the_intro_once` (the title after
+  the intro and at once), `test_flow.the_language_is_chosen_in_the_main_menu` (no title after a language).

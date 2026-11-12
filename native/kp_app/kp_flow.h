@@ -146,6 +146,7 @@ typedef struct KpFlow {
 	KpUiLanguages languages;
 	int language_chosen;  /* the flow starts over in it once its files are there */
 	int language_waiting; /* for them (said once) */
+	int language_restart; /* kp_flow_init after start_over: the main menu at once, no title */
 	const uint8_t *console_art; /* console.kpd (kp_ui_set_console_art), or NULL */
 	size_t console_art_size;
 	KpProfile *profile;    /* loaded; the host's save_profile writes it */

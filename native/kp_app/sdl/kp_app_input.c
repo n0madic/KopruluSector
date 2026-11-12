@@ -142,7 +142,7 @@ static void key(KpApp *a, const SDL_KeyboardEvent *k)
 		if (a->back_vk) vk = a->back_vk;
 	}
 	if (kp_flow_glue_active(&a->flow)) {
-		kp_hud_key(a->flow.ui, down, vk, k->repeat);
+		kp_glue_key(&a->flow.glue, down, vk, k->repeat);
 	} else if (console_on(a)) {
 		ConsoleInput in;
 		memset(&in, 0, sizeof in);
@@ -157,7 +157,7 @@ static void key(KpApp *a, const SDL_KeyboardEvent *k)
 static void text(KpApp *a, const char *utf8)
 {
 	if (kp_flow_glue_active(&a->flow)) {
-		kp_hud_text_key(a->flow.ui, utf8, a->text_vk);
+		kp_glue_text(&a->flow.glue, utf8, a->text_vk);
 	} else if (console_on(a)) {
 		ConsoleInput in;
 		memset(&in, 0, sizeof in);

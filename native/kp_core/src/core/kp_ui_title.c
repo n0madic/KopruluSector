@@ -9,15 +9,12 @@
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 
 #define TEXT_ID (-10)
-#define BLINK_TIMER 1
 #define BLINK_PERIOD 500
 #define TEXT_FONT_SLOT 2   /* 0x6d302c */
 #define TEXT_FORMAT 0x22   /* 0x6d300e: centred both ways in the bitmap */
 #define TEXT_COLOUR 2      /* SelectTextColor 0x4ce250's row */
-#define PCX_PALETTE 769    /* 0x0c and 256 RGB entries at the file's end */
 
 static KpUiTitle *ti(KpUi *ui) { return &ui->title; }
 
@@ -98,44 +95,29 @@ static void loading_text(KpUi *ui, int32_t dialog)
 	ui->text.target = saved;
 	kp_ui_show_control(ui, k);
 	t->text = k;
-	(void)kp_ui_set_timer(&ui->timers, k, BLINK_TIMER, BLINK_PERIOD, kp_ui_callback(ui, blink), ui->now);
+	(void)kp_ui_set_timer(&ui->timers, k, KP_UI_TITLE_BLINK_TIMER, BLINK_PERIOD, kp_ui_callback(ui, blink), ui->now);
 }
 
 /* The dialog's image and the glue's palette from title.pcx: 0 or -1. */
 static int load_background(KpUi *ui, KpUiControl *d)
 {
 	KpUiTitle *t = ti(ui);
-	const KpUiFile *f = kp_ui_glue_file(ui, "glue\\title\\title.pcx");
-	int32_t w, h;
-	size_t k;
-	if (f == NULL || f->size < 128 + PCX_PALETTE || kp_ui_pcx(f->data, f->size, &w, &h, NULL, 0) != 0) return -1;
-	t->background.pixels = (uint8_t *)malloc((size_t)w * (size_t)h);
-	if (t->background.pixels == NULL
-		|| kp_ui_pcx(f->data, f->size, &w, &h, t->background.pixels, (size_t)w * (size_t)h) != 0) {
+	if (kp_ui_load_picture(ui, kp_ui_glue_file(ui, "glue\\title\\title.pcx"), &t->background, ui->glue.palette) != 0) {
 		return -1;
 	}
-	t->background.w = w;
-	t->background.h = h;
-	kp_ui_picture(ui, t->background.pixels, w, h, f); /* the HD interface's (ADR 0013 R4d) */
 	kp_ui_drop_image(ui, d);
 	d->image = t->background.pixels;
-	d->image_w = (uint16_t)w;
-	d->image_h = (uint16_t)h;
+	d->image_w = (uint16_t)t->background.w;
+	d->image_h = (uint16_t)t->background.h;
 	d->owns_image = 0;
-	for (k = 0; k < 256; k++) {
-		const uint8_t *p = f->data + f->size - 768 + 3 * k;
-		ui->glue.palette[4 * k] = p[0];
-		ui->glue.palette[4 * k + 1] = p[1];
-		ui->glue.palette[4 * k + 2] = p[2];
-		ui->glue.palette[4 * k + 3] = 0;
-	}
 	return 0;
 }
 
 static void init(KpUi *ui, int32_t dialog)
 {
 	/* InitTitleScreen 0x4b5450 */
-	if (load_background(ui, &ui->controls[dialog]) != 0) return;
+	if (load_background(ui, &ui->controls[dialog]) != 0) return; /* kp_ui_title_open closes the title */
+	ti(ui)->loaded = 1;
 	kp_ui_text_set_rows(&ui->text, ui->title_rows, ui->title_rows_size); /* LoadFontColorTable 0x47ca80 */
 	kp_ui_music_play(ui, KP_UI_TITLE_MUSIC);                            /* not in the low-memory mode */
 	kp_ui_mark_dirty(ui, dialog);
@@ -148,7 +130,7 @@ static void destroy(KpUi *ui)
 {
 	/* DestroyTitleScreen 0x4b54c0 (the fade out 0x4cceb0 is the host's) */
 	KpUiTitle *t = ti(ui);
-	if (t->text >= 0) kp_ui_delete_timer(&ui->timers, t->text, BLINK_TIMER);
+	if (t->text >= 0) kp_ui_delete_timer(&ui->timers, t->text, KP_UI_TITLE_BLINK_TIMER);
 	t->text = -1;
 	kp_ui_surface_free(ui, t->shown.pixels);
 	kp_ui_surface_free(ui, t->blank.pixels);
@@ -168,8 +150,13 @@ static int title_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 {
 	/* TitleDialogProc 0x4b5500 */
 	if (e->type == KP_UI_USER) {
-		if (e->code == KP_UI_CREATE) init(ui, (int32_t)(d - ui->controls));
-		else if (e->code == KP_UI_DESTROY) destroy(ui);
+		int32_t self = (int32_t)(d - ui->controls);
+		if (e->code == KP_UI_CREATE) {
+			init(ui, self);
+		} else if (e->code == KP_UI_DESTROY) {
+			destroy(ui);
+			if (ti(ui)->dialog == self) ti(ui)->dialog = -1; /* destroyed by whatever: no title open */
+		}
 	}
 	return kp_ui_type_interact(0)(ui, d, e);
 }
@@ -186,10 +173,16 @@ int32_t kp_ui_title_open(KpUi *ui)
 	}
 	kp_ui_font_set(ui, 0);
 	t->toggle = 0;
+	t->loaded = 0;
 	d = kp_ui_load_dialog(ui, "rez\\titledlg.bin");
 	if (d < 0) return -1;
 	t->dialog = d;
 	kp_ui_init_dialog(ui, d, title_proc);
+	if (!t->loaded) { /* InitTitleScreen without its picture: no title */
+		snprintf(ui->error, sizeof ui->error, "ui: glue\\title\\title.pcx is not a picture");
+		kp_ui_title_close(ui);
+		return -1;
+	}
 	return d;
 }
 
@@ -197,10 +190,9 @@ void kp_ui_title_close(KpUi *ui)
 {
 	/* DestroyTitleDialog 0x4b55b0, then RunGlueLoop 0x457510's theme -1 (the next screen's palette comes with it) */
 	KpUiTitle *t = ti(ui);
-	if (t->dialog >= 0) {
-		if (ui->controls[t->dialog].used && ui->controls[t->dialog].interact == title_proc) {
-			kp_ui_destroy_dialog(ui, t->dialog);
-		}
+	int32_t d = t->dialog;
+	if (d >= 0) {
+		if (ui->controls[d].used && ui->controls[d].interact == title_proc) kp_ui_end_dialog(ui, d); /* 0x4c2b50 */
 		ui->glue.theme = -1;
 	}
 	t->dialog = -1;

@@ -698,7 +698,7 @@ void kp_glue_title(KpGlue *g, uint32_t now_ms)
 		return;
 	}
 	g->screen = KP_GLUE_TITLE;
-	g->title_until = now_ms + KP_UI_GLUE_SLEEP_MS;
+	g->title_timed = 0; /* its Sleep counts from its first frame (kp_glue_frame) */
 	g->has_composed = 0;
 }
 
@@ -839,6 +839,10 @@ KpGlueEvent kp_glue_frame(KpGlue *g, int32_t w, int32_t h, uint32_t now_ms, int 
 	int draws, k;
 	ui->now = now_ms;
 	if (g->screen == KP_GLUE_TITLE) {
+		if (!g->title_timed) {
+			g->title_timed = 1;
+			g->title_until = now_ms + KP_UI_GLUE_SLEEP_MS;
+		}
 		kp_ui_music_tick(ui); /* RunGlueLoop's Sleep: no timer, no idle work, but the music's fade in (kp_glue_title) */
 	} else {
 		kp_ui_tick(ui, now_ms);
@@ -881,12 +885,27 @@ void kp_glue_input(KpGlue *g, int event, int32_t lx, int32_t ly)
 	KpUiEvent e;
 	g->buttons = kp_hud_buttons(g->buttons, event);
 	kp_ui_set_keys(ui, ui->input.keys[0], ui->input.keys[1], ui->input.keys[2], g->buttons);
-	if (g->screen == KP_GLUE_TITLE) return; /* the title takes no input (RunGlueLoop's Sleep) */
 	memset(&e, 0, sizeof e);
 	e.type = (uint16_t)event;
 	e.x = (int16_t)(lx - g->place_x);
 	e.y = (int16_t)(ly - g->place_y);
+	if (g->screen == KP_GLUE_TITLE) {
+		/* the title takes no input (RunGlueLoop's Sleep); the main menu's idle events carry the pointer where it is */
+		ui->mouse_x = e.x;
+		ui->mouse_y = e.y;
+		return;
+	}
 	kp_ui_input_event(ui, &e);
+}
+
+void kp_glue_key(KpGlue *g, int down, uint16_t vk, int repeating)
+{
+	if (g->screen != KP_GLUE_TITLE) kp_hud_key(g->ui, down, vk, repeating);
+}
+
+void kp_glue_text(KpGlue *g, const char *utf8, uint16_t vk)
+{
+	if (g->screen != KP_GLUE_TITLE) kp_hud_text_key(g->ui, utf8, vk);
 }
 
 void kp_glue_saves(KpUi *ui, const KpProfile *profile)

@@ -124,34 +124,15 @@ static void load_background(KpUi *ui, const char *name, size_t len)
 	KpUiCredits *c = cr(ui);
 	KpUiControl *d = &ui->controls[c->dialog];
 	char path[KP_UI_CREDITS_TEXT];
-	const KpUiFile *f;
-	int32_t w, h;
-	size_t k;
 	if (len >= sizeof path) len = sizeof path - 1;
 	memcpy(path, name, len);
 	path[len] = 0;
-	kp_ui_surface_free(ui, c->background.pixels);
-	c->background.pixels = NULL;
 	d->image = NULL;
-	f = kp_ui_glue_file(ui, path);
-	if (f == NULL || f->size < 128 + 769 || kp_ui_pcx(f->data, f->size, &w, &h, NULL, 0) != 0) return;
-	c->background.pixels = (uint8_t *)malloc((size_t)w * (size_t)h);
-	if (c->background.pixels == NULL) return;
-	(void)kp_ui_pcx(f->data, f->size, &w, &h, c->background.pixels, (size_t)w * (size_t)h);
-	c->background.w = w;
-	c->background.h = h;
-	kp_ui_picture(ui, c->background.pixels, w, h, f); /* the HD interface's (ADR 0013 R4d) */
+	if (kp_ui_load_picture(ui, kp_ui_glue_file(ui, path), &c->background, c->palette) != 0) return;
 	d->image = c->background.pixels;
-	d->image_w = (uint16_t)w;
-	d->image_h = (uint16_t)h;
+	d->image_w = (uint16_t)c->background.w;
+	d->image_h = (uint16_t)c->background.h;
 	d->owns_image = 0;
-	for (k = 0; k < 256; k++) {
-		const uint8_t *p = f->data + f->size - 768 + 3 * k;
-		c->palette[4 * k] = p[0];
-		c->palette[4 * k + 1] = p[1];
-		c->palette[4 * k + 2] = p[2];
-		c->palette[4 * k + 3] = 0;
-	}
 	c->pending = 1;
 }
 

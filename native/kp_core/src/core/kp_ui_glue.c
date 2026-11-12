@@ -35,7 +35,6 @@
 #define DIALOG_NESTED 0x8000000u
 #define DIALOG_BACKDROP 0x20u
 #define SLIDING 0x20000u
-#define PCX_PALETTE 769         /* the PCX's trailing 0x0c and 256 RGB triples */
 #define THEME_DIRS 12
 #define EFFECT_PERCENT 80      /* InitGlueDialog's single-colour effect */
 #define EFFECT_INDEX 1         /* the theme records' +0x108 (1 in every record) */
@@ -96,27 +95,10 @@ static int load_background(KpUi *ui, int theme)
 {
 	KpUiGlue *g = gl(ui);
 	char path[64];
-	const KpUiFile *f;
-	int32_t w, h;
-	size_t k;
 	if (theme < 0 || theme >= THEME_DIRS) return -1;
 	snprintf(path, sizeof path, "glue\\%s\\Backgnd.pcx", THEMES[theme]);
-	f = kp_ui_glue_file(ui, path);
-	if (f == NULL || f->size < 128 + PCX_PALETTE || kp_ui_pcx(f->data, f->size, &w, &h, NULL, 0) != 0) return -1;
-	kp_ui_surface_free(ui, g->background.pixels);
-	g->background.pixels = (uint8_t *)malloc((size_t)w * (size_t)h);
-	if (g->background.pixels == NULL) return -1;
-	if (kp_ui_pcx(f->data, f->size, &w, &h, g->background.pixels, (size_t)w * (size_t)h) != 0) return -1;
-	g->background.w = w;
-	g->background.h = h;
-	kp_ui_picture(ui, g->background.pixels, w, h, f); /* the HD interface's (ADR 0013 R4d) */
-	for (k = 0; k < 256; k++) {
-		const uint8_t *p = f->data + f->size - 768 + 3 * k;
-		g->background_palette[4 * k] = p[0];
-		g->background_palette[4 * k + 1] = p[1];
-		g->background_palette[4 * k + 2] = p[2];
-		g->background_palette[4 * k + 3] = 0;
-	}
+	g->background_theme = -1; /* the cached one goes either way */
+	if (kp_ui_load_picture(ui, kp_ui_glue_file(ui, path), &g->background, g->background_palette) != 0) return -1;
 	g->background_theme = theme;
 	return 0;
 }

@@ -656,6 +656,13 @@ static int64_t palette_differences(const KpTraceCapture *cap, const KpUi *ui)
 #define TITLE_REF "rez\\titledlg.bin#" /* a record of the title's dialog or its controls */
 static int room_race(int state) { return state == 7 ? 1 : state == 8 ? 0 : state == 9 ? 2 : -1; }
 
+/* Whether a "del" record's rest is the deletion of the timer ref (BIN#record ID) and nothing more. */
+static int is_deletion(const char *rest, const char *ref)
+{
+	size_t n = strlen(ref);
+	return strncmp(rest, ref, n) == 0 && (rest[n] == '\0' || rest[n] == ' ' || rest[n] == '\t' || rest[n] == '\r');
+}
+
 typedef struct {
 	int field; /* 0-based */
 	uint32_t value;
@@ -779,7 +786,8 @@ int kp_cli_menus_replay(int argc, char **argv)
 	uint32_t *seeds;
 	int k, seed_count = 0, run = 0, last_ev = -1, status;
 	int64_t page_tick = -1, differences, start, title;
-	int dumped = 0;
+	int dumped = 0, title_lost = 0;
+	char title_end[64] = "";
 	if (argc < 1) return kp_cli_fail("usage: menus_replay MENUS.txt");
 	m = (Menus *)calloc(1, sizeof *m);
 	if (!m) return kp_cli_fail("out of memory");
@@ -831,19 +839,27 @@ int kp_cli_menus_replay(int argc, char **argv)
 		}
 	}
 	/* the title (CreateTitleScreen 0x4b5570) when the run has it, until RunGlueLoop 0x457510's DestroyTitleDialog
-	 * 0x4b55b0: its loading text's timer deleted; then the main menu at the tick of its first timer */
+	 * 0x4b55b0: DestroyTitleScreen 0x4b54c0 deletes its loading text's timer; then the main menu at the tick of its
+	 * first timer */
 	start = kp_trace_header(&g->file, "start", 0);
 	title = kp_trace_header(&g->file, "title", -1);
 	ui->now = (uint32_t)(title >= 0 ? title : start);
-	if (title >= 0 && kp_ui_title_open(ui) < 0) return kp_cli_fail("ui: the title: %s", ui->error);
-	if (title < 0) kp_ui_menus_enter(ui, 0);
+	if (title >= 0) {
+		if (kp_ui_title_open(ui) < 0) return kp_cli_fail("ui: the title: %s", ui->error);
+		if (ui->title.text < 0) return kp_cli_fail("ui: the title has no loading text");
+		snprintf(title_end, sizeof title_end, "%s%d %d", TITLE_REF, (int)ui->controls[ui->title.text].record,
+			KP_UI_TITLE_BLINK_TIMER);
+	} else {
+		kp_ui_menus_enter(ui, 0);
+	}
 	take(g);
 	for (k = 0; k < g->file.count; k++) {
 		const KpTraceRecord *r = &g->file.records[k];
 		int64_t tick = record_tick(r);
 		m->at = k;
 		if (tick >= 0) menus_captures(m, tick);
-		if (strcmp(r->word, "del") == 0 && kp_ui_title_is_open(ui) && strncmp(r->rest, TITLE_REF, strlen(TITLE_REF)) == 0) {
+		if (strcmp(r->word, "del") == 0 && kp_ui_title_is_open(ui) && is_deletion(r->rest, title_end)) {
+			menus_captures(m, start); /* the captures before the main menu are the title's (its Sleep runs no timer) */
 			kp_ui_title_close(ui);
 			ui->now = (uint32_t)start;
 			kp_ui_menus_enter(ui, 0);
@@ -885,7 +901,11 @@ int kp_cli_menus_replay(int argc, char **argv)
 		menus_follow(m);
 	}
 	menus_captures(m, INT64_MAX);
-	differences = kp_trace_compare(&g->want, &g->have) + g->pixel_differences;
+	if (kp_ui_title_is_open(ui)) { /* no record of DestroyTitleScreen's deletion: the main menu never opened */
+		fprintf(stderr, "menus_replay: the title never closed (no \"del %s\")\n", title_end);
+		title_lost = 1;
+	}
+	differences = kp_trace_compare(&g->want, &g->have) + g->pixel_differences + title_lost;
 	printf("menus_replay: %d timer records, %d videos, %d captures, states", g->want.s[KP_TRACE_TIMERS].count,
 		g->want.s[KP_TRACE_VIDEOS].count, g->cap_count);
 	for (k = 0; k < m->state_count; k++) printf(" %lld", (long long)m->states[k]);

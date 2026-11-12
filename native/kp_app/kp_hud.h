@@ -189,7 +189,8 @@ typedef struct {
 	int screen; /* KP_GLUE_* */
 	int cinematics; /* the host plays cinematics: View Intro is KP_GLUE_INTRO (else the main menu opens again) */
 	int room_opened;
-	uint32_t title_until; /* KP_GLUE_TITLE: the clock the title closes at */
+	uint32_t title_until; /* KP_GLUE_TITLE: the clock the title closes at (title_timed: set by its first frame) */
+	int title_timed;
 	int32_t composed_w, composed_h, composed_bottom; /* the screen composed: its size, its bottom dialog */
 	uint32_t composed_serial;                        /* and the palette's serial (the margins) */
 	int has_composed;
@@ -203,11 +204,12 @@ void kp_glue_init(KpGlue *g, KpUi *ui, KpProfile *profile, uint32_t now_ms);
 void kp_glue_free(KpGlue *g);
 void kp_glue_menus(KpGlue *g, int state);
 /* The title screen of the start (RunMainLoop 0x4679b0, after the first start's cinematics): it stands
- * KP_UI_GLUE_SLEEP_MS as the original's through RunGlueLoop 0x457510's Sleep after the images loaded under it (here
- * they loaded before the window), no interface timer running, the input dropped; then the main menu. The music's fade
- * in runs: the original's load pumps the messages for longer than the fade's 180 ms. The main menu at once when the
- * title cannot open. TODO: RunGlueLoop sleeps the same 1500 ms at every entry, after a game too (before the score
- * screen or the menus); the flow enters the glue at once there. */
+ * KP_UI_GLUE_SLEEP_MS from its first frame, as the original's through RunGlueLoop 0x457510's Sleep after the images
+ * loaded under it (here they loaded before the window, and a slow first frame takes none of its time), no interface
+ * timer running, the input dropped (kp_glue_input, kp_glue_key, kp_glue_text; the pointer's position kept); then the
+ * main menu. The music's fade in runs: the original's load pumps the messages for longer than the fade's 180 ms. The
+ * main menu at once when the title cannot open. TODO: RunGlueLoop sleeps the same 1500 ms at every entry, after a
+ * game too (before the score screen or the menus); the flow enters the glue at once there. */
 void kp_glue_title(KpGlue *g, uint32_t now_ms);
 /* The campaign's epilog (mode 9, RunCampaignEpilog 0x414ef0): the expansion's or the original's text, then its
  * credits, then the main menu (RunMainLoop 0x4679b0: glue state 0); the main menu at once when it cannot open. */
@@ -221,6 +223,9 @@ void kp_glue_score(KpGlue *g, KpGame *game, int result, uint32_t elapsed);
 KpGlueEvent kp_glue_frame(KpGlue *g, int32_t w, int32_t h, uint32_t now_ms, int *changed, uint8_t rgb[768],
 	int *palette);
 void kp_glue_input(KpGlue *g, int event, int32_t lx, int32_t ly);
+/* A key and a text event while a glue screen shows (kp_hud_key, kp_hud_text_key): none while the title stands. */
+void kp_glue_key(KpGlue *g, int down, uint16_t vk, int repeating);
+void kp_glue_text(KpGlue *g, const char *utf8, uint16_t vk);
 /* The logged-in ID's saved games as the interface's list (the load screen's, the in-game dialogs'). */
 void kp_glue_saves(KpUi *ui, const KpProfile *profile);
 void kp_glue_capture_lost(KpGlue *g);

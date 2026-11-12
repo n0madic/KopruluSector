@@ -1068,6 +1068,7 @@ static void the_language_is_chosen_in_the_main_menu(KpT *T)
 	click(H, LANGUAGE_OK);
 	for (k = 0; k < MENU_FRAMES && H->language_changes == 0; k++) frame(H);
 	kp_t_eq(T, H->language_changes, 1, "the flow started over");
+	kp_t_eq(T, H->f.glue.screen, KP_GLUE_MENUS, "the main menu at once: the title is the start's");
 	kp_t_eq_str(T, H->profile.text_locale, "enUS", "kept in the profile");
 	kp_t_eq_str(T, H->f.flags->locale, "enUS", NULL);
 	kp_t_ok(T, H->profile_saves > 0, "the profile written");
@@ -1180,6 +1181,7 @@ static void the_speech_is_chosen_apart_from_the_text(KpT *T)
 	click(H, LANGUAGE_OK);
 	for (k = 0; k < MENU_FRAMES && H->language_changes == 0; k++) frame(H);
 	kp_t_eq(T, H->language_changes, 1, "the flow started over");
+	kp_t_eq(T, H->f.glue.screen, KP_GLUE_MENUS, "the main menu at once: the title is the start's");
 	kp_t_eq_str(T, H->profile.speech_locale, "enUS", "the speech kept in the profile");
 	kp_t_eq_str(T, H->profile.text_locale, "ruRU", "the text's apart");
 	kp_t_eq_str(T, H->f.flags->speech, "enUS", NULL);
@@ -1328,9 +1330,9 @@ static void history_cinematic_at_the_campaigns_end_plays_the_epilog(KpT *T)
 	}
 }
 
-/* The first start (RunMainLoop 0x4679b0, the options' bit 0x800): the logo and the expansion's intro before the main
- * menu, once (the profile written at once); a start without the pack keeps them for one that has it, and the checks
- * and --cine-play's start play none. */
+/* The first start (RunMainLoop 0x4679b0, the options' bit 0x800): the logo and the expansion's intro before the title
+ * and the main menu, once (the profile written at once); a start without the pack keeps them for one that has it, and
+ * the checks and --cine-play's start play none (the title at once). */
 static void first_start_plays_the_logo_and_the_intro_once(KpT *T)
 {
 	Host *H = new_host(T);
@@ -1353,6 +1355,9 @@ static void first_start_plays_the_logo_and_the_intro_once(KpT *T)
 	frames(H, 10);
 	kp_t_eq(T, H->f.glue.screen, KP_GLUE_NONE, NULL);
 	H->movie = 0;
+	frame(H);
+	kp_t_eq(T, H->f.glue.screen, KP_GLUE_TITLE, "the title after the intro (THEN_TITLE)");
+	kp_t_eq_str(T, top(H, name, sizeof name), "rez\\titledlg.bin", NULL);
 	wait_for(H, "rez\\glumain.bin", MENU_FRAMES);
 	in_menus(H, KP_GLUE_MAIN, "after the intro");
 	played = H->profile.options;
@@ -1364,6 +1369,7 @@ static void first_start_plays_the_logo_and_the_intro_once(KpT *T)
 		if (part == 2) H->flags.originals = 1;
 		if (part == 3) snprintf(H->flags.cine_play, sizeof H->flags.cine_play, "3");
 		init(H);
+		kp_t_eq(T, H->f.glue.screen, KP_GLUE_TITLE, "%s: the title at once", WHAT[part]);
 		kp_t_eq(T, H->cine_starts, 0, "%s: no cinematics", WHAT[part]);
 		kp_t_eq(T, H->profile_saves, 0, "%s: the profile as it was", WHAT[part]);
 		if (part > 0) {

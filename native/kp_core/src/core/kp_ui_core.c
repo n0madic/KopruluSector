@@ -926,6 +926,12 @@ void kp_ui_destroy_dialog(KpUi *ui, int32_t dialog)
 	kp_ui_modal_destroyed(ui, dialog); /* a modal run ends: its continuation */
 }
 
+void kp_ui_end_dialog(KpUi *ui, int32_t dialog)
+{
+	kp_ui_close_dialog(ui, dialog);
+	kp_ui_destroy_dialog(ui, dialog);
+}
+
 void kp_ui_drop_control(KpUi *ui, int32_t dialog, int32_t control)
 {
 	int32_t *link = &ui->controls[dialog].child;

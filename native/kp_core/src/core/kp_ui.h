@@ -1003,6 +1003,7 @@ typedef struct {
 	KpUiSurface shown, blank;     /* 0x6c46e4, 0x6c46ec: the background under the text with the text drawn, without */
 	uint32_t toggle;              /* 0x6c46f8 */
 	KpUiSurface background;       /* title.pcx, the dialog's image */
+	int loaded;                   /* InitTitleScreen found its picture */
 } KpUiTitle;
 
 typedef void (*KpUiSoundHook)(KpUi *ui, int event);
@@ -1245,6 +1246,10 @@ int32_t kp_ui_load_dialog(KpUi *ui, const char *bin);
 void kp_ui_init_dialog(KpUi *ui, int32_t dialog, KpUiInteract interact);
 /* DestroyDialog: the user code 1 and the release of the dialog's controls. */
 void kp_ui_destroy_dialog(KpUi *ui, int32_t dialog);
+/* EndDialog 0x4c2b50 of a modeless dialog (no flag 0x4000000) that ends without a slide: its rectangle repainted
+ * (MarkControlDirty 0x4c2840: a popup's was composited into the screen below it), the pass aborted, its destruction
+ * now (kp_ui_close_dialog, then kp_ui_destroy_dialog). */
+void kp_ui_end_dialog(KpUi *ui, int32_t dialog);
 /* A child the dialog goes without: unlinked and freed before the dialog's initialization (a record of ours with nothing
  * to do, which as a hidden control would still take a type's timer the original's dialog never had). */
 void kp_ui_drop_control(KpUi *ui, int32_t dialog, int32_t control);
@@ -1756,6 +1761,7 @@ void kp_ui_credits_free(KpUi *ui);
  * The original keeps it while the start loads and through RunGlueLoop 0x457510's Sleep (KP_UI_GLUE_SLEEP_MS, no
  * timer runs there); DestroyTitleDialog 0x4b55b0 then destroys it (its timer and bitmaps) before the main menu. */
 #define KP_UI_TITLE_MUSIC 22
+#define KP_UI_TITLE_BLINK_TIMER 1 /* the loading text's timer (InitTitleLoadingText 0x4b5300) */
 #define KP_UI_GLUE_SLEEP_MS 1500
 int32_t kp_ui_title_open(KpUi *ui);
 void kp_ui_title_close(KpUi *ui);
@@ -2049,6 +2055,10 @@ void kp_ui_image_whole(KpUi *ui, KpUiSurface *s, const KpUiFile *f, int32_t fram
 /* A picture decoded from file f into pixels (w x h): a blit from it draws an image of f (kept while the HD interface
  * is off too: decoded once, drawn later). */
 void kp_ui_picture(KpUi *ui, const uint8_t *pixels, int32_t w, int32_t h, const KpUiFile *f);
+/* A PCX of the interface's files decoded into s as a picture (kp_ui_picture), its old pixels freed first, and with
+ * palette its palette (the 256 RGB triples after the image data's 0x0c) as 256 R, G, B, 0 entries: 0, or -1 with s
+ * empty (no file, a file the reader refuses, no palette when one is asked for, out of memory). */
+int kp_ui_load_picture(KpUi *ui, const KpUiFile *f, KpUiSurface *s, uint8_t palette[1024]);
 /* The last image drawn on a surface (its pixels), or NULL: the cursor's frame. */
 const KpUiImage *kp_ui_image_last(const KpUi *ui, const uint8_t *surface);
 /* A surface's pixels are freed: its images and its picture go (the log keys them by the pointer, which the next surface

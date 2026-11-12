@@ -791,6 +791,7 @@ static void cine_continue(KpFlow *f)
 		break;
 	case THEN_TITLE:
 		kp_glue_title(&f->glue, now_ms(f));
+		say(f, f->glue.screen == KP_GLUE_TITLE ? "glue: the title" : "glue: the main menu");
 		break;
 	default:
 		break;
@@ -1511,6 +1512,7 @@ static void start_over(KpFlow *f)
 	say(f, "glue: the language %s, the speech %s", f->profile->text_locale, f->profile->speech_locale);
 	kp_flow_free(f);
 	f->host.language(f->host.ctx);
+	f->language_restart = 1; /* the title is the start's, not a language's */
 	if (kp_flow_init(f, err, sizeof err) != 0) {
 		say(f, "glue: %s", err);
 		f->host.quit(f->host.ctx);
@@ -1565,6 +1567,8 @@ int kp_flow_languages_ready(KpFlow *f)
 int kp_flow_init(KpFlow *f, char *err, size_t err_size)
 {
 	char why[256];
+	int restart = f->language_restart;
+	f->language_restart = 0;
 	f->current = -1;
 	read_locale(f);
 	if (!(f->ui = new_interface(f, why, sizeof why))) {
@@ -1608,7 +1612,8 @@ int kp_flow_init(KpFlow *f, char *err, size_t err_size)
 	f->glue.cinematics = f->host.cine_has(f->host.ctx, KP_APP_CINE_LOGO)
 		|| f->host.cine_has(f->host.ctx, KP_APP_CINE_EXPANSION_INTRO);
 	if (first_start(f)) return 0;
-	kp_glue_title(&f->glue, now_ms(f));
+	if (restart) kp_glue_menus(&f->glue, KP_GLUE_MAIN); /* a language chosen: back to the main menu */
+	else kp_glue_title(&f->glue, now_ms(f));
 	say(f, f->glue.screen == KP_GLUE_TITLE ? "glue: the title" : "glue: the main menu");
 	return 0;
 }

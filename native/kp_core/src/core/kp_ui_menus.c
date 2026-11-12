@@ -134,14 +134,6 @@ void kp_ui_modal_destroyed(KpUi *ui, int32_t dialog)
 	}
 }
 
-/* EndDialog 0x4c2b50 of a dialog that ends without a slide: its rectangle is repainted (a popup's was composited into
- * the screen below it), its destruction now. */
-static void end_dialog(KpUi *ui, int32_t dialog)
-{
-	kp_ui_close_dialog(ui, dialog);
-	kp_ui_destroy_dialog(ui, dialog);
-}
-
 /* --- the popups (glupopup.cpp, P21) --- */
 
 static const char *theme_dir(int theme)
@@ -162,22 +154,7 @@ static int state_theme(int state)
 /* The popup dialog's image (0x66b3f8) from a glue file. */
 static void popup_image(KpUi *ui, const char *path)
 {
-	KpUiMenus *m = mn(ui);
-	const KpUiFile *f;
-	int32_t w, h;
-	kp_ui_surface_free(ui, m->popup_image.pixels);
-	m->popup_image.pixels = NULL;
-	if ((f = kp_ui_glue_file(ui, path)) == NULL || kp_ui_pcx(f->data, f->size, &w, &h, NULL, 0) != 0) return;
-	m->popup_image.pixels = (uint8_t *)malloc((size_t)w * (size_t)h);
-	if (m->popup_image.pixels == NULL || kp_ui_pcx(f->data, f->size, &w, &h, m->popup_image.pixels,
-		(size_t)w * (size_t)h) != 0) {
-		free(m->popup_image.pixels);
-		m->popup_image.pixels = NULL;
-		return;
-	}
-	m->popup_image.w = w;
-	kp_ui_picture(ui, m->popup_image.pixels, w, h, f); /* the HD interface's (ADR 0013 R4d) */
-	m->popup_image.h = h;
+	(void)kp_ui_load_picture(ui, kp_ui_glue_file(ui, path), &mn(ui)->popup_image, NULL);
 }
 
 /* The popup's background <theme dir>\<name>. */
@@ -194,7 +171,7 @@ static void close_popup(KpUi *ui)
 	KpUiMenus *m = mn(ui);
 	if (m->popup < 0) return;
 	ui->result = R_CANCEL;
-	end_dialog(ui, m->popup);
+	kp_ui_end_dialog(ui, m->popup);
 }
 
 /* FitPopupTextFont 0x4605e0. */
@@ -295,7 +272,7 @@ static int popup_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 		case KP_UI_POST_LOAD: popup_post_load(ui, self); break;
 		case KP_UI_CLOSE:
 			(void)base(ui, d, e);
-			end_dialog(ui, self);
+			kp_ui_end_dialog(ui, self);
 			return 1;
 		default: break;
 		}

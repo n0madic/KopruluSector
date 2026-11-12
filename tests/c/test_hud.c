@@ -4131,28 +4131,35 @@ static void title_blinks_like_the_original(KpT *T)
 	kp_t_eq(T, kp_ui_tick(ui, OPEN + 10 * PERIOD), 0, "and its timers gone");
 }
 
-/* The start's title (kp_glue_title): KP_UI_GLUE_SLEEP_MS on the screen with no timer running (the blink stands, as
- * through RunGlueLoop 0x457510's Sleep), the input dropped, the music going on; then the main menu, the title's music
- * still playing (the main menu starts it only when none plays). */
+/* The start's title (kp_glue_title): KP_UI_GLUE_SLEEP_MS on the screen from its first frame with no timer running (the
+ * blink stands, as through RunGlueLoop 0x457510's Sleep), the input dropped (the pointer's position kept), the music
+ * going on; then the main menu, the title's music still playing (the main menu starts it only when none plays). */
 static void glue_title_stands_before_the_main_menu(KpT *T)
 {
+	enum { VK_SHIFT_KEY = 0x10, POINT_X = 320, POINT_Y = 300 };
 	Glue *G;
 	KpUi *ui;
 	char name[128];
-	uint32_t opened;
+	uint32_t first;
 	if (!kp_t_ready(T, "test_hud.glue_title_stands_before_the_main_menu", GLUE_FILES)) return;
 	G = glue_bare(T);
 	ui = G->ui;
-	opened = G->now;
 	kp_glue_title(G->glue, G->now);
 	kp_t_eq(T, G->glue->screen, KP_GLUE_TITLE, "the title");
 	glue_frame(G);
+	first = G->now;
 	kp_t_eq(T, strcmp(top(G, name, sizeof name), "rez\\titledlg.bin"), 0, "its dialog on the screen");
-	glue_key(G, 'x');
-	kp_glue_input(G->glue, KP_UI_LEFT_DOWN, 320, 300);
-	kp_glue_input(G->glue, KP_UI_LEFT_UP, 320, 300);
-	while (G->now + 16 - opened < KP_UI_GLUE_SLEEP_MS) glue_frame(G);
-	kp_t_eq(T, G->glue->screen, KP_GLUE_TITLE, "it stands until the Sleep's end");
+	kp_glue_key(G->glue, 1, VK_SHIFT_KEY, 0);
+	kp_glue_text(G->glue, "x", 'X');
+	kp_glue_key(G->glue, 0, 'X', 0);
+	kp_t_eq(T, ui->input.keys[0], 0, "a key dropped (Shift not held)");
+	kp_glue_input(G->glue, KP_UI_MOUSE_MOVE, POINT_X, POINT_Y);
+	kp_glue_input(G->glue, KP_UI_LEFT_DOWN, POINT_X, POINT_Y);
+	kp_glue_input(G->glue, KP_UI_LEFT_UP, POINT_X, POINT_Y);
+	kp_t_ok(T, ui->mouse_x == POINT_X - G->glue->place_x && ui->mouse_y == POINT_Y - G->glue->place_y,
+		"the pointer's position kept for the main menu");
+	while (G->now + 16 - first < KP_UI_GLUE_SLEEP_MS) glue_frame(G);
+	kp_t_eq(T, G->glue->screen, KP_GLUE_TITLE, "it stands until the Sleep's end, from its first frame");
 	kp_t_eq(T, ui->title.toggle, 0, "no blink: no timer runs");
 	kp_t_ok(T, kp_ui_title_is_open(ui) && !G->has_last, "the input changed nothing");
 	glue_frame(G);
@@ -4161,19 +4168,60 @@ static void glue_title_stands_before_the_main_menu(KpT *T)
 	wait_for(G, "rez\\glumain.bin", 200);
 	kp_t_ok(T, ui->music.playing && ui->music.track == KP_UI_TITLE_MUSIC, "the title's music goes on in the main menu");
 	kp_t_eq(T, ui->menus.state, KP_GLUE_MAIN, "the main menu (the dropped key opened nothing)");
+	kp_t_ok(T, !ui->cursor_hidden, "its cursor shown");
 }
 
-/* An interface freed with its title open (a flow freed during the start's title): the title frees its own memory, the
- * dialog's bitmap is freed once, with the other controls. */
+/* A first frame long after kp_glue_title (a slow start: the window, the art) takes none of the title's time; a title
+ * whose picture cannot be read does not open: the main menu at once, nothing of the title left. */
+static void glue_title_counts_from_its_first_frame(KpT *T)
+{
+	enum { LATE_MS = 3000, NOT_A_PICTURE = 100 };
+	Glue *G;
+	KpUi *ui;
+	KpUiFile *f;
+	size_t size;
+	if (!kp_t_ready(T, "test_hud.glue_title_counts_from_its_first_frame", GLUE_FILES)) return;
+	G = glue_bare(T);
+	kp_glue_title(G->glue, G->now);
+	G->now += LATE_MS;
+	glue_frame(G);
+	kp_t_eq(T, G->glue->screen, KP_GLUE_TITLE, "the title after a slow first frame");
+	G = glue_bare(T);
+	ui = G->ui;
+	f = (KpUiFile *)kp_ui_glue_file(ui, "glue\\title\\title.pcx");
+	kp_t_ok(T, f != NULL, "title.pcx");
+	size = f->size;
+	f->size = NOT_A_PICTURE; /* this interface's own entry: its bytes stay the data's */
+	kp_t_eq(T, kp_ui_title_open(ui), -1, "no title without its picture");
+	kp_t_ok(T, strstr(ui->error, "title.pcx") != NULL, "it says why: %s", ui->error);
+	kp_t_ok(T, !kp_ui_title_is_open(ui) && ui->open < 0 && ui->title.background.pixels == NULL, "nothing left of it");
+	kp_t_ok(T, !ui->music.playing && !ui->cursor_hidden, "no music, the cursor shown");
+	kp_glue_title(G->glue, G->now);
+	kp_t_eq(T, G->glue->screen, KP_GLUE_MENUS, "the glue's main menu at once");
+	f->size = size;
+}
+
+/* An interface freed with its title open (a flow freed during the start's title): kp_ui_title_free frees the title's
+ * own memory and leaves the dialog, whose bitmap kp_ui_free frees once with the other controls (destroying it there
+ * after the controls were freed freed that bitmap twice). */
 static void title_open_at_the_interfaces_end_is_freed(KpT *T)
 {
 	KpUi *ui;
+	int32_t d;
+	const uint8_t *bitmap;
 	if (!kp_t_ready(T, "test_hud.title_open_at_the_interfaces_end_is_freed", GLUE_FILES)) return;
 	ui = interface(T);
 	ui->now = 1000;
-	kp_t_ok(T, kp_ui_title_open(ui) >= 0, "the title opens: %s", ui->error);
+	kp_t_ok(T, (d = kp_ui_title_open(ui)) >= 0, "the title opens: %s", ui->error);
 	kp_t_ok(T, ui->title.shown.pixels != NULL && ui->title.background.pixels != NULL, "its bitmaps and picture");
-	/* the deferred free_interface frees it open */
+	bitmap = ui->controls[d].bitmap.pixels;
+	kp_ui_title_free(ui);
+	kp_t_ok(T, ui->title.shown.pixels == NULL && ui->title.blank.pixels == NULL && ui->title.background.pixels == NULL,
+		"the title's own memory freed");
+	kp_t_ok(T, !kp_ui_title_is_open(ui), "no title");
+	kp_t_ok(T, ui->controls[d].used && ui->open == d && ui->controls[d].bitmap.pixels == bitmap,
+		"the dialog left to kp_ui_free, its bitmap with it");
+	/* the deferred free_interface frees the controls (and calls kp_ui_title_free again: nothing) */
 }
 
 /* Whether the script text[0..size) ends with the glue file name's bytes. */
@@ -4687,6 +4735,7 @@ static const KpTest TESTS[] = {
 	{ "glue_cursor_keeps_its_colours_on_every_theme", glue_cursor_keeps_its_colours_on_every_theme, 0 },
 	{ "title_blinks_like_the_original", title_blinks_like_the_original, 0 },
 	{ "glue_title_stands_before_the_main_menu", glue_title_stands_before_the_main_menu, 0 },
+	{ "glue_title_counts_from_its_first_frame", glue_title_counts_from_its_first_frame, 0 },
 	{ "title_open_at_the_interfaces_end_is_freed", title_open_at_the_interfaces_end_is_freed, 0 },
 	{ "glue_closing_a_screen_leaves_no_ghost", glue_closing_a_screen_leaves_no_ghost, 0 },
 	{ "glue_overlays_take_their_pixels_from_the_images", glue_overlays_take_their_pixels_from_the_images, 0 },

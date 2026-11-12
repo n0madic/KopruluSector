@@ -142,6 +142,40 @@ void kp_ui_surface_free(KpUi *ui, uint8_t *pixels)
 	free(pixels);
 }
 
+#define PCX_HEADER 128
+#define PCX_PALETTE 769 /* the PCX's trailing 0x0c and 256 RGB triples */
+
+int kp_ui_load_picture(KpUi *ui, const KpUiFile *f, KpUiSurface *s, uint8_t palette[1024])
+{
+	int32_t w, h;
+	size_t k;
+	kp_ui_surface_free(ui, s->pixels);
+	s->pixels = NULL;
+	s->w = s->h = 0;
+	if (f == NULL || (palette != NULL && f->size < PCX_HEADER + PCX_PALETTE)
+		|| kp_ui_pcx(f->data, f->size, &w, &h, NULL, 0) != 0) {
+		return -1;
+	}
+	s->pixels = (uint8_t *)malloc((size_t)w * (size_t)h);
+	if (s->pixels == NULL) return -1;
+	if (kp_ui_pcx(f->data, f->size, &w, &h, s->pixels, (size_t)w * (size_t)h) != 0) {
+		free(s->pixels); /* not a picture yet: nothing to forget */
+		s->pixels = NULL;
+		return -1;
+	}
+	s->w = w;
+	s->h = h;
+	kp_ui_picture(ui, s->pixels, w, h, f); /* the HD interface's (ADR 0013 R4d) */
+	for (k = 0; palette != NULL && k < 256; k++) {
+		const uint8_t *p = f->data + f->size - (PCX_PALETTE - 1) + 3 * k;
+		palette[4 * k] = p[0];
+		palette[4 * k + 1] = p[1];
+		palette[4 * k + 2] = p[2];
+		palette[4 * k + 3] = 0;
+	}
+	return 0;
+}
+
 /* The interface file whose bytes start at data. */
 static const KpUiFile *file_of(const KpUi *ui, const uint8_t *data)
 {

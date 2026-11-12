@@ -105,7 +105,7 @@ On `build/app-script` (`--headless --window 1280x720`):
 
 - **Conditions not added:**
   - `popup` is `dialog` in the glue.
-  - `screen` takes the screen's BIN stem, not a state of ours. `titledlg` (2026-11-12) is the start's title screen (`kp_glue_title`): `wait screen titledlg` holds through its 1.5 s, and the input sent then is dropped as the title drops it.
+  - `screen` takes the screen's BIN stem, not a state of ours. `titledlg` (2026-11-12) is the start's title screen (`kp_glue_title`): `wait screen titledlg` holds through its 1.5 s (from its first frame), and the keys, text and clicks sent then are dropped as the title drops them.
   - `art` is the values `art.*`.
   - `episode`, `room-entered` and `score` come with SC5's HD script, when its port shows what it waits for.
 - **Values that wait for SC5's picks:** `selection.first`, `selection.has:NAME`, `moved:NAME`.
