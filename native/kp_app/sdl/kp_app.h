@@ -222,28 +222,20 @@ typedef struct {
 #define KP_HD_UPLOADS_A_FRAME 4
 #define KP_HD_PRIME_PAGES 64 /* the pages the first frame waits for at most */
 
-/* kp_app_cine.c: the cinematics' state (ADR 0015) */
+/* kp_app_cine.c: the cinematics' state (ADR 0015; ADR 0019, stage C4) */
 typedef struct {
 	KpCineRun run;          /* the movies' queue and the one playing (kp_cine.c), on SDL's clock */
-	char path[1200];        /* the pack's file */
 	/* the subtitle drawn over the movie: its movie (run.movies), cue (-1 none) and the picture's size it was laid out
 	 * for; the font (ui.kpd VFNT's first) missing is logged once */
 	uint32_t caption_movie;
 	int caption_cue;
 	int32_t caption_w, caption_h;
 	int caption_no_font;
-	KpCineIndex pack;       /* the pack's index as read, its own subtitles (count 0: no pack) */
-	KpCineCatalog catalog;  /* the profile's movies (CINM) when the run's index is an install's (ADR 0018, stage D7) */
-	int casc;               /* that install is Remastered's: its WebM, else 1.17's Smacker files */
-#ifdef __EMSCRIPTEN__
-	/* the web's pack lies beside the page (ADR 0015 item 4): its head preloaded, the rest fetched */
-	uint8_t *head;
-	size_t head_size;
-	uint64_t file_size;
-	KpFetch *sound_fetch;   /* the movie's sound on its way: the pictures wait for it */
-	uint8_t *sound_bytes;   /* and in memory while it plays */
-	int sound_waits;        /* it has not begun yet, though it is to */
-#endif
+	KpCineCatalog catalog;  /* the profile's movies (CINM) */
+	int webm;               /* the data's movies are WebM by Remastered's names, else a 1.17 install's Smacker files */
+	KpFetch *fetch;         /* a movie on its way (the web: its bytes by their range in the repack's group) */
+	int fetch_clip;         /* its clip's id */
+	uint32_t fetch_size;    /* and its bytes */
 } KpAppCine;
 
 typedef struct KpApp KpApp;
@@ -321,6 +313,10 @@ struct KpApp {
 uint8_t *kp_app_read(KpApp *a, const char *path, size_t *size);
 /* Whether a file of the data is there (it opens), unread. */
 int kp_app_exists(KpApp *a, const char *path);
+#ifdef __EMSCRIPTEN__
+/* Whether a file the web fetches lies beside the page (path under KP_APP_WEB_DATA: KP_APP_WEB_SIZES names it). */
+int kp_app_web_beside(KpApp *a, const char *path);
+#endif
 /* The path under the data root (--data) of a file of the converted data. */
 void kp_app_path(const KpApp *a, const char *path, char *out, size_t size);
 /* A group of the repack (its file, as the core's listing names it): 1 added (or, when it cannot be had and an install is
@@ -370,13 +366,13 @@ void kp_audio_mission(KpApp *a);
 SDL_IOStream *kp_app_range_io(const char *full, Sint64 start, Sint64 size);
 #endif
 
-/* kp_app_cine.c: the cinematics (ADR 0015) over libvpx; without a pack nothing plays and every call below answers as
- * if the movie were absent. */
-/* The pack chosen by --cinematics read at start; 0 whether or not there is one (a missing pack is logged). */
+/* kp_app_cine.c: the cinematics (ADR 0015) over libvpx; without the data's movies nothing plays and every call below
+ * answers as if the movie were absent. */
+/* The data's movies of the set --cinematics picks found at start; 0 whether or not there are any (none is logged). */
 int kp_app_cine_open(KpApp *a);
-/* Whether cinematic id (the original's number) is in the pack. */
+/* Whether cinematic id (the original's number) is in the data. */
 int kp_app_cine_has(const KpApp *a, int id);
-/* The cinematics ids[0..n) one after the other (the ones the pack lacks left out), each after its prelude when
+/* The cinematics ids[0..n) one after the other (the ones the data lacks left out), each after its prelude when
  * preludes is set (PlayCinematicWithPrelude 0x458fc0), the music stopped; after the ones playing when some are; 1 when
  * one plays, 0 when none does (nothing changed). */
 int kp_app_cine_start(KpApp *a, const int *ids, int n, int preludes);
@@ -384,7 +380,7 @@ int kp_app_cine_active(const KpApp *a);
 /* Per frame while active: the movie advanced by its clock and its picture drawn (visible 0: no context to draw with,
  * the movie goes on unseen), the movie ended when it is over. */
 void kp_app_cine_frame(KpApp *a, int visible);
-/* --cine-check: every movie of the pack decoded to its end at once (no clock), its first and last pictures saved into
+/* --cine-check: every movie of the data decoded to its end at once (no clock), its first and last pictures saved into
  * dir as PNG, its middle one also drawn by the GPU and compared with the CPU's; the "SPIKE cine check" lines (kp_dev_line);
  * the movies that failed. */
 int kp_app_cine_check(KpApp *a, const char *dir);
@@ -396,8 +392,6 @@ void kp_app_cine_stop(KpApp *a);
 /* The GPU's context was made again: the subtitle shown is uploaded again. */
 void kp_app_cine_lost(KpApp *a);
 void kp_app_cine_free(KpApp *a);
-/* Another language (ADR 0016): the old one's subtitles go, the next movie reads the new one's. */
-void kp_app_cine_language(KpApp *a);
 
 /* kp_app_world.c: the playing game's world */
 int kp_world_build(KpApp *a, char *err, size_t err_size);

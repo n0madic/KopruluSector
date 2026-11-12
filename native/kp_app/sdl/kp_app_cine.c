@@ -1,28 +1,26 @@
 /*
- * The cinematics (ADR 0015): generated/video/cinematics-<hd2|sd>.kpd chosen by --cinematics, its index
- * read at start, a movie played from the file as the clock of its Ogg Vorbis (the sound's position) asks for the
- * pictures that kp_cine.c decodes, their planes converted and drawn full screen by kp_gfx_video with black bars to
- * keep the shape of the frames. The queue, the movies' order and the skip rule are kp_cine.c's run (KpCineRun); this is
- * its host: the pack's file, the soundtrack's track, the input and the drawing. While a movie plays the flow and the
- * world are not run (SDL_AppIterate); a key, a click or a tap ends it once it has been on screen, as the original's
- * PlayCinematic does (LEFT_UP, RIGHT_UP, Escape, Enter, Space: 0x47ec60).
+ * The cinematics (ADR 0015; ADR 0018 stage D7, ADR 0019 stage C4): the data's movies, played as they are. A repack's
+ * or a Remastered install's WebM by Remastered's names (a repack keeps a 1.17 install's movies transcoded as the SD
+ * set), its HD2 set first, else a 1.17 install's Smacker files, each checked against the reference install's copy by
+ * its size; --cinematics picks the set. Each movie is loaded whole when it begins (kp_res), its sound played from
+ * memory as the clock (the sound's position) asks for the pictures that kp_cine.c decodes, their planes converted and
+ * drawn full screen by kp_gfx_video with black bars to keep the shape of the frames. The queue, the movies' order and
+ * the skip rule are kp_cine.c's run (KpCineRun); this is its host: the movies' bytes, the soundtrack's track, the input
+ * and the drawing. While a movie plays the flow and the world are not run (SDL_AppIterate); a key, a click or a tap
+ * ends it once it has been on screen, as the original's PlayCinematic does (LEFT_UP, RIGHT_UP, Escape, Enter, Space:
+ * 0x47ec60).
  *
  * libvpx decodes in one thread on the main thread, with NEON on arm64 (an HD2 frame 1.0 ms on the Fold7, 1.2 on the
  * Mac, ADR 0015) and SSE2..AVX2 on x86-64 when NASM was there at the build (third_party/vpx/kp_vpx.cmake), else from C
  * (the web's wasm: an HD2 frame 3 to 5 ms on the Mac).
  *
- * The web has no file to read at once: the pack lies beside the page, its head preloaded, its packets fetched chunk by
- * chunk as a movie plays and its sound whole before the movie begins; a movie whose bytes have not come waits (its clock
- * and its sound held, KP_CINE_WAIT).
+ * The web reads a movie of the repack's cinematics group, which lies beside the page, by the range the core's listing
+ * gives (kp_res_raw_range): fetched whole before it begins, the screen black meanwhile (KP_CINE_LOAD_WAIT).
  *
- * With an install in --data (ADR 0018, stage D7) the movies are the install's, played as they are: the 1.17 install's
- * (or a repack's) Smacker files, checked against the reference install's copies, or Remastered's WebM, its HD2 set
- * first; each read whole when it begins (kp_res), its sound played from memory. The packs serve the builds without an
- * install (the phones, the web).
- *
- * Remastered's subtitles (the pack's SUBS, from locales/<locale>/Assets/Smk/<name>.srt; an install's .srt of the app's
- * language, else enUS's) are drawn over the bottom of the picture in ui.kpd's text font (kp_caption_render) when the flow shows them (S toggles them, the profile keeps
- * the choice); laid out again when the subtitle, the movie or the picture's size changes.
+ * Remastered's subtitles (locales/<locale>/Assets/Smk/<name>.srt: the language's in effect, else the install's text
+ * locale's, else enUS's) are drawn over the bottom of the picture in ui.kpd's text font (kp_caption_render) when the
+ * flow shows them (S toggles them, the profile keeps the choice); laid out again when the subtitle, the movie or the
+ * picture's size changes.
  */
 #include "kp_app.h"
 
@@ -31,50 +29,15 @@
 #include <string.h>
 
 
-#define PACK_FORMAT "generated/video/cinematics-%s.kpd"
 #define CAPTION_LINE 18.0      /* a subtitle's line is the picture's height over this */
 #define CAPTION_WIDTH 0.9      /* and its lines are at most this much of its width */
 #define CAPTION_MARGIN 0.04    /* above the picture's bottom by this much of its height */
 #define CAPTION_NONE (-2)      /* no subtitle laid out yet: the next frame lays out the one shown */
 #define GPU_ERROR_LIMIT 4 /* --cine-check: the mean byte error of a GPU picture against the CPU's (the chroma sampled
                            * between its texels there, copied here; 0 for the sRGB movies) */
+#define SMK_FORMAT "smk\\%s.smk" /* a 1.17 install's movie by the profile's name */
 
-/* The language's subtitles (the flow's: kp_locale.c's SUBS) over the pack's index as read, laid over before each run
- * (ADR 0016): a language the main menu chooses replaces the flow's bytes. None, or a refused one, leaves the pack's. */
-static void locale_subtitles(KpApp *a)
-{
-	KpError err;
-	if (a->cine.pack.count == 0 || a->cine.run.active) return;
-	a->cine.run.index = a->cine.pack;
-	if (a->flow.text.subs == NULL) return;
-	if (kp_cine_subs_overlay(&a->cine.run.index, a->flow.text.subs, a->flow.text.subs_size, &err) != 0) {
-		SDL_Log("language %s: %s; the pack's subtitles", a->flow.text.locale, err.msg);
-	}
-}
-
-#ifndef __EMSCRIPTEN__
-/* The index of the pack at rel; 0, or -1 (logged unless the file is not there). */
-static int index_file(KpApp *a, const char *rel)
-{
-	const char *path = a->cine.path;
-	uint8_t head[KP_CINE_HEAD];
-	SDL_IOStream *io;
-	Sint64 size;
-	size_t n;
-	KpError err;
-	int rc;
-	if (!(io = kp_io_open_head(path, head, sizeof head, &n, &size))) {
-		if (size >= 0) SDL_Log("cinematics: cannot read %s: %s", path, SDL_GetError());
-		return -1;
-	}
-	(void)rel;
-	rc = kp_cine_index(&a->cine.run.index, head, n, (size_t)size, kp_io_read_into, io, &err);
-	SDL_CloseIO(io);
-	if (rc != 0) SDL_Log("%s (%s)", err.msg, path);
-	else a->cine.pack = a->cine.run.index;
-	return rc;
-}
-#endif
+static const char *const VARIANT_NAME[2] = { "sd", "hd2" };
 
 static uint64_t host_now_ns(void *ctx)
 {
@@ -82,21 +45,12 @@ static uint64_t host_now_ns(void *ctx)
 	return SDL_GetTicksNS();
 }
 
-#ifndef __EMSCRIPTEN__
-static void *host_open(void *ctx)
+/* The movie on its way given up. */
+static void fetch_drop(KpApp *a)
 {
-	KpApp *a = (KpApp *)ctx;
-	SDL_IOStream *io = SDL_IOFromFile(a->cine.path, "rb");
-	if (!io) SDL_Log("cinematics: cannot open %s: %s", a->cine.path, SDL_GetError());
-	return io;
+	kp_fetch_free(a->cine.fetch);
+	a->cine.fetch = NULL;
 }
-
-static void host_close(void *ctx, void *file)
-{
-	(void)ctx;
-	SDL_CloseIO((SDL_IOStream *)file);
-}
-#endif
 
 /* A run begins: PlayCinematic stops the music (the interface's track closed too, so the next screen starts its own
  * again), and the presses before the movie end here: their releases are the movie's. */
@@ -114,6 +68,7 @@ static void host_begin(void *ctx)
 static void host_end(void *ctx)
 {
 	KpApp *a = (KpApp *)ctx;
+	fetch_drop(a);
 	kp_input_focus(a, a->window && (SDL_GetWindowFlags(a->window) & SDL_WINDOW_INPUT_FOCUS) != 0);
 }
 
@@ -130,158 +85,12 @@ static int play_sound(KpApp *a, SDL_IOStream *io, const char *name)
 	return 0;
 }
 
-#ifdef __EMSCRIPTEN__
-/* --- the web: the pack fetched over HTTP Range requests (kp_cine.c's stream over kp_fetch) --- */
-
-/* A range answered with the whole file has cost the pack's bytes once: once is enough. */
-static int web_no_ranges(KpApp *a, const KpFetch *f)
-{
-	if (!kp_fetch_whole_file(f)) return 0;
-	if (a->cine.run.have) SDL_Log("cinematics: the server has no Range requests: no more movies");
-	a->cine.run.have = 0;
-	return 1;
-}
-
-static void *web_fetch_start(void *ctx, uint64_t offset, uint32_t size)
-{
-	return kp_fetch_start(((KpApp *)ctx)->cine.path, (uint32_t)offset, size);
-}
-
-static int web_fetch_state(void *ctx, void *request)
-{
-	int st = kp_fetch_state((const KpFetch *)request);
-	if (st == KP_FETCH_PENDING) return 0;
-	return st == KP_FETCH_DONE && !web_no_ranges((KpApp *)ctx, (const KpFetch *)request) ? 1 : -1;
-}
-
-static uint8_t *web_fetch_take(void *ctx, void *request, size_t *size)
-{
-	(void)ctx;
-	return kp_fetch_take((KpFetch *)request, size);
-}
-
-static void web_fetch_drop(void *ctx, void *request)
-{
-	(void)ctx;
-	kp_fetch_free((KpFetch *)request);
-}
-
-/* The pack's file while movies play. */
-typedef struct {
-	KpApp *app;
-	KpCineStream stream;
-} WebFile;
-
-static void web_stream_init(KpApp *a, KpCineStream *s)
-{
-	memset(s, 0, sizeof *s);
-	s->fetcher.ctx = a;
-	s->fetcher.start = web_fetch_start;
-	s->fetcher.state = web_fetch_state;
-	s->fetcher.take = web_fetch_take;
-	s->fetcher.drop = web_fetch_drop;
-	s->head = a->cine.head;
-	s->head_size = a->cine.head_size;
-	s->file_size = a->cine.file_size;
-}
-
-/* The web's: rel's head preloaded and kept (its sections up to the packets, tools/web_hd_heads.py), its size in
- * KP_APP_WEB_SIZES. */
-static int index_file(KpApp *a, const char *rel)
-{
-	KpCineStream s;
-	KpError err;
-	size_t n, file_size;
-	int rc;
-	free(a->cine.head);
-	if (!(a->cine.head = kp_app_read_head(a, rel, SIZE_MAX, &n, &file_size))) return -1;
-	a->cine.head_size = n;
-	a->cine.file_size = file_size;
-	web_stream_init(a, &s);
-	rc = kp_cine_index(&a->cine.run.index, a->cine.head, n, file_size, kp_cine_stream_read, &s, &err);
-	kp_cine_stream_free(&s);
-	if (rc != 0) {
-		SDL_Log("%s (%s)", err.msg, rel);
-		free(a->cine.head);
-		a->cine.head = NULL;
-	} else {
-		a->cine.pack = a->cine.run.index;
-	}
-	return rc;
-}
-
-/* The movie's sound, whose bytes have come or failed, begins. */
-static void web_sound_begin(KpApp *a, const char *name)
-{
-	size_t n = 0;
-	int whole = web_no_ranges(a, a->cine.sound_fetch);
-	uint8_t *data = kp_fetch_take(a->cine.sound_fetch, &n);
-	a->cine.sound_fetch = NULL;
-	a->cine.sound_waits = 0;
-	if (!data || whole) {
-		free(data);
-		SDL_Log("cinematics: %s plays without sound: its bytes did not come", name);
-		return;
-	}
-	a->cine.sound_bytes = data;
-	(void)play_sound(a, SDL_IOFromConstMem(data, n), name);
-}
-
-/* The stream's read; the packets also wait for the movie's sound, which begins with the first of them. */
-static int web_read(void *ctx, uint64_t offset, uint8_t *out, size_t size)
-{
-	WebFile *f = (WebFile *)ctx;
-	KpApp *a = f->app;
-	const KpCineClip *clip;
-	int rc;
-	if (!a->cine.run.have) return -1; /* not even the chunks of this movie: each would fetch the whole pack */
-	rc = kp_cine_stream_read(&f->stream, offset, out, size);
-	if (rc != 0 || !a->cine.sound_waits || offset + size <= a->cine.head_size) return rc;
-	clip = kp_cine_clip(a->cine.run.player);
-	if (!a->cine.sound_fetch) { /* asked for now, the ranges answered: no second whole file from a server without them */
-		a->cine.sound_fetch = kp_fetch_start(a->cine.path, (uint32_t)clip->audio_offset, clip->audio_size);
-		if (a->cine.sound_fetch) return KP_CINE_READ_WAIT;
-		a->cine.sound_waits = 0; /* out of memory: the movie without it */
-		return 0;
-	}
-	if (kp_fetch_state(a->cine.sound_fetch) == KP_FETCH_PENDING) return KP_CINE_READ_WAIT;
-	web_sound_begin(a, clip->name);
-	return 0;
-}
-
-static void *host_open(void *ctx)
-{
-	KpApp *a = (KpApp *)ctx;
-	WebFile *f;
-	if (!(f = (WebFile *)malloc(sizeof *f))) return NULL;
-	f->app = a;
-	web_stream_init(a, &f->stream);
-	return f;
-}
-
-static void host_close(void *ctx, void *file)
-{
-	(void)ctx;
-	kp_cine_stream_free(&((WebFile *)file)->stream);
-	free(file);
-}
-#endif
-
-/* The movie's soundtrack as its host begins it: an install's movie's from memory, a pack's from its file (the web: when
- * its bytes have come). */
+/* The movie's soundtrack from memory (the movie's) */
 static int host_sound(void *ctx, const KpCineClip *clip, const uint8_t *data, size_t size)
 {
 	KpApp *a = (KpApp *)ctx;
 	if (!a->audio.cine) return 0;
-	if (data) return play_sound(a, SDL_IOFromConstMem(data, size), clip->name);
-#ifdef __EMSCRIPTEN__
-	/* its bytes come first, asked for and begun by the reads of the movie's packets (web_read) */
-	(void)clip;
-	a->cine.sound_waits = 1;
-	return 1;
-#else
-	return play_sound(a, kp_app_range_io(a->cine.path, (Sint64)clip->audio_offset, (Sint64)clip->audio_size), clip->name);
-#endif
+	return play_sound(a, SDL_IOFromConstMem(data, size), clip->name);
 }
 
 static int host_sound_ms(void *ctx, int64_t *ms)
@@ -289,9 +98,6 @@ static int host_sound_ms(void *ctx, int64_t *ms)
 	MIX_Track *t = ((KpApp *)ctx)->audio.cine;
 	Sint64 pos;
 	*ms = -1;
-#ifdef __EMSCRIPTEN__
-	if (((KpApp *)ctx)->cine.sound_waits) return 1; /* it is to begin */
-#endif
 	if (!t || !MIX_TrackPlaying(t)) return 0;
 	pos = MIX_GetTrackPlaybackPosition(t);
 	*ms = pos > 0 ? MIX_TrackFramesToMS(t, pos) : -1;
@@ -303,26 +109,8 @@ static void host_sound_stop(void *ctx)
 	MIX_Track *t = ((KpApp *)ctx)->audio.cine;
 	if (t) {
 		MIX_StopTrack(t, 0);
-		MIX_SetTrackAudio(t, NULL); /* closes the sound's stream: the pack's second handle */
+		MIX_SetTrackAudio(t, NULL); /* closes the sound's stream */
 	}
-#ifdef __EMSCRIPTEN__
-	{
-		KpApp *a = (KpApp *)ctx;
-		kp_fetch_free(a->cine.sound_fetch);
-		free(a->cine.sound_bytes);
-		a->cine.sound_fetch = NULL;
-		a->cine.sound_bytes = NULL;
-		a->cine.sound_waits = 0;
-	}
-#endif
-}
-
-static void host_sound_pause(void *ctx, int pause)
-{
-	MIX_Track *t = ((KpApp *)ctx)->audio.cine;
-	if (!t) return;
-	if (pause) MIX_PauseTrack(t);
-	else MIX_ResumeTrack(t);
 }
 
 static void host_log(void *ctx, const char *line)
@@ -331,24 +119,18 @@ static void host_log(void *ctx, const char *line)
 	SDL_Log("%s", line);
 }
 
-/* --- an install's movies (ADR 0018, stage D7): read whole when each begins, through kp_res --- */
+/* --- the movies: WebM by Remastered's names (a repack's, a Remastered install's) or a 1.17 install's Smacker files --- */
 
-#define SMK_FORMAT "smk\\%s.smk"                    /* a 1.17 movie by the profile's name */
-#define WEBM_FORMAT "%s%s.webm"                     /* a Remastered one: its set's folder, the name in lower case */
-#define SRT_FORMAT "locales/%s/Assets/Smk/%s.srt"   /* and its subtitles */
-static const char *const WEBM_FOLDER[2] = { "SD/smk/", "HD2/Smk/" };
-static const char *const VARIANT_NAME[2] = { "sd", "hd2" };
-
-/* The install's file of catalog movie k in set variant */
-static void original_name(const KpApp *a, int k, int variant, char *out, size_t size)
+/* The data's file of catalog movie k in set variant */
+static void movie_name(const KpApp *a, int k, int variant, char *out, size_t size)
 {
 	const char *name = a->cine.catalog.movies[k].name;
-	if (a->cine.casc) {
+	if (a->cine.webm) {
 		char lower[KP_CINE_NAME];
 		size_t i;
 		for (i = 0; name[i] && i + 1 < sizeof lower; i++) lower[i] = (char)(name[i] >= 'A' && name[i] <= 'Z' ? name[i] - 'A' + 'a' : name[i]);
 		lower[i] = 0;
-		snprintf(out, size, WEBM_FORMAT, WEBM_FOLDER[variant], lower);
+		snprintf(out, size, KP_CINE_WEBM_FORMAT, KP_CINE_WEBM_FOLDER[variant], lower);
 	} else {
 		snprintf(out, size, SMK_FORMAT, name);
 	}
@@ -359,23 +141,39 @@ typedef struct {
 	int variant;
 } HasMovie;
 
-static int original_has(void *ctx, int k)
+/* Whether the data has catalog movie k of the set: a 1.17 install's file, or a WebM an open group holds or the install;
+ * one of a repack's group read by ranges that is not open (a computer's and a phone's groups open with the core, so
+ * there it is not there) where that group lies beside the web's page. */
+static int movie_has(void *ctx, int k)
 {
 	HasMovie *h = (HasMovie *)ctx;
-	char name[128];
-	original_name(h->app, k, h->variant, name, sizeof name);
-	return h->app->cine.casc ? kp_res_raw_held(h->app->res, name) : kp_res_exists(h->app->res, name);
+	KpApp *a = h->app;
+	char name[128], file[128];
+	uint64_t offset;
+	uint32_t size;
+	movie_name(a, k, h->variant, name, sizeof name);
+	if (!a->cine.webm) return kp_res_exists(a->res, name);
+	if (!kp_res_raw_held(a->res, name)) return 0;
+	if (!kp_res_raw_range(a->res, name, file, sizeof file, &offset, &size)) return 1;
+#ifdef __EMSCRIPTEN__
+	{
+		char path[1200];
+		snprintf(path, sizeof path, "%s/%s", kp_res_repack_dir(a->res), file);
+		return kp_app_web_beside(a, path);
+	}
+#else
+	return 0;
+#endif
 }
 
-/* A Remastered movie's subtitles: the .srt of the app's language (--locale, the player's choice) when it has one but
- * the base's, else as the converter's packs chose them (converter/emit/cinematics.py subtitles, auto): of the install's
- * text locale, else enUS; the first the install holds (it downloads only some languages' files). None when no such
- * file is there, or one that does not read (logged). */
-static void original_subtitles(KpApp *a, KpCineMovie *m, const char *movie)
+/* A movie's subtitles: the .srt of the language in effect (the flow's: --locale, the main menu's choice) when it is not
+ * the base's, else of a Remastered install's text locale (the language whose files it downloads), else the base's; the
+ * first the data holds. None when no such file is there, or one that does not read (logged). */
+static void movie_subtitles(KpApp *a, KpCineMovie *m, const char *movie)
 {
 	const char *locales[3];
 	int count = 0, k, j;
-	if (a->flags.locale[0] && strcmp(a->flags.locale, KP_LOCALE_BASE) != 0) locales[count++] = a->flags.locale;
+	if (a->flow.text.locale[0] && strcmp(a->flow.text.locale, KP_LOCALE_BASE) != 0) locales[count++] = a->flow.text.locale;
 	if (kp_res_text_locale(a->res)[0]) locales[count++] = kp_res_text_locale(a->res);
 	locales[count++] = KP_LOCALE_BASE;
 	for (k = 0; k < count; k++) {
@@ -385,7 +183,7 @@ static void original_subtitles(KpApp *a, KpCineMovie *m, const char *movie)
 		KpError err;
 		for (j = 0; j < k && strcmp(locales[j], locales[k]) != 0; j++) {}
 		if (j < k) continue; /* tried */
-		snprintf(name, sizeof name, SRT_FORMAT, locales[k], movie);
+		snprintf(name, sizeof name, KP_LOCALE_SUBTITLES, locales[k], movie);
 		if (!kp_res_raw_held(a->res, name)) continue;
 		if (!(srt = kp_res_raw_read(a->res, name, &size, why, sizeof why))) {
 			SDL_Log("cinematics: %s: %s", name, why);
@@ -397,46 +195,109 @@ static void original_subtitles(KpApp *a, KpCineMovie *m, const char *movie)
 	}
 }
 
-/* The run's load: the movie of the clip read whole from the install or the repack (a 1.17 copy taken when its size is
- * the reference install's: a movie only shows and plays, it is not hashed), with its subtitles. Only a computer reads
- * a movie so: the phones' and the web's bundles leave the repack's cinematics out and play the packs, whose packets
- * are read as they are due (the web's by ranges); the longest movie (79 MB) loads in 0.14 s on the Mac. */
-static KpCineMovie *host_load(void *ctx, const KpCineClip *clip, KpError *err)
+/* A WebM's bytes as the clip's movie with its subtitles: 0, or -1 with err. */
+static int webm_movie(KpApp *a, const KpCineClip *clip, const uint8_t *data, size_t size, KpCineMovie **movie, KpError *err)
+{
+	if (!(*movie = kp_cine_movie_webm(data, size, clip, err))) return -1;
+	movie_subtitles(a, *movie, clip->name + 4);
+	return 0;
+}
+
+/* The fetch of the clip's movie (the web: its bytes by their range in the repack's group, kp_res_raw_range) begun:
+ * KP_CINE_LOAD_WAIT, or -1 with err when the listings place it nowhere or the fetch does not begin. */
+static int fetch_begin(KpApp *a, const KpCineClip *clip, const char *name, KpError *err)
+{
+	char file[128], path[1200];
+	uint64_t offset;
+	uint32_t size;
+	const char *dir = kp_res_repack_dir(a->res);
+	if (!kp_res_raw_range(a->res, name, file, sizeof file, &offset, &size) || !dir[0]) {
+		snprintf(err->msg, sizeof err->msg, "cinematics: %s is not in the data", name);
+		return -1;
+	}
+	if (offset > UINT32_MAX - size) {
+		snprintf(err->msg, sizeof err->msg, "cinematics: %s lies past 4 GB of %s", name, file);
+		return -1;
+	}
+	snprintf(path, sizeof path, "%s/%s", dir, file);
+	if (!(a->cine.fetch = kp_fetch_start(path, (uint32_t)offset, size))) {
+		snprintf(err->msg, sizeof err->msg, "cinematics: %s: out of memory", name);
+		return -1;
+	}
+	a->cine.fetch_clip = clip->id;
+	a->cine.fetch_size = size;
+	return KP_CINE_LOAD_WAIT;
+}
+
+/* The movie on its way: KP_CINE_LOAD_WAIT while it comes, else as host_load. */
+static int fetch_poll(KpApp *a, const KpCineClip *clip, const char *name, KpCineMovie **movie, KpError *err)
+{
+	size_t size = 0;
+	uint8_t *data;
+	int rc, state = kp_fetch_state(a->cine.fetch);
+	if (state == KP_FETCH_PENDING) return KP_CINE_LOAD_WAIT;
+	if (state != KP_FETCH_DONE || kp_fetch_whole_file(a->cine.fetch)) { /* a server without ranges: not the whole group */
+		snprintf(err->msg, sizeof err->msg, "cinematics: %s: %s", name,
+			state == KP_FETCH_DONE ? "the server answers no range requests" : "its bytes did not come");
+		fetch_drop(a);
+		return -1;
+	}
+	data = kp_fetch_take(a->cine.fetch, &size);
+	fetch_drop(a);
+	if (!data || size != a->cine.fetch_size) {
+		free(data);
+		snprintf(err->msg, sizeof err->msg, "cinematics: %s: %lu bytes came, not %u", name, (unsigned long)size,
+			(unsigned)a->cine.fetch_size);
+		return -1;
+	}
+	rc = webm_movie(a, clip, data, size, movie, err);
+	free(data);
+	return rc;
+}
+
+/* The run's load: the movie of the clip read whole from the data (a 1.17 copy taken when its size is the reference
+ * install's: a movie only shows and plays, it is not hashed), with its subtitles; a WebM of a group the web has not
+ * fetched, fetched by its range (KP_CINE_LOAD_WAIT until it has come; another clip asked for gives it up). The
+ * longest movie (79 MB of SMK) loads in 0.14 s on the Mac. */
+static int host_load(void *ctx, const KpCineClip *clip, KpCineMovie **movie, KpError *err)
 {
 	KpApp *a = (KpApp *)ctx;
 	char name[128], why[256];
 	size_t size;
 	uint8_t *data;
-	KpCineMovie *m;
-	original_name(a, clip->id, a->cine.run.index.variant, name, sizeof name);
-	if (a->cine.casc) {
-		data = kp_res_raw_read(a->res, name, &size, why, sizeof why);
-	} else {
+	int rc;
+	*movie = NULL;
+	movie_name(a, clip->id, a->cine.run.index.variant, name, sizeof name);
+	if (a->cine.fetch && a->cine.fetch_clip != clip->id) fetch_drop(a);
+	if (a->cine.fetch) return fetch_poll(a, clip, name, movie, err);
+	if (a->cine.webm) {
+		if (!(data = kp_res_raw_read(a->res, name, &size, why, sizeof why)))
+			return why[0] ? (snprintf(err->msg, sizeof err->msg, "cinematics: %s: %s", name, why), -1)
+				: fetch_begin(a, clip, name, err);
+		rc = webm_movie(a, clip, data, size, movie, err);
+		free(data);
+		return rc;
+	}
+	{
 		KpResStatus st;
 		data = kp_res_read(a->res, name, &size, &st, why, sizeof why);
 	}
 	if (!data) {
 		snprintf(err->msg, sizeof err->msg, "cinematics: %s: %s", name, why[0] ? why : "not in the install");
-		return NULL;
-	}
-	if (a->cine.casc) {
-		m = kp_cine_movie_webm(data, size, clip, err);
-		free(data);
-		if (m) original_subtitles(a, m, clip->name + 4);
-		return m;
+		return -1;
 	}
 	if (kp_cine_catalog_check(&a->cine.catalog, clip->id, size) != 0) {
 		free(data);
 		snprintf(err->msg, sizeof err->msg, "cinematics: %s differs from the reference install's copy (%u bytes)", name,
 			(unsigned)a->cine.catalog.movies[clip->id].size);
-		return NULL;
+		return -1;
 	}
-	return kp_cine_movie_smk(data, size, clip, err);
+	return (*movie = kp_cine_movie_smk(data, size, clip, err)) != NULL ? 0 : -1;
 }
 
-/* The install's movies (--data's) as the run's index: a 1.17 install or a repack its Smacker set, Remastered's
- * storage its HD2 set, else its SD one (--cinematics picks one; hd2 of a 1.17 install: the packs); 0 when it has any. */
-static int original_open(KpApp *a, const char *mode)
+/* The data's movies (--data's) as the run's index: WebM by Remastered's names, its HD2 set first (--cinematics picks a
+ * set), else a 1.17 install's Smacker files (the SD set); 0 when it has any. */
+static int movies_open(KpApp *a, const char *mode)
 {
 	const KpDefsTable *table = a->res ? kp_defs_table(kp_res_profile(a->res), "CINM") : NULL;
 	int variants[2], count = 0, k;
@@ -446,17 +307,18 @@ static int original_open(KpApp *a, const char *mode)
 		SDL_Log("cinematics: the profile's CINM does not read");
 		return -1;
 	}
-	a->cine.casc = kp_res_install(a->res) == KP_RES_SOURCE_CASC;
-	if (a->cine.casc && strcmp(mode, "sd") != 0) variants[count++] = 1; /* Remastered's HD2 set first */
+	if (strcmp(mode, "sd") != 0) variants[count++] = 1;
 	if (strcmp(mode, "hd2") != 0) variants[count++] = 0;
 	has.app = a;
-	for (k = 0; k < count; k++) {
-		has.variant = variants[k];
-		kp_cine_index_original(&a->cine.run.index, variants[k], &a->cine.catalog, original_has, &has);
+	for (k = 0; k < count + 1; k++) { /* the WebM sets, then the Smacker files */
+		a->cine.webm = k < count;
+		has.variant = a->cine.webm ? variants[k] : 0;
+		if (!a->cine.webm && variants[count - 1] != 0) break; /* hd2 alone: no Smacker set */
+		kp_cine_index_movies(&a->cine.run.index, has.variant, &a->cine.catalog, movie_has, &has);
 		if (a->cine.run.index.count > 0) {
 			a->cine.run.have = 1;
-			SDL_Log("cinematics: %s from the %s, %d movies", VARIANT_NAME[variants[k]],
-				a->cine.casc ? "Remastered install" : "1.17 install", a->cine.run.index.count);
+			SDL_Log("cinematics: %s %s, %d movies", VARIANT_NAME[has.variant], a->cine.webm ? "WebM" : "Smacker (1.17 install)",
+				a->cine.run.index.count);
 			return 0;
 		}
 	}
@@ -466,54 +328,25 @@ static int original_open(KpApp *a, const char *mode)
 
 int kp_app_cine_open(KpApp *a)
 {
-	static const char *const AUTO[] = { "hd2", "sd" };
 	const char *mode = a->flags.cinematics[0] ? a->flags.cinematics : "auto";
-	const char *const *variants = AUTO;
-	const char *given[1];
 	KpCineHost *h = &a->cine.run.host;
-	int count = 2, k;
 	memset(&a->cine, 0, sizeof a->cine);
 	a->cine.caption_cue = CAPTION_NONE;
 	h->ctx = a;
 	h->now_ns = host_now_ns;
-#ifdef __EMSCRIPTEN__
-	h->read = web_read;
-#else
-	h->read = kp_io_read_into;
-#endif
-	h->open = host_open;
-	h->close = host_close;
 	h->begin = host_begin;
 	h->end = host_end;
 	h->load = host_load;
 	h->sound = host_sound;
 	h->sound_ms = host_sound_ms;
 	h->sound_stop = host_sound_stop;
-	h->sound_pause = host_sound_pause;
 	h->log = host_log;
 	if (strcmp(mode, "off") == 0) return 0;
-	if (strcmp(mode, "sd") == 0 || strcmp(mode, "hd2") == 0) {
-		given[0] = mode;
-		variants = given;
-		count = 1;
-	} else if (strcmp(mode, "auto") != 0) {
+	if (strcmp(mode, "sd") != 0 && strcmp(mode, "hd2") != 0 && strcmp(mode, "auto") != 0) {
 		SDL_Log("cinematics: --cinematics %s is not auto, sd, hd2 or off; auto", mode);
 		mode = "auto";
 	}
-	if (original_open(a, mode) == 0) return 0;
-	for (k = 0; k < count; k++) {
-		char rel[96];
-		snprintf(rel, sizeof rel, PACK_FORMAT, variants[k]);
-		kp_app_path(a, rel, a->cine.path, sizeof a->cine.path);
-		if (index_file(a, rel) == 0) {
-			a->cine.run.have = 1;
-			SDL_Log("cinematics: %s, %d movies", variants[k], a->cine.run.index.count);
-			return 0;
-		}
-	}
-	memset(&a->cine.run.index, 0, sizeof a->cine.run.index);
-	a->cine.path[0] = 0;
-	SDL_Log("cinematics: no pack (%s): the game plays without them", mode);
+	if (movies_open(a, mode) != 0) SDL_Log("cinematics: none in the data (%s): the game plays without them", mode);
 	return 0;
 }
 
@@ -523,11 +356,11 @@ int kp_app_cine_active(const KpApp *a) { return a->cine.run.active; }
 
 #define CAPTION_WHITE 230 /* --cine-check: a subtitle's text pixel, every channel at least this */
 
-/* Subtitle cue of subs laid out for a picture of rw x rh window pixels (on whole pixels) and given to kp_gfx_video,
- * its rectangle in out_rect and its white pixels' count in out_white when not NULL: 0, or -1 (no font, nothing to lay
- * out; logged) with none. */
-static int caption_upload(KpApp *a, const KpCineSubs *subs, int cue, int32_t rw, int32_t rh, float *out_rect,
-	int32_t *out_white)
+/* Subtitle cue of subs laid out for a picture of rw x rh window pixels (on whole pixels) and given to kp_gfx_video;
+ * when out_img is not NULL its image kept there (the caller's to free) and its top-left pixel in the picture in
+ * out_x, out_y: 0, or -1 (no font, nothing to lay out; logged) with none. */
+static int caption_upload(KpApp *a, const KpCineSubs *subs, int cue, int32_t rw, int32_t rh, KpCaption *out_img,
+	int32_t *out_x, int32_t *out_y)
 {
 	const uint8_t *const *files;
 	const size_t *sizes;
@@ -554,13 +387,13 @@ static int caption_upload(KpApp *a, const KpCineSubs *subs, int cue, int32_t rw,
 	rect[1] = (float)top / (float)rh;
 	rect[3] = rect[1] + (float)img.h / (float)rh;
 	kp_gfx_video_caption(a->gfx, img.rgba, img.w, img.h, rect);
-	if (out_rect) memcpy(out_rect, rect, sizeof rect);
-	if (out_white) {
-		int32_t k;
-		*out_white = 0;
-		for (k = 0; k < img.w * img.h; k++) *out_white += img.rgba[4 * k] >= CAPTION_WHITE;
+	if (out_img) {
+		*out_img = img;
+		*out_x = (rw - img.w) / 2;
+		*out_y = top;
+	} else {
+		kp_caption_free(&img);
 	}
-	kp_caption_free(&img);
 	return 0;
 }
 
@@ -576,7 +409,7 @@ static void caption(KpApp *a, int32_t rw, int32_t rh)
 	c->caption_w = rw;
 	c->caption_h = rh;
 	if (cue < 0) kp_gfx_video_caption(a->gfx, NULL, 0, 0, NULL);
-	else caption_upload(a, &c->run.subs, cue, rw, rh, NULL, NULL);
+	else caption_upload(a, &c->run.subs, cue, rw, rh, NULL, NULL, NULL);
 }
 
 void kp_app_cine_lost(KpApp *a) { a->cine.caption_cue = CAPTION_NONE; }
@@ -611,7 +444,6 @@ static void draw(KpApp *a, const KpVideoPicture *pic)
 
 int kp_app_cine_start(KpApp *a, const int *ids, int n, int preludes)
 {
-	locale_subtitles(a);
 	return kp_cine_run_start(&a->cine.run, ids, n, preludes);
 }
 
@@ -695,42 +527,53 @@ static double gpu_error(KpApp *a, KpCinePlayer *p)
 	return (double)sum / ((double)w * (double)h * 3);
 }
 
-/* The player's picture with subtitle cue over it, drawn by the GPU and saved as dir/<name>_subtitle.png: 0 when the
- * rectangle has, more than the picture alone, three quarters of the subtitle's white pixels (drawn 1:1 on whole pixels,
- * they stay white), -1 (logged) when not. */
+/* The player's picture with subtitle cue over it, drawn by the GPU and saved as dir/<name>_subtitle.png: 0 when three
+ * quarters of the subtitle's white pixels (drawn 1:1 on whole pixels, they stay white) are white in that picture, and
+ * more of them than in the picture alone; -1 (logged) when not. */
 static int check_caption(KpApp *a, KpCinePlayer *p, const KpCineSubs *subs, int cue, const char *dir)
 {
 	const KpCineClip *clip = kp_cine_clip(p);
 	const uint8_t *ref = kp_cine_rgba(p);
-	uint8_t *got, *top;
-	float rect[4];
-	int32_t x, y, w, h, white = 0, before = 0, expected = 0;
-	if (caption_upload(a, subs, cue, clip->width, clip->height, rect, &expected) != 0 || !ref || !(got = gpu_picture(a, p, &w, &h))) {
+	uint8_t *got = NULL, *top;
+	KpCaption img;
+	int32_t x, y, x0 = 0, y0 = 0, w = 0, h = 0, white = 0, seen = 0, before = 0;
+	memset(&img, 0, sizeof img);
+	if (caption_upload(a, subs, cue, clip->width, clip->height, &img, &x0, &y0) != 0 || !ref
+		|| !(got = gpu_picture(a, p, &w, &h))) {
 		kp_dev_line("cine check %s: subtitle %d not drawn", clip->name, cue);
 		kp_gfx_video_caption(a->gfx, NULL, 0, 0, NULL);
+		kp_caption_free(&img);
 		return -1;
 	}
 	kp_gfx_video_caption(a->gfx, NULL, 0, 0, NULL);
 	if (!(top = (uint8_t *)malloc((size_t)w * (size_t)h * 4))) {
 		free(got);
+		kp_caption_free(&img);
 		return -1;
 	}
 	for (y = 0; y < h; y++) { /* rows top first, as the reference */
 		memcpy(top + (size_t)y * (size_t)w * 4, got + (size_t)(h - 1 - y) * (size_t)w * 4, (size_t)w * 4);
 	}
 	free(got);
-	for (y = (int32_t)(rect[1] * (float)clip->height + 0.5f); y < (int32_t)(rect[3] * (float)clip->height + 0.5f) && y < h; y++) {
-		for (x = (int32_t)(rect[0] * (float)clip->width + 0.5f); x < (int32_t)(rect[2] * (float)clip->width + 0.5f) && x < w; x++) {
-			const uint8_t *g = top + ((size_t)y * (size_t)w + (size_t)x) * 4, *r = ref + ((size_t)y * clip->width + (size_t)x) * 4;
-			white += g[0] >= CAPTION_WHITE && g[1] >= CAPTION_WHITE && g[2] >= CAPTION_WHITE;
+	for (y = 0; y < img.h; y++) {
+		for (x = 0; x < img.w; x++) {
+			int32_t px = x0 + x, py = y0 + y;
+			const uint8_t *g, *r;
+			if (img.rgba[4 * ((size_t)y * (size_t)img.w + (size_t)x)] < CAPTION_WHITE) continue;
+			white++;
+			if (px < 0 || py < 0 || px >= w || py >= h) continue;
+			g = top + ((size_t)py * (size_t)w + (size_t)px) * 4;
+			r = ref + ((size_t)py * clip->width + (size_t)px) * 4;
+			seen += g[0] >= CAPTION_WHITE && g[1] >= CAPTION_WHITE && g[2] >= CAPTION_WHITE;
 			before += r[0] >= CAPTION_WHITE && r[1] >= CAPTION_WHITE && r[2] >= CAPTION_WHITE;
 		}
 	}
+	kp_caption_free(&img);
 	if (w == clip->width && h == clip->height) save_picture(clip, top, dir, "subtitle");
 	free(top);
-	kp_dev_line("cine check %s: subtitle %d at %u ms, %d white pixels (%d without it, %d in the subtitle)", clip->name,
-		cue, (unsigned)subs->cues[cue].start_ms, (int)white, (int)before, (int)expected);
-	if (expected == 0 || (white - before) * 4 < expected * 3) {
+	kp_dev_line("cine check %s: subtitle %d at %u ms, %d of its %d white pixels seen (%d white without it)", clip->name,
+		cue, (unsigned)subs->cues[cue].start_ms, (int)seen, (int)white, (int)before);
+	if (white == 0 || seen * 4 < white * 3 || seen <= before) {
 		kp_dev_line("cine check %s: the subtitle is not seen", clip->name);
 		return -1;
 	}
@@ -748,23 +591,19 @@ static uint32_t picture_crc(uint32_t crc, const KpVideoPicture *pic)
 	return crc;
 }
 
-/* Movie k of the index opened for the check: the pack's clip read from file, or the install's movie loaded (*movie, the
- * caller's to free) with its subtitles; its subtitles into subs. NULL with the reason in err. */
-static KpCinePlayer *check_open(KpApp *a, SDL_IOStream *file, int k, KpCineMovie **movie, KpCineSubs *subs, KpError *err)
+/* Movie k of the index loaded for the check (*movie, the caller's to free) and opened, its subtitles into subs. NULL
+ * with the reason in err. */
+static KpCinePlayer *check_open(KpApp *a, int k, KpCineMovie **movie, KpCineSubs *subs, KpError *err)
 {
-	const KpCineIndex *ix = &a->cine.run.index;
 	KpCinePlayer *p;
-	*movie = NULL;
+	int rc = host_load(a, &a->cine.run.index.clips[k], movie, err);
 	subs->count = 0;
-	if (!ix->original) {
-		if (!(p = kp_cine_open(ix, k, kp_io_read_into, file, err))) return NULL;
-		if (kp_cine_subs_load(ix, k, kp_io_read_into, file, subs, err) != 0) {
-			kp_cine_free(p);
-			return NULL;
-		}
-		return p;
+	if (rc == KP_CINE_LOAD_WAIT) { /* the check plays nothing: it reads the movies at once */
+		fetch_drop(a);
+		snprintf(err->msg, sizeof err->msg, "fetched by ranges as the movies play (--cine-play plays one)");
+		return NULL;
 	}
-	if (!(*movie = host_load(a, &ix->clips[k], err))) return NULL;
+	if (rc != 0) return NULL;
 	if (!(p = kp_cine_open_movie(*movie, err))) {
 		kp_cine_movie_free(*movie);
 		*movie = NULL;
@@ -775,10 +614,10 @@ static KpCinePlayer *check_open(KpApp *a, SDL_IOStream *file, int k, KpCineMovie
 }
 
 /* One movie decoded to its end at the times of its frames, its middle picture also drawn by the GPU: 0, or -1 with
- * the reason logged. The line logged gives the mean and longest kp_cine_advance a frame (the pack's reads and the
- * decoding) and the CRC-32 of every picture's planes in turn (the same in any build of libvpx: its SIMD is bit-exact
- * with its C); an install's movie also the time its loading took (its read, its check, its sound decoded). */
-static int check_movie(KpApp *a, SDL_IOStream *file, int k, const char *dir, uint64_t *frames_total)
+ * the reason logged. The line logged gives the mean and longest kp_cine_advance a frame (the decoding) and the CRC-32
+ * of every picture's planes in turn (the same in any build of libvpx: its SIMD is bit-exact with its C), and the time
+ * the movie's loading took (its read, its check, its sound decoded). */
+static int check_movie(KpApp *a, int k, const char *dir, uint64_t *frames_total)
 {
 	const KpCineClip *clip = &a->cine.run.index.clips[k];
 	KpCinePlayer *p;
@@ -792,7 +631,7 @@ static int check_movie(KpApp *a, SDL_IOStream *file, int k, const char *dir, uin
 	KpVideoPicture pic;
 	KpCineSubs *subs = &a->cine.run.subs; /* the run's: --cine-check plays no run */
 	int rc = 0, captioned = 0;
-	if (!(p = check_open(a, file, k, &movie, subs, &err))) {
+	if (!(p = check_open(a, k, &movie, subs, &err))) {
 		kp_dev_line("cine check %s: %s", clip->name, err.msg);
 		return -1;
 	}
@@ -858,28 +697,15 @@ static int check_movie(KpApp *a, SDL_IOStream *file, int k, const char *dir, uin
 int kp_app_cine_check(KpApp *a, const char *dir)
 {
 	const KpCineIndex *ix = &a->cine.run.index;
-	SDL_IOStream *file = NULL;
 	int k, failures = 0;
 	uint64_t frames = 0;
 	if (!a->cine.run.have) {
-		kp_dev_line("cine check: no pack (--cinematics %s)", a->flags.cinematics[0] ? a->flags.cinematics : "auto");
+		kp_dev_line("cine check: no movies (--cinematics %s)", a->flags.cinematics[0] ? a->flags.cinematics : "auto");
 		return -1;
 	}
-#ifdef __EMSCRIPTEN__
-	if (!ix->original && a->cine.head_size < a->cine.file_size) { /* the check reads the pack at once, from a file */
-		kp_dev_line("cine check: the pack is fetched as the movies play (--cine-play plays one)");
-		return -1;
-	}
-#endif
-	kp_app_cine_stop(a); /* a movie of --cine-play keeps the pack's file and its own player */
-	locale_subtitles(a);
+	kp_app_cine_stop(a); /* a movie of --cine-play keeps its own player */
 	if (!SDL_CreateDirectory(dir)) kp_dev_line("cine check: %s: %s", dir, SDL_GetError());
-	if (!ix->original && !(file = SDL_IOFromFile(a->cine.path, "rb"))) {
-		kp_dev_line("cine check: cannot open %s: %s", a->cine.path, SDL_GetError());
-		return -1;
-	}
-	for (k = 0; k < ix->count; k++) failures += check_movie(a, file, k, dir, &frames) != 0;
-	if (file) SDL_CloseIO(file);
+	for (k = 0; k < ix->count; k++) failures += check_movie(a, k, dir, &frames) != 0;
 	kp_dev_line("cine check: %d movies, %llu frames, %d failures", ix->count, (unsigned long long)frames, failures);
 	return failures;
 }
@@ -888,17 +714,8 @@ void kp_app_cine_skip(KpApp *a, uint64_t when_ns) { kp_cine_run_skip(&a->cine.ru
 
 void kp_app_cine_stop(KpApp *a) { kp_cine_run_stop(&a->cine.run); }
 
-void kp_app_cine_language(KpApp *a)
-{
-	if (a->cine.pack.count > 0) a->cine.run.index = a->cine.pack; /* the old language's bytes are gone */
-}
-
 void kp_app_cine_free(KpApp *a)
 {
 	kp_app_cine_stop(a);
-	kp_app_cine_language(a);
-#ifdef __EMSCRIPTEN__
-	free(a->cine.head);
-	a->cine.head = NULL;
-#endif
+	fetch_drop(a);
 }

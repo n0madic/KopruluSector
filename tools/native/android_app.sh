@@ -17,7 +17,7 @@ APP_ID=com.koprulusector.game
 # A script's (--script, ADR 0017) is its summary, its refusal or its watchdog's line alone: its checks' own lines
 # (a palette check's) come before its end.
 launch() {
-  local last='SPIKE (autotest|frame bench|cine check: ([0-9]+ movies|no pack|cannot open))' log pid
+  local last='SPIKE (autotest|frame bench|cine check: ([0-9]+ movies|no movies))' log pid
   case " $* " in
     *" --script "*) last='SPIKE script(: | [^ :]+: ([0-9]+ steps, [0-9]+ failures|no frame in ))' ;;
   esac

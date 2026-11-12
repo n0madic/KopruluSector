@@ -852,7 +852,7 @@ static void code_ranges(KpT *T, const uint8_t *s, size_t size, KpBuf *out)
 }
 
 /* Acceptance of stage C3: each language the converter wrote (the golden's, the install's) built from the install's own
- * files equals its overlays byte for byte: the tables, the dialogs, the scripts, the subtitles, every campaign mission's
+ * files equals its overlays byte for byte: the tables, the dialogs, the scripts, every campaign mission's
  * strings, and the glyphs (its supplements of the same code points, the same TrueType fonts). */
 static void the_languages_equal_the_converters(KpT *T)
 {
@@ -886,8 +886,9 @@ static void the_languages_equal_the_converters(KpT *T)
 			snprintf(name, sizeof name, "%.*s", (int)f->path_len, f->path);
 			same_digest(T, f->data, f->size, scripts, name, locale);
 		}
-		if (kp_json_get(g, "subs") != NULL) same_digest(T, built_l->subs, built_l->subs_size, g, "subs", locale);
-		else kp_t_ok(T, built_l->subs == NULL, "%s has no subtitles", locale);
+		/* the player reads each movie's .srt itself (stage C4): the movies the converter's SUBS had read */
+		kp_t_eq(T, built_l->subtitles > 0, kp_json_get(g, "subs") != NULL, "%s's subtitles (%d movies)", locale,
+			built_l->subtitles);
 		kp_t_eq(T, kp_json_len(missions), CAMPAIGN_MISSIONS, "%s's missions", locale);
 		for (k = 0; k < kp_json_len(missions); k++) {
 			const char *name = missions->keys[k];

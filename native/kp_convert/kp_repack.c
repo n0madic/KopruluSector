@@ -10,6 +10,7 @@
 #include "kp_fs.h"
 #include "kp_json.h"
 #include "kp_locale.h"
+#include "kp_movie.h"
 #include "kp_mpq.h"
 #include "kp_ogg.h"
 #include "kp_sha256.h"
@@ -19,7 +20,7 @@
 #define SINGLE "koprulu.mpq"
 #define CORE "koprulu-core.mpq"
 #define MUSIC "koprulu-music.mpq"
-#define CINEMATICS "koprulu-cinematics.mpq"
+#define CINEMATICS "koprulu-cinematics" /* + ".mpq" the SD set's group, + "-hd2.mpq" the HD2 set's: read by ranges */
 #define LOCALE_GROUP "koprulu-locale-" /* + the locale in lower case + ".mpq" */
 #define LOCALES "locales/"
 #define WINDOW 64 /* the files read, then encoded, at a time (the music's WAVs are 17 MB each) */
@@ -27,10 +28,11 @@
 #define PATH 1024
 #define NOTE 400
 
-/* A file to read: its name as the archive and the listing spell it, its normalized name, its movie (-1 none), whether
- * it is Remastered's own (a language's speech: kp_res_raw_read). */
+/* A file to read: its name as the archive and the listing spell it, its normalized name, the normalized name it is
+ * stored under (the key's, but a 1.17 movie's: its WebM's), its 1.17 movie (-1 none), whether it is Remastered's own (a
+ * language's speech, the movies, the base's subtitles: kp_res_raw_read). */
 typedef struct {
-	char name[KP_REPACK_NAME], key[KP_REPACK_NAME];
+	char name[KP_REPACK_NAME], key[KP_REPACK_NAME], stored[KP_REPACK_NAME];
 	int movie, raw;
 } Read;
 
@@ -44,8 +46,10 @@ typedef struct {
 	size_t ogg_size;
 	uint8_t wav_sha[KP_SHA256_SIZE];
 	size_t header_size; /* the WAV's header, data[0, header_size) */
-	int encoded;        /* the Ogg was encoded now (not the cache's) */
+	int encoded;        /* the Ogg or the WebM was encoded now (not the cache's) */
 	size_t speech_from; /* a language's line or voice re-encoded: the size it had (0: as it is) */
+	size_t movie_from;  /* a 1.17 movie transcoded: its SMK's size */
+	int failed;         /* a 1.17 movie that does not transcode: the repack stops (note: why) */
 	char note[NOTE];    /* why a WAV stays a WAV, logged in order */
 } Job;
 
@@ -54,6 +58,7 @@ typedef struct {
 	KpMpq *mpq;
 	KpBuf lines; /* its listing's file lines */
 	int planned, files;
+	int ranged;  /* read by ranges (the cinematics'): its files stored as they are, each placed in the core's listing */
 	uint64_t bytes;
 } Group;
 
@@ -82,6 +87,22 @@ static int ends_with(const char *s, const char *suffix)
 	return n >= k && strcmp(s + n - k, suffix) == 0;
 }
 
+#define MOVIES_SD "sd/smk/"   /* KP_CINE_WEBM_FOLDER's, normalized */
+#define MOVIES_HD2 "hd2/smk/"
+
+/* Whether a locale's n letters are the base's (KP_LOCALE_BASE, any case) */
+static int base_locale(const char *locale, size_t n)
+{
+	size_t i;
+	if (n != strlen(KP_LOCALE_BASE)) return 0;
+	for (i = 0; i < n; i++)
+		if (tolower((unsigned char)locale[i]) != tolower((unsigned char)KP_LOCALE_BASE[i])) return 0;
+	return 1;
+}
+
+/* Whether a group's files are read by ranges: the cinematics' */
+static int ranged_group(const char *file) { return strncmp(file, CINEMATICS, sizeof CINEMATICS - 1) == 0; }
+
 void kp_repack_group(const char *key, char *out, size_t size, char *prefix, size_t prefix_size)
 {
 	static const char CAMPAIGN[] = "campaign/";
@@ -96,7 +117,8 @@ void kp_repack_group(const char *key, char *out, size_t size, char *prefix, size
 		snprintf(out + o, size > o ? size - o : 0, ".mpq");
 		return;
 	}
-	if (strncmp(key, LOCALES, sizeof LOCALES - 1) == 0 && (at = strchr(key + sizeof LOCALES - 1, '/')) != NULL) {
+	if (strncmp(key, LOCALES, sizeof LOCALES - 1) == 0 && (at = strchr(key + sizeof LOCALES - 1, '/')) != NULL
+		&& !base_locale(key + sizeof LOCALES - 1, (size_t)(at - key) - (sizeof LOCALES - 1))) { /* the base's: the core's */
 		size_t n = (size_t)(at - key) + 1;
 		snprintf(prefix, prefix_size, "%.*s", (int)n, key);
 		snprintf(out, size, LOCALE_GROUP "%.*s.mpq", (int)(n - sizeof LOCALES), key + sizeof LOCALES - 1);
@@ -105,9 +127,12 @@ void kp_repack_group(const char *key, char *out, size_t size, char *prefix, size
 	if (strncmp(key, "music/", 6) == 0) {
 		snprintf(out, size, MUSIC);
 		snprintf(prefix, prefix_size, "music/");
-	} else if (strncmp(key, "smk/", 4) == 0) {
-		snprintf(out, size, CINEMATICS);
-		snprintf(prefix, prefix_size, "smk/");
+	} else if (strncmp(key, MOVIES_SD, sizeof MOVIES_SD - 1) == 0) {
+		snprintf(out, size, CINEMATICS ".mpq");
+		snprintf(prefix, prefix_size, MOVIES_SD);
+	} else if (strncmp(key, MOVIES_HD2, sizeof MOVIES_HD2 - 1) == 0) {
+		snprintf(out, size, CINEMATICS "-hd2.mpq");
+		snprintf(prefix, prefix_size, MOVIES_HD2);
 	} else {
 		snprintf(out, size, CORE);
 		snprintf(prefix, prefix_size, "%s", "");
@@ -120,7 +145,7 @@ static Group *group_of(Group *groups, int *count, const char *key, int single, c
 	char file[64], prefix[KP_REPACK_NAME];
 	int k;
 	kp_repack_group(key, file, sizeof file, prefix, sizeof prefix);
-	if (single && strcmp(file, CINEMATICS) != 0 && strncmp(file, LOCALE_GROUP, sizeof LOCALE_GROUP - 1) != 0) {
+	if (single && !ranged_group(file) && strncmp(file, LOCALE_GROUP, sizeof LOCALE_GROUP - 1) != 0) {
 		snprintf(file, sizeof file, SINGLE);
 		prefix[0] = 0;
 	}
@@ -133,6 +158,7 @@ static Group *group_of(Group *groups, int *count, const char *key, int single, c
 	memset(&groups[*count], 0, sizeof groups[0]);
 	snprintf(groups[*count].file, sizeof groups[0].file, "%s", file);
 	snprintf(groups[*count].prefix, sizeof groups[0].prefix, "%s", prefix);
+	groups[*count].ranged = ranged_group(file);
 	return &groups[(*count)++];
 }
 
@@ -149,6 +175,7 @@ static int add_read(Read **reads, int *count, int *cap, const char *name, int mo
 	r = &(*reads)[(*count)++];
 	normalize(name, r->key, sizeof r->key);
 	mpq_name(r->key, r->name, sizeof r->name);
+	snprintf(r->stored, sizeof r->stored, "%s", r->key);
 	r->movie = movie;
 	r->raw = raw;
 	return 0;
@@ -224,10 +251,29 @@ memory:
 	return -1;
 }
 
-/* The files to read, in order: the manifest's, the movies' (a 1.17 install's), the extra names the rest leave out, the
- * languages' speech and texts (kp_locale_names: the files the runtime builds a language from, Remastered's TrueType
- * fonts with them, which the base's text takes too). */
-static Read *plan(KpRes *res, const KpRepackConfig *c, const KpCineCatalog *movies, int *count, char *err, size_t err_size)
+/* A Remastered install's movies (stage C4): each of the catalog's in the SD and the HD2 set as they are, and the
+ * base's subtitles the install holds (downloaded: an other text locale's install names them, CascLib's offline). */
+static int movie_names(KpRes *res, const KpCineCatalog *catalog, Read **reads, int *count, int *cap)
+{
+	int k, set;
+	for (k = 0; k < catalog->count; k++) {
+		char name[KP_REPACK_NAME], lower[KP_CINE_NAME];
+		normalize(catalog->movies[k].name, lower, sizeof lower);
+		for (set = 0; set < 2; set++) {
+			snprintf(name, sizeof name, KP_CINE_WEBM_FORMAT, KP_CINE_WEBM_FOLDER[set], lower);
+			if (add_read(reads, count, cap, name, -1, 1) != 0) return -1;
+		}
+		snprintf(name, sizeof name, KP_LOCALE_SUBTITLES, KP_LOCALE_BASE, lower);
+		if (kp_res_raw_held(res, name) && add_read(reads, count, cap, name, -1, 1) != 0) return -1;
+	}
+	return 0;
+}
+
+/* The files to read, in order: the manifest's, the movies' (a 1.17 install's), the extra names the rest leave out; a
+ * Remastered install's movies (movie_names), the languages' speech and texts (kp_locale_names: the files the runtime
+ * builds a language from, Remastered's TrueType fonts with them, which the base's text takes too). */
+static Read *plan(KpRes *res, const KpRepackConfig *c, const KpCineCatalog *catalog, const KpCineCatalog *movies,
+	int *count, char *err, size_t err_size)
 {
 	const KpDefsProfile *p = kp_res_profile(res);
 	Read *reads = NULL;
@@ -235,10 +281,13 @@ static Read *plan(KpRes *res, const KpRepackConfig *c, const KpCineCatalog *movi
 	*count = 0;
 	for (k = 0; k < p->file_count; k++)
 		if (add_read(&reads, count, &cap, p->files[k].name, -1, 0) != 0) goto memory;
-	for (k = 0; movies && k < movies->count; k++) {
-		char name[KP_REPACK_NAME];
+	for (k = 0; movies && k < movies->count; k++) { /* a 1.17 install's, transcoded: stored as Remastered's SD set */
+		char name[KP_REPACK_NAME], lower[KP_CINE_NAME];
 		snprintf(name, sizeof name, "smk\\%s.smk", movies->movies[k].name);
 		if (add_read(&reads, count, &cap, name, k, 0) != 0) goto memory;
+		normalize(movies->movies[k].name, lower, sizeof lower);
+		snprintf(name, sizeof name, KP_CINE_WEBM_FORMAT, KP_CINE_WEBM_FOLDER[0], lower);
+		normalize(name, reads[*count - 1].stored, sizeof reads[*count - 1].stored);
 	}
 	manifest = *count;
 	for (k = 0; k < c->extra_count; k++) {
@@ -261,6 +310,10 @@ static Read *plan(KpRes *res, const KpRepackConfig *c, const KpCineCatalog *movi
 		}
 		failed = kp_locale_names(&d, KP_LOCALE_BASE, add_listed, &fonts, &e) != 0;
 		if (failed) snprintf(err, err_size, "the TrueType fonts: %s", e.msg);
+		if (!failed && movie_names(res, catalog, &reads, count, &cap) != 0) {
+			snprintf(err, err_size, "out of memory");
+			failed = 1;
+		}
 		for (k = 0; k < c->locale_count && !failed; k++) {
 			RawList text = { &reads, count, &cap, *count }; /* the language's own: its speech's names too */
 			failed = speech_names(&d, c->locales[k], &reads, count, &cap, err, err_size) != 0;
@@ -326,7 +379,41 @@ static void encode_speech(const KpRepackConfig *c, Job *j)
 	}
 }
 
-/* The Ogg Vorbis of a WAV from the cache, or encoded and kept there; a language's speech's (encode_speech). */
+/* A 1.17 movie as WebM (kp_movie_smk_webm) from the cache, or transcoded and kept there (<SMK SHA-256>-<settings>.webm),
+ * in its place; one that does not transcode fails the repack. */
+static void encode_movie(const KpRepackConfig *c, Job *j)
+{
+	char hex[2 * KP_SHA256_SIZE + 1], path[PATH], why[NOTE], clip[KP_REPACK_NAME];
+	uint8_t sha[KP_SHA256_SIZE], *webm = NULL;
+	size_t size = 0, dot;
+	KpMovieInfo info;
+	kp_sha256(j->data, j->size, sha);
+	if (c->cache) {
+		kp_sha256_hex(sha, hex);
+		snprintf(path, sizeof path, "%s/%s-%s.webm", c->cache, hex, KP_MOVIE_SETTINGS);
+		webm = kp_fs_read(path, &size, why, sizeof why);
+	}
+	if (!webm) {
+		snprintf(clip, sizeof clip, "%s", j->read->name); /* "smk\\blizzard.smk" as the clip's "smk\\blizzard" */
+		if ((dot = strlen(clip)) > 4 && strcmp(clip + dot - 4, ".smk") == 0) clip[dot - 4] = 0;
+		if (!(webm = kp_movie_smk_webm(j->data, j->size, clip, &size, &info, why, sizeof why))) {
+			snprintf(j->note, sizeof j->note, "%s", why);
+			j->failed = 1;
+			return;
+		}
+		j->encoded = 1;
+		if (c->cache && kp_fs_write(path, webm, size, why, sizeof why) != 0)
+			snprintf(j->note, sizeof j->note, "%s: the WebM is not kept: %s", j->read->name, why);
+	}
+	j->movie_from = j->size;
+	free(j->data);
+	j->data = webm;
+	j->size = size;
+	j->status = KP_RES_CONVERTED;
+}
+
+/* The Ogg Vorbis of a WAV from the cache, or encoded and kept there; a language's speech's (encode_speech), a 1.17
+ * movie's WebM (encode_movie). */
 static void encode(void *ctx, int k)
 {
 	Encoding *e = (Encoding *)ctx;
@@ -336,6 +423,11 @@ static void encode(void *ctx, int k)
 	uint32_t serial;
 	size_t size = 0;
 	uint8_t *ogg = NULL;
+	if (j->data && j->read->movie >= 0) { /* a WebM with --wav too: its name is the WebM's */
+		encode_movie(e->c, j);
+		return;
+	}
+	if (e->c->wav) return; /* the sounds as they are */
 	if (j->data && j->read->raw) {
 		encode_speech(e->c, j);
 		return;
@@ -378,18 +470,28 @@ static void say(const KpRepackConfig *c, const char *line)
 	if (c->log && line[0]) c->log(c->log_ctx, line);
 }
 
-/* The job's file into its group's archive and listing. */
-static int store(Group *g, Job *j, KpRepackReport *rep, char *err, size_t err_size)
+/* The job's file into its group's archive and listing (a group read by ranges: placed in the core's, ranges). */
+static int store(Group *g, Job *j, KpBuf *ranges, KpRepackReport *rep, char *err, size_t err_size)
 {
 	const uint8_t *data = j->ogg ? j->ogg : j->data;
 	size_t size = j->ogg ? j->ogg_size : j->size;
 	uint8_t sha[KP_SHA256_SIZE];
-	char hex[2 * KP_SHA256_SIZE + 1];
-	int compress = !j->ogg && !ends_with(j->read->key, ".smk") && !ends_with(j->read->key, ".ogg");
-	if (kp_mpq_add(g->mpq, j->read->name, data, size, compress ? KP_MPQ_ZLIB : KP_MPQ_STORE, err, err_size) != 0) return -1;
+	char hex[2 * KP_SHA256_SIZE + 1], name[KP_REPACK_NAME];
+	int compress = !g->ranged && !j->ogg && !ends_with(j->read->stored, ".ogg") && !ends_with(j->read->stored, ".webm");
+	mpq_name(j->read->stored, name, sizeof name);
+	if (kp_mpq_add(g->mpq, name, data, size, compress ? KP_MPQ_ZLIB : KP_MPQ_STORE, err, err_size) != 0) return -1;
 	kp_sha256(data, size, sha);
 	kp_sha256_hex(sha, hex);
-	kp_buf_printf(&g->lines, "%s %lu %s", hex, (unsigned long)size, j->read->movie >= 0 ? "exact" : kp_res_status_name(j->status));
+	if (g->ranged) {
+		uint64_t offset;
+		if (kp_mpq_stored_at(g->mpq, name, &offset) != 0) {
+			snprintf(err, err_size, "%s: its place in %s does not read", name, g->file);
+			return -1;
+		}
+		kp_buf_printf(ranges, "in %s %llu %s %lu %s %s\n", g->file, (unsigned long long)offset, hex, (unsigned long)size,
+			kp_res_status_name(j->status), name);
+	}
+	kp_buf_printf(&g->lines, "%s %lu %s", hex, (unsigned long)size, kp_res_status_name(j->status));
 	if (j->ogg) {
 		size_t i;
 		kp_sha256_hex(j->wav_sha, hex);
@@ -406,10 +508,15 @@ static int store(Group *g, Job *j, KpRepackReport *rep, char *err, size_t err_si
 		rep->speech_from += j->speech_from;
 		rep->speech_bytes += size;
 	}
-	kp_buf_printf(&g->lines, " %s\n", j->read->name);
+	if (j->movie_from) {
+		rep->movies++;
+		rep->movie_from += j->movie_from;
+		rep->movie_bytes += size;
+	}
+	kp_buf_printf(&g->lines, " %s\n", name);
 	g->files++;
 	g->bytes += size;
-	rep->statuses[j->read->movie >= 0 ? KP_RES_EXACT : j->status]++;
+	rep->statuses[j->status]++;
 	if (j->encoded) rep->encoded++;
 	return 0;
 }
@@ -419,9 +526,10 @@ static int cmp_groups(const void *a, const void *b)
 	return strcmp((*(const Group *const *)a)->file, (*(const Group *const *)b)->file);
 }
 
-/* Each archive's listing written and the archive closed; the root's names the groups that hold files. */
-static int finish(Group *groups, int count, const char *root, const char *head, const char *out, KpRepackReport *rep,
-	char *err, size_t err_size)
+/* Each archive's listing written and the archive closed; the root's names the groups that hold files, then places the
+ * files of those read by ranges (ranges). */
+static int finish(Group *groups, int count, const char *root, const char *head, const KpBuf *ranges, const char *out,
+	KpRepackReport *rep, char *err, size_t err_size)
 {
 	Group *sorted[KP_REPACK_GROUPS];
 	int k, failed = 0;
@@ -433,9 +541,11 @@ static int finish(Group *groups, int count, const char *root, const char *head, 
 		int i;
 		kp_buf_init(&listing);
 		kp_buf_str(&listing, head);
-		if (strcmp(g->file, root) == 0)
+		if (strcmp(g->file, root) == 0) {
 			for (i = 0; i < count; i++)
 				if (sorted[i] != g && sorted[i]->files) kp_buf_printf(&listing, "group %s %s\n", sorted[i]->file, sorted[i]->prefix);
+			kp_buf_add(&listing, ranges->data, ranges->size);
+		}
 		kp_buf_add(&listing, g->lines.data, g->lines.size);
 		if (!failed && kp_mpq_add(g->mpq, KP_RES_LISTING, listing.data, listing.size, KP_MPQ_ZLIB, err, err_size) != 0)
 			failed = 1;
@@ -469,34 +579,32 @@ int kp_repack_write(KpRes *res, const KpRepackConfig *c, KpRepackReport *rep, ch
 	const KpDefsProfile *p = kp_res_profile(res);
 	KpResSourceKind kind = kp_res_install(res);
 	const char *root = c->single ? SINGLE : CORE;
-	KpCineCatalog movies, *have_movies = NULL;
+	const KpDefsTable *cinm = kp_defs_table(p, "CINM");
+	KpCineCatalog catalog;
 	Group *groups = NULL;
 	Read *reads = NULL;
 	Job *jobs = NULL;
-	KpBuf head;
+	KpBuf head, ranges;
 	int count = 0, group_count = 0, k, at, rc = -1, threads = c->threads > 0 ? c->threads : kp_work_processors();
 	memset(rep, 0, sizeof *rep);
 	kp_buf_init(&head);
+	kp_buf_init(&ranges);
 	if (kp_res_repacks(res) || (kind != KP_RES_SOURCE_MPQ && kind != KP_RES_SOURCE_CASC)) {
 		snprintf(err, err_size, "the repack is made from an install (1.17's or Remastered's), not from %s",
 			kp_res_repacks(res) ? "a repack" : "nothing");
 		return -1;
 	}
-	if (kind == KP_RES_SOURCE_MPQ) { /* the movies the runtime plays as they are; Remastered's are its WebM */
-		const KpDefsTable *t = kp_defs_table(p, "CINM");
-		if (!t || kp_cine_catalog(&movies, t->data, t->size) != 0) {
-			snprintf(err, err_size, "the profile's movies (CINM) do not read");
-			return -1;
-		}
-		have_movies = &movies;
+	if (!cinm || kp_cine_catalog(&catalog, cinm->data, cinm->size) != 0) {
+		snprintf(err, err_size, "the profile's movies (CINM) do not read");
+		return -1;
 	}
-	if (!(reads = plan(res, c, have_movies, &count, err, err_size))) return -1;
+	if (!(reads = plan(res, c, &catalog, kind == KP_RES_SOURCE_MPQ ? &catalog : NULL, &count, err, err_size))) return -1;
 	if (!(groups = (Group *)calloc(KP_REPACK_GROUPS, sizeof *groups)) || !(jobs = (Job *)calloc(WINDOW, sizeof *jobs))) {
 		snprintf(err, err_size, "out of memory");
 		goto done;
 	}
 	for (k = 0; k < count; k++) {
-		Group *g = group_of(groups, &group_count, reads[k].key, c->single, err, err_size);
+		Group *g = group_of(groups, &group_count, reads[k].stored, c->single, err, err_size);
 		if (!g) goto done;
 		g->planned++;
 	}
@@ -521,13 +629,13 @@ int kp_repack_write(KpRes *res, const KpRepackConfig *c, KpRepackReport *rep, ch
 			if (j->read->raw) { /* a language's file: none, or an empty one (a silent stand-in), is the base's */
 				j->status = KP_RES_REMASTERED;
 				if (!(j->data = kp_res_raw_read(res, j->read->key, &j->size, why, sizeof why)) && !why[0]) {
-					rep->speech_absent++;
+					rep->raw_absent++;
 					continue;
 				}
 				if (j->data && j->size == 0) {
 					free(j->data);
 					j->data = NULL;
-					rep->speech_absent++;
+					rep->raw_absent++;
 					continue;
 				}
 			} else {
@@ -545,7 +653,7 @@ int kp_repack_write(KpRes *res, const KpRepackConfig *c, KpRepackReport *rep, ch
 			if (j->read->movie >= 0) {
 				uint8_t sha[KP_SHA256_SIZE];
 				kp_sha256(j->data, j->size, sha);
-				if (j->size != movies.movies[j->read->movie].size || memcmp(sha, movies.movies[j->read->movie].sha256, sizeof sha) != 0) {
+				if (j->size != catalog.movies[j->read->movie].size || memcmp(sha, catalog.movies[j->read->movie].sha256, sizeof sha) != 0) {
 					snprintf(why, sizeof why, "%s: not the reference copy's bytes, left out", j->read->name);
 					say(c, why);
 					free(j->data);
@@ -554,24 +662,26 @@ int kp_repack_write(KpRes *res, const KpRepackConfig *c, KpRepackReport *rep, ch
 				}
 			}
 		}
-		if (!c->wav) {
-			e.c = c;
-			e.jobs = jobs;
-			kp_work_run(encode, &e, n, threads);
-		}
+		e.c = c;
+		e.jobs = jobs;
+		kp_work_run(encode, &e, n, threads);
 		for (k = 0; k < n; k++) {
 			Job *j = &jobs[k];
 			Group *g;
+			if (j->failed) {
+				snprintf(err, err_size, "%s", j->note);
+				goto done;
+			}
 			say(c, j->note);
 			if (!j->data) continue;
-			g = group_of(groups, &group_count, j->read->key, c->single, err, err_size);
-			if (!g || store(g, j, rep, err, err_size) != 0) goto done;
+			g = group_of(groups, &group_count, j->read->stored, c->single, err, err_size);
+			if (!g || store(g, j, &ranges, rep, err, err_size) != 0) goto done;
 			free(j->data);
 			free(j->ogg);
 			j->data = j->ogg = NULL;
 		}
 	}
-	rc = finish(groups, group_count, root, kp_buf_text(&head), c->out, rep, err, err_size);
+	rc = finish(groups, group_count, root, kp_buf_text(&head), &ranges, c->out, rep, err, err_size);
 done:
 	for (k = 0; jobs && k < WINDOW; k++) {
 		free(jobs[k].data);
@@ -582,6 +692,7 @@ done:
 		kp_buf_free(&groups[k].lines);
 	}
 	kp_buf_free(&head);
+	kp_buf_free(&ranges);
 	free(jobs);
 	free(groups);
 	free(reads);

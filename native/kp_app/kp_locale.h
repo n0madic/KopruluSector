@@ -8,7 +8,7 @@
  *   its records the base's but for their texts and the rectangles defs/l10n/locales.json's `layout` gives; our own
  *   dialogs' and records' texts from defs/l10n/koprulu-<locale>.json;
  * - the scripts of the credits and the epilogues (rez\*.txt);
- * - the movies' subtitles (SUBS, kp_cine_subs_overlay's form);
+ * - the movies' subtitles checked (the player reads each movie's .srt itself: KP_LOCALE_SUBTITLES);
  * - a campaign mission's strings (kp_locale_mission);
  * - the glyphs of the FNT fonts' supplements and the vector fonts (kp_locale_glyphs).
  * locales.json's rules are compiled in (tools/defs_c.py: LROW, LEXC, LTPL, LKEP, LTXT, LLAY, LSTR, LOWN). A text that
@@ -68,9 +68,7 @@ typedef struct {
 	KpUiFile *scripts;    /* the language's rez\*.txt, by the base's paths, each malloc'd */
 	int script_count;
 	int scripts_left;     /* the base's scripts the language has none of */
-	uint8_t *subs;        /* SUBS, NULL: no subtitles */
-	size_t subs_size;
-	int subtitles;        /* the movies with subtitles */
+	int subtitles;        /* the movies whose subtitles read */
 	KpLocaleFound found;
 } KpLocale;
 

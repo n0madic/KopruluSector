@@ -56,6 +56,7 @@ typedef enum {
 	KP_RES_COLOUR_EQUAL,  /* a PCX of the same colours */
 	KP_RES_APPROXIMATION, /* neither (lossy art, edited texts, a movie that stands in for its SMK) */
 	KP_RES_REMASTERED,    /* Remastered's own file by its CASC name (kp_res_raw_read), which no manifest lists */
+	KP_RES_CONVERTED,     /* a repack's own file by a Remastered name: kp_convert's of the install's (a 1.17 movie as WebM) */
 	KP_RES_STATUS_COUNT
 } KpResStatus;
 
@@ -122,13 +123,19 @@ void kp_res_counts(const KpRes *r, int counts[KP_RES_STATUS_COUNT]);
 int kp_res_write_log(const KpRes *r, const char *path, char *err, size_t err_size);
 
 /* Remastered's own files by their CASC names ("locales/ruRU/Assets/sound/terran/advisor/tadupd00.wav", any case, '/'
- * or '\\'; ADR 0019, stage C2): a repack's copy (listed "remastered": its size checked, a CHK's SHA-256 too), else the
- * Remastered install's, unchecked. A malloc'd copy, or NULL (err empty when no source has it). */
+ * or '\\'; ADR 0019, stage C2): a repack's copy (listed "remastered", or "converted": its size checked, a CHK's SHA-256
+ * too; a group's not open, none), else the Remastered install's, unchecked. A malloc'd copy, or NULL (err empty when no source has it). */
 uint8_t *kp_res_raw_read(KpRes *r, const char *raw, size_t *size, char *err, size_t err_size);
 /* Its first `want` bytes and size as kp_res_head (a repack's Ogg of a WAV: the WAV's header and size). */
 uint8_t *kp_res_raw_head(KpRes *r, const char *raw, size_t want, size_t *got, uint64_t *total, char *err, size_t err_size);
-/* Whether a repack lists the file or the Remastered install holds it (named and downloaded: kp_casc_held). */
+/* Whether a repack lists the file (a group's read by ranges too, open or not: kp_res_raw_range) or the Remastered install
+ * holds it (named and downloaded: kp_casc_held). */
 int kp_res_raw_held(KpRes *r, const char *raw);
+/* Where a repack keeps a file of a group read by ranges that is not open (the cinematics', ADR 0019 stage C4: the
+ * core's listing names each of its files' place): 1, its group's file name ("koprulu-cinematics.mpq", beside the core)
+ * in file and its bytes' offset in it and size; 0 when no listing places it so, or its group is open (kp_res_raw_read
+ * reads it). The web fetches those bytes alone. */
+int kp_res_raw_range(const KpRes *r, const char *raw, char *file, size_t file_size, uint64_t *offset, uint32_t *size);
 /* The core's reader over the raw names (kp_files.h): kp_res_raw_read and kp_res_raw_head over r, its profile. */
 void kp_res_raw_files(KpRes *r, KpFiles *f);
 /* A Remastered install's text locale ("deDE"; Remastered downloads that language's files), "" none. */
@@ -146,7 +153,7 @@ uint8_t *kp_res_casc_rebuild(const char *key, const char *casc_name, const uint8
 
 /* The repack's listing file and its first line */
 #define KP_RES_LISTING "(koprulu)"
-#define KP_RES_LISTING_MAGIC "koprulu repack 3"
+#define KP_RES_LISTING_MAGIC "koprulu repack 4"
 
 #ifdef __cplusplus
 }

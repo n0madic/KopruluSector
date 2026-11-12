@@ -55,7 +55,7 @@ typedef struct {
 	char error[512];
 } Main;
 
-/* Whether a folder holds the converter's output (generated/: the HD art, the languages, the cinematics' packs). */
+/* Whether a folder holds the converter's output (generated/: the HD art, the console's pieces, the repack). */
 static int has_generated(const char *dir)
 {
 	char probe[600];

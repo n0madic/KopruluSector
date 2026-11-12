@@ -241,14 +241,13 @@ static int host_cine_active(void *ctx) { return kp_app_cine_active((const KpApp 
 
 static int host_exists(void *ctx, const char *path) { return kp_app_exists((KpApp *)ctx, path); }
 
-/* The interface and its language replaced (the main menu's languages, ADR 0016): the vector glyphs of the old one, the
- * old language's subtitles. */
+/* The interface and its language replaced (the main menu's languages, ADR 0016): the vector glyphs of the old one go
+ * (the next movie reads the new language's subtitles itself). */
 static void host_language(void *ctx)
 {
 	KpApp *a = (KpApp *)ctx;
 	kp_vtext_free(&a->vtext);
 	a->vtext_ui = NULL;
-	kp_app_cine_language(a);
 }
 
 /* A mission's files: there unless its repack's group is not open yet (the web's, fetched beside the page: kp_app_group);

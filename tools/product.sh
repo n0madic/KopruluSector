@@ -3,19 +3,20 @@
 #   tools/product.sh macos|web|android|ios|ios-sim|linux|windows [release|debug]
 # The data staged for a bundle (ADR 0018, stage D8b): the repack of the original files (kp_convert repack DIR):
 # a computer's one koprulu.mpq (generated/repack-single, repack DIR --single), a phone's and the web's groups
-# (generated/repack, but its cinematics' group: the cinematics are the packs below), the web's core preloaded and
-# the other groups beside the page, fetched when needed (a mission's before it starts, the music's from the start),
-# Android's read in place from the APK (stored uncompressed: tools/native/android_app.sh's noCompress);
+# (generated/repack), the cinematics' groups apart in both (below), the web's core preloaded and the other groups
+# beside the page, fetched when needed (a mission's before it starts, the music's from the start, a movie's bytes by
+# their range as it begins), Android's read in place from the APK (stored uncompressed:
+# tools/native/android_app.sh's noCompress);
 # the vector fonts (third_party/fonts as fonts/); the console's pieces (generated/data/console.kpd); the HD art where
 # it was imported (generated/hd, not for the web; a phone's HD2 transcoded by kp_hd_phone: its pages in ASTC, or in ETC2 with
 # KOPRULU_PHONE_BLOCKS=etc2 for phones without ASTC, which otherwise draw the original's art, and by default on ios-sim,
 # whose context takes no ASTC; its tiles in ETC2);
-# the cinematics (generated/video, python3 -m converter cinematics; ADR 0015: StarCraft: Remastered's, or the 1.17
-# install's transcoded into the SD set) with
-# KOPRULU_CINEMATICS=auto|sd|hd2|both|none: the packs staged and the player built in over libvpx (fetched, built from
-# C), whatever HD art is staged (a game of HD art with SD movies, or the other way round); auto, the default, takes
-# HD2's pack where it was converted, else SD's, else none; none builds none of it; the web fetches the pack beside the
-# page as byte ranges (a server with Range requests: tools/web_serve.py), its head preloaded; a debug build adds the
+# the cinematics (ADR 0015; ADR 0019, stage C4: the repack's koprulu-cinematics.mpq, the SD set: StarCraft:
+# Remastered's, or the 1.17 install's transcoded into WebM; koprulu-cinematics-hd2.mpq, Remastered's HD2 set) with
+# KOPRULU_CINEMATICS=auto|sd|hd2|both|none: the groups staged, whatever HD art is staged (a game of HD art with SD
+# movies, or the other way round); auto, the default, takes HD2's group where the repack has it, else SD's, else none;
+# the web fetches a movie from its group beside the page by its range (a server with Range requests:
+# tools/web_serve.py); a debug build adds the
 # test scenarios, the terrain checks' CRCs and the scripts (tests/scripts/*.kps as generated/scripts/: the
 # development checks, --autotest and --script; a phone reads them from its assets). The languages (ADR 0016; ADR
 # 0019, stages C2 and C3: their texts and speech, which the game builds from Remastered's own files) are the repack's
@@ -49,33 +50,6 @@ done
 
 tools/toolchain/fetch.sh >/dev/null
 
-CINEMATICS="${KOPRULU_CINEMATICS:-auto}"
-if [ "$CINEMATICS" = auto ]; then # the best pack converted (generated/video), none where none is
-  CINEMATICS=none
-  for v in hd2 sd; do
-    if [ "$CINEMATICS" = none ] && [ -f "$GENERATED/video/cinematics-$v.kpd" ]; then CINEMATICS="$v"; fi
-  done
-  # a product of a converted pack carries it (hundreds of MB) and libvpx: said, so that a build's size is no surprise
-  [ "$CINEMATICS" = none ] || echo "product: cinematics $CINEMATICS (auto; KOPRULU_CINEMATICS=none builds none)" >&2
-fi
-CINE_VARIANTS=""
-case "$CINEMATICS" in
-  none) ;;
-  sd | hd2 | both)
-    CINE_VARIANTS="$CINEMATICS"
-    [ "$CINEMATICS" = both ] && CINE_VARIANTS="sd hd2"
-    for v in $CINE_VARIANTS; do
-      if [ ! -f "$GENERATED/video/cinematics-$v.kpd" ]; then
-        hint="--scr DIR --variant $v"
-        [ "$v" = sd ] && hint="--scr DIR --variant sd, or --data DIR from 1.17"
-        echo "product: no $GENERATED/video/cinematics-$v.kpd (python3 -m converter cinematics $hint)" >&2
-        exit 1
-      fi
-    done
-    ;;
-  *) echo "product: KOPRULU_CINEMATICS is auto, none, sd, hd2 or both" >&2; exit 2 ;;
-esac
-
 # The repack (ADR 0018): a computer's one file, a phone's and the web's groups (each read or fetched when needed)
 case "$PLATFORM" in
   web|android|ios|ios-sim) REPACK=repack; REPACK_HINT="kp_convert repack DIR, make repack SC=DIR|SCR=DIR" ;;
@@ -85,8 +59,37 @@ if [ ! -f "$GENERATED/$REPACK/koprulu-core.mpq" ] && [ ! -f "$GENERATED/$REPACK/
   echo "product: no $GENERATED/$REPACK ($REPACK_HINT)" >&2
   exit 1
 fi
-# the files of the repack a bundle carries (relative to $GENERATED): the cinematics' group goes, the packs show them;
-# the languages' groups (their texts and speech) KOPRULU_LOCALES stages, not to the web
+# the cinematics' groups (the repack's, kept apart with --single too): a set's group by its name
+cine_group() { if [ "$1" = sd ]; then echo koprulu-cinematics.mpq; else echo "koprulu-cinematics-$1.mpq"; fi; }
+CINEMATICS="${KOPRULU_CINEMATICS:-auto}"
+if [ "$CINEMATICS" = auto ]; then # the best set the repack has, none where it has none
+  CINEMATICS=none
+  for v in hd2 sd; do
+    if [ "$CINEMATICS" = none ] && [ -f "$GENERATED/$REPACK/$(cine_group "$v")" ]; then CINEMATICS="$v"; fi
+  done
+  # a product of the movies carries hundreds of MB: said, so that a build's size is no surprise
+  [ "$CINEMATICS" = none ] || echo "product: cinematics $CINEMATICS (auto; KOPRULU_CINEMATICS=none stages none)" >&2
+fi
+CINE_GROUPS="" # each name with a space before it (repack_files looks for " NAME ")
+case "$CINEMATICS" in
+  none) ;;
+  sd | hd2 | both)
+    variants="$CINEMATICS"
+    [ "$CINEMATICS" = both ] && variants="sd hd2"
+    for v in $variants; do
+      if [ ! -f "$GENERATED/$REPACK/$(cine_group "$v")" ]; then
+        hint="kp_convert repack DIR"
+        [ "$v" = hd2 ] && hint="kp_convert repack DIR from StarCraft: Remastered"
+        echo "product: no $GENERATED/$REPACK/$(cine_group "$v") ($hint)" >&2
+        exit 1
+      fi
+      CINE_GROUPS="$CINE_GROUPS $(cine_group "$v")"
+    done
+    ;;
+  *) echo "product: KOPRULU_CINEMATICS is auto, none, sd, hd2 or both" >&2; exit 2 ;;
+esac
+# the files of the repack a bundle carries (relative to $GENERATED): the cinematics' groups KOPRULU_CINEMATICS
+# stages; the languages' groups (their texts and speech) KOPRULU_LOCALES stages, not to the web
 # TODO: the web fetches a language's group when the language is chosen
 GENERATED_DIR="$(cd "$GENERATED" && pwd)"
 LANGUAGE_GROUPS="" # each name with a space before it (repack_files looks for " NAME ")
@@ -108,9 +111,10 @@ case "$LOCALES" in
 esac
 repack_files() {
   local f
-  (cd "$GENERATED_DIR" && find "$REPACK" -name 'koprulu*.mpq' ! -name koprulu-cinematics.mpq | sort) | while read -r f; do
+  (cd "$GENERATED_DIR" && find "$REPACK" -name 'koprulu*.mpq' | sort) | while read -r f; do
     case "$(basename "$f")" in
       koprulu-locale-*) case "$LANGUAGE_GROUPS " in *" $(basename "$f") "*) echo "$f" ;; esac ;;
+      koprulu-cinematics*) case "$CINE_GROUPS " in *" $(basename "$f") "*) echo "$f" ;; esac ;;
       *) echo "$f" ;;
     esac
   done
@@ -127,9 +131,6 @@ stage_data() {
       echo data/console.kpd # the console's pieces (Remastered's, whole: python3 -m converter console)
       # the web preloads the core, the other groups lie beside the page (stage_web_fetched)
       if [ "$PLATFORM" = web ]; then repack_files | grep '/koprulu-core\.mpq$'; else repack_files; fi
-      if [ "$PLATFORM" != web ]; then # the web's head alone (web_hd_heads.py), the rest beside the page
-        for v in $CINE_VARIANTS; do echo "video/cinematics-$v.kpd"; done
-      fi
       if [ "$VARIANT" = debug ]; then # the test scenarios (their CHK, the scenarios' catalog)
         find scenarios -name '*.chk' -o -name index.txt
         find viewer -name '*.mcrc'
@@ -156,8 +157,8 @@ stage_data() {
   fi
   case "$PLATFORM" in
     android|ios|ios-sim) stage_hd_phone ;;
-    web) # shellcheck disable=SC2086
-      python3 tools/web_hd_heads.py "$GENERATED" "$STAGE/generated" --video $CINE_VARIANTS ;;
+    web) # shellcheck disable=SC2046
+      python3 tools/web_hd_heads.py "$GENERATED" "$STAGE/generated" --ranged $(for g in $CINE_GROUPS; do echo "$REPACK/$g"; done) ;;
   esac
   # a debug build's scripts (ADR 0017): a phone's --script reads generated/scripts/NAME.kps from its assets
   if [ "$VARIANT" = debug ]; then
@@ -167,14 +168,14 @@ stage_data() {
   echo "product: data $(du -sh "$STAGE" | cut -f1)"
 }
 
-# The web's HD2 (stage R4b) and cinematics: the page preloads the files' heads and sizes (stage_data,
-# tools/web_hd_heads.py) and fetches the rest as byte ranges from the files beside it (a server with Range requests:
-# tools/web_serve.py); the repack's groups but its core, fetched whole (ADR 0018, stage D8b).
+# The web's HD2 (stage R4b): the page preloads the files' heads and sizes (stage_data, tools/web_hd_heads.py) and
+# fetches the rest as byte ranges from the files beside it (a server with Range requests: tools/web_serve.py); the
+# repack's groups but its core, fetched whole (ADR 0018, stage D8b), the cinematics' by each movie's range (ADR 0019,
+# stage C4).
 stage_web_fetched() {
-  local src f v
+  local src f
   src="$(cd "$GENERATED" && pwd)"
   { [ -d "$src/hd/hd2" ] && (cd "$src" && find hd/hd2 -name '*.kpd')
-    for v in $CINE_VARIANTS; do echo "video/cinematics-$v.kpd"; done
     repack_files | grep -v '/koprulu-core\.mpq$'
   } | while read -r f; do
     mkdir -p "$OUT/generated/$(dirname "$f")"

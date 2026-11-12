@@ -14,7 +14,7 @@ The converter becomes `kp_convert`, in C, sharing its builders with the runtime.
 | C1 | `kp_convert`: `repack`, `verify`, `digests`, `extract` (`kp_data_probe` folded in), `icon`, `scenarios`, `terrain`, on macOS, Linux and Windows; the Makefile, README, `tools/product.sh` and `tools/ci.sh` on `kp_convert`; `manifest`, the listing v3 and `kp_res_raw_stream_open` moved to the stages that need them | done 2026-11-11 |
 | C2 | Speech: the lines and voices of `locales/<loc>/Assets/` played as they are, TIME merged from the language's CHK when a mission loads; the repack's language group recompressed; the speech overlays go | done 2026-11-12 |
 | C3 | Language texts: `kp_locale.c` (the six tables, dialogs by `defs/l10n`, `rez\*.txt`, the maps' STR, subtitles, the glyphs at start, VFNT from TTF); `kp_convert locale-check`; the text overlays and `glyphs.kpd` go | done 2026-11-12 |
-| C4 | Cinematics: the 1.17 SMK transcoded to VP9 and Vorbis in our own WebM by `kp_convert repack`; Remastered's WebM as they are; `CINE` and FFmpeg go | |
+| C4 | Cinematics: the 1.17 SMK transcoded to VP9 and Vorbis in our own WebM by `kp_convert repack`; Remastered's WebM as they are; `CINE` and FFmpeg go | done 2026-11-12 |
 | C5 | The HD world: `kp_anim.c`, `images.rel`, the grouped packer, the HD page thread over anim; `HDTS`/`HDWA` from the originals; `HDPK`/`HDTS`/`HDWA` in the `hd2`/`hd` groups | |
 | C6 | The HD interface, portraits, console: `kp_convert hd-ui-table` writes `defs/scr/hd-ui-bw-1.17.0.1.json`; `HDUI`/`CONW` built from the originals; `HDUI`/`HDPV`/`CONW` in the `ui` group | |
 | C7 | `converter/` deleted; the readers for research moved to `tools/research/`; the bundles carry `koprulu*.mpq` only; the Fold7 run | |
@@ -73,7 +73,7 @@ The converter becomes `kp_convert`, in C, sharing its builders with the runtime.
 | `verify DIR...` | every manifest file read through `kp_res`, the statuses and time by kind; exact and derived files checked to the byte; a 1.17 install's `StarCraft.exe` by its SHA-256 (`executable_sha256`, compiled in by `tools/defs_c.py`) | `kp_data_probe`, `converter verify` |
 | `digests DIR --out PATH` | each manifest file's name, status and SHA-256 | `kp_data_probe --digests` |
 | `extract DIR NAME OUT` | a file as `kp_res` reads it, or a Remastered file by its CASC name (`kp_res_raw_read`) | `converter extract`, `scr-extract` |
-| `repack DIR [--single] [--wav] [--res-log] [--cache] [--threads]` | `kp_repack.c`: the groups or one `koprulu.mpq`, StormLib's writer; a WAV as Ogg Vorbis (`kp_ogg.c`, libvorbisenc at `-q 3`, the CRC-32 of the name as the serial) on every core (`kp_work.c`), each kept in `generated/cache/repack-vorbis/<sha>-q3-s<serial>.ogg` | `converter repack` (oggenc) |
+| `repack DIR [--single] [--wav] [--res-log] [--cache] [--threads]` | `kp_repack.c`: the groups or one `koprulu.mpq`, StormLib's writer; a WAV as Ogg Vorbis (`kp_ogg.c`, libvorbisenc at `-q 3`, the CRC-32 of the name as the serial) on every core (`kp_work.c`), each kept in `generated/cache/repack-vorbis/<sha>-q3-s<serial>.ogg` (since C4 `generated/cache/repack/`, beside the movies' WebM) | `converter repack` (oggenc) |
 | `scenarios DIR` | `kp_scenario.c`: each spec of `tests/scenarios/` rewrites its base CHK (OWNR, UNIT, THG2, MBRF, TRIG, STR, MRGN, PTEC); `index.txt` with the packs of the profile's compiled `SPAK` | `converter scenarios` |
 | `terrain DIR` | the eight tilesets' megatile CRCs | `converter terrain` |
 | `icon DIR` | `kp_icon.c`: the executable's icon group 102 (a bounds-checked PE32 reader), the sizes it lacks resampled on premultiplied colour, PNG, ICO and ICNS, the iOS, web and Android files | `converter icon` |
@@ -197,3 +197,47 @@ Each is cached as `<sha256>-q3-s<serial>-speech.ogg`. From `/Applications/StarCr
 - `generated/locale/` from the Python converter stays on disk where it was written; nothing reads it (remove it by hand).
 - The glyphs' time on the Fold7 is not measured (no device attached); C7's device run covers the language with its speech.
 - The web carries no language group yet (C7).
+
+## C4 as built (2026-11-12)
+
+**The movies in the repack** (`native/kp_convert/kp_repack.c`). Two groups by Remastered's names, apart with `--single` too: `koprulu-cinematics.mpq` (`sd/smk/<name>.webm`) and `koprulu-cinematics-hd2.mpq` (`hd2/smk/`). From Remastered both sets go in as they are, and the base's subtitles the install holds go in the core (`locales/enus/assets/smk/<name>.srt`; a language's are in its group since C3). From 1.17 each of the catalog's 28 Smacker movies, checked against `CINM`'s size and SHA-256, is transcoded into the SD set's name with the status `converted`. `--wav` keeps the sounds but still transcodes the movies: their names are the WebM's. The groups are stored uncompressed, and the core's listing (version 4) places each of their files: `in <group> <offset> <sha256> <size> <status> <name>` (`kp_mpq_stored_at`), so a group need not be open to know where a movie lies. [The format](formats/repack.md).
+
+**The transcode** (`kp_movie.c`, `kp_webm_write.c`). `kp_movie_smk_webm` opens the SMK with kp_cine's own player and encodes the frames it shows: VP9 profile 1, 4:4:4 sRGB, constant quality 32, `--cpu-used 2`, a key frame at least every 128 frames, one thread a movie (`kp_movie_vp9`). The sound is the first track decoded by `kp_smk`, Vorbis at `-q 3` (`kp_vorbis_from_wav`: the packets alone, with their granules and block sizes). It refuses a sound more than half a frame longer or shorter than the video. `kp_webm_write` muxes them into WebM (the Vorbis headers Xiph-laced as `CodecPrivate`, 1 ms timestamps, a cluster from each key frame, `DiscardPadding` on the sound's last block; no dates or random UIDs, so the same movie gives the same bytes), and the movie is read back by nestegg (`kp_webm_streams`) before it is kept: the same packets and sound length, else the repack fails. Each WebM is cached as `<smk sha256>-vp9-q32-c2-k128-vorbis-q3-webm1.webm` in `generated/cache/repack/`. The 28: 202.0 MB for 605.4 MB, 146 s on 14 cores with an empty cache (FFmpeg's 138 s), the same bytes from the cache.
+
+**The player reads WebM from either source** (`native/kp_app/kp_cine.c`, `sdl/kp_app_cine.c`). The pack's index and its reader are gone; `kp_cine_index_movies` indexes the catalog's movies the data has, as for an install. The host's `load` opens a movie when it begins: the WebM by its name (a repack's or a Remastered install's, HD2 first unless `--cinematics sd`), else the 1.17 install's Smacker file. `load` may answer `KP_CINE_LOAD_WAIT`: the run then waits for the movie, its time standing still (`r->loading`). A press while it waits ends it only if it comes after the wait began. On the web a movie whose group is not open is fetched alone by its range (`kp_res_raw_range`, `kp_fetch_start` with an offset; `web_sizes.txt` lists the groups, `kp_app_web_beside`); a computer or a phone opens every group it carries at start. The subtitles are read with each movie: the `.srt` of the language in effect, else of the install's text locale, else enUS (`KP_LOCALE_SUBTITLES`); `SUBS` and its overlay over the pack are gone, `kp_locale.c` only checks the language's `.srt` files.
+
+**`--cine-check` over any source.** It plays every movie the data has to its end, the GPU's picture against the CPU's. A subtitle is checked pixel by pixel: at least three quarters of its white pixels seen white in the GPU's picture, and more than the movie shows without it (the old area test failed on terran4's «Терраны!», 15 white pixels over a bright frame). On the web it refuses with a line: the movies come by ranges as they play.
+
+**Tests.**
+- `test_cine` rewritten over the fixture WebM (cine0.webm sRGB, cine1.webm 4:2:0, cine1.srt): the index, the movie, the subtitles' times, the pictures equal to FFmpeg's, a refused movie (cut, not WebM, a frame off its time, a first frame not key, a zero packet), the run over a recording host (waiting for a movie, a press during the wait, a movie that does not load, the data gone).
+- `test_convert`: `webm_reads_back` (our WebM read back by the player), `repack_movies_read_by_ranges` (the listing's ranges, a group added later, `kp_mpq_stored_at`), `repack_reads_back` (the fixture's SMK repacked as WebM, from the cache the second time), `movies_equal_the_converters` (below). The fixture's SMK comes from `kp_t_smk`, the Smacker writer `test_movies` uses too.
+- `test_encoders` encodes through `kp_movie_vp9`.
+
+**Equal to the Python converter.** Before `cinematics_smk.py` went, its SD pack from the 1.17 install was recorded in `tests/golden/cinematics/converter.json` (private): per movie its size, rate and frames, the SHA-256 of its VP9 packets and of its frame table, its Vorbis packets' count and bytes (but the comment header, the encoder's vendor) and its samples. `movies_equal_the_converters` transcodes two movies from `KP_TEST_ORIGINAL`, or compares all 28 of a repack (`KP_TEST_MOVIES`): every VP9 packet and frame table is equal, the Vorbis packets and samples too, their bytes 26 apart over 13.3 MB. The pictures being the pack's, no PSNR threshold is needed.
+
+**The tools.**
+- `tools/ci.sh`: the product's cine check per set over the bundle's groups (`KOPRULU_CINEMATICS`); cine checks over the 1.17 install and its repack (`sd WebM, 28 movies`), and over Remastered and its repack with ruRU's subtitles (`--locale ruRU`); the 28 movies against the golden (`KP_TEST_MOVIES=build/repack/original`).
+- `tools/product.sh`: `KOPRULU_CINEMATICS=auto|sd|hd2|both|none` picks the repack's groups (`auto`: HD2, else SD, else none); `generated/video/` is no longer staged. The web lists the groups in `web_sizes.txt` (`tools/web_hd_heads.py --ranged`) and fetches them by ranges.
+- `Makefile`: `cinematics` and `CINE=` gone; `make repack` carries the movies.
+- `tools/defs_c.py` builds `CINM` from `defs/campaign/cinematics.json` itself; `tools/oracle/export_smk_ffmpeg.py` reads the table without the converter.
+
+**Removed:** the `CINE` container and its reader, `converter cinematics`, `converter/emit/cinematics.py`, `cinematics_smk.py`, `sound.py`, `converter/formats/ivf.py`, `srt.py`, `kpf.container.header`, `test_cinematics.py`, `test_cinematics_smk.py`, the Ogg tests of `test_packs.py`, the fixture `cine.kpd`; oggenc is no longer a requirement.
+
+**Verified.**
+- `--cine-check`, 0 failures:
+  - the 1.17 install (28 Smacker movies), its repack in groups and with `--single` (28 movies, 30,211 frames);
+  - Remastered's install, SD (30,211 frames) and HD2 (31,156 frames);
+  - Remastered's repack, HD2 and SD, with ruRU's 20 subtitled movies.
+- A repack without its cinematics group, or HD2 asked of 1.17's: "no movies", the game without them.
+- The web bundle in the browser pane: the intro fetched by a Range request (206) from `koprulu-cinematics.mpq`, played, and the next movie fetched when it was skipped.
+
+**Decisions taken in C4:**
+- **The 1.17 movies take Remastered's SD names**, so one reader serves both sources and a bundle cannot tell them apart.
+- **A movie is read when it begins**, from a group or by its range, not indexed at start: no pack's index to keep beside the data.
+- **The run waits for a movie** (`KP_CINE_LOAD_WAIT`) rather than the host blocking: the web's fetch is asynchronous.
+
+**Open after C4:**
+- `generated/video/` from the Python converter stays on disk where it was written; nothing reads it (remove it by hand), nor `generated/cache/repack-ogg/` (the Python repack's cache) and `generated/cache/repack-vorbis/` (C1's, `generated/cache/repack/` since C4).
+- The web's movies are not covered by `tools/ci.sh` (checked in the browser pane by hand); `--cine-check` cannot run there.
+- The fixture movies (`cine0.webm`, `cine1.webm`) are still made by FFmpeg (C7).
+

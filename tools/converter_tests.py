@@ -6,7 +6,7 @@ not run again.
 
 Each module's output goes to DIR/<module>.log; the failed ones' last lines are printed. The key of a pass covers what
 the tests read: the repository's files except the native sources and most of the documents, the private evidence, the
-converted data and the original installs (by name, size and time), the Python packages, FFmpeg, oggenc and StormLib. A
+converted data and the original installs (by name, size and time), the Python packages, FFmpeg and StormLib. A
 module's own imports are not traced: a change to any of it reruns them all, and a pass whose inputs changed while it
 ran is not remembered. Temporary files go under DIR/tmp, removed even when this run is stopped: test_hd2 writes
 gigabytes.
@@ -47,7 +47,7 @@ KEPT = ("docs/research/",)
 # Their data outside the repository's tracked files, and where the original installs are named.
 UNTRACKED_INPUTS = (Path("generated"), Path("docs/research/evidence"))
 INSTALLS = ("KOPRULU_ORIGINAL", "KOPRULU_SCR")
-EXTERNAL_TOOLS = ("ffmpeg", "ffprobe", "oggenc")
+EXTERNAL_TOOLS = ("ffmpeg", "ffprobe")
 STOP_SIGNALS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
 
 

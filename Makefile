@@ -12,18 +12,15 @@ OUT      ?= generated
 PYTHON   ?= python3
 VARIANT  ?= release
 HD       ?= hd2
-CINE     ?= hd2
 PORT     ?= 8793
 ARGS     ?=
 BUILD_DIR ?= build/app
 TOOLS_DIR ?= build/cmake
 
 CONVERTER := $(PYTHON) -m converter
-# The C converter (ADR 0019): verify, the repack, the test scenarios, the terrain checks and the icon
+# The C converter (ADR 0019): verify, the repack (the cinematics too), the test scenarios, the terrain checks and the
+# icon
 KP_CONVERT := $(TOOLS_DIR)/kp_convert
-# The 1.17 install has only the SD set: a CINE given on the command line or in the environment goes to the converter,
-# which refuses hd2 there; CINE's default (hd2) is Remastered's
-CINE_DATA := $(if $(filter file,$(origin CINE)),,--variant $(CINE))
 
 # The bundles read the converter's output from here (tools/product.sh)
 export KOPRULU_GENERATED := $(OUT)
@@ -32,30 +29,28 @@ PLATFORMS := macos web android ios ios-sim linux windows
 
 .DEFAULT_GOAL := help
 .PHONY: help convert convert-remastered remastered-extras check-source check-sc check-scr verify repack console \
-	scenarios terrain icon hd cinematics locale-check convert-tool toolchain app run test serve \
+	scenarios terrain icon hd locale-check convert-tool toolchain app run test serve \
 	install-android clean $(PLATFORMS)
 
 help:
 	@echo "Koprulu Sector: convert the original data, then build the game."
 	@echo ""
 	@echo "Convert (SC = a StarCraft: Brood War 1.17.0.1 folder, SCR = a StarCraft: Remastered folder):"
-	@echo "  make convert SC=DIR          verify, the repack, the test scenarios, the terrain checks, icon and"
-	@echo "                               cinematics from 1.17"
-	@echo "                               (CINE=none leaves the cinematics out; without FFmpeg's libvpx-vp9"
-	@echo "                               encoder or oggenc they are left out with a warning)"
+	@echo "  make convert SC=DIR          verify, the repack, the test scenarios, the terrain checks and the icon"
+	@echo "                               from 1.17"
 	@echo "  make convert SCR=DIR         the repack, the test scenarios, the terrain checks and the console's"
 	@echo "                               pieces from Remastered"
 	@echo "  make repack SC=DIR|SCR=DIR   the original files the game reads: OUT/repack (groups: the phones, the"
-	@echo "                               web) and OUT/repack-single (one koprulu.mpq: the computers); from"
-	@echo "                               Remastered a group per language it holds (its texts and speech)"
+	@echo "                               web) and OUT/repack-single (one koprulu.mpq: the computers), the"
+	@echo "                               cinematics apart in both (1.17's transcoded into WebM, Remastered's"
+	@echo "                               SD and HD2 sets as they are); from Remastered a group per language it"
+	@echo "                               holds (its texts and speech)"
 	@echo "  make console SCR=DIR         the console's pieces OUT/data/console.kpd from Remastered's art"
 	@echo "  make scenarios SC=DIR|SCR=DIR  the test scenarios' CHKs OUT/scenarios/ (tests, the oracle's tools)"
 	@echo "  make terrain SC=DIR|SCR=DIR    the terrain checks' CRCs OUT/viewer/ (koprulu --autotest)"
 	@echo "  make convert-remastered SCR=DIR"
-	@echo "                               all of the above from Remastered plus its HD art and cinematics"
+	@echo "                               all of the above from Remastered plus its HD art"
 	@echo "  make hd SCR=DIR [HD=hd2|hd|all]"
-	@echo "  make cinematics SCR=DIR [CINE=sd|hd2|all]"
-	@echo "  make cinematics SC=DIR       the 1.17 movies transcoded into the SD set (FFmpeg with libvpx-vp9)"
 	@echo "  make locale-check SCR=DIR    every string of each language Remastered holds checked, the reports"
 	@echo "                               OUT/reports/locale-<LOC>.json"
 	@echo ""
@@ -101,9 +96,6 @@ ifneq ($(strip $(SCR)),)
 endif
 ifneq ($(strip $(SC)),)
 	$(MAKE) icon
-ifneq ($(CINE),none)
-	$(CONVERTER) cinematics --data "$(SC)" $(CINE_DATA) --optional --out "$(OUT)"
-endif
 endif
 
 convert-remastered: check-scr
@@ -112,9 +104,6 @@ convert-remastered: check-scr
 
 remastered-extras: check-scr
 	$(MAKE) hd
-ifneq ($(CINE),none)
-	$(MAKE) cinematics
-endif
 
 locale-check: check-scr convert-tool
 	$(KP_CONVERT) locale-check "$(SCR)" --out "$(OUT)"
@@ -141,14 +130,6 @@ icon: check-sc convert-tool
 
 hd: check-scr
 	$(CONVERTER) hd --scr "$(SCR)" --variant $(HD) --out "$(OUT)"
-
-# Remastered's cinematics (CINE picks the sets) when SCR is given, else the 1.17 movies transcoded into the SD set
-cinematics: check-source
-ifneq ($(strip $(SCR)),)
-	$(CONVERTER) cinematics --scr "$(SCR)" --variant $(CINE) --out "$(OUT)"
-else
-	$(CONVERTER) cinematics --data "$(SC)" $(CINE_DATA) --out "$(OUT)"
-endif
 
 convert-tool: toolchain
 	cmake -S . -B $(TOOLS_DIR) -G Ninja -DCMAKE_BUILD_TYPE=Release

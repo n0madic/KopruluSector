@@ -1233,24 +1233,22 @@ static void build_scripts(Build *b)
 
 /* --- the movies' subtitles --- */
 
-/* SUBS (subtitles_section): the locale in 4 bytes, u32 cues, u32 text bytes; per movie of the catalog u32 its first
- * cue and u32 its cues; per cue u32 start, end (ms), at, size in the text; the text. None when no movie has any. */
-static void build_subs(Build *b)
+/* The language's subtitles, which the player reads per movie as they are (KP_LOCALE_SUBTITLES): each one read and
+ * parsed as kp_cine_subs_srt does (one that does not is a problem: its movie plays without them), its code points noted
+ * for the glyphs; the movies that have them counted. */
+static void check_subtitles(Build *b)
 {
 	KpLocale *l = b->l;
 	const KpDefsTable *cinm = kp_defs_table(b->d->profile, "CINM");
 	KpCineCatalog *cat = (KpCineCatalog *)malloc(sizeof *cat);
 	KpCineSubs *s = (KpCineSubs *)malloc(sizeof *s);
-	Buf table = { NULL, 0, 0, 0 }, records = { NULL, 0, 0, 0 }, text = { NULL, 0, 0, 0 }, out = { NULL, 0, 0, 0 };
-	uint32_t total = 0;
-	int k, c, movies = 0;
-	char id[4] = { 0, 0, 0, 0 };
+	int k, c;
 	if (!cat || !s) {
 		b->oom = 1;
 		goto done;
 	}
 	if (!cinm || kp_cine_catalog(cat, cinm->data, cinm->size) != 0) {
-		problem(&l->found, "the profile's CINM does not read: no subtitles");
+		problem(&l->found, "the profile's CINM does not read: no subtitles checked");
 		goto done;
 	}
 	for (k = 0; k < cat->count; k++) {
@@ -1261,59 +1259,24 @@ static void build_subs(Build *b)
 		for (i = 0; cat->movies[k].name[i] && i + 1 < sizeof lower; i++) lower[i] = ascii_lower(cat->movies[k].name[i]);
 		lower[i] = 0;
 		snprintf(path, sizeof path, KP_LOCALE_SUBTITLES, b->locale, lower);
-		put_u32(&table, total);
-		s->count = 0;
 		why[0] = 0;
-		if ((srt = b->raw->read(b->raw->ctx, path, &size, why, sizeof why)) != NULL) {
-			if (kp_cine_subs_srt(srt, size, s, &err) != 0) {
-				problem(&l->found, "%s: %s", path, err.msg);
-				free(srt);
-				goto done; /* the converter's: a language's subtitles whole or none */
-			}
+		if (!(srt = b->raw->read(b->raw->ctx, path, &size, why, sizeof why))) {
+			if (why[0]) problem(&l->found, "%s: %s", path, why); /* there but unread */
+			continue;
+		}
+		if (kp_cine_subs_srt(srt, size, s, &err) != 0) {
+			problem(&l->found, "%s: %s", path, err.msg);
 			free(srt);
-			movies++;
-		} else if (why[0]) { /* there but unread */
-			problem(&l->found, "%s: %s", path, why);
-			goto done;
+			continue;
 		}
-		put_u32(&table, (uint32_t)s->count);
+		free(srt);
+		l->subtitles++;
 		for (c = 0; c < s->count; c++) {
-			const KpCineCue *q = &s->cues[c];
 			snprintf(where, sizeof where, "%s.srt cue %d", cat->movies[k].name, c);
-			if (!kp_text_valid_utf8((const uint8_t *)s->text + q->at, q->size)) {
-				problem(&l->found, "%s: not UTF-8", where);
-				goto done;
-			}
-			note_codes(&l->found, where, (const uint8_t *)s->text + q->at, q->size);
-			put_u32(&records, q->start_ms);
-			put_u32(&records, q->end_ms);
-			put_u32(&records, (uint32_t)text.n);
-			put_u32(&records, q->size);
-			put(&text, s->text + q->at, q->size);
+			note_codes(&l->found, where, (const uint8_t *)s->text + s->cues[c].at, s->cues[c].size);
 		}
-		total += (uint32_t)s->count;
 	}
-	if (!movies) goto done;
-	memcpy(id, b->locale, strlen(b->locale) < 4 ? strlen(b->locale) : 4);
-	put(&out, id, 4);
-	put_u32(&out, total);
-	put_u32(&out, (uint32_t)text.n);
-	put(&out, table.p, table.n);
-	put(&out, records.p, records.n);
-	put(&out, text.p, text.n);
-	if (table.bad || records.bad || text.bad || out.bad) {
-		b->oom = 1;
-		free(out.p);
-		goto done;
-	}
-	l->subs = out.p;
-	l->subs_size = out.n;
-	l->subtitles = movies;
-	out.p = NULL;
 done:
-	free(table.p);
-	free(records.p);
-	free(text.p);
 	free(cat);
 	free(s);
 }
@@ -1373,7 +1336,7 @@ int kp_locale_build(KpLocale *l, const KpUiData *d, const KpFiles *raw, const ch
 				(unsigned)b.rules.rows.items[k].row);
 	if (!b.oom) build_dialogs(&b);
 	if (!b.oom) build_scripts(&b);
-	if (!b.oom) build_subs(&b);
+	if (!b.oom) check_subtitles(&b);
 	if (!b.oom) { /* the language dialog shows every language by its own name */
 		Cur c = defs(d->profile, "LANG");
 		uint32_t n = c.p ? u8_(&c) : 0;
@@ -1404,7 +1367,6 @@ void kp_locale_free(KpLocale *l)
 	free(l->pool);
 	for (k = 0; k < l->script_count; k++) free((void *)l->scripts[k].data);
 	free(l->scripts);
-	free(l->subs);
 	kp_locale_found_free(&l->found);
 	memset(l, 0, sizeof *l);
 }

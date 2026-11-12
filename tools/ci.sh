@@ -46,15 +46,17 @@
 #     trigger wait ending), the touch layer (touch.kps: terran01 played by synthetic fingers) and, with the HD art
 #     imported, the HD interface (hd_glue.kps, hd_game.kps on each race: the glue's screens and the game's screens and
 #     menus with no SD pixel where HD art exists; each language's walk on terran01 too, without the HD art its first
-#     screen); with KOPRULU_ORIGINAL or KOPRULU_SCR the cine check over the install's own movies (stage D7: the 1.17
-#     install's Smacker files, Remastered's SD WebM and their subtitles, its HD2 set too when KOPRULU_CINEMATICS asks)
-#     and the install's repack (stage D8, kp_convert repack into build/repack: the 1.17 install's groups, Remastered's
-#     one koprulu.mpq), the scripts over it writing what they write over the install and over the bundle's repack, and
-#     with a mission's group taken out the same over the install beside it, the mission refused with none;
-#   KOPRULU_CINEMATICS=sd|hd2|both, with KOPRULU_APP, builds the product with the packs from generated/video and runs
-#     the cine check (every cinematic decoded to its end, the first pictures also drawn by the GPU); unset or none (the
-#     default here, whatever product.sh's auto would take), the products are built without them (the player and its
-#     suite, over libvpx, are in every build);
+#     screen); with KOPRULU_ORIGINAL or KOPRULU_SCR the install's repack (stage D8, kp_convert repack into build/repack:
+#     the 1.17 install's groups, Remastered's one koprulu.mpq), the scripts over it writing what they write over the
+#     install and over the bundle's repack, and with a mission's group taken out the same over the install beside it,
+#     the mission refused with none; and the cine check over the install's own movies and over its repack's (stage D7:
+#     the 1.17 install's Smacker files; Remastered's SD WebM and their subtitles, its HD2 set too when
+#     KOPRULU_CINEMATICS asks; ADR 0019, stage C4: the repack's koprulu-cinematics*.mpq, the 1.17 movies transcoded
+#     into WebM, Remastered's as they are with a language's subtitles from its group);
+#   KOPRULU_CINEMATICS=sd|hd2|both, with KOPRULU_APP, builds the product with the cinematics' groups of its repack
+#     (generated/repack-single/koprulu-cinematics*.mpq) and runs the cine check (every cinematic decoded to its end,
+#     the first pictures also drawn by the GPU); unset or none (the default here, whatever product.sh's auto would
+#     take), the products are built without them (the player and its suite, over libvpx, are in every build);
 #   KOPRULU_WEB=1 builds the product for the web (tools/product.sh web debug, needs emcmake);
 #   KOPRULU_ANDROID=1 builds the APK and runs the play scripts, the autotest, the touch script and the frame benchmark
 #     on the attached, unlocked phone: only for the changes that need a real phone (docs/phaseS.md, "Device runs");
@@ -394,7 +396,7 @@ if [ -n "$LLVM_CLANG" ]; then
   build/cmake-asan-llvm/kp_hd_phone --selftest build/cmake-asan-llvm | tail -1 # the tool without the ASTC encoder
 fi
 if [ -d generated ]; then
-  step "the converter's containers parsed under ASan and UBSan (console.kpd, the HD files, the cinematics' packs)"
+  step "the converter's containers parsed under ASan and UBSan (console.kpd, the HD files)"
   find generated -path generated/cache -prune -o -name "*.kpd" -print | sort | xargs build/cmake-asan/kp_load_check | tail -1
 fi
 if command -v emcmake >/dev/null && command -v node >/dev/null; then
@@ -618,37 +620,52 @@ if [ -n "${KOPRULU_APP:-}" ]; then
       [ -s "build/locale_check/$loc/menu_repack.png" ]
     done
   fi
+  # the bundle's movies (the cinematics' groups of its repack, ADR 0019, stage C4)
   if [ "$CINEMATICS" != none ]; then
     for variant in sd hd2; do
-      [ -f "${KOPRULU_GENERATED:-generated}/video/cinematics-$variant.kpd" ] || continue
       case "$CINEMATICS" in both | "$variant") ;; *) continue ;; esac
-      step "product cine check ($variant): every cinematic decoded to its end, frame counts as the pack's index"
+      step "product cine check ($variant): the bundle's movies decoded to their end, the first pictures drawn"
       mkdir -p "build/cine_check/$variant"
-      app_check cine_check "$APP" --cinematics "$variant" --cine-check "build/cine_check/$variant"
-      grep -E "^SPIKE cine check: " build/cine_check.log
-      grep -qE "^$CINE_OK" build/cine_check.log
+      app_check "cine_check_$variant" "$APP" --cinematics "$variant" --cine-check "build/cine_check/$variant"
+      grep -E "^SPIKE cine check: " "build/cine_check_$variant.log"
+      grep -qE "^$CINE_OK" "build/cine_check_$variant.log"
     done
   fi
-  # an install's movies played as they are (ADR 0018, stage D7): the 1.17 install's Smacker files (each checked
-  # against the reference copy; kp_smk's palette records and sound), Remastered's WebM with the subtitles of its
-  # language (HD2's too when KOPRULU_CINEMATICS asks for it)
+  # cine_check NAME ARGS...: every movie of a source decoded to its end (28), its log build/cine_check_NAME.log
+  cine_check() {
+    local name="$1"
+    shift
+    mkdir -p "build/cine_check/$name"
+    app_check "cine_check_$name" "$APP" "$@" --cine-check "build/cine_check/$name"
+    grep -E "^SPIKE cine check: " "build/cine_check_$name.log"
+    grep -qE "^SPIKE cine check: 28 movies, [1-9][0-9]* frames, 0 failures$" "build/cine_check_$name.log"
+  }
+  # an install's movies played as they are (ADR 0018, stage D7), and its repack's (ADR 0019, stage C4): the 1.17
+  # install's Smacker files (each checked against the reference copy; kp_smk's palette records and sound) and the same
+  # movies transcoded into WebM; Remastered's WebM with the subtitles of a language, from the install and from the
+  # repack's cinematics' and language's groups (HD2's too when KOPRULU_CINEMATICS asks for it)
   if [ -n "${KOPRULU_ORIGINAL:-}" ]; then
     step "product cine check over the 1.17 install: its 28 Smacker movies decoded to their end"
-    mkdir -p build/cine_check/original
-    app_check cine_check_original "$APP" --data "$KOPRULU_ORIGINAL" --cine-check build/cine_check/original
-    grep -E "^SPIKE cine check: " build/cine_check_original.log
-    grep -qE "^SPIKE cine check: 28 movies, [1-9][0-9]* frames, 0 failures$" build/cine_check_original.log
+    cine_check original --data "$KOPRULU_ORIGINAL"
+    step "product cine check over the 1.17 install's repack: its 28 movies as WebM decoded to their end"
+    [ -f build/repack/original/koprulu-cinematics.mpq ]
+    grep -E "^[0-9]+ movies as WebM " build/repack_original.log
+    cine_check original_repack --data build/repack/original
+    grep -qF 'cinematics: sd WebM, 28 movies' build/cine_check_original_repack.err
+    # all 28 against the Python converter's pack (tests/golden/cinematics/converter.json, recorded before stage C4 deleted
+    # it): the same VP9 packets and frame tables, the Vorbis within a thousandth of oggenc's bytes
+    step "the 1.17 repack's movies: the VP9 packets the Python converter's, the Vorbis within a thousandth"
+    env KP_TEST_MOVIES=build/repack/original "$RES_ORIGINAL" build/cmake/kp_test test_convert:movies_equal_the_converters \
+      | tail -1
   fi
   if [ -n "${KOPRULU_SCR:-}" ]; then
     for variant in sd hd2; do
       [ "$variant" = sd ] || case "$CINEMATICS" in both | hd2) ;; *) continue ;; esac
-      step "product cine check over Remastered ($variant): its WebM played directly, with its language's subtitles"
-      mkdir -p "build/cine_check/scr_$variant"
-      app_check "cine_check_scr_$variant" "$APP" --data "$KOPRULU_SCR" --cinematics "$variant" \
-        --cine-check "build/cine_check/scr_$variant"
-      grep -E "^SPIKE cine check: " "build/cine_check_scr_$variant.log"
-      grep -qE "^SPIKE cine check: 28 movies, [1-9][0-9]* frames, 0 failures$" "build/cine_check_scr_$variant.log"
+      step "product cine check over Remastered ($variant) and its repack: its WebM played as they are, subtitled"
+      cine_check "scr_$variant" --data "$KOPRULU_SCR" --cinematics "$variant"
       grep -qE "^SPIKE cine check smk.starintr: subtitle 0 at " "build/cine_check_scr_$variant.log"
+      cine_check "scr_repack_$variant" --data build/repack/scr --cinematics "$variant" --locale ruRU
+      grep -qE "^SPIKE cine check smk.starintr: subtitle 0 at " "build/cine_check_scr_repack_$variant.log"
     done
   fi
   if [ -d "${KOPRULU_GENERATED:-generated}/hd" ]; then

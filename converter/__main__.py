@@ -18,13 +18,6 @@ Commands:
   hd --scr DIR [--variant hd2|hd|all] [--out generated]
                                write StarCraft: Remastered's HD art (x2, x4) as generated/hd/<variant>/
                                packs/<pack>.kpd and tilesets/<name>.kpd for the HD renderer (--graphics)
-  cinematics --data DIR|--scr DIR [--variant sd|hd2|all] [--subtitles auto|none|LOC] [--optional]
-             [--out generated]
-                               write the optional player's generated/video/cinematics-<variant>.kpd: with
-                               --scr Remastered's movies and subtitles as they are; with --data the 1.17
-                               install's Smacker movies transcoded into the SD set (FFmpeg with libvpx-vp9
-                               and oggenc; reused from generated/cache/cinematics/); --optional: without
-                               those tools a warning instead of an error
   dump FILE [--section XXXX]   print a .kpd container in readable form
   scr-compare --data DIR --scr DIR
                                compare Remastered's DAT tables and scripts with the profile's
@@ -38,7 +31,6 @@ Commands:
 from __future__ import annotations
 
 import argparse
-import contextlib
 import logging
 import sys
 from pathlib import Path
@@ -48,16 +40,6 @@ from .mpq.profile import DEFAULT_PROFILE, Profile, Resolver
 from .mpq.stormlib import StormLibError
 
 log = logging.getLogger("converter")
-
-
-def _open_source(args: argparse.Namespace):
-    """The 1.17 install (`--data`) or a StarCraft: Remastered install (`--scr`) as the profile's files."""
-    profile = Profile.load(args.profile)
-    if args.scr:
-        from .casc.source import ScrSource
-
-        return ScrSource(args.scr, profile)
-    return Resolver(args.data, profile)
 
 
 def _console(args: argparse.Namespace) -> int:
@@ -120,44 +102,6 @@ def _hd(args: argparse.Namespace) -> int:
     return 0
 
 
-def _cinematics(args: argparse.Namespace) -> int:
-    """The cinematics for the optional player (generated/video/cinematics-<variant>.kpd; ADR 0015): StarCraft:
-    Remastered's as they are, or the 1.17 install's Smacker movies transcoded into the SD set. --optional: without
-    the tools they need, a warning and nothing written."""
-    from .emit import cinematics, cinematics_smk
-
-    out = Path(args.out)
-    if args.data:
-        if args.variant not in ("sd", "all"):
-            raise cinematics.CinematicsError("the 1.17 install has only the SD movies; --variant hd2 needs --scr")
-        if args.subtitles not in (cinematics.SUBTITLES_AUTO, cinematics.SUBTITLES_NONE):
-            raise cinematics.CinematicsError("the 1.17 install has no subtitles; --subtitles needs --scr")
-        # StarCraft: Remastered's SD set wins over the 1.17 movies whichever was converted first
-        kept = cinematics.remastered_pack(out, "sd", Profile.load(args.profile).data_set_hash())
-        if kept is not None:
-            log.info("cinematics sd: %s is StarCraft: Remastered's set, kept (remove it to convert the 1.17 movies)",
-                     kept)
-            return 0
-    try:
-        (cinematics_smk.require if args.data else cinematics.require)()
-    except cinematics.CinematicsToolsError as e:
-        if not args.optional:
-            raise
-        log.warning("cinematics: none written: %s", e)
-        return 0
-    with _open_source(args) as source:
-        if args.data:
-            # closed here, not when collected: the encodings stop before the archives close
-            with contextlib.closing(cinematics_smk.movies(source, out / cinematics_smk.CACHE)) as movies:
-                cinematics.generate(movies, out, "sd", source.profile.id, source.data_set_hash())
-            return 0
-        subs = cinematics.subtitles(source.storage, cinematics.table()[0], args.subtitles)
-        for variant in (cinematics.VARIANTS if args.variant == "all" else (args.variant,)):
-            cinematics.generate(cinematics.remastered(source.storage, variant), out, variant, source.profile.id,
-                                source.data_set_hash(), subs)
-    return 0
-
-
 def _dump(args: argparse.Namespace) -> int:
     from .kpf.dump import dump
 
@@ -204,12 +148,6 @@ def _scr_digests(args: argparse.Namespace) -> int:
     return 0
 
 
-def _source_arguments(p: argparse.ArgumentParser) -> None:
-    group = p.add_mutually_exclusive_group(required=True)
-    group.add_argument("--data", help="the profile's install (StarCraft.exe and the MPQs)")
-    group.add_argument("--scr", help="a StarCraft: Remastered install (.build.info and Data/) instead")
-
-
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     parser = argparse.ArgumentParser(prog="converter")
@@ -230,19 +168,6 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--variant", choices=("hd2", "hd", "all"), default="all")
     p.add_argument("--out", default="generated")
     p.set_defaults(func=_hd)
-    p = sub.add_parser("cinematics", help="write the cinematics for the optional player: Remastered's, or the 1.17 "
-                                          "install's transcoded into the SD set")
-    _source_arguments(p)
-    p.add_argument("--variant", choices=("sd", "hd2", "all"), default="all",
-                   help="with --scr the sets to write; the 1.17 install has only the SD set")
-    p.add_argument("--subtitles", default="auto",
-                   help="with --scr the movies' subtitles: auto (the install's text locale, else enUS), none, or a "
-                        "locale; the 1.17 install has none")
-    p.add_argument("--optional", action="store_true",
-                   help="without the tools the cinematics need (FFmpeg, its libvpx-vp9 encoder for --data, oggenc), "
-                        "warn and write nothing instead of failing")
-    p.add_argument("--out", default="generated")
-    p.set_defaults(func=_cinematics)
     p = sub.add_parser("dump", help="print a Koprulu container")
     p.add_argument("file")
     p.add_argument("--section")

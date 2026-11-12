@@ -93,6 +93,22 @@ int kp_mpq_add(KpMpq *m, const char *name, const void *data, size_t size, int co
 	return 0;
 }
 
+int kp_mpq_stored_at(KpMpq *m, const char *name, uint64_t *offset)
+{
+	const DWORD OTHERWISE = MPQ_FILE_COMPRESS_MASK | MPQ_FILE_ENCRYPTED | MPQ_FILE_SECTOR_CRC | MPQ_FILE_PATCH_FILE;
+	HANDLE f = NULL;
+	ULONGLONG at = 0, base = 0;
+	DWORD flags = 0;
+	int ok;
+	if (!SFileOpenFileEx(m->h, name, SFILE_OPEN_FROM_MPQ, &f)) return -1;
+	ok = SFileGetFileInfo(f, SFileInfoFlags, &flags, sizeof flags, NULL) && SFileGetFileInfo(f, SFileInfoByteOffset, &at, sizeof at, NULL)
+		&& SFileGetFileInfo(m->h, SFileMpqHeaderOffset, &base, sizeof base, NULL) && !(flags & OTHERWISE);
+	SFileCloseFile(f);
+	if (!ok) return -1;
+	*offset = (uint64_t)(base + at);
+	return 0;
+}
+
 int kp_mpq_close(KpMpq *m)
 {
 	int rc = 0;

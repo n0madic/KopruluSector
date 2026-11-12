@@ -1,58 +1,11 @@
-"""Sound conversion (converter/emit/sound.py, the 1.17 movies' sound) on synthetic data; stock sound grouping with
-KOPRULU_ORIGINAL."""
+"""Stock sound grouping with KOPRULU_ORIGINAL."""
 from __future__ import annotations
 
 import os
-import shutil
 import struct
 import unittest
-from unittest import mock
-
-from converter.emit import sound
-from converter.emit.files import ROOT
-from converter.kpf import fixtures
 
 ORIGINAL = os.environ.get("KOPRULU_ORIGINAL")
-OUT = ROOT / "build" / "unittest" / "packs"
-has_oggenc = unittest.skipIf(shutil.which("oggenc") is None, "oggenc missing")
-
-
-class PacksOutputTest(unittest.TestCase):
-    """Tests that write sound files under OUT, which is recreated for each test."""
-
-    def setUp(self) -> None:
-        shutil.rmtree(OUT, ignore_errors=True)
-        OUT.mkdir(parents=True)
-        self.out = OUT
-
-    def tearDown(self) -> None:
-        shutil.rmtree(OUT, ignore_errors=True)
-
-    @has_oggenc
-    def test_ogg_is_deterministic_and_cached(self):
-        wav = fixtures.fixture_wav(4410)
-        assert sound.ogg_bytes(wav, 7) == sound.ogg_bytes(wav, 7)
-        assert sound.ogg_bytes(wav, 7)[:4] == b"OggS"
-        cache = sound.OggCache(self.out)
-        target = self.out / "a" / "b.ogg"
-        cache.convert([(wav, target)])
-        first = target.read_bytes()
-        cache = sound.OggCache(self.out)
-        cache.convert([(wav, target)])
-        assert cache.converted == 0 and target.read_bytes() == first
-        target.unlink()
-        cache.convert([(wav, target)])
-        assert cache.converted == 1 and target.read_bytes() == first
-        # The stream serial is fixed per output path, so the bytes do not depend on the run.
-        assert struct.unpack_from("<I", first, 14)[0] == sound.serial(target)
-
-    @has_oggenc
-    def test_a_sound_oggenc_refuses_is_a_converter_error(self):
-        with self.assertRaisesRegex(sound.SoundError, "oggenc"):
-            sound.ogg_bytes(b"not a wav", 7)
-        with mock.patch.object(sound.subprocess, "run", side_effect=FileNotFoundError("oggenc")), \
-                self.assertRaisesRegex(sound.SoundError, "vorbis-tools"):
-            sound.ogg_bytes(fixtures.fixture_wav(441), 7)
 
 
 class PacksTest(unittest.TestCase):

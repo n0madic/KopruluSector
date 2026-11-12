@@ -62,41 +62,43 @@ static float sample(const uint8_t *pcm, int bits, int channels, size_t k, int c)
 /* The samples the encoder reads: n frames from frame `at`, a plane per channel */
 typedef void (*Fill)(const void *ctx, float **buf, size_t at, size_t n, int channels);
 
-/* frames of channels at rate as Ogg Vorbis, as oggenc writes them: malloc'd bytes and *out_size, or NULL with the
- * reason. */
-static uint8_t *vorbis(int channels, long rate, size_t frames, Fill fill, const void *ctx, float quality, uint32_t serial,
-	size_t *out_size, char *err, size_t err_size)
+/* Where the encoder's packets go: the three headers (blocksize 0), then the sound's (its block's samples), in order;
+ * end once the last one is in. */
+typedef struct {
+	void (*packet)(void *ctx, ogg_packet *op, int header, long blocksize);
+	void (*end)(void *ctx);
+	void *ctx;
+} Sink;
+
+/* frames of channels at rate encoded by libvorbisenc as oggenc encodes them, each packet given to sink: 0, or -1 with
+ * the reason (the encoder refuses the format). */
+static int encode(int channels, long rate, size_t frames, Fill fill, const void *ctx, float quality, const Sink *sink,
+	char *err, size_t err_size)
 {
 	vorbis_info vi;
 	vorbis_comment vc;
 	vorbis_dsp_state vd;
 	vorbis_block vb;
-	ogg_stream_state os;
-	ogg_page og;
 	ogg_packet op, head, comment, code;
-	Buffer b;
 	size_t k;
 	int eos = 0;
 	vorbis_info_init(&vi);
 	if (vorbis_encode_init_vbr(&vi, channels, rate, quality) != 0) {
 		vorbis_info_clear(&vi);
 		snprintf(err, err_size, "the encoder refuses %ld Hz, %d channels", rate, channels);
-		return NULL;
+		return -1;
 	}
-	memset(&b, 0, sizeof b);
 	vorbis_comment_init(&vc);
 	vorbis_analysis_init(&vd, &vi);
 	vorbis_block_init(&vd, &vb);
-	ogg_stream_init(&os, (int)serial);
 	vorbis_analysis_headerout(&vd, &vc, &head, &comment, &code);
-	ogg_stream_packetin(&os, &head);
-	ogg_stream_packetin(&os, &comment);
-	ogg_stream_packetin(&os, &code);
-	while (ogg_stream_flush(&os, &og)) put_page(&b, &og); /* the headers end their page */
+	sink->packet(sink->ctx, &head, 1, 0);
+	sink->packet(sink->ctx, &comment, 1, 0);
+	sink->packet(sink->ctx, &code, 1, 0);
 	for (k = 0; !eos; k += FEED) {
 		size_t n = k < frames ? (frames - k < FEED ? frames - k : FEED) : 0;
 		if (n == 0) {
-			vorbis_analysis_wrote(&vd, 0); /* the end: the last block is encoded and the last page marked */
+			vorbis_analysis_wrote(&vd, 0); /* the end: the last block is encoded and the last packet marked */
 		} else {
 			fill(ctx, vorbis_analysis_buffer(&vd, (int)n), k, n, channels);
 			vorbis_analysis_wrote(&vd, (int)n);
@@ -104,26 +106,117 @@ static uint8_t *vorbis(int channels, long rate, size_t frames, Fill fill, const 
 		while (vorbis_analysis_blockout(&vd, &vb) == 1) {
 			vorbis_analysis(&vb, NULL);
 			vorbis_bitrate_addblock(&vb);
-			while (vorbis_bitrate_flushpacket(&vd, &op)) {
-				ogg_stream_packetin(&os, &op);
-				while (ogg_stream_pageout(&os, &og)) put_page(&b, &og);
-			}
+			while (vorbis_bitrate_flushpacket(&vd, &op)) sink->packet(sink->ctx, &op, 0, vorbis_packet_blocksize(&vi, &op));
 		}
 		eos = n == 0;
 	}
-	while (ogg_stream_flush(&os, &og)) put_page(&b, &og);
-	ogg_stream_clear(&os);
+	sink->end(sink->ctx);
 	vorbis_block_clear(&vb);
 	vorbis_dsp_clear(&vd);
 	vorbis_comment_clear(&vc);
 	vorbis_info_clear(&vi);
-	if (b.failed) {
-		free(b.data);
-		snprintf(err, err_size, "out of memory");
+	return 0;
+}
+
+/* --- the packets as Ogg pages, as oggenc writes them --- */
+
+typedef struct {
+	ogg_stream_state os;
+	Buffer b;
+	int headers;
+} OggSink;
+
+static void ogg_sink_packet(void *ctx, ogg_packet *op, int header, long blocksize)
+{
+	OggSink *s = (OggSink *)ctx;
+	ogg_page og;
+	(void)blocksize;
+	ogg_stream_packetin(&s->os, op);
+	if (header) {
+		if (++s->headers == 3)
+			while (ogg_stream_flush(&s->os, &og)) put_page(&s->b, &og); /* the headers end their page */
+		return;
+	}
+	while (ogg_stream_pageout(&s->os, &og)) put_page(&s->b, &og);
+}
+
+static void ogg_sink_end(void *ctx)
+{
+	OggSink *s = (OggSink *)ctx;
+	ogg_page og;
+	while (ogg_stream_flush(&s->os, &og)) put_page(&s->b, &og);
+}
+
+/* frames of channels at rate as Ogg Vorbis, as oggenc writes them: malloc'd bytes and *out_size, or NULL with the
+ * reason. */
+static uint8_t *vorbis(int channels, long rate, size_t frames, Fill fill, const void *ctx, float quality, uint32_t serial,
+	size_t *out_size, char *err, size_t err_size)
+{
+	OggSink s;
+	Sink sink;
+	int rc;
+	memset(&s, 0, sizeof s);
+	ogg_stream_init(&s.os, (int)serial);
+	sink.packet = ogg_sink_packet;
+	sink.end = ogg_sink_end;
+	sink.ctx = &s;
+	rc = encode(channels, rate, frames, fill, ctx, quality, &sink, err, err_size);
+	ogg_stream_clear(&s.os);
+	if (rc != 0 || s.b.failed) {
+		if (rc == 0) snprintf(err, err_size, "out of memory");
+		free(s.b.data);
 		return NULL;
 	}
-	*out_size = b.size;
-	return b.data;
+	*out_size = s.b.size;
+	return s.b.data;
+}
+
+/* --- the packets as they are (KpVorbisPackets) --- */
+
+typedef struct {
+	KpVorbisPackets *p;
+	size_t cap; /* the packets' room in ends, granules and blocks */
+	Buffer b;
+	int failed;
+} PacketSink;
+
+static void packet_sink_packet(void *ctx, ogg_packet *op, int header, long blocksize)
+{
+	PacketSink *s = (PacketSink *)ctx;
+	KpVorbisPackets *p = s->p;
+	if (s->failed) return;
+	if ((size_t)p->count == s->cap) {
+		size_t cap = s->cap ? 2 * s->cap : 1024;
+		size_t *ends = (size_t *)realloc(p->ends, cap * sizeof *ends);
+		int64_t *granules;
+		uint32_t *blocks;
+		if (ends) p->ends = ends;
+		granules = ends ? (int64_t *)realloc(p->granules, cap * sizeof *granules) : NULL;
+		if (granules) p->granules = granules;
+		blocks = granules ? (uint32_t *)realloc(p->blocks, cap * sizeof *blocks) : NULL;
+		if (!blocks) {
+			s->failed = 1;
+			return;
+		}
+		p->blocks = blocks;
+		s->cap = cap;
+	}
+	put(&s->b, op->packet, (size_t)op->bytes);
+	p->ends[p->count] = s->b.size;
+	p->granules[p->count] = header ? -1 : (int64_t)op->granulepos;
+	p->blocks[p->count] = header ? 0u : (uint32_t)(blocksize > 0 ? blocksize : 0);
+	p->count++;
+}
+
+static void packet_sink_end(void *ctx) { (void)ctx; }
+
+void kp_vorbis_packets_free(KpVorbisPackets *p)
+{
+	free(p->data);
+	free(p->ends);
+	free(p->granules);
+	free(p->blocks);
+	memset(p, 0, sizeof *p);
 }
 
 typedef struct {
@@ -168,6 +261,37 @@ uint8_t *kp_ogg_from_wav(const uint8_t *wav, size_t size, float quality, uint32_
 	size_t frames;
 	if (pcm_wav(wav, size, &w, &p, &frames, err, err_size) != 0) return NULL;
 	return vorbis(w.channels, (long)w.sample_rate, frames, fill_pcm, &p, quality, serial, out_size, err, err_size);
+}
+
+int kp_vorbis_from_wav(const uint8_t *wav, size_t size, float quality, KpVorbisPackets *out, char *err, size_t err_size)
+{
+	KpWavInfo w;
+	Pcm pcm;
+	PacketSink s;
+	Sink sink;
+	size_t frames;
+	int rc;
+	memset(out, 0, sizeof *out);
+	if (pcm_wav(wav, size, &w, &pcm, &frames, err, err_size) != 0) return -1;
+	memset(&s, 0, sizeof s);
+	s.p = out;
+	sink.packet = packet_sink_packet;
+	sink.end = packet_sink_end;
+	sink.ctx = &s;
+	rc = encode(w.channels, (long)w.sample_rate, frames, fill_pcm, &pcm, quality, &sink, err, err_size);
+	out->data = s.b.data;
+	out->size = s.b.size;
+	if (rc == 0 && (s.failed || s.b.failed || out->count < 4)) {
+		snprintf(err, err_size, s.failed || s.b.failed ? "out of memory" : "the encoder gave no sound");
+		rc = -1;
+	}
+	if (rc != 0) {
+		kp_vorbis_packets_free(out);
+		return -1;
+	}
+	out->rate = w.sample_rate;
+	out->channels = w.channels;
+	return 0;
 }
 
 /* --- a language's speech: mono at 22,050 Hz (ADR 0019, stage C2) --- */

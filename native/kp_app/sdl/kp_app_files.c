@@ -1,6 +1,6 @@
 /*
  * The product's files (plan phase S, stage S5): the converted data read through SDL (a directory on the desktop, the
- * APK's assets on Android, the preloaded package on the web: the HD art, the languages, the cinematics' packs), the
+ * APK's assets on Android, the preloaded package on the web: the HD art, the console's pieces), the
  * original data every game and the interface are built from (ADR 0018: an install or a repack through kp_res; Android's
  * repack read in place from the APK), and the preferences (the profile and the saves) in SDL's preference path; on the web
  * that path is an IndexedDB mount, written back after every write (FS.syncfs).
@@ -106,6 +106,13 @@ static size_t web_size(KpApp *a, const char *path, size_t size)
 		at += n + 1;
 	}
 	return size;
+}
+
+int kp_app_web_beside(KpApp *a, const char *path)
+{
+	size_t root = strlen(KP_APP_WEB_DATA);
+	if (strncmp(path, KP_APP_WEB_DATA, root) == 0) path += root;
+	return web_size(a, path, 0) > 0;
 }
 #endif
 

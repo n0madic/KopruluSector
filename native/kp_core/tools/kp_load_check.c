@@ -1,8 +1,8 @@
 /*
- * Parses every Koprulu container given on the command line (the converter's HD files, console.kpd, the cinematics'
- * packs) with kp_kpf_parse, the checksums verified, for the sanitizer builds (CMakeLists.txt with KP_SANITIZE=ON,
- * tools/ci.sh). Prints one line per file; exits 1 at the first failure. The SD data has no containers (ADR 0018): its
- * readers run over the original files in the C suites.
+ * Parses every Koprulu container given on the command line (the converter's HD files, console.kpd) with kp_kpf_parse,
+ * the checksums verified, for the sanitizer builds (CMakeLists.txt with KP_SANITIZE=ON, tools/ci.sh). Prints one line
+ * per file; exits 1 at the first failure. The SD data has no containers (ADR 0018): its readers run over the original
+ * files in the C suites.
  */
 #include <stdio.h>
 #include <stdlib.h>

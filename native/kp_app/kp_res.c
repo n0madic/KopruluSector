@@ -64,6 +64,9 @@ typedef struct {
 	uint8_t *head;    /* the repack table's Ogg of a WAV: the WAV's header and size */
 	uint32_t head_size, wav_size;
 	uint8_t sha256[KP_SHA256_SIZE]; /* the repack table's: the stored bytes' listed SHA-256 */
+	int ranged;       /* the raw table's: placed by the core's listing in a group read by ranges (archive -1 until it opens) */
+	int group;        /* that group (KpRes.groups) */
+	uint64_t offset;  /* and the bytes' offset in its file */
 } Entry;
 
 typedef struct {
@@ -373,7 +376,7 @@ const char *kp_res_status_name(KpResStatus status)
 {
 	static const char *const NAMES[KP_RES_STATUS_COUNT] = {
 		"missing", "absent", "repacked", "exact", "derived", "differs", "unlisted", "refused", "error",
-		"equivalent", "colour-equal", "approximation", "remastered",
+		"equivalent", "colour-equal", "approximation", "remastered", "converted",
 	};
 	return (unsigned)status < KP_RES_STATUS_COUNT ? NAMES[status] : "?";
 }
@@ -397,14 +400,15 @@ KpResSourceKind kp_res_detect(const char *dir, const KpDefsProfile *profile)
 static int listed_status(const char *word)
 {
 	static const KpResStatus LISTED[] = { KP_RES_EXACT, KP_RES_DERIVED, KP_RES_DIFFERS, KP_RES_UNLISTED,
-		KP_RES_EQUIVALENT, KP_RES_COLOUR_EQUAL, KP_RES_APPROXIMATION, KP_RES_REMASTERED };
+		KP_RES_EQUIVALENT, KP_RES_COLOUR_EQUAL, KP_RES_APPROXIMATION, KP_RES_REMASTERED, KP_RES_CONVERTED };
 	size_t k;
 	for (k = 0; k < sizeof LISTED / sizeof LISTED[0]; k++)
 		if (strcmp(word, kp_res_status_name(LISTED[k])) == 0) return (int)LISTED[k];
 	return -1;
 }
 
-/* A group the core's listing names, "FILE PREFIX", kept (its prefix normalized); the index, or -1. */
+/* A group the core's listing names, "FILE PREFIX" (a group line's) or "FILE" (an in line's), kept (its prefix
+ * normalized); the index, or -1. */
 static int add_group(KpRes *r, const char *spec)
 {
 	char file[KP_RES_GROUP_FILE], prefix[KP_RES_NAME];
@@ -412,7 +416,10 @@ static int add_group(KpRes *r, const char *spec)
 	prefix[0] = 0;
 	if (sscanf(spec, "%127s %511s", file, prefix) < 1) return -1;
 	for (k = 0; k < r->group_count; k++)
-		if (strcmp(r->groups[k].file, file) == 0) return k;
+		if (strcmp(r->groups[k].file, file) == 0) {
+			if (!r->groups[k].prefix[0]) normalize(prefix, r->groups[k].prefix, sizeof r->groups[k].prefix);
+			return k;
+		}
 	if (r->group_count >= KP_RES_GROUPS) return -1;
 	snprintf(r->groups[k].file, sizeof r->groups[k].file, "%s", file);
 	normalize(prefix, r->groups[k].prefix, sizeof r->groups[k].prefix);
@@ -474,7 +481,7 @@ static int listed_file(KpRes *r, int archive, const char *line)
 			return 0;
 		}
 	}
-	if (!(e = map_put(status == KP_RES_REMASTERED ? &r->raw : &r->listed, key))) {
+	if (!(e = map_put(status == KP_RES_REMASTERED || status == KP_RES_CONVERTED ? &r->raw : &r->listed, key))) {
 		free(head);
 		return -1;
 	}
@@ -486,6 +493,36 @@ static int listed_file(KpRes *r, int archive, const char *line)
 	e->head_size = (uint32_t)head_size;
 	e->wav_size = (uint32_t)wav_n;
 	memcpy(e->sha256, sha, KP_SHA256_SIZE);
+	return 0;
+}
+
+/* A line of the core's listing that places a file of a group read by ranges (ADR 0019, stage C4), "in FILE OFFSET
+ * SHA256 SIZE STATUS NAME" (a raw status: remastered, converted), into the raw table with its group and offset; a file
+ * the table does not hold yet is in no open archive (-1) until its group opens (listed_file). 0, or -1 for a line that
+ * does not hold. */
+static int ranged_file(KpRes *r, const char *line)
+{
+	char file[KP_RES_GROUP_FILE], hex[2 * KP_SHA256_SIZE + 1], word[32], key[KP_RES_NAME];
+	unsigned long long offset;
+	unsigned long n;
+	uint8_t sha[KP_SHA256_SIZE];
+	int used = 0, status, g;
+	Entry *e;
+	if (sscanf(line, "%127s %llu %64s %lu %31s %n", file, &offset, hex, &n, word, &used) != 5 || used == 0 || !line[used]
+		|| kp_hex_decode(hex, sha, KP_SHA256_SIZE) != 0 || n > UINT32_MAX
+		|| ((status = listed_status(word)) != KP_RES_REMASTERED && status != KP_RES_CONVERTED) || (g = add_group(r, file)) < 0)
+		return -1;
+	normalize(line + used, key, sizeof key);
+	if (!(e = map_find(&r->raw, key))) {
+		if (!(e = map_put(&r->raw, key))) return -1;
+		e->archive = -1;
+		e->size = (uint32_t)n;
+		e->status = status;
+		memcpy(e->sha256, sha, KP_SHA256_SIZE);
+	}
+	e->ranged = 1;
+	e->group = g;
+	e->offset = (uint64_t)offset;
 	return 0;
 }
 
@@ -519,9 +556,9 @@ static int find_repack(const KpRes *r, const char *dir, const char *file, char *
 	return r->repack_file ? r->repack_file(r->repack_ctx, file, out, size) : 0;
 }
 
-/* A repack's listing: "koprulu repack 3", "profile ID", "source WHAT", "group FILE PREFIX" lines (the core's: its
- * groups, those beside it, in dir or KpResConfig.repack_file's when dir is NULL, added), then a file a line
- * (listed_file). 0, or -1 with the reason (another profile, a broken listing), its lines then unapplied. */
+/* A repack's listing: "koprulu repack 4", "profile ID", "source WHAT", "group FILE PREFIX" lines (the core's: its
+ * groups, those beside it, in dir or KpResConfig.repack_file's when dir is NULL, added), "in ..." lines (the core's:
+ * the files of the groups read by ranges, ranged_file), then a file a line (listed_file). 0, or -1 with the reason (another profile, a broken listing), its lines then unapplied. */
 static int read_listing(KpRes *r, int archive, const char *dir, char *err, size_t err_size)
 {
 	size_t size = 0;
@@ -549,7 +586,7 @@ static int read_listing(KpRes *r, int archive, const char *dir, char *err, size_
 			if (found < 0) say(r, "res: %s (its files fall back to the install)", path, NULL);
 			else if (found && add_repack(r, path, r->groups[g].file, dir, why2, sizeof why2) != 0)
 				say(r, "res: %s (its files fall back to the install)", why2, NULL);
-		} else if (listed_file(r, archive, line) != 0) {
+		} else if (strncmp(line, "in ", 3) == 0 ? ranged_file(r, line + 3) != 0 : listed_file(r, archive, line) != 0) {
 			bad++;
 		}
 	}
@@ -1100,12 +1137,13 @@ uint8_t *kp_res_head(KpRes *r, const char *name, size_t want, size_t *got, uint6
 /* --- Remastered's own files by their CASC names (ADR 0019, stage C2) --- */
 
 /* A repack's raw entry as listed: its size (a CHK's SHA-256 too: a language's map times its game), NULL when it has
- * none or its copy differs (logged: the install's is read). */
+ * none, its group is not open (a group read by ranges) or its copy differs (logged: the install's is read). */
 static uint8_t *read_raw_repack(KpRes *r, const char *key, const Entry *e, size_t *size)
 {
 	char name[KP_RES_NAME], why[KP_RES_MESSAGE];
 	size_t got = 0;
 	uint8_t *b;
+	if (e->archive < 0) return NULL;
 	mpq_name(key, name, sizeof name);
 	b = kp_mpq_read(r->repack[e->archive].mpq, name, &got, why, sizeof why);
 	if (b && got == e->size && (!simulation_input(key) || digest_is(b, got, e->sha256))) {
@@ -1126,7 +1164,7 @@ uint8_t *kp_res_raw_read(KpRes *r, const char *raw, size_t *size, char *err, siz
 	if (err_size) err[0] = 0;
 	normalize(raw, key, sizeof key);
 	if ((e = map_find(&r->raw, key)) != NULL && (b = read_raw_repack(r, key, e, size)) != NULL) {
-		seen(r, key, KP_RES_REMASTERED, r->repack[e->archive].file);
+		seen(r, key, (KpResStatus)e->status, r->repack[e->archive].file);
 		return b;
 	}
 	if (!r->casc || !(b = kp_casc_read(r->casc, raw, size, err, err_size))) return NULL;
@@ -1169,10 +1207,10 @@ uint8_t *kp_res_raw_head(KpRes *r, const char *raw, size_t want, size_t *got, ui
 	*total = 0;
 	if (err_size) err[0] = 0;
 	normalize(raw, key, sizeof key);
-	if ((e = map_find(&r->raw, key)) != NULL) {
+	if ((e = map_find(&r->raw, key)) != NULL && e->archive >= 0) {
 		KpMpqFile *f;
 		if (e->head) {
-			if ((b = ogg_head(e, want, got, total, err, err_size)) != NULL) seen(r, key, KP_RES_REMASTERED, r->repack[e->archive].file);
+			if ((b = ogg_head(e, want, got, total, err, err_size)) != NULL) seen(r, key, (KpResStatus)e->status, r->repack[e->archive].file);
 			return b;
 		}
 		mpq_name(key, name, sizeof name);
@@ -1180,7 +1218,7 @@ uint8_t *kp_res_raw_head(KpRes *r, const char *raw, size_t want, size_t *got, ui
 			b = head_of(mpq_file_read, f, raw, want, *total, got, err, err_size);
 		kp_mpq_file_close(f);
 		if (b) {
-			seen(r, key, KP_RES_REMASTERED, r->repack[e->archive].file);
+			seen(r, key, (KpResStatus)e->status, r->repack[e->archive].file);
 			return b;
 		}
 		say(r, "res: %s in %s differs from its listing or cannot be read: the install's is read", name, r->repack[e->archive].name);
@@ -1199,6 +1237,18 @@ int kp_res_raw_held(KpRes *r, const char *raw)
 	char key[KP_RES_NAME];
 	normalize(raw, key, sizeof key);
 	return map_find(&r->raw, key) != NULL || (r->casc && kp_casc_held(r->casc, raw));
+}
+
+int kp_res_raw_range(const KpRes *r, const char *raw, char *file, size_t file_size, uint64_t *offset, uint32_t *size)
+{
+	char key[KP_RES_NAME];
+	const Entry *e;
+	normalize(raw, key, sizeof key);
+	if (!(e = map_find(&r->raw, key)) || !e->ranged || e->archive >= 0) return 0; /* none, or its group is open */
+	snprintf(file, file_size, "%s", r->groups[e->group].file);
+	*offset = e->offset;
+	*size = e->size;
+	return 1;
 }
 
 int kp_res_stream_read(KpResStream *s, uint64_t offset, void *out, size_t size)

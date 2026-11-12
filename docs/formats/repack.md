@@ -4,45 +4,51 @@
 
 ## The archives
 
-MPQ version 1, written by StormLib, with a `(listfile)` and no `(attributes)` (StormLib reads and writes its 64-bit file times at unaligned addresses). Each file is compressed with zlib on its own, except an Ogg Vorbis and a Smacker movie, which are stored as they are.
+MPQ version 1, written by StormLib, with a `(listfile)` and no `(attributes)` (StormLib reads and writes its 64-bit file times at unaligned addresses). Each file is compressed with zlib on its own, except an Ogg Vorbis and a movie (WebM), which are stored as they are.
 
 | File | Holds |
 |---|---|
-| `koprulu.mpq` | everything but the cinematics (`--single`: the computers' bundles) |
+| `koprulu.mpq` | everything but the cinematics and the languages (`--single`: the computers' bundles) |
 | `koprulu-core.mpq` | what the program reads when it starts: the DAT, the scripts, the interface, the fonts, the palettes, the tilesets, every GRP (grpmeta reads their frames), every portrait, the sounds |
 | `koprulu-<campaign>-<mission>.mpq` | a mission directory's files, `campaign\<campaign>\<mission>\` (its CHK and speech): 68 |
 | `koprulu-music.mpq` | `music\` |
-| `koprulu-cinematics.mpq` | `smk\`: the 1.17 install's 28 movies (Remastered's WebM are not repacked); apart from `koprulu.mpq` with `--single` too |
+| `koprulu-cinematics.mpq` | `sd/smk/`: the SD set by Remastered's names (`SD/smk/<name>.webm`, ADR 0019, stage C4): StarCraft: Remastered's WebM as they are (status `remastered`), or the 1.17 install's 28 Smacker movies transcoded into WebM (status `converted`, below); apart from `koprulu.mpq` with `--single` too, read by ranges |
+| `koprulu-cinematics-hd2.mpq` | `hd2/smk/`: Remastered's HD2 set as it is; apart and read by ranges as the SD set |
 | `koprulu-locale-<loc>.mpq` | `locales/<loc>/`: a language from StarCraft: Remastered (ADR 0019, stages C2 and C3), by its CASC names: the files its text is built from (the XML strings, the glue's `rez/*.txt`, the subtitles' `.srt`: exactly the names `kp_locale_names` records the runtime reading), each campaign mission's map (`Assets/campaign/<c>/<m>/staredit/scenario.chk`: its strings, and its triggers' TIME the mission takes), its spoken lines (the mission's WAV strings' paths, `.ogg`) and the unit voices (sfxdata's paths, `.wav`); apart from `koprulu.mpq` with `--single` too; one per language the install holds, or those `--locales` names (`none`: no language). From Remastered the core holds its TrueType fonts (`font/EUROSTILE-REG.TTF`, `font/EUROSTILEEXT-REG.TTF`), which the languages' glyphs are drawn from |
 
-A group with no file is not written. `--out` defaults to `generated/repack`, with `--single` to `generated/repack-single`: the folders a bundle stages (`tools/product.sh`, under its data's `generated/`) and the app looks in when no `--data` names a source. A bundle carries no cinematics' group (the cinematics packs show the movies). The files are the input manifest's (`defs/scr/inputs-<profile>.json`) but its absent names, in its sorted order, then the 1.17 cinematics, then the names a `--res-log` of a run read unlisted, then each language's texts and speech; a file the source lacks, or holds a damaged copy of (one StormLib cannot read whole), is left out and reported. A language's file the install lacks or holds empty (Remastered's silent stand-ins) is left out and counted: the game plays the base's there.
+A group with no file is not written. `--out` defaults to `generated/repack`, with `--single` to `generated/repack-single`: the folders a bundle stages (`tools/product.sh`, under its data's `generated/`) and the app looks in when no `--data` names a source. A bundle carries the cinematics' groups `KOPRULU_CINEMATICS` picks (`auto`: HD2 where the repack has it, else SD). The files are the input manifest's (`defs/scr/inputs-<profile>.json`) but its absent names, in its sorted order, then the 1.17 cinematics, then the names a `--res-log` of a run read unlisted, then Remastered's movies (both sets) and the base's subtitles the install holds (`locales/enus/assets/smk/<name>.srt`, in the core), then each language's texts and speech; a file the source lacks, or holds a damaged copy of (one StormLib cannot read whole), is left out and reported. A language's file the install lacks or holds empty (Remastered's silent stand-ins) is left out and counted: the game plays the base's there.
 
 ## The listing `(koprulu)`
 
 Each archive holds one, in UTF-8, a line each:
 
 ```
-koprulu repack 3
+koprulu repack 4
 profile <profile id>
 source <1.17|remastered>
 group <file> <prefix>
+in <file> <offset> <sha256> <size> <status> <name>
 <sha256> <size> <status> <name>
 <sha256> <size> <status> ogg <wav sha256> <wav size> <wav header> <name>
 ```
 
-Version 3 (stage C2) added the `remastered` status and the language groups; `kp_res` refuses version 2, and the app
-then reads the install (`make repack` writes the repack again).
+Version 3 (stage C2) added the `remastered` status and the language groups; version 4 (stage C4) the `in` lines, the
+`converted` status and the movies' sets. `kp_res` refuses an older version, and the app then reads the install
+(`make repack` writes the repack again).
 A language group of stage C2 holds no texts: the language's text then stays the base's, with one line in the log
 (`make repack` writes it again).
 
 - `group` lines are the core's only: a group's file and the normalized prefix of its names (lower case, `/`). `kp_res` adds a group lying beside the core when it opens it; `kp_res_group_wanted` names the group of a name while it is not open (the web fetches it, then `kp_res_add_repack`).
-- `<sha256>` and `<size>` are the stored bytes'. `<status>` is the source's: `exact`, `derived`, `differs`, `equivalent`, `colour-equal`, `approximation` (Remastered's statuses, `converter/casc/source.py`), `unlisted` (a name the manifest does not hold), or `remastered`: a file of StarCraft: Remastered's own by its CASC name, which no manifest lists (a language's texts and speech, the TrueType fonts). `<name>` is the source's spelling, `\` separated; a `remastered` file's is its CASC name normalized (lower case, `/`). `kp_res_raw_read`, `kp_res_raw_head` and `kp_res_raw_files` read the `remastered` files by their CASC names, a repack's copy before the install's (its size checked, a CHK's SHA-256 too), and `kp_res_raw_held` tells whether either has one.
+- `in` lines are the core's only: a file of a group read by ranges (the movies' groups), the group's file and the offset of its bytes there (stored as they are, so that the bytes are the file), then the file's line. `kp_res_raw_range` names a file's group and range while that group is not open: the web fetches a movie alone by an HTTP Range request on the group beside the page (`kp_app_cine.c`). A computer or a phone opens every group it carries at start, and reads the movie through StormLib.
+- `<sha256>` and `<size>` are the stored bytes'. `<status>` is the source's: `exact`, `derived`, `differs`, `equivalent`, `colour-equal`, `approximation` (Remastered's statuses, `converter/casc/source.py`), `unlisted` (a name the manifest does not hold), or `remastered`: a file of StarCraft: Remastered's own by its CASC name, which no manifest lists (a language's texts and speech, the TrueType fonts, the movies), or `converted`: the converter's own of an install's file, stored by a Remastered name (a 1.17 movie as WebM). `<name>` is the source's spelling, `\` separated; a `remastered` file's is its CASC name normalized (lower case, `/`). `kp_res_raw_read`, `kp_res_raw_head` and `kp_res_raw_files` read the `remastered` files by their CASC names, a repack's copy before the install's (its size checked, a CHK's SHA-256 too), and `kp_res_raw_held` tells whether either has one.
 - `ogg`: a WAV stored as Ogg Vorbis (libvorbisenc at `-q 3`, the CRC-32 of the normalized name as the stream's serial; the bytes can differ by processor, what they decode to cannot beyond the encoder's rounding), done only when the Ogg is smaller and the WAV's header, up to its data chunk, fits in 4,096 bytes. The WAV's digest, size and header (hexadecimal) follow: `kp_res_head` answers them for the WAV (the game computes the sounds' durations from the header), `kp_res_read` gives the Ogg (SDL3_mixer tells the formats apart by their bytes).
 - A language's speech is encoded by `kp_ogg_speech`: mono (the channels averaged), a 44,100 Hz sound halved to 22,050 Hz (a 65-tap Blackman-windowed sinc), the same quality and serial; a line (Remastered's Ogg Vorbis, decoded by libvorbis) is replaced by its Ogg when that is smaller, a voice (a WAV: 16- or 24-bit, Remastered's deDE keeps a few at 24) kept as `ogg` with its WAV's header, so that the interface's talking durations stay the original's. The encoded files are kept in the cache as `<sha256>-q3-s<serial>-speech.ogg`.
 
+- A 1.17 movie (`smk\<name>.smk`, checked against `defs/campaign/cinematics.json`'s size and SHA-256) is stored as `sd/smk/<name>.webm` (`kp_movie.c`): the frames kp_cine's player decodes as VP9 profile 1, 4:4:4 sRGB (the palette's colours as G, B, R planes, without loss before the encoder) at the movie's own size and exact frame rate, constant quality 32 at `--cpu-used 2`, a key frame at least every 128 frames, one thread; the first sound track as Vorbis at `-q 3` (libvorbisenc); written by `kp_webm_write.c` and read back by the player's reader (nestegg) before it is kept: its packets and its sound's length as written. Each is kept in the cache as `<smk sha256>-<KP_MOVIE_SETTINGS>.webm`; the 28 take a few minutes on a laptop's cores, the cache makes a second run quick. The movies are 1.17's own frames: no subtitles (the 1.17 install has none).
+
 ## Android: the groups read in place
 
-An Android bundle carries its groups in the APK's assets, `generated/repack/` (`tools/product.sh`), stored uncompressed (`tools/native/android_app.sh`'s `noCompress`). The app reads them in place (`kp_app_files.c` `apk_repack_file`, `KpResConfig.repack_file`): `AAsset_openFileDescriptor64` gives a group as the APK's descriptor, the group's offset and its length, and StormLib opens the archive by the name `fd:N:OFFSET:LENGTH` (`kp_mpq_slice_name`; its POSIX file streams patched for that, `tools/toolchain/patches/StormLib-9.40/`), through a descriptor of its own (`dup`) read with `pread`. The core is asked for first, then each group its listing names; a group the APK does not hold (the cinematics') is not open. A group stored compressed is refused with its name: the core then leaves no repack. Until 2026-11-11 the app copied the groups out of the APK into its preference path (`repack.txt`, its SHA-256 checked on the copy): 140 MB more on the phone.
+An Android bundle carries its groups in the APK's assets, `generated/repack/` (`tools/product.sh`), stored uncompressed (`tools/native/android_app.sh`'s `noCompress`). The app reads them in place (`kp_app_files.c` `apk_repack_file`, `KpResConfig.repack_file`): `AAsset_openFileDescriptor64` gives a group as the APK's descriptor, the group's offset and its length, and StormLib opens the archive by the name `fd:N:OFFSET:LENGTH` (`kp_mpq_slice_name`; its POSIX file streams patched for that, `tools/toolchain/patches/StormLib-9.40/`), through a descriptor of its own (`dup`) read with `pread`. The core is asked for first, then each group its listing names; a group the APK does not hold (a cinematics' set the bundle left out) is not open. A group stored compressed is refused with its name: the core then leaves no repack. Until 2026-11-11 the app copied the groups out of the APK into its preference path (`repack.txt`, its SHA-256 checked on the copy): 140 MB more on the phone.
 
 ## Checks
 

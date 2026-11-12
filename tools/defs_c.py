@@ -69,7 +69,7 @@ def built_tables() -> list[tuple[str, bytes]]:
     record, u16 length, its UTF-8), the fonts' plaintext files (FNTP) and each tileset's colour cycles (CYCn, the
     container's CYCL). Stage D4: the CHK loader tables (CHKL, chk.loader_section) and each campaign mission's packs
     (MPAK: u16 count; per mission by its lowercased directory u8 length, the directory, its PACK payload). Stage D7: the
-    cinematics an install's movies are played as (CINM, cinematics_smk.catalog_section). Stage C1 (ADR 0019): each test
+    cinematics an install's movies are played as (CINM, cinematics_catalog). Stage C1 (ADR 0019): each test
     scenario's packs for kp_convert scenarios' index (SPAK: as MPAK, by the scenario's name). Stage C2: the languages
     (LANG, defs/l10n/locales.json's in its order, the base's first: u8 count; per language u8 length and its ID, u8
     length and its own name in UTF-8) and the missions whose language's triggers may differ from the base's in more than
@@ -77,7 +77,6 @@ def built_tables() -> list[tuple[str, bytes]]:
     (l10n_tables).
     """
     from converter import missions
-    from converter.emit import cinematics_smk
     from converter.formats import chk, dialog, palette
     from converter.kpf import kpd, kpm
 
@@ -107,13 +106,28 @@ def built_tables() -> list[tuple[str, bytes]]:
     packs = sorted((n.lower().encode("latin-1"), p) for n, p in missions.load_scenario_packs(PROFILE).items())
     out.append(("SPAK", struct.pack("<H", len(packs)) + b"".join(bytes([len(n)]) + n + kpm.packs_payload(p)
                                                                for n, p in packs)))
-    out.append(("CINM", cinematics_smk.catalog_section()))
+    out.append(("CINM", cinematics_catalog()))
     l10n = json.loads((ROOT / "defs/l10n/locales.json").read_text(encoding="utf-8"))
     out.append(("LANG", bytes([len(l10n["locales"])]) + b"".join(
         bytes([len(i)]) + i + bytes([len(n)]) + n for i, n in ((r["id"].encode(), r["name"].encode()) for r in l10n["locales"]))))
     out.append(("SPEX", names_table([f"{e['locale']} {e['mission']}" for e in l10n.get("speech", ())])))
     out += l10n_tables(l10n)
     return out
+
+
+def cinematics_catalog() -> bytes:
+    """CINM, the movies the runtime plays (ADR 0018, stage D7; native kp_cine_catalog): u16 movies, u16 preludes; per
+    movie of defs/campaign/cinematics.json's `names` in its order u8 length, its name, u32 size and SHA-256 of its
+    Smacker copy in the reference 1.17 install (`smk`); per prelude u8 cinematic, u8 prelude."""
+    raw = json.loads((ROOT / "defs/campaign/cinematics.json").read_text(encoding="utf-8"))
+    out = bytearray(struct.pack("<HH", len(raw["names"]), len(raw["preludes"])))
+    for name in raw["names"]:
+        size, digest = raw["smk"][name]
+        encoded = name.encode("ascii")
+        out += bytes([len(encoded)]) + encoded + struct.pack("<I", size) + bytes.fromhex(digest)
+    for cinematic, prelude in raw["preludes"]:
+        out += struct.pack("<BB", cinematic, prelude)
+    return bytes(out)
 
 
 def text16(text: str) -> bytes:

@@ -24,9 +24,9 @@
  *       its SHA-256): <out>/icon/ with icon-<size>.png, icon.ico, icon.icns and the ios/, web/ and android/res/ files
  *   repack DIR [--out DIR] [--single] [--wav] [--res-log FILE] [--cache DIR] [--threads N] [--locales LIST]
  *       the koprulu*.mpq repack of an install (kp_repack.h): its groups into generated/repack, or with --single one
- *       koprulu.mpq (the cinematics' and the languages' groups beside it) into generated/repack-single; a WAV as Ogg
- *       Vorbis when that is smaller (--wav keeps the WAVs; each encoded once into --cache,
- *       generated/cache/repack-vorbis); --res-log: a run's kp_res log, the names it read unlisted go in too;
+ *       koprulu.mpq (the movies' sets' and the languages' groups beside it) into generated/repack-single; a WAV as Ogg
+ *       Vorbis when that is smaller (--wav keeps the WAVs), a 1.17 movie as WebM (each encoded once into --cache,
+ *       generated/cache/repack); --res-log: a run's kp_res log, the names it read unlisted go in too;
  *       --locales: the languages that go in (their texts and speech), each its koprulu-locale-<locale>.mpq
  *       ("ruRU,deDE"; "none"; by default every language of the profile but the base's the install holds)
  *   locale-check DIR [--locale L|all] [--out generated]
@@ -409,7 +409,7 @@ static int cmd_repack(int argc, char **argv)
 	int i, shown = 0, rc, files = 0, statuses_shown = 0;
 	KpRes *res;
 	memset(&c, 0, sizeof c);
-	c.cache = "generated/cache/repack-vorbis";
+	c.cache = "generated/cache/repack";
 	c.log = warn_line;
 	for (i = 0; i < argc; i++) {
 		if (strcmp(argv[i], "--out") == 0 && i + 1 < argc) c.out = argv[++i];
@@ -462,13 +462,17 @@ static int cmd_repack(int argc, char **argv)
 			if (rep->statuses[i]) printf("%s%d %s", statuses_shown++ ? ", " : "", rep->statuses[i], kp_res_status_name((KpResStatus)i));
 		printf("), %d WAVs as Ogg Vorbis (%.1f MB for %.1f MB), %d encoded\n", rep->ogg, (double)rep->ogg_bytes / 1e6,
 			(double)rep->wav_bytes / 1e6, rep->encoded);
+		if (rep->movies)
+			printf("%d movies as WebM (%.1f MB for %.1f MB of Smacker)\n", rep->movies, (double)rep->movie_bytes / 1e6,
+				(double)rep->movie_from / 1e6);
 		if (c.locale_count > 0) {
 			printf("speech of");
 			for (i = 0; i < c.locale_count; i++) printf(" %s", locales[i]);
-			printf(": %d lines and voices as Ogg Vorbis at %d Hz (%.1f MB for %.1f MB), %d names the install lacks or keeps "
-				"empty (the base's)\n", rep->speech, KP_OGG_SPEECH_RATE, (double)rep->speech_bytes / 1e6,
-				(double)rep->speech_from / 1e6, rep->speech_absent);
+			printf(": %d lines and voices as Ogg Vorbis at %d Hz (%.1f MB for %.1f MB)\n", rep->speech, KP_OGG_SPEECH_RATE,
+				(double)rep->speech_bytes / 1e6, (double)rep->speech_from / 1e6);
 		}
+		if (rep->raw_absent)
+			printf("%d Remastered names the install lacks or keeps empty (a language's: the base's played)\n", rep->raw_absent);
 	}
 	free(rep);
 	free(extra);

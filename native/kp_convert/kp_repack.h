@@ -6,10 +6,15 @@
  * The files are the input manifest's (kp_defs.h) in its order (a Remastered rebuild's palette is kept for the files
  * after it: the order kp_res reads them in), then a 1.17 install's movies (the profile's CINM, each checked against its
  * reference copy's size and SHA-256), then the names a run read unlisted (its --res-log). From a Remastered install the
- * copies and rebuilds keep kp_res's statuses and no movies go in (Remastered's are WebM, which the runtime reads from the
- * install). A file the source lacks (a 1.17 install without its CDs' archives: music, movies, speech), or holds a
- * damaged copy of (one StormLib cannot read whole), is left out and reported; a 1.17 copy kp_res refuses (it differs
- * from the manifest) stops the repack.
+ * copies and rebuilds keep kp_res's statuses. A file the source lacks (a 1.17 install without its CDs' archives:
+ * music, movies, speech), or holds a damaged copy of (one StormLib cannot read whole), is left out and reported; a 1.17
+ * copy kp_res refuses (it differs from the manifest) stops the repack.
+ *
+ * The movies (ADR 0019, stage C4) go in under Remastered's names, which the runtime plays them by from either source
+ * (kp_cine.h KP_CINE_WEBM_FORMAT): a 1.17 install's transcoded into WebM (kp_movie.h; encoded once into the cache as
+ * <SMK SHA-256>-KP_MOVIE_SETTINGS.webm, listed "converted") as the SD set; a Remastered install's SD and HD2 sets as
+ * they are, with the base language's subtitles the install holds (KP_LOCALE_SUBTITLES; a language's own go with its
+ * text). A movie that does not transcode stops the repack.
  *
  * A WAV goes in as Ogg Vorbis when that is smaller (kp_ogg.h, the CRC-32 of its normalized name as the stream serial;
  * encoded once into the cache): the listing keeps the WAV's digest, size and header up to its data chunk, which the
@@ -24,21 +29,26 @@
  * listing, as the base's sounds do.
  *
  * Groups, for a build that fetches them when it needs them (the web): koprulu-core.mpq, what the program reads when it
- * starts; a group per mission directory, its CHK and speech (koprulu-<campaign>-<mission>.mpq); koprulu-music.mpq;
- * koprulu-cinematics.mpq; a language's speech, koprulu-locale-<locale>.mpq. The core's listing names each group with
- * the prefix of its names. A single repack is one koprulu.mpq instead (the desktops), the cinematics and each
- * language still apart in their groups, which its listing names (a bundle takes the languages it ships).
+ * starts (the base language's subtitles too); a group per mission directory, its CHK and speech
+ * (koprulu-<campaign>-<mission>.mpq); koprulu-music.mpq; the movies' sets, koprulu-cinematics.mpq (SD) and
+ * koprulu-cinematics-hd2.mpq; a language's speech and text, koprulu-locale-<locale>.mpq. The core's listing names each
+ * group with the prefix of its names. A single repack is one koprulu.mpq instead (the desktops), the movies' sets and
+ * each language still apart in their groups, which its listing names (a bundle takes the sets and languages it
+ * ships). The movies' groups are read by ranges (the web fetches a movie alone): their files stored as they are, the
+ * core's listing places each.
  *
  * The listing (a line each):
- *     koprulu repack 3
+ *     koprulu repack 4
  *     profile <id>
  *     source <1.17|remastered>
  *     group <file> <prefix>                          the core's: a group and the normalized prefix of its names
+ *     in <file> <offset> <sha256> <size> <status> <name>   the core's: a file of a group read by ranges, its bytes there
  *     <sha256> <size> <status> <name>
  *     <sha256> <size> <status> ogg <wav sha256> <wav size> <wav header, hex> <name>
  * The digest and size are the stored bytes'; <status> the source's (kp_res_status_name: exact, derived, differs,
  * equivalent, colour-equal, approximation, unlisted; remastered: a Remastered file by its own name, which no manifest
- * lists); <name> the normalized name with '\' separators.
+ * lists; converted: the converter's of the install's, by a Remastered name); <name> the normalized name with '\'
+ * separators; <offset> where the group's file holds the bytes.
  */
 #ifndef KP_REPACK_H
 #define KP_REPACK_H
@@ -60,8 +70,8 @@ extern "C" {
 typedef struct {
 	const char *out;        /* the folder; the koprulu*.mpq there before are removed */
 	int single;             /* one koprulu.mpq and the cinematics' group, instead of the groups */
-	int wav;                /* the WAVs as they are (no Ogg Vorbis) */
-	const char *cache;      /* the folder each WAV's Ogg Vorbis is kept in (<WAV SHA-256>-q3-s<serial>.ogg), NULL none */
+	int wav;                /* the sounds as they are (no Ogg Vorbis; a 1.17 movie is WebM all the same) */
+	const char *cache;      /* the folder the encoded files are kept in (a WAV's Ogg Vorbis, a 1.17 movie's WebM), NULL none */
 	const char *const *extra; /* names a run read unlisted (kp_res's log), the manifest's left out */
 	int extra_count;
 	const char *const *locales; /* the languages whose speech goes in ("ruRU"; the install's: kp_res_raw_read) */
@@ -83,14 +93,17 @@ typedef struct {
 	char missing_names[KP_REPACK_NAMES][KP_REPACK_NAME], damaged_names[KP_REPACK_NAMES][KP_REPACK_NAME];
 	int ogg, encoded;
 	uint64_t wav_bytes, ogg_bytes; /* the WAVs the Oggs replace, and the Oggs */
-	int speech, speech_absent;          /* a language's lines and voices re-encoded; its names the install lacks */
+	int speech;                         /* a language's lines and voices re-encoded */
 	uint64_t speech_from, speech_bytes; /* the files the re-encoded ones replace, and they */
+	int movies;                         /* a 1.17 install's movies as WebM */
+	uint64_t movie_from, movie_bytes;   /* their SMKs, and they */
+	int raw_absent;                     /* Remastered names the install lacks or keeps empty (a language's: the base's) */
 } KpRepackReport;
 
 /* The group file of a normalized name and the prefix of its group's names into out and prefix: a mission directory's
- * "campaign/<campaign>/<mission>/" (koprulu-<campaign>-<mission>.mpq), "music/" (koprulu-music.mpq), "smk/"
- * (koprulu-cinematics.mpq), a language's "locales/<locale>/" (koprulu-locale-<locale>.mpq, the locale in lower case);
- * the core's is koprulu-core.mpq and "". */
+ * "campaign/<campaign>/<mission>/" (koprulu-<campaign>-<mission>.mpq), "music/" (koprulu-music.mpq), "sd/smk/"
+ * (koprulu-cinematics.mpq), "hd2/smk/" (koprulu-cinematics-hd2.mpq), a language's but the base's "locales/<locale>/"
+ * (koprulu-locale-<locale>.mpq, the locale in lower case); the core's is koprulu-core.mpq and "". */
 void kp_repack_group(const char *key, char *out, size_t size, char *prefix, size_t prefix_size);
 
 /* The repack of an install's files (res holds one install and no repack) into c->out: 0, or -1 with the reason (the

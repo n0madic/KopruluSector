@@ -1,19 +1,16 @@
 /*
- * The cinematics of an install played as they are (ADR 0018, stage D7): kp_smk's palette records and sound (Smacker's
- * PCM and Huffman DPCM) over a movie written here, the subtitles of an .srt (converter/formats/srt.py's rules), a
- * movie in memory (KpCineMovie: an SMK's, a WebM's) played by kp_cine's player; with KP_TEST_ORIGINAL the 28 Smacker
- * movies of the 1.17 install decode to FFmpeg's frames and sound (FFMPEG_GOLDEN: SHA-256 of each frame's indices and
- * palette as FFmpeg's pal8, and of the sound as s16le), with KP_TEST_SCR Remastered's WebM split into the converted
- * packs' packets, sound and subtitles (generated/video/cinematics-<sd|hd2>.kpd, when converted).
+ * The cinematics of the data played as they are (ADR 0018, stage D7; ADR 0019, stage C4): kp_smk's palette records
+ * and sound (Smacker's PCM and Huffman DPCM) over a movie written here, the subtitles of an .srt, a movie in memory
+ * (KpCineMovie: an SMK's, a WebM's) played by kp_cine's player, a run of an install's movies; with KP_TEST_ORIGINAL the
+ * 28 Smacker movies of the 1.17 install decode to FFmpeg's frames and sound (FFMPEG_GOLDEN: SHA-256 of each frame's
+ * indices and palette as FFmpeg's pal8, and of the sound as s16le).
  */
-#define _POSIX_C_SOURCE 200809L /* fseeko, ftello: the packs pass 2 GB on a 32-bit off_t's systems */
 #include "kp_test.h"
 #include "kp_test_app.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/types.h>
 
 #include "kp_cine.h"
 #include "kp_defs.h"
@@ -21,7 +18,6 @@
 #include "kp_res.h"
 #include "kp_sha256.h"
 #include "kp_smk.h"
-#include "kp_webm.h"
 
 #define W 16
 #define H 8
@@ -29,58 +25,7 @@
 #define FILL 7 /* every pixel's index */
 #define KPW_FIXTURE "tests/fixtures/generated/kpf/movie.kpw"
 #define KPW_HEADER (24 + 768) /* a KPW1's header and palette before its WebM */
-#define CINE_PACK "tests/fixtures/generated/kpf/cine.kpd"
-#define CINE_WEBM0 "tests/fixtures/generated/kpf/cine0.webm" /* the WebM the pack's clips were split from */
-#define CINE_WEBM1 "tests/fixtures/generated/kpf/cine1.webm"
-#define CINE_SRT1 "tests/fixtures/generated/kpf/cine1.srt" /* the second one's subtitles */
 #define FFMPEG_GOLDEN "tests/golden/oracle/cinematics/smk_ffmpeg.json" /* tools/oracle/export_smk_ffmpeg.py */
-
-typedef struct {
-	const uint8_t *data;
-	size_t size;
-} Memory;
-
-static int read_memory(void *ctx, uint64_t offset, uint8_t *out, size_t size)
-{
-	const Memory *m = (const Memory *)ctx;
-	if (offset > m->size || size > m->size - offset) return -1;
-	memcpy(out, m->data + offset, size);
-	return 0;
-}
-
-static void free_movie(void *m) { kp_cine_movie_free((KpCineMovie *)m); }
-static void close_file(void *f) { fclose((FILE *)f); }
-
-/* --- a bit writer, least significant bit first (Smacker's) --- */
-
-typedef struct {
-	uint8_t bytes[4096];
-	size_t at; /* bits */
-} BitOut;
-
-static void put_bits(BitOut *o, uint32_t v, int n)
-{
-	int i;
-	for (i = 0; i < n; i++, o->at++) {
-		if (v >> i & 1u) o->bytes[o->at >> 3] |= (uint8_t)(1u << (o->at & 7));
-	}
-}
-
-static size_t bit_bytes(const BitOut *o) { return (o->at + 7) / 8; }
-
-/* A leaf of an 8-bit tree, and a node of two leaves */
-static void leaf(BitOut *o, uint8_t v)
-{
-	put_bits(o, 0, 1);
-	put_bits(o, v, 8);
-}
-
-static void pair(BitOut *o, uint8_t zero, uint8_t one)
-{
-	put_bits(o, 1, 1);
-	leaf(o, zero);
-	leaf(o, one);
-}
 
 /* --- the movie --- */
 
@@ -120,31 +65,31 @@ static size_t palette_record(int frame, uint8_t *out)
 /* A packed 16-bit stereo chunk (u32 unpacked size, the bits) of frame f */
 static size_t packed_chunk(int f, uint8_t *out)
 {
-	BitOut o;
+	KpTBits o;
 	int i;
 	memset(&o, 0, sizeof o);
-	put_bits(&o, 1, 1); /* data */
-	put_bits(&o, 1, 1); /* stereo */
-	put_bits(&o, 1, 1); /* 16 bits */
+	kp_t_bits(&o, 1, 1); /* data */
+	kp_t_bits(&o, 1, 1); /* stereo */
+	kp_t_bits(&o, 1, 1); /* 16 bits */
 	/* left low: +1 or 0xff (with the high byte: -1); left high: 0 or 0xff; right low and high: one leaf each */
-	put_bits(&o, 1, 1); pair(&o, 0x01, 0xff); put_bits(&o, 0, 1);
-	put_bits(&o, 1, 1); pair(&o, 0x00, 0xff); put_bits(&o, 0, 1);
-	put_bits(&o, 1, 1); leaf(&o, 0x02); put_bits(&o, 0, 1);
-	put_bits(&o, 1, 1); leaf(&o, 0x00); put_bits(&o, 0, 1);
+	kp_t_bits(&o, 1, 1); kp_t_bits_pair(&o, 0x01, 0xff); kp_t_bits(&o, 0, 1);
+	kp_t_bits(&o, 1, 1); kp_t_bits_pair(&o, 0x00, 0xff); kp_t_bits(&o, 0, 1);
+	kp_t_bits(&o, 1, 1); kp_t_bits_leaf(&o, 0x02); kp_t_bits(&o, 0, 1);
+	kp_t_bits(&o, 1, 1); kp_t_bits_leaf(&o, 0x00); kp_t_bits(&o, 0, 1);
 	{ /* the first samples, the right one first, each big endian in the stream's order */
 		uint16_t r = (uint16_t)(int16_t)RIGHT0, l = (uint16_t)LEFT0;
-		put_bits(&o, (uint32_t)(r >> 8 | (r & 0xff) << 8), 16);
-		put_bits(&o, (uint32_t)(l >> 8 | (l & 0xff) << 8), 16);
+		kp_t_bits(&o, (uint32_t)(r >> 8 | (r & 0xff) << 8), 16);
+		kp_t_bits(&o, (uint32_t)(l >> 8 | (l & 0xff) << 8), 16);
 	}
 	for (i = 0; i < PACKED_FRAMES - 1; i++) {
-		put_bits(&o, LEFT_BITS[f % 2][i], 1); /* left low */
-		put_bits(&o, LEFT_BITS[f % 2][i], 1); /* left high: the same code, so +1 or -1 */
+		kp_t_bits(&o, LEFT_BITS[f % 2][i], 1); /* left low */
+		kp_t_bits(&o, LEFT_BITS[f % 2][i], 1); /* left high: the same code, so +1 or -1 */
 		/* the right trees are single leaves: no bits */
 	}
 	out[0] = (uint8_t)(PACKED_FRAMES * 4);
 	out[1] = out[2] = out[3] = 0;
-	memcpy(out + 4, o.bytes, bit_bytes(&o));
-	return 4 + bit_bytes(&o);
+	memcpy(out + 4, o.bytes, kp_t_bits_bytes(&o));
+	return 4 + kp_t_bits_bytes(&o);
 }
 
 /* The samples packed_chunk's frame f decodes to */
@@ -162,75 +107,28 @@ static void packed_expected(int f, int16_t *out)
 	}
 }
 
-static void put32(uint8_t *p, uint32_t v)
+/* Frames 0 and 1's chunks: a palette record, track 0's packed chunk, track 1's PCM */
+static size_t movie_chunks(void *ctx, int f, uint8_t *type, uint8_t *out)
 {
-	p[0] = (uint8_t)v;
-	p[1] = (uint8_t)(v >> 8);
-	p[2] = (uint8_t)(v >> 16);
-	p[3] = (uint8_t)(v >> 24);
+	size_t at, n;
+	(void)ctx;
+	if (f >= 2) return 0;
+	*type = 1 | 2 | 4;
+	at = palette_record(f, out);
+	n = packed_chunk(f, out + at + 4);
+	kp_le_put32(out + at, (uint32_t)(4 + n));
+	at += 4 + n;
+	kp_le_put32(out + at, 4 + sizeof PCM8[f]);
+	memcpy(out + at + 4, PCM8[f], sizeof PCM8[f]);
+	return at + 4 + sizeof PCM8[f];
 }
 
-/* An SMK2 of W x H, FRAMES frames at the cinematics' rate, every pixel FILL (the TYPE tree one leaf: fill blocks of
- * that colour), palette records in frames 0 and 1, a packed 16-bit stereo track 0 and an 8-bit mono PCM track 1 in
- * frames 0 and 1. */
+/* An SMK2 of W x H, FRAMES frames at the cinematics' rate, every pixel FILL, palette records in frames 0 and 1, a
+ * packed 16-bit stereo track 0 and an 8-bit mono PCM track 1 in frames 0 and 1. */
 static uint8_t *smk_movie(KpT *T, size_t *size)
 {
-	uint8_t *m = (uint8_t *)calloc(1, 65536), *frames_at;
-	BitOut trees;
-	size_t at, tree_bytes;
-	int f;
-	if (!m) kp_t_fail(T, "out of memory");
-	kp_t_defer(T, free, m);
-	memset(&trees, 0, sizeof trees);
-	put_bits(&trees, 0, 1); /* MMAP, MCLR, FULL absent */
-	put_bits(&trees, 0, 1);
-	put_bits(&trees, 0, 1);
-	put_bits(&trees, 1, 1); /* TYPE: */
-	put_bits(&trees, 1, 1); leaf(&trees, 3 | 63 << 2); put_bits(&trees, 0, 1); /* low: a fill of 2048 blocks */
-	put_bits(&trees, 1, 1); leaf(&trees, FILL); put_bits(&trees, 0, 1);        /* high: the colour */
-	put_bits(&trees, 0x1111, 16);
-	put_bits(&trees, 0x2222, 16);
-	put_bits(&trees, 0x3333, 16);
-	put_bits(&trees, 0, 1); /* the big tree: one leaf */
-	put_bits(&trees, 0, 1);
-	tree_bytes = bit_bytes(&trees);
-	memcpy(m, "SMK2", 4);
-	put32(m + 4, W);
-	put32(m + 8, H);
-	put32(m + 12, FRAMES);
-	put32(m + 16, (uint32_t)-6666);
-	put32(m + 52, (uint32_t)tree_bytes);
-	put32(m + 56, 0);
-	put32(m + 60, 0);
-	put32(m + 64, 0);
-	put32(m + 68, 64);
-	put32(m + 72, 0xf0000000u | 22050);
-	put32(m + 76, 0x40000000u | 11025);
-	at = 104 + 4 * FRAMES;
-	for (f = 0; f < FRAMES; f++) m[at + f] = f < 2 ? 1 | 2 | 4 : 0;
-	at += FRAMES;
-	memcpy(m + at, trees.bytes, tree_bytes);
-	at += tree_bytes;
-	frames_at = m + at;
-	for (f = 0; f < FRAMES; f++) {
-		size_t start = at;
-		if (f < 2) {
-			size_t n;
-			at += palette_record(f, m + at);
-			n = packed_chunk(f, m + at + 4);
-			put32(m + at, (uint32_t)(4 + n));
-			at += 4 + n;
-			put32(m + at, 4 + sizeof PCM8[f]);
-			memcpy(m + at + 4, PCM8[f], sizeof PCM8[f]);
-			at += 4 + sizeof PCM8[f];
-		}
-		at += 4; /* the video: no bits needed */
-		while ((at - start) % 4) at++;
-		put32(m + 104 + 4 * (size_t)f, (uint32_t)(at - start));
-	}
-	(void)frames_at;
-	*size = at;
-	return m;
+	static const uint32_t TRACKS[2] = { 0xf0000000u | 22050, 0x40000000u | 11025 };
+	return kp_t_smk(T, W, H, FRAMES, FILL, TRACKS, movie_chunks, NULL, size);
 }
 
 static uint8_t level(uint8_t v) { return (uint8_t)(v << 2 | v >> 4); }
@@ -280,7 +178,7 @@ static void smk_palette_records_and_sound(KpT *T)
 		if (!cut) kp_t_fail(T, "out of memory");
 		kp_t_defer(T, free, cut);
 		memcpy(cut, data, size);
-		put32(cut + 76, 0xf0000000u | 22050); /* track 1 said packed: its PCM bytes are no Huffman stream */
+		kp_le_put32(cut + 76, 0xf0000000u | 22050); /* track 1 said packed: its PCM bytes are no Huffman stream */
 		kp_t_eq(T, kp_smk_open(&c, cut, size), 0, NULL);
 		kp_t_eq(T, kp_smk_sound_format(&c, 1, &f), 0, NULL);
 		kp_t_eq(T, kp_smk_sound(&c, 1, &f, &pcm, &n), -1, "a malformed chunk refused");
@@ -488,42 +386,31 @@ static void original_smk_movies_decode_as_ffmpeg(KpT *T)
 typedef struct {
 	KpCineRun r;
 	uint64_t now;
-	int loads, fail_load, sounds, sound_stops, held_at_stop, opens;
+	int loads, fail_load, sounds, sound_stops, held_at_stop;
 	const uint8_t *movie; /* the SMK each load gives */
 	size_t movie_size, sound_size;
 	char last_log[512];
 } OriginalHost;
 
 static uint64_t orig_now(void *ctx) { return ((OriginalHost *)ctx)->now; }
-static void *orig_open(void *ctx)
-{
-	((OriginalHost *)ctx)->opens++;
-	return NULL;
-}
-static void orig_close(void *ctx, void *file) { (void)ctx, (void)file; }
 static void orig_begin(void *ctx) { (void)ctx; }
 static void orig_end(void *ctx) { (void)ctx; }
-static int orig_read(void *ctx, uint64_t offset, uint8_t *out, size_t size)
-{
-	(void)ctx, (void)offset, (void)out, (void)size;
-	return -1;
-}
 
-static KpCineMovie *orig_load(void *ctx, const KpCineClip *clip, KpError *err)
+static int orig_load(void *ctx, const KpCineClip *clip, KpCineMovie **movie, KpError *err)
 {
 	OriginalHost *h = (OriginalHost *)ctx;
 	uint8_t *copy;
 	h->loads++;
 	if (h->fail_load) {
 		snprintf(err->msg, sizeof err->msg, "cinematics: %s is not there", clip->name);
-		return NULL;
+		return -1;
 	}
 	if (!(copy = (uint8_t *)malloc(h->movie_size))) {
 		snprintf(err->msg, sizeof err->msg, "out of memory");
-		return NULL;
+		return -1;
 	}
 	memcpy(copy, h->movie, h->movie_size);
-	return kp_cine_movie_smk(copy, h->movie_size, clip, err);
+	return (*movie = kp_cine_movie_smk(copy, h->movie_size, clip, err)) != NULL ? 0 : -1;
 }
 
 static int orig_sound(void *ctx, const KpCineClip *clip, const uint8_t *data, size_t size)
@@ -548,8 +435,6 @@ static void orig_sound_stop(void *ctx)
 	h->sound_stops++;
 	h->held_at_stop += h->r.movie != NULL; /* the sound's bytes are the movie's: it is stopped before they go */
 }
-
-static void orig_sound_pause(void *ctx, int pause) { (void)ctx, (void)pause; }
 
 static void orig_log(void *ctx, const char *line) { snprintf(((OriginalHost *)ctx)->last_log, 512, "%s", line); }
 
@@ -576,7 +461,7 @@ static void run_plays_an_installs_movies(KpT *T)
 		table[at++] = 2;
 		table[at++] = 'M';
 		table[at++] = (uint8_t)('0' + k);
-		put32(table + at, (uint32_t)k);
+		kp_le_put32(table + at, (uint32_t)k);
 		memset(table + at + 4, k, 32);
 		at += 4 + 32;
 	}
@@ -594,9 +479,9 @@ static void run_plays_an_installs_movies(KpT *T)
 	kp_t_eq(T, kp_cine_catalog_check(&cat, 0, cat.movies[0].size), 0, "a copy of the reference's size");
 	kp_t_eq(T, kp_cine_catalog_check(&cat, 0, cat.movies[0].size + 1), -1, "a copy of another size than the reference's");
 	kp_t_eq(T, kp_cine_catalog_check(&cat, cat.count, cat.movies[0].size), -1, "a movie past the table");
-	kp_cine_index_original(&h->r.index, 0, &cat, has_even, NULL);
-	kp_t_ok(T, h->r.index.original && h->r.index.count == 2, "the movies the install has");
-	kp_t_eq_str(T, h->r.index.clips[1].name, "smk\\m2", "named as a pack's clip");
+	kp_cine_index_movies(&h->r.index, 0, &cat, has_even, NULL);
+	kp_t_eq(T, h->r.index.count, 2, "the movies the install has");
+	kp_t_eq_str(T, h->r.index.clips[1].name, "smk\\m2", "named in lower case");
 	kp_t_eq(T, h->r.index.clips[1].id, 2, "numbered as the table");
 	kp_t_eq(T, kp_cine_prelude(&h->r.index, 2), 0, NULL);
 	h->movie = smk_movie(T, &h->movie_size);
@@ -605,19 +490,14 @@ static void run_plays_an_installs_movies(KpT *T)
 	c = &h->r.host;
 	c->ctx = h;
 	c->now_ns = orig_now;
-	c->read = orig_read;
-	c->open = orig_open;
-	c->close = orig_close;
 	c->begin = orig_begin;
 	c->end = orig_end;
 	c->load = orig_load;
 	c->sound = orig_sound;
 	c->sound_ms = orig_sound_ms;
 	c->sound_stop = orig_sound_stop;
-	c->sound_pause = orig_sound_pause;
 	c->log = orig_log;
 	kp_t_eq(T, kp_cine_run_start(&h->r, ids, 1, 1), 1, "the prelude and its movie");
-	kp_t_eq(T, h->opens, 0, "no pack's file");
 	kp_t_ok(T, h->loads == 1 && h->sounds == 1, "the prelude loaded, its sound given");
 	kp_t_eq(T, (int64_t)h->sound_size, 44 + 2 * PACKED_FRAMES * 4, "a WAV in memory");
 	for (k = 0; k < 400 && h->r.active; k++) {
@@ -636,236 +516,13 @@ static void run_plays_an_installs_movies(KpT *T)
 	kp_t_ok(T, h->loads == 1 && strstr(h->last_log, "is not there") != NULL, "logged: %s", h->last_log);
 }
 
-/* --- Remastered's WebM: split as the converter's packs split them --- */
-
-typedef struct {
-	FILE *f;
-} PackFile;
-
-static int read_pack(void *ctx, uint64_t offset, uint8_t *out, size_t size)
-{
-	PackFile *p = (PackFile *)ctx;
-	if (fseeko(p->f, (off_t)offset, SEEK_SET) != 0 || fread(out, 1, size, p->f) != size) return -1;
-	return 0;
-}
-
-/* The SHA-256 of an Ogg stream's packets (each its u32 size and bytes, laced over the pages) but the comment header
- * (packet 1: its vendor and tags are the muxer's, and FFmpeg's Ogg muxer writes its own), their count, the last page's
- * granule position and the identification header's rate. -1 for a stream that does not read. */
-#define VORBIS_COMMENT 1u /* the comment header's packet */
-
-static int ogg_packets(const uint8_t *p, size_t n, uint8_t digest[32], uint32_t *count, int64_t *granule, uint32_t *rate)
-{
-	KpSha256 sha;
-	uint8_t *packet = NULL;
-	size_t at = 0, have = 0;
-	kp_sha256_init(&sha);
-	*count = 0;
-	*granule = -1;
-	*rate = 0;
-	while (at < n) {
-		size_t segs, body = 0, i;
-		const uint8_t *b;
-		if (n - at < 27 || memcmp(p + at, "OggS", 4) != 0 || n - at < 27 + (segs = p[at + 26])) break;
-		for (i = 0; i < segs; i++) body += p[at + 27 + i];
-		if (n - at - 27 - segs < body) break;
-		*granule = (int64_t)((uint64_t)kp_le_u32(p + at + 6) | (uint64_t)kp_le_u32(p + at + 10) << 32);
-		b = p + at + 27 + segs;
-		for (i = 0; i < segs; i++) {
-			size_t len = p[at + 27 + i];
-			uint8_t *grown = (uint8_t *)realloc(packet, have + len + 1), le[4];
-			if (!grown) break;
-			packet = grown;
-			memcpy(packet + have, b, len);
-			have += len;
-			b += len;
-			if (len == 255) continue; /* the packet goes on */
-			if (*count == 0 && have >= 16) *rate = kp_le_u32(packet + 12);
-			if (*count != VORBIS_COMMENT) {
-				kp_le_put32(le, (uint32_t)have);
-				kp_sha256_update(&sha, le, 4);
-				kp_sha256_update(&sha, packet, have);
-			}
-			(*count)++;
-			have = 0;
-		}
-		at += 27 + segs + body;
-	}
-	free(packet);
-	kp_sha256_final(&sha, digest);
-	return at == n && have == 0 ? 0 : -1;
-}
-
-/* Clip k of a pack (read through read, ctx) against kp_cine_movie_webm's of the WebM it was split from: its sizes, its
- * frames and the time of its end (its rate within a millisecond: the pack's is ffprobe's, the movie's the track's
- * frame duration), its frame table and packets byte for byte, its sound's Vorbis packets but the comment header (the
- * Ogg pages may be laid out otherwise) and its end, and with srt its subtitles. The pack's end is FFmpeg's, from the
- * WebM's millisecond times (the last block's time and duration, less its DiscardPadding): within a millisecond's
- * samples of the exact one, or past the samples the blocks decode to, which a decoder does not trim (Remastered's
- * movies count their first block, which decodes to nothing). */
-static void movie_as_the_packs(KpT *T, const KpCineIndex *ix, int k, KpCineRead read, void *ctx, const uint8_t *webm,
-	size_t size, const uint8_t *srt, size_t srt_size, const char *name)
-{
-	const KpCineClip *want = &ix->clips[k], *got;
-	KpCineMovie *m;
-	KpError err;
-	uint8_t *packs, *mine;
-	size_t frames_bytes;
-	int64_t end_want, end_got;
-	m = kp_cine_movie_webm(webm, size, want, &err);
-	kp_t_ok(T, m != NULL, "%s: %s", name, err.msg);
-	kp_t_defer(T, free_movie, m);
-	got = kp_cine_movie_clip(m);
-	kp_t_ok(T, got->id == want->id && strcmp(got->name, want->name) == 0, "%s: named as the index's clip", name);
-	kp_t_ok(T, got->width == want->width && got->height == want->height && got->shown_w == want->shown_w
-		&& got->shown_h == want->shown_h, "%s: its sizes", name);
-	kp_t_eq(T, got->frames, want->frames, "%s: its frames", name);
-	end_want = (int64_t)kp_cine_frame_ms(want, want->frames);
-	end_got = (int64_t)kp_cine_frame_ms(got, got->frames);
-	kp_t_ok(T, end_got - end_want <= 1 && end_want - end_got <= 1, "%s: ends at %lld ms (%u/%u fps), the pack's %lld (%u/%u)",
-		name, (long long)end_got, got->rate_num, got->rate_den, (long long)end_want, want->rate_num, want->rate_den);
-	kp_t_eq(T, got->video_size, want->video_size, "%s: its packets' bytes", name);
-	frames_bytes = 4u * (size_t)want->frames;
-	packs = (uint8_t *)malloc((size_t)want->video_size + frames_bytes + want->audio_size + 1);
-	mine = (uint8_t *)malloc((size_t)want->video_size + frames_bytes + 1);
-	if (!packs || !mine) {
-		free(packs);
-		free(mine);
-		kp_t_fail(T, "out of memory");
-	}
-	kp_t_defer(T, free, packs);
-	kp_t_defer(T, free, mine);
-	kp_t_eq(T, read(ctx, want->video_offset, packs, want->video_size), 0, "%s: the pack's packets", name);
-	kp_t_eq(T, read(ctx, want->frame_table, packs + want->video_size, frames_bytes), 0, "%s: its frame table", name);
-	kp_t_eq(T, kp_cine_movie_read(m, got->video_offset, mine, got->video_size), 0, NULL);
-	kp_t_eq(T, kp_cine_movie_read(m, got->frame_table, mine + got->video_size, frames_bytes), 0, NULL);
-	kp_t_ok(T, memcmp(mine, packs, (size_t)want->video_size + frames_bytes) == 0, "%s: the packets and the frame table "
-		"byte for byte", name);
-	kp_t_eq(T, got->audio_size > 0, want->audio_size > 0, "%s: a sound as the pack's", name);
-	if (want->audio_size) {
-		uint8_t *ogg = packs + want->video_size + frames_bytes, d1[32], d2[32];
-		const uint8_t *sound;
-		size_t sound_size;
-		uint32_t n1, n2, rate;
-		int64_t g1, g2, end, blocks;
-		KpWebmStreams streams;
-		char why[256];
-		kp_t_eq(T, read(ctx, want->audio_offset, ogg, want->audio_size), 0, "%s: the pack's sound", name);
-		sound = kp_cine_movie_sound(m, &sound_size);
-		kp_t_eq(T, ogg_packets(ogg, want->audio_size, d1, &n1, &g1, &rate), 0, "%s: the pack's Ogg", name);
-		kp_t_eq(T, ogg_packets(sound, sound_size, d2, &n2, &g2, &rate), 0, "%s: the Ogg made here", name);
-		kp_t_eq(T, n2, n1, "%s: its packets", name);
-		kp_t_ok(T, memcmp(d1, d2, 32) == 0, "%s: the Vorbis packets byte for byte (the comment header aside)", name);
-		kp_t_eq(T, kp_webm_streams(webm, size, 0, &streams, why, sizeof why), 0, "%s: %s", name, why);
-		blocks = streams.samples;
-		kp_webm_streams_free(&streams);
-		end = g1 < blocks ? g1 : blocks; /* the pack's end as a decoder trims it */
-		kp_t_ok(T, g2 <= blocks && g2 - end <= rate / 1000 + 1 && end - g2 <= rate / 1000 + 1,
-			"%s: ends at %lld samples (%u Hz), the pack's %lld (its granule %lld)", name, (long long)g2, rate, (long long)end,
-			(long long)g1);
-	}
-	if (srt) {
-		KpCineSubs *want_subs = (KpCineSubs *)malloc(sizeof *want_subs);
-		const KpCineSubs *got_subs;
-		int q;
-		if (!want_subs) kp_t_fail(T, "out of memory");
-		kp_t_defer(T, free, want_subs);
-		kp_t_eq(T, kp_cine_subs_load(ix, k, read, ctx, want_subs, &err), 0, "%s", err.msg);
-		kp_t_eq(T, kp_cine_movie_subtitles(m, srt, srt_size, &err), 0, "%s: %s", name, err.msg);
-		got_subs = kp_cine_movie_subs(m);
-		kp_t_eq(T, got_subs->count, want_subs->count, "%s: its cues", name);
-		for (q = 0; q < want_subs->count; q++) {
-			const KpCineCue *a = &got_subs->cues[q], *b = &want_subs->cues[q];
-			kp_t_ok(T, a->start_ms == b->start_ms && a->end_ms == b->end_ms && a->size == b->size
-				&& memcmp(got_subs->text + a->at, want_subs->text + b->at, a->size) == 0, "%s: cue %d", name, q);
-		}
-	}
-}
-
-/* The fixtures' pack (converter.kpf.fixtures: two WebM with Vorbis sound split by the converter, the second with
- * subtitles) against the same WebM played here. */
-static void webm_movies_split_as_the_fixture_pack(KpT *T)
-{
-	static const char *const FILES[] = { CINE_PACK, CINE_WEBM0, CINE_WEBM1, CINE_SRT1, NULL };
-	const char *const webms[2] = { CINE_WEBM0, CINE_WEBM1 };
-	KpCineIndex *ix = (KpCineIndex *)calloc(1, sizeof *ix);
-	Memory mem;
-	KpError err;
-	size_t size, srt_size;
-	const uint8_t *srt;
-	int k;
-	if (!ix) kp_t_fail(T, "out of memory");
-	kp_t_defer(T, free, ix);
-	if (!kp_t_ready(T, T->test, FILES)) return;
-	mem.data = kp_t_read(T, CINE_PACK, &mem.size);
-	kp_t_eq(T, kp_cine_index(ix, mem.data, mem.size, mem.size, read_memory, &mem, &err), 0, "%s", err.msg);
-	kp_t_eq(T, ix->count, 2, NULL);
-	srt = kp_t_read(T, CINE_SRT1, &srt_size);
-	for (k = 0; k < 2; k++) {
-		const uint8_t *webm = kp_t_read(T, webms[k], &size);
-		movie_as_the_packs(T, ix, k, read_memory, &mem, webm, size, k == 1 ? srt : NULL, srt_size, webms[k]);
-	}
-}
-
-/* Each movie of a pack the converter split from Remastered's WebM (generated/video/cinematics-<sd|hd2>.kpd, where they
- * were converted) against the same WebM read from the install, its subtitles those of the install's .srt of the pack's
- * locale. */
-static void scr_movies_split_as_the_packs(KpT *T)
-{
-	static const char *const VARIANT[2] = { "sd", "hd2" };
-	static const char *const FOLDER[2] = { "SD/smk/", "HD2/Smk/" };
-	KpRes *res = kp_t_install(T, "KP_TEST_SCR");
-	int v, item = 0, packs = 0;
-	for (v = 0; v < 2; v++) {
-		char path[64];
-		PackFile pf;
-		uint8_t head[KP_CINE_HEAD];
-		size_t head_size;
-		off_t file_size;
-		KpCineIndex *ix = (KpCineIndex *)calloc(1, sizeof *ix);
-		KpError err;
-		int k;
-		if (!ix) kp_t_fail(T, "out of memory");
-		kp_t_defer(T, free, ix);
-		snprintf(path, sizeof path, "generated/video/cinematics-%s.kpd", VARIANT[v]);
-		if (!(pf.f = fopen(path, "rb"))) continue;
-		kp_t_defer(T, close_file, pf.f);
-		packs++;
-		kp_t_eq(T, fseeko(pf.f, 0, SEEK_END), 0, NULL);
-		file_size = ftello(pf.f);
-		head_size = file_size < KP_CINE_HEAD ? (size_t)file_size : KP_CINE_HEAD;
-		kp_t_eq(T, read_pack(&pf, 0, head, head_size), 0, "%s's head", path);
-		kp_t_eq(T, kp_cine_index(ix, head, head_size, (size_t)file_size, read_pack, &pf, &err), 0, "%s", err.msg);
-		for (k = 0; k < ix->count; k++) {
-			char name[96], srt_name[128], why[256];
-			uint8_t *webm, *srt = NULL;
-			size_t size, srt_size = 0;
-			int mark = kp_t_mark(T); /* each movie's buffers released after it */
-			if (!kp_t_mine(T, ++item)) continue;
-			snprintf(name, sizeof name, "%s%s.webm", FOLDER[v], ix->clips[k].name + 4);
-			webm = kp_res_raw_read(res, name, &size, why, sizeof why);
-			kp_t_ok(T, webm != NULL, "%s: %s", name, why);
-			kp_t_defer(T, free, webm);
-			if (ix->subtitles[0]) {
-				snprintf(srt_name, sizeof srt_name, "locales/%s/Assets/Smk/%s.srt", ix->subtitles, ix->clips[k].name + 4);
-				if ((srt = kp_res_raw_read(res, srt_name, &srt_size, why, sizeof why)) != NULL) kp_t_defer(T, free, srt);
-			}
-			movie_as_the_packs(T, ix, k, read_pack, &pf, webm, size, srt, srt_size, name);
-			kp_t_release(T, mark);
-		}
-	}
-	if (packs == 0) kp_t_skip(T, "no generated/video/cinematics-*.kpd to compare with");
-}
-
 static const KpTest TESTS[] = {
 	{ "smk_palette_records_and_sound", smk_palette_records_and_sound, 0 },
 	{ "smk_movie_plays", smk_movie_plays, 0 },
 	{ "webm_movie_plays", webm_movie_plays, 0 },
 	{ "subtitles_of_an_srt", subtitles_of_an_srt, 0 },
 	{ "run_plays_an_installs_movies", run_plays_an_installs_movies, 0 },
-	{ "webm_movies_split_as_the_fixture_pack", webm_movies_split_as_the_fixture_pack, 0 },
 	{ "original_smk_movies_decode_as_ffmpeg", original_smk_movies_decode_as_ffmpeg, 8 },
-	{ "scr_movies_split_as_the_packs", scr_movies_split_as_the_packs, 8 },
 };
 
 KP_SUITE(kp_suite_movies, "test_movies", TESTS);

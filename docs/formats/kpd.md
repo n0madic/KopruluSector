@@ -253,14 +253,14 @@ A zero skip plots even mask 0; a positive skip plots only a nonzero mask inside 
 
 ## A language's parts ([ADR 0016](../adr/0016-localization.md); [ADR 0019](../adr/0019-install-or-repack-converter-in-c.md), stage C3)
 
-The runtime builds a language from StarCraft: Remastered's own files, `locales/<loc>/Assets/` in the install or the repack's language group ([the repack](repack.md)): `kp_locale_build`, `kp_locale_mission` and `kp_locale_glyphs` (`native/kp_app/kp_locale.c`), by the rules `defs/l10n/` holds (compiled by `tools/defs_c.py`). Its parts go to the interface as a `KpUiLocale` (`kp_ui_set_locale`), a mission's strings to `kp_host_game_text`, the subtitles to `kp_cine_subs_overlay`; a part of other row counts or dialogs than the base's, or malformed, is refused and the base's stays. Nothing is written: `kp_convert locale-check DIR` builds every part of each language a source holds and writes the checks to `reports/locale-<loc>.json`. Until stage C3 `python3 -m converter locale` wrote the same parts as overlays under `generated/locale/` (`glyphs.kpd`, `<loc>/strings.kpd`, `ui.kpd`, `cinematics.kpd`, `missions/*.kpm`), which nothing reads now.
+The runtime builds a language from StarCraft: Remastered's own files, `locales/<loc>/Assets/` in the install or the repack's language group ([the repack](repack.md)): `kp_locale_build`, `kp_locale_mission` and `kp_locale_glyphs` (`native/kp_app/kp_locale.c`), by the rules `defs/l10n/` holds (compiled by `tools/defs_c.py`). Its parts go to the interface as a `KpUiLocale` (`kp_ui_set_locale`), a mission's strings to `kp_host_game_text`; a part of other row counts or dialogs than the base's, or malformed, is refused and the base's stays. Nothing is written: `kp_convert locale-check DIR` builds every part of each language a source holds and writes the checks to `reports/locale-<loc>.json`. Until stage C3 `python3 -m converter locale` wrote the same parts as overlays under `generated/locale/` (`glyphs.kpd`, `<loc>/strings.kpd`, `ui.kpd`, `cinematics.kpd`, `missions/*.kpm`), which nothing reads now.
 
 | Part | Form |
 |---|---|
 | the six tables | `STAT`, `NETW`, `GLUA`, `GHST`, `TIPS`, `HELP`'s rows from the language's XML, as a language's table below |
 | the dialogs | `DLGS`, `POOL` (the base's records, the language's texts; it ends in a NUL) |
 | the glue's text files | `GFIL`'s form: its `rez\*.txt`, read before the base's |
-| the subtitles | `SUBS` (packs.md's form), one row per movie of the original's table (`defs/campaign/cinematics.json`), a clip's by its id |
+| the subtitles | not a part since stage C4: the player reads a movie's `.srt` (`locales/<loc>/Assets/Smk/<name>.srt`) when it begins; `kp_locale_build` checks them (`kp_cine_subs_srt`) |
 | a mission's strings | `STRS` ([kpm](kpm.md)), built when the mission loads |
 | the glyphs | a supplement per FNT font (below) and `VFNT`: Remastered's Eurostile and Eurostile Extended (font16x's) |
 

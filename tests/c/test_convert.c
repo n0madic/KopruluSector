@@ -11,15 +11,21 @@
 
 #include <vorbis/codec.h>
 
+#include "kp_cine.h"
 #include "kp_fs.h"
 #include "kp_icon.h"
+#include "kp_json.h"
 #include "kp_kpf.h"
+#include "kp_movie.h"
 #include "kp_mpq.h"
 #include "kp_ogg.h"
 #include "kp_repack.h"
 #include "kp_res.h"
 #include "kp_scenario.h"
 #include "kp_sha256.h"
+#include "kp_test_app.h"
+#include "kp_webm.h"
+#include "kp_webm_write.h"
 #include "kp_work.h"
 #include "zlib.h"
 
@@ -192,10 +198,17 @@ typedef struct {
 	uint8_t cinm[4 + 1 + 4 + 4 + KP_SHA256_SIZE];
 	char hex[FILES][2 * KP_SHA256_SIZE + 1];
 	char log[4096];
+	const uint8_t *movie; /* the install's smk\test.smk */
+	size_t movie_size;
 } Profile;
 
 static const KpDefsArchive ARCHIVES[] = { { "A.mpq", 0, "core" } };
-static const char ONE[] = "one, in the core", CHK[] = "a mission's map", MOVIE[] = "a movie's bytes";
+static const char ONE[] = "one, in the core", CHK[] = "a mission's map";
+#define TEST_MOVIE_W 16 /* the install's movie: 16 x 8, 3 frames of one colour, no sound */
+#define TEST_MOVIE_H 8
+#define TEST_MOVIE_FRAMES 3
+#define TEST_MOVIE_FILL 7
+#define TEST_MOVIE_WEBM "sd/smk/test.webm" /* where the repack keeps it (Remastered's SD set's name) */
 
 static void profile_log(void *ctx, const char *line)
 {
@@ -226,8 +239,8 @@ static void repack_log(void *ctx, const char *line)
 	profile_log(ctx, line);
 }
 
-/* The test profile (its manifest: a core file, a mission's map and speech, a track; its movies' catalog: "test") and
- * its install, A.mpq and Game.exe, in dir. The speech is long enough that its Ogg is smaller; the track so short that
+/* The test profile (its manifest: a core file, a mission's map and speech, a track; its movies' catalog: "test", a
+ * Smacker movie) and its install, A.mpq and Game.exe, in dir. The speech is long enough that its Ogg is smaller; the track so short that
  * its Ogg is not. */
 static void test_install(KpT *T, Profile *p, const char *dir, const uint8_t *speech, size_t speech_size,
 	const uint8_t *track, size_t track_size)
@@ -252,6 +265,7 @@ static void test_install(KpT *T, Profile *p, const char *dir, const uint8_t *spe
 	data[3] = track;
 	sizes[3] = track_size;
 	memset(p, 0, sizeof *p);
+	p->movie = kp_t_smk(T, TEST_MOVIE_W, TEST_MOVIE_H, TEST_MOVIE_FRAMES, TEST_MOVIE_FILL, NULL, NULL, NULL, &p->movie_size);
 	for (k = 0; k < FILES; k++) { /* sorted by name */
 		kp_sha256(data[k], sizes[k], digest);
 		kp_sha256_hex(digest, p->hex[k]);
@@ -264,8 +278,8 @@ static void test_install(KpT *T, Profile *p, const char *dir, const uint8_t *spe
 	kp_le_put16(p->cinm + 2, 0);
 	p->cinm[4] = 4;
 	memcpy(p->cinm + 5, "test", 4);
-	kp_le_put32(p->cinm + 9, (uint32_t)strlen(MOVIE));
-	kp_sha256(MOVIE, strlen(MOVIE), p->cinm + 13);
+	kp_le_put32(p->cinm + 9, (uint32_t)p->movie_size);
+	kp_sha256(p->movie, p->movie_size, p->cinm + 13);
 	memcpy(p->tables[0].fourcc, "CINM", 5);
 	p->tables[0].data = p->cinm;
 	p->tables[0].size = (uint32_t)sizeof p->cinm;
@@ -283,7 +297,7 @@ static void test_install(KpT *T, Profile *p, const char *dir, const uint8_t *spe
 	kp_t_ok(T, (m = kp_mpq_create(path, 16, err, sizeof err)) != NULL, "%s", err);
 	for (k = 0; k < FILES; k++)
 		kp_t_ok(T, kp_mpq_add(m, STORED[k], data[k], sizes[k], KP_MPQ_ZLIB, err, sizeof err) == 0, "%s", err);
-	kp_t_ok(T, kp_mpq_add(m, "smk\\test.smk", MOVIE, strlen(MOVIE), KP_MPQ_STORE, err, sizeof err) == 0, "%s", err);
+	kp_t_ok(T, kp_mpq_add(m, "smk\\test.smk", p->movie, p->movie_size, KP_MPQ_STORE, err, sizeof err) == 0, "%s", err);
 	kp_t_eq(T, kp_mpq_close(m), 0, "A.mpq written");
 }
 
@@ -297,9 +311,28 @@ static const uint8_t *read_back(KpT *T, KpRes *r, const char *name, size_t *size
 	return b;
 }
 
+/* The test install's movie as the repack keeps it: a WebM the player takes, of the SMK's size, rate and frames. */
+static void test_movie_is_its_webm(KpT *T, const uint8_t *webm, size_t size)
+{
+	KpCineClip named;
+	KpCineMovie *m;
+	KpError e;
+	memset(&named, 0, sizeof named);
+	snprintf(named.name, sizeof named.name, "smk\\test");
+	kp_t_ok(T, size > 4 && memcmp(webm, "\x1a\x45\xdf\xa3", 4) == 0, "a WebM (EBML) of %lu bytes", (unsigned long)size);
+	kp_t_ok(T, (m = kp_cine_movie_webm(webm, size, &named, &e)) != NULL, "the player takes it: %s", e.msg);
+	kp_t_ok(T, kp_cine_movie_clip(m)->width == TEST_MOVIE_W && kp_cine_movie_clip(m)->height == TEST_MOVIE_H
+		&& kp_cine_movie_clip(m)->frames == TEST_MOVIE_FRAMES && kp_cine_movie_clip(m)->rate_num == 50000
+		&& kp_cine_movie_clip(m)->rate_den == 3333 && kp_cine_movie_clip(m)->audio_size == 0,
+		"%ux%u, %u frames at %u/%u, no sound", kp_cine_movie_clip(m)->width, kp_cine_movie_clip(m)->height,
+		kp_cine_movie_clip(m)->frames, kp_cine_movie_clip(m)->rate_num, kp_cine_movie_clip(m)->rate_den);
+	kp_cine_movie_free(m);
+}
+
 /* An install's repack in groups, read back through kp_res alone: every file, the speech as Ogg Vorbis whose header
- * the listing answers, the short track as its WAV, the movie in the cinematics' group. A second run, the single
- * repack (one koprulu.mpq and the cinematics' group), takes the Oggs from the cache. */
+ * the listing answers, the short track as its WAV, the movie transcoded into WebM in the cinematics' group (status
+ * converted). A second run, the single repack (one koprulu.mpq and the cinematics' group), takes the Oggs and the
+ * movie from the cache. */
 static void repack_reads_back(KpT *T)
 {
 	static const char *const GROUP_FILES[] = { "koprulu-cinematics.mpq", "koprulu-core.mpq", "koprulu-music.mpq",
@@ -332,8 +365,10 @@ static void repack_reads_back(KpT *T)
 	kp_t_eq(T, kp_repack_write(r, &c, &rep, err, sizeof err), 0, "%s", err);
 	kp_t_eq(T, rep.group_count, 4, "the core, the mission's, the music's, the cinematics' groups");
 	kp_t_eq(T, rep.ogg, 1, "the speech as Ogg Vorbis, the short track as its WAV");
-	kp_t_eq(T, rep.encoded, 2, "both encoded (the track's Ogg is the larger)");
+	kp_t_eq(T, rep.encoded, 3, "both sounds encoded (the track's Ogg is the larger), and the movie");
 	kp_t_eq(T, rep.missing + rep.damaged, 0, "every file there");
+	kp_t_ok(T, rep.movies == 1 && rep.movie_from == p.movie_size && rep.movie_bytes > 0, "the movie as WebM");
+	kp_t_eq(T, rep.statuses[KP_RES_CONVERTED], 1, "the movie converted");
 	kp_t_ok(T, (names = kp_fs_list(out, ".mpq", &count, err, sizeof err)) != NULL, "%s", err);
 	kp_t_eq(T, count, 4, "four archives");
 	for (k = 0; k < count; k++) {
@@ -351,8 +386,17 @@ static void repack_reads_back(KpT *T)
 	kp_t_ok(T, size == strlen(CHK) && memcmp(b, CHK, size) == 0, "the map");
 	b = read_back(T, r, "music\\t.wav", &size, &st);
 	kp_t_ok(T, size == track_size && memcmp(b, track, size) == 0 && st == KP_RES_REPACKED, "the track as its WAV");
-	b = read_back(T, r, "smk\\test.smk", &size, &st);
-	kp_t_ok(T, size == strlen(MOVIE) && memcmp(b, MOVIE, size) == 0, "the movie");
+	{ /* the movie by its WebM name, its group open: read whole, not by a range */
+		char file[64];
+		uint64_t offset;
+		uint32_t ranged;
+		uint8_t *webm = kp_res_raw_read(r, TEST_MOVIE_WEBM, &size, err, sizeof err);
+		kp_t_ok(T, webm != NULL, "%s: %s", TEST_MOVIE_WEBM, err);
+		kp_t_defer(T, free, webm);
+		test_movie_is_its_webm(T, webm, size);
+		kp_t_eq(T, kp_res_raw_range(r, TEST_MOVIE_WEBM, file, sizeof file, &offset, &ranged), 0, "its group is open");
+		kp_t_eq(T, kp_res_exists(r, "smk\\test.smk"), 0, "no SMK in the repack");
+	}
 	b = read_back(T, r, "campaign\\terran\\terran01\\staredit\\wav\\x.wav", &size, &st);
 	kp_t_ok(T, size > 4 && memcmp(b, "OggS", 4) == 0 && size < speech_size, "the speech as Ogg Vorbis (%lu bytes)",
 		(unsigned long)size);
@@ -369,6 +413,7 @@ static void repack_reads_back(KpT *T)
 	c.single = 1;
 	kp_t_eq(T, kp_repack_write(r, &c, &rep, err, sizeof err), 0, "%s", err);
 	kp_t_ok(T, rep.ogg == 1 && rep.encoded == 0, "the Oggs from the cache (%d encoded)", rep.encoded);
+	kp_t_eq(T, rep.movies, 1, "the movie (from the cache)");
 	kp_t_eq(T, rep.group_count, 2, "koprulu.mpq and the cinematics' group");
 	kp_t_ok(T, strcmp(rep.groups[0].file, "koprulu.mpq") == 0 || strcmp(rep.groups[1].file, "koprulu.mpq") == 0, "%s, %s",
 		rep.groups[0].file, rep.groups[1].file);
@@ -403,6 +448,80 @@ static void repack_needs_an_install(KpT *T)
 	kp_t_ok(T, strstr(err, "from an install") != NULL, "%s", err);
 }
 
+/* The movies' group is read by ranges (the web, ADR 0019 stage C4): the core's listing places each movie in its group's
+ * file, stored as it is, so that while the group is not open the bytes to fetch are named; once it is added the movie
+ * is read whole. A stored file has a place in its archive, a compressed one none (kp_mpq_stored_at). */
+static void repack_movies_read_by_ranges(KpT *T)
+{
+	const char *root = kp_t_temp_dir(T, NULL);
+	char install[KP_T_PATH], out[KP_T_PATH], core[KP_T_PATH], path[KP_T_PATH], file[64], err[512];
+	size_t speech_size = 0, track_size = 0, size = 0, n = 0, refused = 0, got = 0;
+	const uint8_t *speech = wav_new(T, 10, 1, 16, 1, &speech_size), *track = wav_new(T, 10, 1, 16, 1, &track_size), *b;
+	uint8_t *webm, *again;
+	uint64_t offset = 0;
+	uint32_t ranged = 0;
+	KpRepackConfig c;
+	KpRepackReport rep;
+	Profile p;
+	KpRes *r;
+	KpMpq *m;
+	snprintf(install, sizeof install, "%s/install", root);
+	snprintf(out, sizeof out, "%s/out", root);
+	snprintf(core, sizeof core, "%s/core", root);
+	kp_t_eq(T, kp_t_mkdir(install), 0, "%s", install);
+	kp_t_eq(T, kp_t_mkdir(core), 0, "%s", core);
+	test_install(T, &p, install, speech, speech_size, track, track_size);
+
+	snprintf(path, sizeof path, "%s/A.mpq", install);
+	kp_t_ok(T, (m = kp_mpq_open(path, 0, err, sizeof err)) != NULL, "%s", err);
+	kp_t_eq(T, kp_mpq_stored_at(m, "smk\\test.smk", &offset), 0, "the stored movie's place");
+	kp_t_eq(T, kp_mpq_stored_at(m, "a\\one.dat", &offset), -1, "a compressed file has none");
+	kp_t_eq(T, kp_mpq_stored_at(m, "a\\none.dat", &offset), -1, "nor a file the archive lacks");
+	kp_t_eq(T, kp_mpq_stored_at(m, "smk\\test.smk", &offset), 0, NULL);
+	kp_mpq_close(m);
+	b = kp_t_read(T, path, &n);
+	kp_t_ok(T, offset + p.movie_size <= n && memcmp(b + offset, p.movie, p.movie_size) == 0, "the bytes at %llu are the movie",
+		(unsigned long long)offset);
+
+	memset(&c, 0, sizeof c);
+	c.out = out;
+	c.wav = 1;
+	c.threads = 1;
+	kp_t_eq(T, kp_repack_write(open_res(T, &p, install), &c, &rep, err, sizeof err), 0, "%s", err);
+	r = open_res(T, &p, out);
+	webm = kp_res_raw_read(r, TEST_MOVIE_WEBM, &size, err, sizeof err);
+	kp_t_ok(T, webm != NULL, "%s: %s", TEST_MOVIE_WEBM, err);
+	kp_t_defer(T, free, webm);
+
+	/* the core alone: the movie listed, its range named, not read */
+	snprintf(path, sizeof path, "%s/koprulu-core.mpq", out);
+	b = kp_t_read(T, path, &n);
+	snprintf(path, sizeof path, "%s/koprulu-core.mpq", core);
+	kp_t_eq(T, kp_fs_write(path, b, n, err, sizeof err), 0, "%s", err);
+	r = open_res(T, &p, core);
+	kp_t_ok(T, kp_res_raw_held(r, TEST_MOVIE_WEBM), "the movie is listed");
+	kp_t_eq(T, kp_res_raw_range(r, TEST_MOVIE_WEBM, file, sizeof file, &offset, &ranged), 1, "its range");
+	kp_t_eq_str(T, file, "koprulu-cinematics.mpq", "in the cinematics' group");
+	kp_t_eq(T, (int64_t)ranged, (int64_t)size, "the movie's size");
+	snprintf(path, sizeof path, "%s/koprulu-cinematics.mpq", out);
+	b = kp_t_read(T, path, &n);
+	kp_t_ok(T, offset + ranged <= n && memcmp(b + offset, webm, size) == 0, "the group's bytes at %llu are the movie",
+		(unsigned long long)offset);
+	kp_t_ok(T, kp_res_raw_read(r, TEST_MOVIE_WEBM, &refused, err, sizeof err) == NULL, "not read while its group is not open");
+	kp_t_eq(T, kp_res_raw_range(r, "sd/smk/none.webm", file, sizeof file, &offset, &ranged), 0, "a movie not listed");
+	kp_t_eq(T, kp_res_raw_range(r, "a/one.dat", file, sizeof file, &offset, &ranged), 0, "a core file is no range");
+
+	/* the group added (the web, once fetched): read whole */
+	snprintf(path, sizeof path, "%s/koprulu-cinematics.mpq", core);
+	kp_t_eq(T, kp_fs_write(path, b, n, err, sizeof err), 0, "%s", err);
+	kp_t_eq(T, kp_res_add_repack(r, path, err, sizeof err), 0, "%s", err);
+	kp_t_eq(T, kp_res_raw_range(r, TEST_MOVIE_WEBM, file, sizeof file, &offset, &ranged), 0, "its group open");
+	again = kp_res_raw_read(r, TEST_MOVIE_WEBM, &got, err, sizeof err);
+	kp_t_ok(T, again != NULL, "%s", err);
+	kp_t_defer(T, free, again);
+	kp_t_ok(T, got == size && memcmp(again, webm, got) == 0, "the movie from its group");
+}
+
 /* A name's group: a mission directory's own, the music's, the cinematics', the core's. */
 static void repack_groups_by_name(KpT *T)
 {
@@ -415,7 +534,9 @@ static void repack_groups_by_name(KpT *T)
 		{ "campaign/staredit/x.wav", "koprulu-core.mpq", "" }, /* no mission directory between */
 		{ "campaign/terran/readme.txt", "koprulu-core.mpq", "" },
 		{ "music/terran1.wav", "koprulu-music.mpq", "music/" },
-		{ "smk/blizzard.smk", "koprulu-cinematics.mpq", "smk/" },
+		{ "sd/smk/blizzard.webm", "koprulu-cinematics.mpq", "sd/smk/" },
+		{ "hd2/smk/blizzard.webm", "koprulu-cinematics-hd2.mpq", "hd2/smk/" },
+		{ "smk/blizzard.smk", "koprulu-core.mpq", "" }, /* a 1.17 movie goes in as WebM, by Remastered's SD name */
 		{ "arr/units.dat", "koprulu-core.mpq", "" },
 		{ "", "koprulu-core.mpq", "" },
 	};
@@ -830,6 +951,270 @@ static void work_runs_every_job_once(KpT *T)
 	}
 	kp_t_ok(T, kp_work_processors() >= 1, "processors");
 }
+
+/* --- the movies' WebM (stage C4) --- */
+
+#define MOVIE_W 32
+#define MOVIE_H 16
+#define MOVIE_PLANE (MOVIE_W * MOVIE_H)
+#define MOVIE_FRAMES 6
+#define MOVIE_RATE_NUM 50000 /* the 1.17 movies' rate */
+#define MOVIE_RATE_DEN 3333
+#define MOVIE_FRAME_NS 66660000u /* 1e9 * 3333 / 50000 */
+#define MOVIE_SERIAL 77
+#define MOVIES_GOLDEN "tests/golden/cinematics/converter.json" /* converter cinematics' SD pack, before stage C4 */
+#define MOVIES_REPACK "KP_TEST_MOVIES" /* a repack whose cinematics group's movies are compared, all of them */
+#define MOVIES_ORIGINAL "KP_TEST_ORIGINAL"
+#define VORBIS_SLACK 1000 /* a movie's Vorbis bytes from oggenc's at most a thousandth of them */
+
+/* Frame n's G, B, R planes: a level that moves with n. */
+static int movie_frame(void *ctx, uint32_t n, const uint8_t *planes[3], int strides[3])
+{
+	uint8_t *p = (uint8_t *)ctx + (size_t)n * 3 * MOVIE_PLANE;
+	int k, i;
+	for (k = 0; k < 3; k++) {
+		for (i = 0; i < MOVIE_PLANE; i++) p[k * MOVIE_PLANE + i] = (uint8_t)(40 * k + 7 * (i % MOVIE_W) + 20 * n);
+		planes[k] = p + (size_t)k * MOVIE_PLANE;
+		strides[k] = MOVIE_W;
+	}
+	return 0;
+}
+
+static void movie_video_free(void *v)
+{
+	kp_movie_video_free((KpMovieVideo *)v);
+	free(v);
+}
+
+static void vorbis_free(void *p)
+{
+	kp_vorbis_packets_free((KpVorbisPackets *)p);
+	free(p);
+}
+
+static void streams_free(void *s)
+{
+	kp_webm_streams_free((KpWebmStreams *)s);
+	free(s);
+}
+
+static KpWebmStreams *streams_of(KpT *T, const uint8_t *webm, size_t size)
+{
+	KpWebmStreams *st = (KpWebmStreams *)calloc(1, sizeof *st);
+	char err[200];
+	kp_t_ok(T, st != NULL, "memory");
+	kp_t_ok(T, kp_webm_streams(webm, size, MOVIE_SERIAL, st, err, sizeof err) == 0, "the WebM reads back: %s", err);
+	kp_t_defer(T, streams_free, st);
+	return st;
+}
+
+/* A movie written as WebM reads back as the player takes it: the VP9 packets and their key frames, the frame's
+ * duration (the rate 50000/3333 again), the Vorbis sound decoded to exactly its samples (its last block's
+ * DiscardPadding trimmed), the same bytes twice; without sound, none. */
+static void webm_reads_back(KpT *T)
+{
+	uint8_t *frames = (uint8_t *)malloc((size_t)MOVIE_FRAMES * 3 * MOVIE_PLANE);
+	KpMovieVideo *v = (KpMovieVideo *)calloc(1, sizeof *v);
+	KpVorbisPackets *sound = (KpVorbisPackets *)calloc(1, sizeof *sound);
+	KpWebmMovie m;
+	KpWebmStreams *st;
+	KpCineClip named;
+	KpCineMovie *movie;
+	KpError e;
+	size_t wav_size = 0, a_size = 0, b_size = 0, silent_size = 0;
+	const uint8_t *wav;
+	uint8_t *a, *b, *silent;
+	char err[256];
+	uint32_t n;
+	kp_t_ok(T, frames && v && sound, "memory");
+	kp_t_defer(T, free, frames);
+	kp_t_defer(T, movie_video_free, v);
+	kp_t_defer(T, vorbis_free, sound);
+	kp_t_ok(T, kp_movie_vp9(MOVIE_W, MOVIE_H, MOVIE_RATE_NUM, MOVIE_RATE_DEN, MOVIE_FRAMES, movie_frame, frames, v, err,
+		sizeof err) == 0, "%s", err);
+	wav = wav_new(T, SOUND_FRAMES, 2, 16, 1, &wav_size);
+	kp_t_ok(T, kp_vorbis_from_wav(wav, wav_size, KP_OGG_QUALITY, sound, err, sizeof err) == 0, "%s", err);
+	kp_t_eq(T, sound->granules[sound->count - 1], SOUND_FRAMES, "the last packet's granule is the sound's length");
+	memset(&m, 0, sizeof m);
+	m.width = MOVIE_W;
+	m.height = MOVIE_H;
+	m.shown_w = 2 * MOVIE_W;
+	m.frame_ns = MOVIE_FRAME_NS;
+	m.packets = v->packets;
+	m.sizes = v->sizes;
+	m.frames = v->count;
+	m.sound = sound;
+	a = kp_webm_write(&m, &a_size, err, sizeof err);
+	b = kp_webm_write(&m, &b_size, err, sizeof err);
+	kp_t_ok(T, a && b, "%s", err);
+	kp_t_defer(T, free, a);
+	kp_t_defer(T, free, b);
+	kp_t_ok(T, a_size == b_size && memcmp(a, b, a_size) == 0, "the same movie gives the same bytes");
+	st = streams_of(T, a, a_size);
+	kp_t_eq(T, st->width, MOVIE_W, "width");
+	kp_t_eq(T, st->height, MOVIE_H, "height");
+	kp_t_eq(T, st->frame_ns, MOVIE_FRAME_NS, "the frame's duration");
+	kp_t_eq(T, st->count, MOVIE_FRAMES, "a packet a frame");
+	kp_t_ok(T, st->packets_size == v->size && memcmp(st->packets, v->packets, v->size) == 0, "the packets as written");
+	for (n = 0; n < st->count; n++) kp_t_eq(T, kp_le_u32(st->sizes + 4u * n), v->sizes[n], "frame %u's size and key bit", n);
+	kp_t_ok(T, st->ogg != NULL, "the sound");
+	ogg_decode(T, st->ogg, st->ogg_size, 2, MOVIE_SERIAL); /* every sample, no more: the padding trimmed */
+	memset(&named, 0, sizeof named);
+	snprintf(named.name, sizeof named.name, "smk\\test");
+	movie = kp_cine_movie_webm(a, a_size, &named, &e);
+	kp_t_ok(T, movie != NULL, "the player takes it: %s", e.msg);
+	kp_t_eq(T, kp_cine_movie_clip(movie)->rate_num, MOVIE_RATE_NUM, "its rate");
+	kp_t_eq(T, kp_cine_movie_clip(movie)->rate_den, MOVIE_RATE_DEN, "its rate");
+	kp_t_eq(T, kp_cine_movie_clip(movie)->frames, MOVIE_FRAMES, "its frames");
+	kp_cine_movie_free(movie);
+	m.sound = NULL;
+	silent = kp_webm_write(&m, &silent_size, err, sizeof err);
+	kp_t_ok(T, silent != NULL, "%s", err);
+	kp_t_defer(T, free, silent);
+	st = streams_of(T, silent, silent_size);
+	kp_t_ok(T, st->ogg == NULL && st->count == MOVIE_FRAMES, "no sound, the frames");
+	v->sizes[0] &= ~KP_WEBM_KEY;
+	m.sizes = v->sizes;
+	kp_t_ok(T, kp_webm_write(&m, &silent_size, err, sizeof err) == NULL, "a first frame that is no key frame refused");
+}
+
+/* The SHA-256 of bytes, in hexadecimal */
+static void hex_digest(const uint8_t *data, size_t size, char hex[2 * KP_SHA256_SIZE + 1])
+{
+	uint8_t d[KP_SHA256_SIZE];
+	kp_sha256(data, size, d);
+	kp_sha256_hex(d, hex);
+}
+
+/* An Ogg stream's packets: their count, their bytes but the second's (the comment header: the encoder's vendor), the
+ * last page's granule. */
+static void ogg_packets(KpT *T, const uint8_t *ogg, size_t size, int *count, uint64_t *bytes, int64_t *granule)
+{
+	size_t at = 0, current = 0;
+	*count = 0;
+	*bytes = 0;
+	*granule = -1;
+	while (at < size) {
+		size_t segments, body = 0, k, data;
+		kp_t_ok(T, at + 27 <= size && memcmp(ogg + at, "OggS", 4) == 0, "an Ogg page at %lu", (unsigned long)at);
+		segments = ogg[at + 26];
+		*granule = (int64_t)((uint64_t)kp_le_u32(ogg + at + 6) | (uint64_t)kp_le_u32(ogg + at + 10) << 32);
+		data = at + 27 + segments;
+		for (k = 0; k < segments; k++) {
+			current += ogg[at + 27 + k];
+			body += ogg[at + 27 + k];
+			if (ogg[at + 27 + k] < 255) { /* a packet ends */
+				if (*count != 1) *bytes += current;
+				(*count)++;
+				current = 0;
+			}
+		}
+		at = data + body;
+	}
+}
+
+/* A movie's WebM against its golden entry: its size and rate (the player's: KpCineClip), its VP9 packets and frame
+ * table; its Vorbis packets' count and the sound's length, their bytes within 1 / VORBIS_SLACK of oggenc's (libvorbisenc
+ * built here rounds a few floats otherwise than Homebrew's oggenc: stage C0's 3 bytes in paryes00.wav), *vorbis_apart
+ * counting how far. */
+static void movie_as_golden(KpT *T, const char *name, const uint8_t *webm, size_t size, const KpJson *g,
+	int64_t *vorbis_apart)
+{
+	KpWebmStreams *st = streams_of(T, webm, size);
+	KpCineClip named;
+	KpCineMovie *movie;
+	KpError e;
+	char hex[2 * KP_SHA256_SIZE + 1];
+	memset(&named, 0, sizeof named);
+	snprintf(named.name, sizeof named.name, "%s", name);
+	movie = kp_cine_movie_webm(webm, size, &named, &e);
+	kp_t_ok(T, movie != NULL, "%s: the player takes it: %s", name, e.msg);
+	kp_t_eq(T, kp_cine_movie_clip(movie)->rate_num, kp_json_int(kp_json_at(kp_json_get(g, "rate"), 0), -1), "%s: rate", name);
+	kp_t_eq(T, kp_cine_movie_clip(movie)->rate_den, kp_json_int(kp_json_at(kp_json_get(g, "rate"), 1), -1), "%s: rate", name);
+	kp_cine_movie_free(movie);
+	kp_t_eq(T, st->width, kp_json_field_int(g, "width", -1), "%s: width", name);
+	kp_t_eq(T, st->height, kp_json_field_int(g, "height", -1), "%s: height", name);
+	kp_t_eq(T, st->count, kp_json_field_int(g, "frames", -1), "%s: frames", name);
+	kp_t_eq(T, st->packets_size, kp_json_field_int(g, "video_size", -1), "%s: the video's bytes", name);
+	hex_digest(st->packets, (size_t)st->packets_size, hex);
+	kp_t_ok(T, strcmp(hex, kp_json_str(kp_json_get(g, "video"), "")) == 0, "%s: the VP9 packets are the converter's", name);
+	hex_digest(st->sizes, 4u * st->count, hex);
+	kp_t_ok(T, strcmp(hex, kp_json_str(kp_json_get(g, "sizes"), "")) == 0, "%s: the frame table is the converter's", name);
+	if (kp_json_get(g, "samples")) {
+		int count;
+		uint64_t bytes, want = (uint64_t)kp_json_field_int(g, "vorbis_bytes", -1);
+		int64_t granule;
+		kp_t_ok(T, st->ogg != NULL, "%s: its sound", name);
+		ogg_packets(T, st->ogg, st->ogg_size, &count, &bytes, &granule);
+		kp_t_eq(T, count, kp_json_field_int(g, "vorbis_packets", -1), "%s: the Vorbis packets", name);
+		kp_t_eq(T, granule, kp_json_field_int(g, "samples", -1), "%s: the sound's samples", name);
+		kp_t_ok(T, (bytes > want ? bytes - want : want - bytes) * VORBIS_SLACK <= want,
+			"%s: %llu bytes of Vorbis, oggenc's %llu", name, (unsigned long long)bytes, (unsigned long long)want);
+		*vorbis_apart += (int64_t)bytes - (int64_t)want;
+	} else {
+		kp_t_ok(T, st->ogg == NULL, "%s: no sound", name);
+	}
+}
+
+/* The movie names of the profile's catalog in lower case ("blizzard"), k-th. */
+static void catalog_lower(const KpCineCatalog *c, int k, char *out, size_t size)
+{
+	size_t i;
+	for (i = 0; c->movies[k].name[i] && i + 1 < size; i++)
+		out[i] = (char)(c->movies[k].name[i] >= 'A' && c->movies[k].name[i] <= 'Z' ? c->movies[k].name[i] - 'A' + 'a' : c->movies[k].name[i]);
+	out[i] = 0;
+}
+
+/* Acceptance of stage C4: the 1.17 movies kp_convert transcodes (kp_movie_smk_webm) equal what the Python converter
+ * wrote (MOVIES_GOLDEN, recorded before it was deleted): the same VP9 packets and key frames, the same Vorbis packets
+ * (all but the comment header) and length. With KP_TEST_MOVIES, a repack's cinematics group, all 28 (the repack wrote
+ * them: tools/ci.sh); else two transcoded here from KP_TEST_ORIGINAL (a quick 320-wide one and a 640-wide briefing). */
+static void movies_equal_the_converters(KpT *T)
+{
+	static const char *const QUICK[] = { "blizzard", "preprotoss_3" };
+	const char *repack = getenv(MOVIES_REPACK);
+	KpRes *res = kp_t_install(T, repack && repack[0] ? MOVIES_REPACK : MOVIES_ORIGINAL);
+	const KpJson *golden = kp_json_get(kp_t_golden(T, MOVIES_GOLDEN), "movies");
+	const KpDefsTable *cinm = kp_defs_table(kp_res_profile(res), "CINM");
+	KpCineCatalog *c = (KpCineCatalog *)malloc(sizeof *c);
+	int k, compared = 0;
+	int64_t vorbis_apart = 0;
+	kp_t_ok(T, c != NULL, "memory");
+	kp_t_defer(T, free, c);
+	kp_t_ok(T, cinm && kp_cine_catalog(c, cinm->data, cinm->size) == 0, "the profile's movies");
+	kp_t_eq(T, kp_json_len(golden), c->count, "a golden entry a movie");
+	for (k = 0; k < c->count; k++) {
+		char lower[KP_CINE_NAME], name[KP_CINE_NAME + 8], path[96], err[400];
+		const KpJson *g;
+		uint8_t *webm;
+		size_t size = 0, q;
+		catalog_lower(c, k, lower, sizeof lower);
+		snprintf(name, sizeof name, "smk\\%s", lower);
+		kp_t_ok(T, (g = kp_json_get(golden, name)) != NULL, "%s in the golden", name);
+		if (repack && repack[0]) {
+			snprintf(path, sizeof path, KP_CINE_WEBM_FORMAT, KP_CINE_WEBM_FOLDER[0], lower);
+			webm = kp_res_raw_read(res, path, &size, err, sizeof err);
+			kp_t_ok(T, webm != NULL, "%s in the repack: %s", path, err);
+		} else {
+			KpResStatus status;
+			uint8_t *smk;
+			KpMovieInfo info;
+			for (q = 0; q < sizeof QUICK / sizeof QUICK[0] && strcmp(QUICK[q], lower) != 0; q++) {}
+			if (q == sizeof QUICK / sizeof QUICK[0]) continue;
+			snprintf(path, sizeof path, "smk\\%s.smk", c->movies[k].name);
+			smk = kp_res_read(res, path, &size, &status, err, sizeof err);
+			kp_t_ok(T, smk != NULL, "%s: %s", path, err);
+			webm = kp_movie_smk_webm(smk, size, name, &size, &info, err, sizeof err);
+			free(smk);
+			kp_t_ok(T, webm != NULL, "%s", err);
+		}
+		kp_t_defer(T, free, webm);
+		movie_as_golden(T, name, webm, size, g, &vorbis_apart);
+		compared++;
+	}
+	kp_t_log(T, "%d movies as the converter's, their Vorbis %+lld bytes from oggenc's", compared, (long long)vorbis_apart);
+}
+
 #else
 #define SKIPPED(name) \
 	static void name(KpT *T) { kp_t_skip(T, "built without KP_ENCODERS"); }
@@ -837,6 +1222,7 @@ SKIPPED(ogg_from_wav_decodes)
 SKIPPED(ogg_serial_is_the_names_crc)
 SKIPPED(repack_reads_back)
 SKIPPED(repack_needs_an_install)
+SKIPPED(repack_movies_read_by_ranges)
 SKIPPED(repack_groups_by_name)
 SKIPPED(scenario_rewrites_the_base)
 SKIPPED(scenario_refuses_a_bad_spec)
@@ -846,6 +1232,8 @@ SKIPPED(icon_png_holds_the_rows)
 SKIPPED(icon_writes_every_platforms_files)
 SKIPPED(fs_lists_writes_removes)
 SKIPPED(work_runs_every_job_once)
+SKIPPED(webm_reads_back)
+SKIPPED(movies_equal_the_converters)
 #endif
 
 static const KpTest TESTS[] = {
@@ -853,6 +1241,7 @@ static const KpTest TESTS[] = {
 	{ "ogg_serial_is_the_names_crc", ogg_serial_is_the_names_crc, 0 },
 	{ "repack_reads_back", repack_reads_back, 0 },
 	{ "repack_needs_an_install", repack_needs_an_install, 0 },
+	{ "repack_movies_read_by_ranges", repack_movies_read_by_ranges, 0 },
 	{ "repack_groups_by_name", repack_groups_by_name, 0 },
 	{ "scenario_rewrites_the_base", scenario_rewrites_the_base, 0 },
 	{ "scenario_refuses_a_bad_spec", scenario_refuses_a_bad_spec, 0 },
@@ -862,6 +1251,8 @@ static const KpTest TESTS[] = {
 	{ "icon_writes_every_platforms_files", icon_writes_every_platforms_files, 0 },
 	{ "fs_lists_writes_removes", fs_lists_writes_removes, 0 },
 	{ "work_runs_every_job_once", work_runs_every_job_once, 0 },
+	{ "webm_reads_back", webm_reads_back, 0 },
+	{ "movies_equal_the_converters", movies_equal_the_converters, 0 },
 };
 
 KP_SUITE(kp_suite_convert, "test_convert", TESTS);

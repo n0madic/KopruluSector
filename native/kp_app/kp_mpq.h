@@ -29,6 +29,10 @@ int kp_mpq_slice_name(int fd, uint64_t offset, uint64_t length, char *out, size_
 KpMpq *kp_mpq_create(const char *path, uint32_t max_files, char *err, size_t err_size);
 /* A file added to a created archive (a name already there is replaced): 0, or -1 with the reason. */
 int kp_mpq_add(KpMpq *m, const char *name, const void *data, size_t size, int compression, char *err, size_t err_size);
+/* Where a file added uncompressed (KP_MPQ_STORE) keeps its bytes in the archive's file, to be read as a range of it (the
+ * web's movies, ADR 0019 stage C4): 0 and *offset, or -1 when the archive does not have it or keeps it otherwise
+ * (compressed, encrypted, with sector CRCs). */
+int kp_mpq_stored_at(KpMpq *m, const char *name, uint64_t *offset);
 /* Closes the archive (a created one is written out first): 0, or -1 when it could not be written. NULL is fine. */
 int kp_mpq_close(KpMpq *m);
 int kp_mpq_has(KpMpq *m, const char *name);

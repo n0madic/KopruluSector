@@ -2,7 +2,7 @@
 """Export FFmpeg's decode of the 1.17 install's 28 cinematics into a JSON golden (ADR 0018, stage D7).
 
 Each movie of defs/campaign/cinematics.json (`smk\\<name>.smk`, the effective copy of the profile's archives checked
-against the reference install's size and SHA-256, as converter/emit/cinematics_smk.py reads it) is decoded by FFmpeg
+against the reference install's size and SHA-256 that the table records, `smk`) is decoded by FFmpeg
 twice: its frames as `pal8` (each frame's width x height palette indices, then its palette's 256 entries as B, G, R,
 255) and its first sound track as 16-bit little-endian PCM. The golden keeps the byte count and SHA-256 of each;
 tests/c/test_movies.c decodes the same files with kp_smk (its palette records and Smacker sound) and compares.
@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import logging
 import os
 import shutil
@@ -26,7 +27,6 @@ from pathlib import Path
 from oracle_common import GOLDEN, ROOT, ExportError, update_goldens
 
 sys.path.insert(0, str(ROOT))
-from converter.emit import cinematics, cinematics_smk  # noqa: E402
 from converter.mpq.profile import DEFAULT_PROFILE, Profile, Resolver  # noqa: E402
 
 log = logging.getLogger("export_smk_ffmpeg")
@@ -37,6 +37,8 @@ DECODES = {
     "sound": ["-map", "0:a:0", "-f", "s16le", "-c:a", "pcm_s16le"],
 }
 CHUNK = 1 << 20
+CINEMATICS = ROOT / "defs" / "campaign" / "cinematics.json"
+SMK_PATH = "smk\\{name}.smk"
 
 
 def decode(path: Path, args: list[str]) -> list:
@@ -54,12 +56,12 @@ def decode(path: Path, args: list[str]) -> list:
 
 def movies(data: Path) -> dict:
     """Each movie's decodes, the copies read and checked as the converter reads them."""
-    known = cinematics_smk.expected()
+    table = json.loads(CINEMATICS.read_text(encoding="utf-8"))
     out = {}
     with Resolver(data, Profile.load(DEFAULT_PROFILE)) as resolver, tempfile.TemporaryDirectory() as tmp:
-        for name in cinematics.table()[0]:
-            size, sha256 = known[name]
-            _, raw = resolver.read_expected(cinematics_smk.SMK_PATH.format(name=name), size, sha256)
+        for name in table["names"]:
+            size, sha256 = table["smk"][name]
+            _, raw = resolver.read_expected(SMK_PATH.format(name=name), size, sha256)
             path = Path(tmp) / f"{name}.smk"
             path.write_bytes(raw)
             del raw

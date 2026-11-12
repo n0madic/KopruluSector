@@ -19,8 +19,7 @@ import tempfile
 from pathlib import Path
 
 from . import container as kpf
-from ..emit import cinematics
-from ..formats import dialog, grp, kpw
+from ..formats import dialog, ffmpeg, grp, kpw
 from . import kpd, kpm
 from ..derive import mission as mission_terrain
 
@@ -505,7 +504,7 @@ def cine_webm(source: str, pix_fmt: str, duration: float = 0.8, gop: int = 5) ->
     encoders. The same bytes each time (bitexact: the muxer's identifiers are otherwise random), so that regenerating
     the fixtures leaves tools/ci.sh's remembered passes valid. FFmpeg's own Vorbis encoder is the first try; where its
     sound does not begin with the video (6.1 of Ubuntu 24.04 starts it 46 ms early, the encoder's delay as a negative
-    start time, which the cinematics emitter refuses: a real movie's video begins 3 to 12 ms after the sound) libvorbis
+    start time, which kp_cine's movies may not have: a real movie's video begins 3 to 12 ms after the sound) libvorbis
     is the second."""
     if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
         return None
@@ -520,13 +519,25 @@ def cine_webm(source: str, pix_fmt: str, duration: float = 0.8, gop: int = 5) ->
                                  capture_output=True, check=False)
             if run.returncode != 0 or not out.exists():
                 continue
-            try:
-                cinematics.probe(str(out))
-            except cinematics.CinematicsError as e:
-                log.warning("cinematics fixtures: FFmpeg's %s encoder: %s", vorbis, e)
+            offset = _sound_offset(str(out))
+            if offset > CINE_SOUND_DRIFT:
+                log.warning("cinematics fixtures: FFmpeg's %s encoder begins the sound %.0f ms from the video", vorbis,
+                            offset * 1000)
                 continue
             return out.read_bytes()
     return None
+
+
+CINE_SOUND_DRIFT = 0.5 / 15  # half of a fixture movie's frame: kp_cine starts its sound and its video together
+
+
+def _sound_offset(path: str) -> float:
+    """How far apart (seconds) a WebM's video and sound begin (ffprobe's start times)."""
+    video = ffmpeg.probe(path, "v:0", ("start_time",), RuntimeError)
+    audio = ffmpeg.probe(path, "a:0", ("start_time",), RuntimeError)
+    if video is None or audio is None:
+        raise RuntimeError(f"{path}: no video or no sound")
+    return abs(float(video[0]) - float(audio[0]))
 
 
 def cine_frames(webm: bytes, pix_fmt: str = "rgba") -> bytes:
@@ -540,24 +551,9 @@ def cine_frames(webm: bytes, pix_fmt: str = "rgba") -> bytes:
         return run.stdout
 
 
-# the cinematics fixture's subtitles: `starintr`'s (the second clip), `blizzard` has none
+# the cinematics fixture's subtitles: the second movie's, the first has none
 CINE_SUBTITLES = ("1\n00:00:00,100 --> 00:00:00,300\nПервая\n\n"
                   "2\n00:00:00,300 --> 00:00:00,700\nВторая\nстрока\n").encode("utf-8")
-
-
-class _CineStorage:
-    """The cinematics emitter's storage over two movies: `blizzard` (cinematic 0) and `starintr` (1), the second with
-    enUS subtitles."""
-
-    def __init__(self, movies: dict[str, bytes]):
-        self.movies = {f"SD/smk/{n}.webm".lower(): d for n, d in movies.items()}
-        self.movies["locales/enus/assets/smk/starintr.srt"] = CINE_SUBTITLES
-
-    def has(self, name: str) -> bool:
-        return name.lower() in self.movies
-
-    def read(self, name: str) -> bytes:
-        return self.movies[name.lower()]
 
 
 # KPW1 fixtures (formats/kpw.py), read by test_ui_data's kpw tests: each movie's file and its stored frames' indices
@@ -718,24 +714,18 @@ def scr_fixture() -> dict[str, bytes]:
     return files
 
 
-def cine_fixture(source_hash: bytes) -> dict[str, bytes]:
-    """cine.kpd (cinematic 0: gbrp, 1: yuv420p) and the movies' FFmpeg-decoded frames, cine0.rgba and cine1.rgba, and
-    cine1.yuv, the second movie's decoded planes (VP9 decoding is exact: libvpx, in C or with SIMD, gives FFmpeg's);
-    the WebM the pack was split from, cine0.webm and cine1.webm, and the second one's subtitles, cine1.srt (stage D7:
-    an install's movies played as they are, against the pack's clips); empty where FFmpeg cannot encode them (the C
-    suite then skips)."""
+def cine_fixture() -> dict[str, bytes]:
+    """Two WebM movies as kp_cine plays them (ADR 0019, stage C4: an install's or a repack's WebM), cine0.webm (gbrp: the
+    SD movies' VP9 profile 1 4:4:4 sRGB) and cine1.webm (yuv420p: the HD2 ones' profile 0), their FFmpeg-decoded
+    frames, cine0.rgba and cine1.rgba, the second's decoded planes, cine1.yuv (VP9 decoding is exact: libvpx, in C or
+    with SIMD, gives FFmpeg's), and its subtitles, cine1.srt; empty where FFmpeg cannot encode them (the C suite then
+    skips)."""
     srgb, ycc = cine_webm("testsrc", "gbrp"), cine_webm("testsrc2", "yuv420p")  # not gradients: its colours are random
     if srgb is None or ycc is None:
         log.warning("cinematics fixtures: ffmpeg with libvpx-vp9 and vorbis is not available")
         return {}
-    storage = _CineStorage({"blizzard": srgb, "starintr": ycc})
-    subtitles = cinematics.subtitles(storage, cinematics.table()[0], cinematics.SUBTITLES_AUTO)
-    with tempfile.TemporaryDirectory() as tmp:
-        info = cinematics.generate(cinematics.remastered(storage, "sd"), Path(tmp), "sd", "bw-1.17.0.1", source_hash,
-                                   subtitles)
-        return {"cine.kpd": Path(info["path"]).read_bytes(), "cine0.rgba": cine_frames(srgb),
-                "cine1.rgba": cine_frames(ycc), "cine1.yuv": cine_frames(ycc, "yuv420p"), "cine0.webm": srgb,
-                "cine1.webm": ycc, "cine1.srt": CINE_SUBTITLES}
+    return {"cine0.rgba": cine_frames(srgb), "cine1.rgba": cine_frames(ycc), "cine1.yuv": cine_frames(ycc, "yuv420p"),
+            "cine0.webm": srgb, "cine1.webm": ycc, "cine1.srt": CINE_SUBTITLES}
 
 
 def build_fixtures(out: Path = DEFAULT_OUT) -> list[Path]:
@@ -766,7 +756,7 @@ def build_fixtures(out: Path = DEFAULT_OUT) -> list[Path]:
     files.update({files_path(p): data for p, data in originals.items()})
     files.update(kpw_fixture())
     files.update(scr_fixture())
-    files.update(cine_fixture(source_hash))
+    files.update(cine_fixture())
     grpmeta_set, _ = grpmeta_fixture()
     shutil.rmtree(out / "files", ignore_errors=True)  # no file of an earlier run's layout stays
     written = []

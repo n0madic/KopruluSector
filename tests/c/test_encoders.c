@@ -1,65 +1,28 @@
 /*
- * The encoder kp_convert's movies will build on (ADR 0019, stage C0; C4 makes the movies of it): libvpx's VP9 encoder
- * with the cinematics' settings (ADR 0015: profile 1, 4:4:4 sRGB planes G, B, R, constant quality 32, good, cpu-used 2,
- * a key frame at most every 128 frames, one thread) run over made-up frames and decoded back: what it writes decodes to
- * the input's frames, and the same frames give the same bytes (the cache of converted files relies on it). The Ogg
- * Vorbis half is kp_convert's own since stage C1 (kp_ogg.h, test_convert.c). Built with KP_ENCODERS only (the host's
- * tools, CMakeLists.txt); elsewhere its test skips.
+ * The encoder of kp_convert's movies (ADR 0019: stage C0 measured it, C4 makes the 1.17 movies with it, kp_movie.h):
+ * libvpx's VP9 encoder at the cinematics' settings (ADR 0015: profile 1, 4:4:4 sRGB planes G, B, R, constant quality
+ * 32, good, cpu-used 2, a key frame at most every 128 frames, one thread) run over made-up frames and decoded back:
+ * what it writes decodes to the input's frames, and the same frames give the same bytes (the cache of converted files
+ * relies on it). The Ogg Vorbis half is kp_convert's own since stage C1 (kp_ogg.h, test_convert.c). Built with
+ * KP_ENCODERS only (the host's tools, CMakeLists.txt); elsewhere its test skips.
  */
 #include "kp_test.h"
 
 #ifdef KP_ENCODERS
 #include <math.h>
 
-#include "vpx/vp8cx.h"
+#include "kp_movie.h"
+#include "kp_webm.h"
 #include "vpx/vp8dx.h"
 #include "vpx/vpx_decoder.h"
-#include "vpx/vpx_encoder.h"
 
 #define W 64
 #define H 48
 #define PLANE (W * H)
 #define MOVIE_FRAMES 10
-#define VP9_CQ 32
-#define VP9_CPU_USED 2
-#define VP9_KEY_INTERVAL 128
+#define RATE_NUM 50000 /* the 1.17 movies' rate: 50000/3333 frames a second */
+#define RATE_DEN 3333
 #define VP9_PSNR_FLOOR 45.0 /* 50.4 dB measured on this picture (macOS arm64; Terran2 at the same settings 41.4, ADR 0019) */
-
-typedef struct {
-	uint8_t *data;
-	size_t size, cap;
-	uint32_t frames;
-	size_t at[MOVIE_FRAMES + 1]; /* each frame packet's offset; the last entry the end */
-} Out;
-
-static void out_free(void *p)
-{
-	free(((Out *)p)->data);
-	free(p);
-}
-
-static Out *out_new(KpT *T)
-{
-	Out *o = (Out *)calloc(1, sizeof *o);
-	kp_t_ok(T, o != NULL, "memory");
-	kp_t_defer(T, out_free, o);
-	return o;
-}
-
-static void out_put(KpT *T, Out *o, const void *data, size_t size)
-{
-	if (o->size + size > o->cap) {
-		size_t cap = o->cap ? o->cap : 4096;
-		uint8_t *grown;
-		while (cap < o->size + size) cap *= 2;
-		grown = (uint8_t *)realloc(o->data, cap);
-		kp_t_ok(T, grown != NULL, "memory");
-		o->data = grown;
-		o->cap = cap;
-	}
-	memcpy(o->data + o->size, data, size);
-	o->size += size;
-}
 
 /* Frame f's planes G, B, R: a gradient, a square that moves, a few flat colours as a palette's would be. */
 static void movie_frame(uint32_t f, uint8_t *gbr)
@@ -75,75 +38,56 @@ static void movie_frame(uint32_t f, uint8_t *gbr)
 		}
 }
 
-static void vp9_encode(KpT *T, const uint8_t *frames, Out *o)
+static int frame_of(void *ctx, uint32_t n, const uint8_t *planes[3], int strides[3])
 {
-	vpx_codec_ctx_t enc;
-	vpx_codec_enc_cfg_t cfg;
-	vpx_image_t img;
-	uint32_t f;
-	kp_t_eq(T, vpx_codec_enc_config_default(vpx_codec_vp9_cx(), &cfg, 0), VPX_CODEC_OK, "the encoder's defaults");
-	cfg.g_w = W;
-	cfg.g_h = H;
-	cfg.g_profile = 1;
-	cfg.g_threads = 1;
-	cfg.g_timebase.num = 3333; /* the 1.17 movies' rate: 50000/3333 frames a second */
-	cfg.g_timebase.den = 50000;
-	cfg.rc_end_usage = VPX_Q;
-	cfg.kf_max_dist = VP9_KEY_INTERVAL;
-	kp_t_eq(T, vpx_codec_enc_init(&enc, vpx_codec_vp9_cx(), &cfg, 0), VPX_CODEC_OK, "the encoder opens");
-	vpx_codec_control(&enc, VP8E_SET_CPUUSED, VP9_CPU_USED);
-	vpx_codec_control(&enc, VP8E_SET_CQ_LEVEL, VP9_CQ);
-	vpx_codec_control(&enc, VP9E_SET_COLOR_SPACE, VPX_CS_SRGB);
-	vpx_img_wrap(&img, VPX_IMG_FMT_I444, W, H, 1, (unsigned char *)frames);
-	img.cs = VPX_CS_SRGB;
-	for (f = 0; f <= MOVIE_FRAMES; f++) {
-		int got;
-		if (f < MOVIE_FRAMES) {
-			const uint8_t *p = frames + (size_t)f * 3 * PLANE;
-			img.planes[0] = (unsigned char *)p;
-			img.planes[1] = (unsigned char *)p + PLANE;
-			img.planes[2] = (unsigned char *)p + 2 * PLANE;
-			img.stride[0] = img.stride[1] = img.stride[2] = W;
-		}
-		do { /* past the last frame the encoder is drained: it holds frames back for its alternate references */
-			const vpx_codec_cx_pkt_t *pkt;
-			vpx_codec_iter_t it = NULL;
-			kp_t_eq(T, vpx_codec_encode(&enc, f < MOVIE_FRAMES ? &img : NULL, f, 1, 0, VPX_DL_GOOD_QUALITY),
-				VPX_CODEC_OK, "frame %u encodes", f);
-			got = 0;
-			while ((pkt = vpx_codec_get_cx_data(&enc, &it)) != NULL) {
-				if (pkt->kind != VPX_CODEC_CX_FRAME_PKT) continue;
-				kp_t_ok(T, o->frames < MOVIE_FRAMES, "no more packets than frames");
-				o->at[o->frames++] = o->size;
-				out_put(T, o, pkt->data.frame.buf, pkt->data.frame.sz);
-				got = 1;
-			}
-		} while (f == MOVIE_FRAMES && got);
+	const uint8_t *p = (const uint8_t *)ctx + (size_t)n * 3 * PLANE;
+	int k;
+	for (k = 0; k < 3; k++) {
+		planes[k] = p + (size_t)k * PLANE;
+		strides[k] = W;
 	}
-	o->at[o->frames] = o->size;
-	vpx_codec_destroy(&enc);
+	return 0;
+}
+
+static void video_free(void *v)
+{
+	kp_movie_video_free((KpMovieVideo *)v);
+	free(v);
+}
+
+static KpMovieVideo *vp9_encode(KpT *T, uint8_t *frames)
+{
+	KpMovieVideo *v = (KpMovieVideo *)calloc(1, sizeof *v);
+	char err[256];
+	kp_t_ok(T, v != NULL, "memory");
+	kp_t_defer(T, video_free, v);
+	kp_t_ok(T, kp_movie_vp9(W, H, RATE_NUM, RATE_DEN, MOVIE_FRAMES, frame_of, frames, v, err, sizeof err) == 0, "%s", err);
+	return v;
 }
 
 static void vp9_round_trip(KpT *T)
 {
 	uint8_t *frames = (uint8_t *)malloc((size_t)MOVIE_FRAMES * 3 * PLANE);
-	Out *a = out_new(T), *b = out_new(T);
+	const KpMovieVideo *a, *b;
 	vpx_codec_ctx_t dec;
 	double sse = 0, psnr;
 	uint32_t f, decoded = 0;
+	size_t at = 0;
 	kp_t_ok(T, frames != NULL, "memory");
 	kp_t_defer(T, free, frames);
 	for (f = 0; f < MOVIE_FRAMES; f++) movie_frame(f, frames + (size_t)f * 3 * PLANE);
-	vp9_encode(T, frames, a);
-	vp9_encode(T, frames, b);
-	kp_t_eq(T, a->frames, MOVIE_FRAMES, "a packet a frame");
-	kp_t_ok(T, a->size == b->size && memcmp(a->data, b->data, a->size) == 0, "the same frames give the same bytes");
+	a = vp9_encode(T, frames);
+	b = vp9_encode(T, frames);
+	kp_t_eq(T, a->count, MOVIE_FRAMES, "a packet a frame");
+	kp_t_ok(T, a->sizes[0] & KP_WEBM_KEY, "the first a key frame");
+	kp_t_ok(T, a->size == b->size && memcmp(a->packets, b->packets, a->size) == 0, "the same frames give the same bytes");
 	kp_t_eq(T, vpx_codec_dec_init(&dec, vpx_codec_vp9_dx(), NULL, 0), VPX_CODEC_OK, "the decoder opens");
-	for (f = 0; f < a->frames; f++) {
+	for (f = 0; f < a->count; f++) {
+		uint32_t size = a->sizes[f] & ~KP_WEBM_KEY;
 		vpx_codec_iter_t it = NULL;
 		vpx_image_t *im;
-		kp_t_eq(T, vpx_codec_decode(&dec, a->data + a->at[f], (unsigned)(a->at[f + 1] - a->at[f]), NULL, 0),
-			VPX_CODEC_OK, "packet %u decodes", f);
+		kp_t_eq(T, vpx_codec_decode(&dec, a->packets + at, size, NULL, 0), VPX_CODEC_OK, "packet %u decodes", f);
+		at += size;
 		while ((im = vpx_codec_get_frame(&dec, &it)) != NULL) {
 			const uint8_t *src = frames + (size_t)decoded * 3 * PLANE;
 			int p;
@@ -161,6 +105,7 @@ static void vp9_round_trip(KpT *T)
 		}
 	}
 	vpx_codec_destroy(&dec);
+	kp_t_eq(T, at, a->size, "the packets add up");
 	kp_t_eq(T, decoded, MOVIE_FRAMES, "every frame decodes back");
 	psnr = sse == 0 ? 99.0 : 10.0 * log10(255.0 * 255.0 * 3.0 * PLANE * MOVIE_FRAMES / sse);
 	kp_t_ok(T, psnr >= VP9_PSNR_FLOOR, "PSNR %.2f dB at least %.1f", psnr, VP9_PSNR_FLOOR);
