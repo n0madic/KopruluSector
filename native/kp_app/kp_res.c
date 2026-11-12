@@ -103,6 +103,7 @@ struct KpRes {
 	int group_count;
 	Map listed;  /* the repacks' files */
 	Map raw;     /* the repacks' Remastered files by their CASC names (listed "remastered": kp_res_raw_read) */
+	KpResSourceKind origin; /* the install the repacks were written from (the first listing's "source"), NONE unknown */
 	KpResSourceKind install;
 	char install_dir[KP_RES_PATH];
 	Archive archives[KP_RES_ARCHIVES];
@@ -591,8 +592,12 @@ static int read_listing(KpRes *r, int archive, const char *dir, char *err, size_
 	for (line = strchr(text, '\n'); line && *++line; line = next) { /* past the magic */
 		next = strchr(line, '\n');
 		if (next) *next = 0;
-		if (!*line || strncmp(line, "profile ", 8) == 0 || strncmp(line, "source ", 7) == 0) {
+		if (!*line || strncmp(line, "profile ", 8) == 0) {
 			/* the profile's checked */
+		} else if (strncmp(line, "source ", 7) == 0) {
+			if (r->origin == KP_RES_SOURCE_NONE) /* the core's, read before its groups' */
+				r->origin = strcmp(line + 7, "1.17") == 0 ? KP_RES_SOURCE_MPQ
+					: strcmp(line + 7, "remastered") == 0 ? KP_RES_SOURCE_CASC : KP_RES_SOURCE_NONE;
 		} else if (strncmp(line, "group ", 6) == 0) {
 			char path[KP_RES_PATH], why2[KP_RES_MESSAGE];
 			int g = add_group(r, line + 6), found = g >= 0 ? find_repack(r, dir, r->groups[g].file, path, sizeof path) : 0;
@@ -767,6 +772,7 @@ void kp_res_close(KpRes *r)
 }
 
 KpResSourceKind kp_res_install(const KpRes *r) { return r->install; }
+KpResSourceKind kp_res_origin(const KpRes *r) { return r->repack_count > 0 ? r->origin : r->install; }
 int kp_res_repacks(const KpRes *r) { return r->repack_count; }
 const KpDefsProfile *kp_res_profile(const KpRes *r) { return r->profile; }
 

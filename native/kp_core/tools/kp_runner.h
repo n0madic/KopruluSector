@@ -144,6 +144,8 @@ typedef KpHostGame KpOracleGame;
  * scenarios (generated/scenarios/) and the source tree's vector fonts (third_party/fonts/), built once per root and
  * kept for the process; NULL with the error. */
 const KpData *kp_oracle_data(const char *root, KpError *err);
+/* Which install the root's original data are the files of (kp_res_origin), NONE without them. */
+KpResSourceKind kp_oracle_data_origin(const char *root);
 /* The mission of a key ("missions/<campaign>/<name>", "scenarios/<name>": kp_data_find in the root's data) built
  * from its files (kp_data_mission, a scenario's CHK under root): its catalog entry, or NULL with the error (m
  * released). */

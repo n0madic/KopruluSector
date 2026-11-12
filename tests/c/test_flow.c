@@ -76,6 +76,7 @@ typedef struct {
 	KpData language_data;    /* the data with StarCraft: Remastered's ruRU files (with_language) */
 	KpFiles install_raw, language_raw;
 	int no_speech;           /* with_language's ruRU without its speech */
+	int no_language;         /* every language's files hidden (without_language) */
 	int language_changes;
 	int files_wait;          /* a mission's files: on their way this many more asks (the web's repack group) */
 	int files_fail;          /* then they cannot be had */
@@ -293,21 +294,16 @@ static void release_host(void *p)
 	if (H->has_tileset) kp_tileset_free(&H->tileset);
 }
 
-static int ready(KpT *T)
+/* A host and its flow over the original data, not started (its flags and profile the test's to set); skips the test
+ * without the data (a public checkout's). Released when the test ends. */
+static Host *new_host(KpT *T)
 {
 	static const char *const NEED[] = { KP_T_DATA, "missions/" EXPANSION_PROTOSS01, "missions/" EXPANSION_PROTOSS02,
 		"missions/" PROTOSS01, NULL };
-	return kp_t_ready(T, T->test, NEED);
-}
-
-/* A host and its flow over the original data, not started (its flags and profile the test's to set); NULL when the
- * data is not there (the SKIP line printed). Released when the test ends. */
-static Host *new_host(KpT *T)
-{
 	Host *H;
 	KpFlow *f;
 	KpFlowHost *h;
-	if (!ready(T)) return NULL;
+	kp_t_need(T, NEED);
 	H = (Host *)calloc(1, sizeof *H);
 	kp_t_ok(T, H != NULL, "out of memory");
 	kp_t_defer(T, free, H);
@@ -402,7 +398,6 @@ static void wait_for(Host *H, const char *bin, int n)
 static Host *glue_host(KpT *T, int pack)
 {
 	Host *H = new_host(T);
-	if (!H) return NULL;
 	H->pack = pack;
 	H->profile.options &= ~KP_UI_OPTION_EXPANSION_INTRO; /* a profile past its first start */
 	init(H);
@@ -587,7 +582,6 @@ static void room_start_plays_the_game_in_the_glues_console(KpT *T)
 	Host *H = glue_host(T, 0);
 	KpUi *ui;
 	int stops, ticks;
-	if (!H) return;
 	ui = H->f.ui;
 	stops = H->stops;
 	start_from_menu(H, EXPANSION_PROTOSS01);
@@ -628,7 +622,6 @@ static void briefing_text_is_vector_text(KpT *T)
 	uint8_t codes[256];
 	int32_t k, id;
 	int n, inside = 0;
-	if (!H) return;
 	ui = H->f.ui;
 	memset(codes, 1, sizeof codes);
 	kp_ui_set_vector_text(ui, 1, 1, codes);
@@ -694,7 +687,6 @@ static void scrolled_briefing_text_keeps_its_glyphs(KpT *T)
 	uint8_t codes[256];
 	int32_t id, height;
 	int n, inside = 0, scrolled = 0, most = 0;
-	if (!H) return;
 	ui = H->f.ui;
 	memset(codes, 1, sizeof codes);
 	kp_ui_set_vector_text(ui, 1, 1, codes);
@@ -732,7 +724,6 @@ static void room_cancel_leaves_no_game(KpT *T)
 {
 	Host *H = glue_host(T, 0);
 	int k;
-	if (!H) return;
 	start_from_menu(H, EXPANSION_PROTOSS01);
 	wait_for(H, PROTOSS_ROOM_BIN, ROOM_FRAMES);
 	key(H, KEY_ESCAPE);
@@ -755,7 +746,6 @@ static void victory_goes_through_the_score_screen_to_the_next_game(KpT *T)
 	KpCampaignStep step;
 	int64_t cinematics[KP_APP_STEP_CINEMATICS];
 	int count = 0, saves, builds, k;
-	if (!H) return;
 	play(H, EXPANSION_PROTOSS01);
 	/* what the campaign gives for the game as it stands */
 	run = H->f.run;
@@ -795,7 +785,6 @@ static void victory_without_a_step_opens_the_main_menu(KpT *T)
 	for (part = 0; part < 2; part++) {
 		Host *H = glue_host(T, 0);
 		int k;
-		if (!H) return;
 		play(H, part == 0 ? PROTOSS01 : EXPANSION_PROTOSS01);
 		if (part == 0) {
 			H->f.has_run = 0;
@@ -851,7 +840,6 @@ static void score_cinematics_play_before_the_next_game(KpT *T)
 	KpCampaignRun run;
 	const char *name;
 	int count = 0, k, builds;
-	if (!H) return;
 	name = mission_with_step(H, KP_CAMPAIGN_STEP_MISSION, &count, &run);
 	kp_t_ok(T, name != NULL, "a mission with cinematic rows after it");
 	play(H, name);
@@ -878,7 +866,6 @@ static void restart_plays_the_mission_again_from_its_room(KpT *T)
 	Host *H = glue_host(T, 0);
 	KpCampaignRun run;
 	int builds;
-	if (!H) return;
 	play(H, EXPANSION_PROTOSS01);
 	run = H->f.run;
 	builds = H->builds;
@@ -898,7 +885,6 @@ static void restart_plays_the_mission_again_from_its_room(KpT *T)
 static void quit_mission_opens_the_campaign_menu(KpT *T)
 {
 	Host *H = glue_host(T, 0);
-	if (!H) return;
 	play(H, EXPANSION_PROTOSS01);
 	game_event(H, KP_EVENT_GAME_EXIT, EXIT_QUIT_MISSION, NULL);
 	frame(H);
@@ -915,7 +901,6 @@ static void quit_mission_opens_the_campaign_menu(KpT *T)
 static void exit_program_ends_the_program_or_opens_the_main_menu(KpT *T)
 {
 	Host *H = glue_host(T, 0);
-	if (!H) return;
 	play(H, EXPANSION_PROTOSS01);
 	game_event(H, KP_EVENT_GAME_EXIT, EXIT_PROGRAM, NULL);
 	kp_t_eq(T, H->quits, 1, "the program ends");
@@ -933,7 +918,6 @@ static void exit_program_ends_the_program_or_opens_the_main_menu(KpT *T)
 static void glue_exit_ends_the_program_or_opens_the_main_menu(KpT *T)
 {
 	Host *H = glue_host(T, 0);
-	if (!H) return;
 	menus_end(H, KP_UI_MENU_EXIT, KP_GLUE_MAIN, 0, 0, 0);
 	kp_t_eq(T, H->quits, 1, "the program ends");
 	in_menus(H, KP_GLUE_MAIN, "Exit");
@@ -991,7 +975,7 @@ static int control_shown(Host *H, int id)
 static int shown(const Host *H, const char *name)
 {
 	if (strncmp(name, LOCALES, sizeof LOCALES - 1) != 0) return 1;
-	return !H->language_away && strncmp(name, ONLY, sizeof ONLY - 1) == 0 && !(H->no_speech && strncmp(name, SPEECH, sizeof SPEECH - 1) == 0);
+	return !H->no_language && !H->language_away && strncmp(name, ONLY, sizeof ONLY - 1) == 0 && !(H->no_speech && strncmp(name, SPEECH, sizeof SPEECH - 1) == 0);
 }
 
 static uint8_t *language_read(void *ctx, const char *name, size_t *size, char *err, size_t err_size)
@@ -1014,11 +998,10 @@ static uint8_t *language_head(void *ctx, const char *name, size_t want, size_t *
 		: H->install_raw.read(H->install_raw.ctx, name, got, err, err_size);
 }
 
-/* The host's data with the language of the Remastered install KP_TEST_SCR (its ruRU files: the texts, the TrueType
- * fonts, the speech unless no_speech); skips the test without it. */
-static void with_language(Host *H)
+/* The host's data with Remastered's files read from raw through shown (language_read, language_head). */
+static void languages_from(Host *H, const KpFiles *raw)
 {
-	kp_res_raw_files(kp_t_install(H->T, "KP_TEST_SCR"), &H->install_raw);
+	H->install_raw = *raw;
 	H->language_raw = H->install_raw;
 	H->language_raw.read = language_read;
 	H->language_raw.head = language_head;
@@ -1028,17 +1011,37 @@ static void with_language(Host *H)
 	H->data = H->f.data = &H->language_data;
 }
 
+/* The host's data with the language of the Remastered install KP_TEST_SCR (its ruRU files: the texts, the TrueType
+ * fonts, the speech unless no_speech); skips the test without it. */
+static void with_language(Host *H)
+{
+	KpFiles raw;
+	kp_res_raw_files(kp_t_install(H->T, "KP_TEST_SCR"), &raw);
+	languages_from(H, &raw);
+}
+
+/* The host's data with no language beside the base, as a 1.17 install's, whatever the suite's data are (a repack of
+ * Remastered's has its languages' groups): their files hidden. */
+static void without_language(Host *H)
+{
+	H->no_language = 1;
+	languages_from(H, &H->data->raw);
+}
+
 /* The main menu's Language over the installed languages (ADR 0016): the glue starts in the system's, the popup's button
  * takes the next and its OK starts the flow over in it, kept in the profile, which the next start takes over the
- * system's; Cancel changes nothing. Without a language in the data (the 1.17 install's) the button is hidden and the
- * text is the base's, unglyphed. */
+ * system's; Cancel changes nothing. Without a language in the data (a 1.17 install's: without_language) the button is
+ * hidden and the text is the base's, unglyphed. */
 static void the_language_is_chosen_in_the_main_menu(KpT *T)
 {
-	Host *H = glue_host(T, 0);
+	Host *H = new_host(T);
 	const KpUi *before;
 	int k;
-	if (!H) return;
-	kp_t_eq_str(T, H->f.flags->locale, "enUS", "no other language in the data: the base");
+	without_language(H);
+	H->profile.options &= ~KP_UI_OPTION_EXPANSION_INTRO;
+	snprintf(H->flags.system_locales, sizeof H->flags.system_locales, "ru_RU");
+	init(H);
+	kp_t_eq_str(T, H->f.flags->locale, "enUS", "no other language in the data: the base, whatever the system's");
 	wait_for(H, "rez\\glumain.bin", MENU_FRAMES);
 	/* not a hidden control: the original's dialog, which a hidden type 14 would give one FLC timer more (menus_check) */
 	kp_t_eq(T, kp_ui_find_control(H->f.ui, H->f.ui->open, LANGUAGE_BUTTON), -1, "no Language");
@@ -1111,7 +1114,6 @@ static void a_language_waits_for_its_group(KpT *T)
 {
 	Host *H = new_host(T);
 	int k;
-	if (!H) return;
 	with_language(H);
 	H->profile.options &= ~KP_UI_OPTION_EXPANSION_INTRO;
 	snprintf(H->flags.system_locales, sizeof H->flags.system_locales, "ru_RU");
@@ -1217,7 +1219,6 @@ static void history_cinematic_goes_on_from_its_row(KpT *T)
 		KpCampaignStep step;
 		int64_t more[KP_APP_STEP_CINEMATICS];
 		int count = 0;
-		if (!H) return;
 		progress = *kp_profile_progress(&H->profile);
 		kp_t_ok(T, kp_campaign_after_cinematic(&H->data->campaign, 0, HISTORY_ROW, HISTORY_CINEMATIC, &run, &progress, &step,
 			more, &count, KP_APP_STEP_CINEMATICS), "the row");
@@ -1271,7 +1272,6 @@ static void campaign_end_plays_its_cinematics_then_the_epilog(KpT *T)
 	KpCampaignRun run;
 	const char *name;
 	int count = 0, k;
-	if (!H) return;
 	name = mission_with_step(H, KP_CAMPAIGN_STEP_EPILOG, &count, &run);
 	kp_t_ok(T, name != NULL, "a mission whose victory ends its campaign");
 	play(H, name);
@@ -1298,7 +1298,6 @@ static void history_cinematic_at_the_campaigns_end_plays_the_epilog(KpT *T)
 		Host *H = glue_host(T, pack);
 		const KpCampaignRow *row = NULL;
 		int t, k, count = 0, expansion = 0;
-		if (!H) return;
 		for (t = 0; t < H->data->campaign.table_count && !row; t++) {
 			const KpCampaignTable *table = &H->data->campaign.tables[t];
 			for (k = 0; k < table->count && !row; k++) {
@@ -1339,7 +1338,6 @@ static void first_start_plays_the_logo_and_the_intro_once(KpT *T)
 	uint32_t played;
 	int part;
 	char name[128];
-	if (!H) return;
 	H->pack = 1;
 	kp_t_ok(T, (H->profile.options & KP_UI_OPTION_EXPANSION_INTRO) != 0, "a new profile");
 	init(H);
@@ -1462,7 +1460,6 @@ static void a_box_is_written_at_its_dialogs_ok(KpT *T)
 	Host *H = new_host(T);
 	KpUi *ui;
 	uint32_t was;
-	if (!H) return;
 	init(H);
 	wait_for(H, "rez\\glumain.bin", MENU_FRAMES);
 	ui = H->f.ui;
@@ -1599,7 +1596,6 @@ static void measured_runs_keep_the_originals(KpT *T)
 	for (k = 0; k < 2; k++) {
 		const char *what = k == 0 ? "--bench-frames" : "--screenshot";
 		Host *H = new_host(T);
-		if (!H) return;
 		H->profile.settings = KEPT_SETTINGS;
 		H->profile.settings.music = 0;
 		H->profile.settings.game_speed = 0;
@@ -1640,7 +1636,6 @@ static void frame_cap_follows_the_throttle(KpT *T)
 	size_t k;
 	for (k = 0; k < sizeof CASES / sizeof *CASES; k++) {
 		Host *H = new_host(T);
-		if (!H) return;
 		H->flags.bench_frames = CASES[k].bench;
 		H->flags.frame_cap = CASES[k].flag;
 		init(H);
@@ -1649,7 +1644,6 @@ static void frame_cap_follows_the_throttle(KpT *T)
 	}
 	{
 		Host *H = new_host(T);
-		if (!H) return;
 		H->profile.settings = KEPT_SETTINGS; /* its throttle on */
 		init(H);
 		kp_t_eq(T, kp_flow_frame_cap(&H->f), KP_THROTTLE_FPS, "the profile's box limits the glue too");
@@ -1793,7 +1787,6 @@ static void view_intro_plays_then_opens_the_main_menu(KpT *T)
 {
 	static const int IDS[] = { 3, 4 };
 	Host *H = glue_host(T, 1);
-	if (!H) return;
 	kp_t_ok(T, H->f.glue.cinematics, "View Intro is offered with the pack");
 	menus_end(H, KP_UI_MENU_INTRO, KP_GLUE_MAIN, 0, 0, 0);
 	kp_t_eq(T, H->cine_starts, 1, "the cinematics");
@@ -1822,7 +1815,6 @@ static void view_intro_plays_then_opens_the_main_menu(KpT *T)
 static void glue_mission_outside_the_catalog_leaves_nothing(KpT *T)
 {
 	Host *H = glue_host(T, 0);
-	if (!H) return;
 	H->f.has_continue = 1; /* as score_next leaves it */
 	menus_end(H, KP_UI_MENU_MISSION, PROTOSS_ROOM, KP_DATA_MISSIONS + 1, 0, 1);
 	in_menus(H, KP_GLUE_MAIN, "no such mission");
@@ -1837,7 +1829,6 @@ static void start_that_fails_leaves_no_scene(KpT *T)
 {
 	Host *H = glue_host(T, 0);
 	char why[256];
-	if (!H) return;
 	H->fail_world = 1;
 	menus_end(H, KP_UI_MENU_MISSION, PROTOSS_ROOM, mission_row(H, EXPANSION_PROTOSS01), 0, 1);
 	in_menus(H, KP_GLUE_MAIN, "a failed start");
@@ -1864,7 +1855,6 @@ static void save_is_written_and_the_glue_loads_it_before_the_first_frame(KpT *T)
 	uint8_t *bytes;
 	size_t size;
 	int syncs, builds;
-	if (!H) return;
 	play(H, EXPANSION_PROTOSS01);
 	syncs = H->syncs;
 	save(H, "flowsave");
@@ -1899,7 +1889,6 @@ static void load_of_another_missions_save_starts_its_game(KpT *T)
 {
 	Host *H = glue_host(T, 0);
 	int builds;
-	if (!H) return;
 	play(H, EXPANSION_PROTOSS01);
 	save(H, "flowother");
 	game_event(H, KP_EVENT_GAME_EXIT, EXIT_QUIT_MISSION, NULL);
@@ -1920,7 +1909,6 @@ static void load_of_another_missions_save_starts_its_game(KpT *T)
 static void load_that_fails_keeps_the_game_or_opens_the_campaign_menu(KpT *T)
 {
 	Host *H = glue_host(T, 0);
-	if (!H) return;
 	play(H, PROTOSS01);
 	save(H, "flowgone");
 	request(H, KP_EVENT_LOAD_GAME, "flownone");
@@ -1939,7 +1927,6 @@ static void load_that_fails_keeps_the_game_or_opens_the_campaign_menu(KpT *T)
 static void glue_load_that_fails_opens_the_load_screen_again(KpT *T)
 {
 	Host *H = glue_host(T, 0);
-	if (!H) return;
 	kp_profile_add_save(&H->profile, "flowmissing");
 	kp_glue_saves(H->f.ui, &H->profile);
 	H->f.ui->menus.save_choice = 0;
@@ -1957,7 +1944,6 @@ static void delete_keeps_the_name_of_a_file_that_stays(KpT *T)
 	Host *H = new_host(T);
 	char held[400], inner[460];
 	FILE *f;
-	if (!H) return;
 	init(H);
 	kp_profile_add_save(&H->profile, "flowstays");
 	kp_profile_add_save(&H->profile, "flowmissing");
@@ -1980,7 +1966,6 @@ static void delete_keeps_the_name_of_a_file_that_stays(KpT *T)
 static Host *two_ids_host(KpT *T)
 {
 	Host *H = new_host(T);
-	if (!H) return NULL;
 	H->profile.character_count = 2;
 	snprintf(H->profile.characters[0].name, sizeof H->profile.characters[0].name, "Fenix");
 	snprintf(H->profile.characters[1].name, sizeof H->profile.characters[1].name, "Zeratul");
@@ -1999,7 +1984,6 @@ static void saves_are_each_ids_and_leave_with_it(KpT *T)
 	char fenix[400], zeratul[400];
 	uint8_t *bytes;
 	size_t size;
-	if (!H) return;
 	play(H, PROTOSS01);
 	save(H, "flowsame");
 	save_path(H, "flowsame", fenix, sizeof fenix);
@@ -2029,7 +2013,6 @@ static void saves_are_each_ids_and_leave_with_it(KpT *T)
 static void glue_load_takes_the_row_of_the_logged_in_ids_list(KpT *T)
 {
 	Host *H = two_ids_host(T);
-	if (!H) return;
 	play(H, PROTOSS01);
 	save(H, "flowfenix");
 	game_event(H, KP_EVENT_GAME_EXIT, EXIT_QUIT_MISSION, NULL);
@@ -2057,7 +2040,6 @@ static void old_save_files_get_their_ids_names(KpT *T)
 	uint8_t *bytes;
 	size_t size;
 	KpError err;
-	if (!H) return;
 	H->profile.character_count = 1;
 	snprintf(H->profile.characters[0].name, sizeof H->profile.characters[0].name, "Fenix");
 	snprintf(H->profile.name, sizeof H->profile.name, "Fenix");
@@ -2091,7 +2073,6 @@ static void game_failure_stops_the_game_and_the_flow_goes_on(KpT *T)
 {
 	Host *H = glue_host(T, 0);
 	int ticks;
-	if (!H) return;
 	play(H, EXPANSION_PROTOSS01);
 	H->fail_game = 1;
 	frame(H);
@@ -2115,7 +2096,6 @@ static void video_options_come_from_the_profile_under_the_flags(KpT *T)
 	for (check = 0; check < 2; check++) {
 		Host *H = new_host(T);
 		KpUi *ui;
-		if (!H) return;
 		H->profile.video.gamma = 150;
 		H->profile.video.portraits = KP_UI_PORTRAITS_STILL;
 		H->profile.video.graphics = KP_GRAPHICS_HD2;
@@ -2161,7 +2141,6 @@ static void video_dialog_applies_and_keeps_its_options(KpT *T)
 		Host *H = new_host(T);
 		KpUiVideoOptions *o;
 		int saves;
-		if (!H) return;
 		H->flags.originals = check;
 		init(H);
 		o = &H->f.ui->video_options;
@@ -2197,7 +2176,6 @@ static void camera_keeps_to_the_view_and_its_centre(KpT *T)
 	const KpMission *m;
 	int64_t max_x, max_y, x, y;
 	int32_t vw, vh, w, h;
-	if (!H) return;
 	play(H, EXPANSION_PROTOSS01);
 	m = kp_session_mission(H->f.session);
 	kp_hud_view_size(H->f.world_w, H->f.world_h, &vw, &vh);
@@ -2241,7 +2219,6 @@ static void mission_flag_plays_without_the_glue(KpT *T)
 {
 	Host *H = new_host(T);
 	char err[256];
-	if (!H) return;
 	snprintf(H->flags.mission, sizeof H->flags.mission, "%s", EXPANSION_PROTOSS01);
 	init(H);
 	kp_t_eq(T, H->f.glue_on, 0, "no glue");
@@ -2265,7 +2242,6 @@ static void mission_waits_for_its_files(KpT *T)
 {
 	Host *H = new_host(T);
 	int k;
-	if (!H) return;
 	snprintf(H->flags.mission, sizeof H->flags.mission, "%s", EXPANSION_PROTOSS01);
 	H->files_wait = 3;
 	init(H);
@@ -2338,7 +2314,6 @@ static void script_names_hold_over_the_flow(KpT *T)
 	int64_t v, w;
 	int32_t x, y, vw, vh;
 	int k;
-	if (!H) return;
 	kp_t_ok(T, kp_script_flow_name(KP_SCRIPT_NAME_DIALOG, "GameMenu", &name) == 0, "a dialog's name in any case");
 	kp_t_ok(T, kp_script_flow_name(KP_SCRIPT_NAME_DIALOG, "gamemenu.bin", &name) != 0, "its name without .bin");
 	kp_t_ok(T, kp_script_flow_name(KP_SCRIPT_NAME_CONTROL, "gamemenu.nothing", &name) != 0, "no such control");
@@ -2646,7 +2621,6 @@ static void a_script_walks_the_glues_menus(KpT *T)
 	ScriptRun *R;
 	KpScriptRef cond;
 	char why[256];
-	if (!H) return;
 	cond = script_ref(T, KP_SCRIPT_NAME_COND, "screen", script_ref(T, KP_SCRIPT_NAME_DIALOG, "gluLogin", 0).id);
 	kp_t_ok(T, !kp_script_flow_cond(&H->f, &cond, why, sizeof why), "not the login");
 	kp_t_eq_str(T, why, "the glue: gluMain", NULL);
@@ -2700,7 +2674,6 @@ static void a_script_observes_a_game(KpT *T)
 	char why[256];
 	int64_t v;
 	int k, glue;
-	if (!H) return;
 	snprintf(H->flags.mission, sizeof H->flags.mission, "%s", EXPANSION_PROTOSS01);
 	init(H);
 	R = run_script(H, "game.kps", SCRIPT);
@@ -2762,7 +2735,6 @@ static void script_acts_over_a_game(KpT *T)
 	int64_t v, unit;
 	int32_t x, y, box[4];
 	int k;
-	if (!H) return;
 	kp_t_ok(T, kp_script_flow_name(KP_SCRIPT_NAME_CHOICE, "graphics.HD2", &name) == 0
 		&& name.id == KP_VIDEO_CHOICE_ID(KP_VIDEO_ID_GRAPHICS, KP_GRAPHICS_HD2), "graphics.hd2 is its button");
 	kp_t_ok(T, kp_script_flow_name(KP_SCRIPT_NAME_CHOICE, "portraits.still", &name) == 0
@@ -2793,13 +2765,12 @@ static void script_acts_over_a_game(KpT *T)
 	memset(&run, 0, sizeof run);
 
 	/* the glue: no game to pick in */
-	if ((G = new_host(T)) != NULL) {
-		init(G);
-		frames(G, 4);
-		s = script_step(KP_SCRIPT_PICK, 0, 0, 0);
-		kp_t_ok(T, kp_script_flow_act(&G->f, &run, &s, why, sizeof why) != 0, "no pick in the glue");
-		kp_t_ok(T, kp_script_flow_value(&G->f, &run, &moved, &v, why, sizeof why) != 0, "no moved in the glue");
-	}
+	G = new_host(T);
+	init(G);
+	frames(G, 4);
+	s = script_step(KP_SCRIPT_PICK, 0, 0, 0);
+	kp_t_ok(T, kp_script_flow_act(&G->f, &run, &s, why, sizeof why) != 0, "no pick in the glue");
+	kp_t_ok(T, kp_script_flow_value(&G->f, &run, &moved, &v, why, sizeof why) != 0, "no moved in the glue");
 
 	snprintf(H->flags.mission, sizeof H->flags.mission, "%s", EXPANSION_PROTOSS02);
 	init(H);

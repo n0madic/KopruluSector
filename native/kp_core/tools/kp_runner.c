@@ -372,6 +372,8 @@ typedef struct DataRoot {
 	uint8_t *fonts[KP_DATA_VECTOR_FONTS];
 } DataRoot;
 
+static DataRoot *roots; /* the roots opened, kept for the process */
+
 static int data_root_open(DataRoot *r, const char *root, KpError *err)
 {
 	KpResConfig config;
@@ -404,7 +406,6 @@ static int data_root_open(DataRoot *r, const char *root, KpError *err)
 
 const KpData *kp_oracle_data(const char *root, KpError *err)
 {
-	static DataRoot *roots;
 	DataRoot *r;
 	int k;
 	for (r = roots; r; r = r->next) {
@@ -421,6 +422,16 @@ const KpData *kp_oracle_data(const char *root, KpError *err)
 	r->next = roots;
 	roots = r;
 	return &r->data;
+}
+
+KpResSourceKind kp_oracle_data_origin(const char *root)
+{
+	KpError err;
+	DataRoot *r;
+	if (!kp_oracle_data(root, &err)) return KP_RES_SOURCE_NONE;
+	for (r = roots; strcmp(r->root, root) != 0; r = r->next) {
+	}
+	return kp_res_origin(r->res);
 }
 
 int64_t kp_oracle_mission_index(const char *root, const char *key)

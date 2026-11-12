@@ -109,6 +109,10 @@ int kp_res_group_wanted(const KpRes *r, const char *name, char *out, size_t size
  * (KpResConfig.repack_file). */
 const char *kp_res_repack_dir(const KpRes *r);
 KpResSourceKind kp_res_install(const KpRes *r);
+/* Which install the original files are read from: KP_RES_SOURCE_MPQ 1.17's, KP_RES_SOURCE_CASC Remastered's (some of
+ * its copies of the 1.17 files differ: its interface's texts and art). A repack's, whose files are read before an
+ * install's: the install its listing names ("source"; NONE when it names none it knows); else the install's kind. */
+KpResSourceKind kp_res_origin(const KpRes *r);
 int kp_res_repacks(const KpRes *r);
 /* The profile the sources are read by. */
 const KpDefsProfile *kp_res_profile(const KpRes *r);

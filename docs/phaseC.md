@@ -782,3 +782,34 @@ A review of the whole phase's code (`6735450..a4f7525`) found these, now fixed:
 - **Not tested by a fixture:** the tiles' block formats, a DDS header against its entry and a failed repack's cleanup
   are not exercised by a test (they need a damaged install or a repack that fails halfway); the install's own files
   pass the new checks (`test_hd.tilesets_and_water_equal_the_converters`).
+
+## After C7: the suites' data and the install they come from (2026-11-12)
+
+The suites play from the data root's repack (`kp_t_data`: `generated/repack-single`, else `generated/repack`), which
+`make repack SC=DIR` and `make repack SCR=DIR` both write. Over a repack of Remastered five tests failed with no word
+of why: the interface's oracle tests compare with the original's recordings over the 1.17 install's files, and
+Remastered's copies of some differ (seven strings of `rez\gluAll.tbl`, string 136 `"Map:  "` against `"Map:"`; the
+consoles' PCX, 25 GRP and 8 dialogs of the glue), and `test_flow.the_language_is_chosen_in_the_main_menu` counted on
+data with no language beside the base, as the 1.17 install's.
+
+- **`kp_res_origin`** tells which install the original files come from: a repack's listing's `source` (read since
+  now; it was skipped), else the install's kind. `kp_oracle_data_origin` answers it for a root's data.
+- **`kp_t_data_117`**: the tests that compare the interface's drawing or text layout with the original's recordings
+  (`test_kp_ui.text_matches_the_original_probes`, `panels_equal_the_original`, `hud_panels_equal_the_original`,
+  `hud_panels_hold_with_the_glyph_log`, `hud_panels_hold_with_the_image_log`) take their data through it and fail over
+  Remastered's files, naming the folder and `make repack SC=DIR`. The game's goldens hold over either install.
+- **`test_flow.the_language_is_chosen_in_the_main_menu`** hides the data's languages itself (`without_language`), so
+  it holds over either repack.
+- **Without the data** (the hosted CI: no install, no repack, no `tests/golden/`) these tests skip, as every test
+  that needs the data. `test_flow.the_speech_is_chosen_apart_from_the_text` crashed there instead (the hosted macOS
+  job's failure since 2026-11-12): `new_host` returned NULL without the data and that test used it unchecked.
+  `new_host` now skips the test itself (`kp_t_need`, beside `kp_t_ready`), and its callers' 44 NULL checks are gone.
+- **The hosted CI's builds show their errors:** `tools/ci.sh` sent the native builds' output to `/dev/null`, so the
+  hosted Linux job's failing build (since 2026-11-11) printed nothing; each build's output now goes to
+  `build/<name>_build.log`, its last 40 lines printed when it fails (`logged`). TODO: the hosted Linux build's
+  error itself, which the next hosted run prints: a clean clone of `d6791e9` builds every target locally on Ubuntu
+  24.04 x86-64 with GCC 13.3 and the workflow's packages (Docker, emulated) and on arm64 with GCC 15.2.
+- **Checked:** the native suites over a 1.17 repack all pass; over Remastered's repack the five tests fail with that
+  message and the rest pass; with no data and no goldens (`KP_TEST_PUBLIC=1`) all pass, the data's tests skipped;
+  `test_res` and `test_convert` check the origin of an install, of a repack written from a 1.17 install, of a listing
+  naming `remastered` beside a 1.17 install and of one naming none.

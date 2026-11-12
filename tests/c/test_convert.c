@@ -381,6 +381,7 @@ static void repack_reads_back(KpT *T)
 
 	r = open_res(T, &p, out);
 	kp_t_eq(T, kp_res_install(r), KP_RES_SOURCE_NONE, "the repack alone");
+	kp_t_eq(T, kp_res_origin(r), KP_RES_SOURCE_MPQ, "written from a 1.17 install (its listing's source)");
 	b = read_back(T, r, "a/one.dat", &size, &st);
 	kp_t_ok(T, size == strlen(ONE) && memcmp(b, ONE, size) == 0 && st == KP_RES_REPACKED, "one.dat: status %s",
 		kp_res_status_name(st));

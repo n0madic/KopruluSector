@@ -245,7 +245,7 @@ step "kp_core's defs tables are current (tools/defs_c.py: the profile and its in
 "$PYTHON" tools/defs_c.py --check
 step "native build (CMake): kp_core, its tools and the C suites, checked as C and C++"
 cmake -S . -B build/cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DKP_ASTC=ON >/dev/null
-cmake --build build/cmake >/dev/null
+logged build/native_build.log 0 cmake --build build/cmake
 if [ -n "${KOPRULU_SCR:-}" ]; then
   # a string refused fails the step (its first ones printed); the product's runs below play the languages it lists
   step "the languages: every string of each language the install holds (kp_convert locale-check; ADR 0019, stage C3)"
@@ -380,10 +380,10 @@ fi
 cmake -S . -B build/cmake-asan -G Ninja -DKP_SANITIZE=ON -DKP_CXX_CHECK=OFF -DKP_ASTC=ON >/dev/null
 if [ -n "$LLVM_CLANG" ]; then
   step "the tools under ASan and UBSan (the C suites run in the LLVM build below)"
-  cmake --build build/cmake-asan --target kp_hd_phone >/dev/null
+  logged build/native_asan_hd_phone_build.log 0 cmake --build build/cmake-asan --target kp_hd_phone
 else
   step "C suites under ASan and UBSan (no clang 17 or later for -fsanitize=function and leaks; KOPRULU_CLANG=<clang>)"
-  cmake --build build/cmake-asan >/dev/null
+  logged build/native_asan_build.log 0 cmake --build build/cmake-asan
   c_suites asan build/cmake-asan/kp_test long "" "$(cc --version | head -n 1)" \
     KP_TEST_GLSLANG=1 KP_TEST_LOGS=build/c-tests-asan "$RES_ORIGINAL" "$RES_SCR"
 fi
@@ -392,7 +392,7 @@ if [ -n "$LLVM_CLANG" ]; then
   step "C suites under ASan, LSan and UBSan with $LLVM_CLANG (-fsanitize=function, leaks)"
   cmake -S . -B build/cmake-asan-llvm -G Ninja -DKP_SANITIZE=ON -DKP_CXX_CHECK=OFF \
     -DCMAKE_C_COMPILER="$LLVM_CLANG" -DCMAKE_CXX_COMPILER="$(llvm_clangxx "$LLVM_CLANG")" >/dev/null
-  cmake --build build/cmake-asan-llvm >/dev/null
+  logged build/native_asan_llvm_build.log 0 cmake --build build/cmake-asan-llvm
   # kp_test -j counts a job whose process fails after its tests passed (a leak report at exit) as a failure
   c_suites asan-llvm build/cmake-asan-llvm/kp_test long "" "$("$LLVM_CLANG" --version | head -n 1)" \
     ASAN_OPTIONS=detect_leaks=1:strict_string_checks=1:detect_stack_use_after_return=1:check_initialization_order=1 \
@@ -403,7 +403,7 @@ if command -v emcmake >/dev/null && command -v node >/dev/null; then
   # the jobs are wasm's under node, their dispatch the host's runner
   step "C suites in wasm under node (the HTML5 proxy: the deterministic core in WebAssembly)"
   emcmake cmake -S . -B build/cmake-wasm -G Ninja -DCMAKE_BUILD_TYPE=Release >/dev/null
-  cmake --build build/cmake-wasm >/dev/null
+  logged build/native_wasm_build.log 0 cmake --build build/cmake-wasm
   c_suites wasm build/cmake/kp_test long "build/cmake-wasm/kp_test.js build/cmake-wasm/kp_test.wasm" \
     "$(node --version)" "KP_TEST_EXEC=node build/cmake-wasm/kp_test.js" KP_TEST_LOGS=build/c-tests-wasm "$RES_ORIGINAL" "$RES_SCR"
 else

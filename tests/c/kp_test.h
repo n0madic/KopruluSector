@@ -111,6 +111,11 @@ const KpJson *kp_t_golden(KpT *T, const char *path);
 /* The original data the suites play from (kp_oracle_data over the repository root: its repack, ADR 0018), built once
  * in the suite's process; skips the test without it. */
 const KpData *kp_t_data(KpT *T);
+/* kp_t_data when its files are the 1.17 install's (a 1.17 install or a repack written from one: kp_res_origin); fails
+ * the test otherwise, naming the data and how to write them. The original's recordings of its interface (its
+ * drawings and its text's layout, tests/golden/oracle/ui/) are of 1.17's files, and Remastered's copies of some differ
+ * (the strings of rez\gluAll.tbl, the consoles' PCX, the glue's GRP and dialogs). */
+const KpData *kp_t_data_117(KpT *T);
 /* A native game of the mission of a key ("missions/<campaign>/<name>", "scenarios/<name>"), released at the end;
  * skips the test without the original data, fails when it does not start. Its failure handler is the test's, so a C
  * failure fails the test (KpTry locals inside the test catch theirs). */
@@ -128,6 +133,8 @@ void kp_t_golden_run_release(KpGoldenRun *gr);
 KpReplay *kp_t_replay(KpT *T);
 /* Whether the files exist (kp_t_has); logs "SKIP label: no <file>" for the first missing one. files ends with NULL. */
 int kp_t_ready(KpT *T, const char *label, const char *const *files);
+/* Skips the test (kp_t_skip) without one of the files (kp_t_has), naming the first missing. files ends with NULL. */
+void kp_t_need(KpT *T, const char *const *files);
 /* The failure handler of a game the test starts itself (kp_t_game does it). */
 void kp_t_guard(KpT *T, KpGame *g);
 /* A string of the test's arena (released at the end). */

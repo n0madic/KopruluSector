@@ -290,6 +290,20 @@ const KpData *kp_t_data(KpT *T)
 	return d;
 }
 
+const KpData *kp_t_data_117(KpT *T)
+{
+	const KpData *d = kp_t_data(T);
+	KpResSourceKind origin = kp_oracle_data_origin(".");
+	char dir[600];
+	if (origin != KP_RES_SOURCE_MPQ) {
+		kp_data_dir(".", dir, sizeof dir);
+		kp_t_fail(T, "the original data (%s) are %s files, and the original's recordings of its interface were made "
+			"over 1.17's: write the repack from the 1.17 install (make repack SC=DIR)", dir,
+			origin == KP_RES_SOURCE_CASC ? "StarCraft: Remastered's" : "an unknown install's");
+	}
+	return d;
+}
+
 KpOracleGame *kp_t_game(KpT *T, const char *key, uint32_t seed, int expansion, const KpOracleOpts *opts)
 {
 	KpOracleGame *og;
@@ -361,16 +375,27 @@ KpReplay *kp_t_replay(KpT *T)
 	return r;
 }
 
-int kp_t_ready(KpT *T, const char *label, const char *const *files)
+/* The first of files that is not there (kp_t_has), NULL when all are */
+static const char *first_missing(const KpT *T, const char *const *files)
 {
 	int k;
 	for (k = 0; files && files[k]; k++) {
-		if (!kp_t_has(T, files[k])) {
-			kp_t_log(T, "SKIP %s: no %s", label, files[k]);
-			return 0;
-		}
+		if (!kp_t_has(T, files[k])) return files[k];
 	}
-	return 1;
+	return NULL;
+}
+
+int kp_t_ready(KpT *T, const char *label, const char *const *files)
+{
+	const char *missing = first_missing(T, files);
+	if (missing) kp_t_log(T, "SKIP %s: no %s", label, missing);
+	return missing == NULL;
+}
+
+void kp_t_need(KpT *T, const char *const *files)
+{
+	const char *missing = first_missing(T, files);
+	if (missing) kp_t_skip(T, "no %s", missing);
 }
 
 char *kp_t_strdup(KpT *T, const char *s)

@@ -613,6 +613,7 @@ static void res_repack_groups_join_the_core(KpT *T)
 	dirs[0] = pack->dir;
 	r = open_res(T, &p, dirs, 1);
 	kp_t_eq(T, kp_res_install(r), KP_RES_SOURCE_NONE, "no install");
+	kp_t_eq(T, kp_res_origin(r), KP_RES_SOURCE_NONE, "a listing that names no source");
 	kp_t_eq(T, kp_res_repacks(r), 2, "the core and the group there (g2 is not)");
 	s = read_text(T, r, "a/one.dat", &st, err, sizeof err);
 	kp_t_eq_str(T, s, ONE, "the core's file");
@@ -702,6 +703,8 @@ static void res_repack_listing_statuses(KpT *T)
 	dirs[1] = pack->dir;
 	r = open_res(T, &p, dirs, 2);
 	kp_t_ok(T, strstr(p.log, "names a\\one.dat as the 1.17 file, which it is not") != NULL, "logged: %s", p.log);
+	kp_t_eq(T, kp_res_install(r), KP_RES_SOURCE_MPQ, "a 1.17 install beside");
+	kp_t_eq(T, kp_res_origin(r), KP_RES_SOURCE_CASC, "the repack's source, its files read first");
 	kp_t_ok(T, strstr(p.log, "1 lines of its listing are not a file's") != NULL, "logged: %s", p.log);
 	s = read_text(T, r, "a/one.dat", &st, err, sizeof err);
 	kp_t_eq_str(T, s, ONE, "the install's one");
@@ -1113,6 +1116,7 @@ static void res_reads_the_1_17_install(KpT *T)
 	uint64_t stream_size;
 	uint8_t *b;
 	kp_t_eq(T, kp_res_install(r), KP_RES_SOURCE_MPQ, "a 1.17 install");
+	kp_t_eq(T, kp_res_origin(r), KP_RES_SOURCE_MPQ, "its files");
 	b = kp_res_read(r, "arr\\units.dat", &size, &st, err, sizeof err);
 	kp_t_ok(T, b != NULL && st == KP_RES_EXACT, "units.dat: %s", err);
 	kp_t_eq(T, (int64_t)size, 19876, "units.dat's size");
@@ -1132,6 +1136,7 @@ static void res_reads_the_remastered_install(KpT *T)
 	size_t size;
 	uint8_t *b;
 	kp_t_eq(T, kp_res_install(r), KP_RES_SOURCE_CASC, "a Remastered install");
+	kp_t_eq(T, kp_res_origin(r), KP_RES_SOURCE_CASC, "its files");
 	b = kp_res_read(r, "arr\\units.dat", &size, &st, err, sizeof err);
 	kp_t_ok(T, b != NULL && st == KP_RES_EXACT && size == 19876, "units.dat: %s", err);
 	free(b);

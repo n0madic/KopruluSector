@@ -321,11 +321,11 @@ static void text_matches_the_original_probes(KpT *T)
 	int n, packets = 0, tbls = 0;
 	uint8_t *buf;
 	if (!kp_t_ready(T, "test_kp_ui.text_matches_the_original_probes", UI_FILES)) return;
-	tfgm = kp_t_data(T)->ui.font_rows.data;
+	g = kp_t_golden(T, "tests/golden/oracle/ui/text_cases.json");
+	tfgm = kp_t_data_117(T)->ui.font_rows.data; /* the probes ran over 1.17's texts and fonts */
 	tfgm_n = kp_t_data(T)->ui.font_rows.size;
 	tfnt = kp_t_data(T)->ui.title_font_rows.data;
 	tfnt_n = kp_t_data(T)->ui.title_font_rows.size;
-	g = kp_t_golden(T, "tests/golden/oracle/ui/text_cases.json");
 	cases = kp_json_get(g, "cases");
 	buf = (uint8_t *)malloc(1 << 16);
 	kp_t_ok(T, buf != NULL, "out of memory");
@@ -1999,6 +1999,7 @@ static void panels_equal_the_original(KpT *T)
 	int k, checked = 0;
 	if (!kp_t_ready(T, "test_kp_ui.panels_equal_the_original", UI_FILES)) return;
 	cases = kp_json_get(kp_t_golden(T, "tests/golden/oracle/ui/panels.json"), "cases");
+	kp_t_data_117(T); /* the captures are of 1.17's console */
 	for (k = 0; k < kp_json_len(cases); k++) {
 		const KpJson *c = kp_json_at(cases, k);
 		int mark = kp_t_mark(T);
@@ -2162,6 +2163,7 @@ static void hud_panels(KpT *T)
 		Panels p;
 		snprintf(path, sizeof path, "tests/golden/oracle/ui/hud_%s.json", RUNS[r]);
 		if (!kp_t_has(T, path)) continue;
+		kp_t_data_117(T); /* the captures are of 1.17's console and texts */
 		panels = kp_json_get(kp_t_golden(T, path), "panels");
 		for (k = 0; k < kp_json_len(panels); k++) { /* the frames, in order */
 			int64_t f = kp_json_int(kp_json_at(kp_json_at(panels, k), 0), 0);
