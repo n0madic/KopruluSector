@@ -1231,6 +1231,11 @@ uint8_t *kp_res_raw_head(KpRes *r, const char *raw, size_t want, size_t *got, ui
 	return b;
 }
 
+int kp_res_raw_key(KpRes *r, const char *raw, uint8_t key[16])
+{
+	return r->casc ? kp_casc_key(r->casc, raw, key) : -1;
+}
+
 int kp_res_raw_held(KpRes *r, const char *raw)
 {
 	char key[KP_RES_NAME];

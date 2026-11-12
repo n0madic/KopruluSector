@@ -7,7 +7,6 @@ from __future__ import annotations
 import struct
 import zlib
 from dataclasses import dataclass, field
-from typing import BinaryIO
 
 from ..errors import ConverterError
 
@@ -185,23 +184,6 @@ def _entry(table: bytes, at: int, length: int) -> tuple:
     if offset % ALIGN or offset + size > length:
         raise ContainerError(f"section {cc!r} out of bounds or misaligned")
     return fields
-
-
-def _file_header(f: BinaryIO) -> tuple[tuple, int]:
-    """A container file's header fields, checked against its length, and that length."""
-    length = f.seek(0, 2)
-    f.seek(0)
-    return _header(f.read(HEADER_SIZE), length), length
-
-
-def section_table(f: BinaryIO) -> list[tuple[bytes, int, int]]:
-    """A container file's sections as (fourcc, offset, size), from its header and section table alone: the payloads
-    are neither read nor checked."""
-    fields, length = _file_header(f)
-    count, table_offset = fields[5], fields[11]
-    f.seek(table_offset)
-    table = f.read(count * ENTRY_SIZE)
-    return [(e[0], e[4], e[5]) for e in (_entry(table, i * ENTRY_SIZE, length) for i in range(count))]
 
 
 def parse(data: bytes, *, verify_crc: bool = True) -> Container:

@@ -202,6 +202,7 @@ int kp_app_load_data(KpApp *a, char *err, size_t err_size)
 	int font_count, rc;
 	size_t scenarios_size = 0;
 	char *scenarios;
+	uint64_t t0;
 	if (!a->res) {
 		snprintf(err, err_size, "no original data: --data names a StarCraft 1.17.0.1 install, StarCraft: Remastered's or "
 			"a repack (kp_convert repack)");
@@ -217,7 +218,13 @@ int kp_app_load_data(KpApp *a, char *err, size_t err_size)
 	}
 	kp_save_identity(&a->identity, &a->data.files, &a->data.dat);
 	a->musi = kp_ui_data_table(&a->data.ui, "MUSI", &a->musi_size);
-	a->console_art = kp_app_read(a, "generated/data/console.kpd", &a->console_art_size);
+	t0 = SDL_GetTicksNS();
+	if (!(a->console_art = kp_hd_ui_scr_console_art(a->res, &a->data.files, &a->console_art_size, &e)) && e.msg[0]) {
+		SDL_Log("%s: the original's console", e.msg);
+	} else if (a->console_art) {
+		SDL_Log("data: the consoles' art (%zu bytes) in %.1f ms", a->console_art_size,
+			(double)(SDL_GetTicksNS() - t0) / 1e6);
+	}
 	return 0;
 }
 

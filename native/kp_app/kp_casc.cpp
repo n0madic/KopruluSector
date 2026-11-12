@@ -61,6 +61,15 @@ int kp_casc_held(KpCasc *c, const char *name)
 	return held;
 }
 
+int kp_casc_key(KpCasc *c, const char *name, uint8_t key[16])
+{
+	HANDLE f = NULL;
+	if (!CascOpenFile(c->storage, name, CASC_LOCALE_ALL, CASC_OPEN_BY_NAME, &f)) return -1;
+	int ok = CascGetFileInfo(f, CascFileContentKey, key, MD5_HASH_SIZE, NULL) ? 0 : -1;
+	CascCloseFile(f);
+	return ok;
+}
+
 uint8_t *kp_casc_read(KpCasc *c, const char *name, size_t *size, char *err, size_t err_size)
 {
 	HANDLE f = NULL;

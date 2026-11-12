@@ -14,6 +14,7 @@
 #include "kp_flow.h"
 #include "kp_gfx.h"
 #include "kp_hd_scr.h"
+#include "kp_hd_ui_scr.h"
 #include "kp_hud.h"
 #include "kp_present.h"
 #include "kp_res.h"
@@ -60,7 +61,7 @@ typedef struct {
 /* Byte ranges of the data files read without waiting (kp_app_fetch.c, stage R4b): on the web HTTP Range requests to
  * the files beside the page, elsewhere a read done at once. */
 #define KP_APP_WEB_DATA "/data/" /* the web build's data root (its preloaded files; the HD2 art and the movies are fetched) */
-#define KP_APP_WEB_SIZES "generated/web_sizes.txt" /* "path size" per fetched file (tools/web_hd_heads.py) */
+#define KP_APP_WEB_SIZES "generated/web_sizes.txt" /* "path size" per group fetched by ranges (tools/product.sh) */
 enum { KP_FETCH_PENDING, KP_FETCH_DONE, KP_FETCH_FAILED };
 typedef struct KpFetch KpFetch;
 /* Starts reading size bytes at offset of a data file (its full path, kp_app_path; size 0: the whole file); NULL out of
@@ -120,7 +121,8 @@ int kp_hd_loader_result(KpHdLoader *l, KpHdLoaded *out, int wait);
 void kp_hd_loaded_free(KpHdLoaded *r);
 
 /* An HD portrait being shown (kp_app_hd_ui.c, stage R4e): its clip read whole, decoded frame by frame into its place
- * in the interface's atlas (one place a slot, KP_HD_VIDEO_MAX square). */
+ * in the interface's atlas (one place a slot, KP_APP_HD_CLIP_MAX square). */
+#define KP_APP_HD_CLIP_MAX 256 /* a clip's largest width and height */
 #define KP_APP_HD_CLIPS 6 /* the console's portrait and the briefing's four, one spare */
 #define KP_APP_HD_UI_FETCHES 16 /* the interface's frames fetched at once (the web) */
 typedef struct {
@@ -134,22 +136,24 @@ typedef struct {
 	uint32_t used;            /* when it was last shown (the slot of the oldest is taken) */
 } KpAppHdClip;
 
-/* The HD interface (kp_app_hd_ui.c, stage R4d): ui.kpd of the variant --graphics and the scale pick, opened from its
- * head (its images read as they are first shown), and the atlas of the images shown; the HD portraits (R4e). */
+/* The HD interface (kp_app_hd_ui.c, stage R4d; ADR 0019, stage C6): the variant --graphics and the scale pick, laid
+ * out from a Remastered install's files by the placement table, or a repack's ui.kpd opened from its head in the core
+ * (its images read as they are first shown: from its open group, or by ranges on the web), and the atlas of the images
+ * shown; the HD portraits (R4e). */
 typedef struct {
 	char variant[8];
-	uint8_t *head;          /* NULL: off */
-	KpHdUi index;
-	char path[1200];
+	int open;               /* 0: off */
+	KpHdUi index;           /* the layout's, or over head */
+	KpHdUiScr scr;          /* the install's layout (scr.head NULL: the repack's) */
+	uint8_t *head;          /* the repack's ui.kpd head */
+	KpHdSource source;      /* where the repack's ui.kpd lies */
+	KpResReader *reader;    /* the install's files, the repack's open group: read here, on the main thread */
 	KpHdUiAtlas atlas;
 	uint32_t gfx_generation; /* the atlas's generation kp_gfx's texture was made for */
 	float *items;           /* the item table of the frame */
 	uint8_t *states;        /* and per item what became of its HD image (KP_HD_UI_ITEM_*) */
 	int32_t item_cap, item_count;
 	int failed[2];          /* a variant not imported: hd, hd2 */
-	uint8_t *video_head;    /* portraits.kpd's head, NULL: none */
-	KpHdVideo video;
-	char video_path[1200];
 	KpAppHdClip clips[KP_APP_HD_CLIPS];
 	uint32_t clock;
 	KpFetch *fetches[KP_APP_HD_UI_FETCHES]; /* frames on their way (the web) */
@@ -275,7 +279,7 @@ struct KpApp {
 	KpData data;
 	void *vector_fonts[KP_DATA_VECTOR_FONTS];
 	KpSaveIdentity identity;
-	uint8_t *console_art;  /* generated/data/console.kpd (optional), or NULL */
+	uint8_t *console_art;  /* console.kpd: the repack's, or built from a Remastered install (kp_hd_ui_scr.h); NULL none */
 	size_t console_art_size;
 	const uint8_t *musi;
 	uint32_t musi_size;
@@ -332,6 +336,13 @@ int kp_app_exists(KpApp *a, const char *path);
 /* Whether a file the web fetches lies beside the page (path under KP_APP_WEB_DATA: KP_APP_WEB_SIZES names it). */
 int kp_app_web_beside(KpApp *a, const char *path);
 #endif
+/* Where a repack's file of a group read by ranges lies (ADR 0019, kp_app_world.c): in an open group (place: read on
+ * any thread), or in the web's group beside the page (url, its bytes at base); its size. 0, or -1 when no repack holds
+ * it, or its group is not there (a bundle ships the groups it draws). */
+int kp_app_repack_where(KpApp *a, const char *raw, KpHdSource *s, uint64_t *size);
+/* Such a file read now (its group open), or on its way (the web: its range in the group); NULL when no repack holds it
+ * or it cannot be read (logged). */
+KpFetch *kp_app_repack_fetch(KpApp *a, const char *raw);
 /* The path under the data root (--data) of a file of the converted data. */
 void kp_app_path(const KpApp *a, const char *path, char *out, size_t size);
 /* A group of the repack (its file, as the core's listing names it): 1 added (or, when it cannot be had and an install is
@@ -442,7 +453,7 @@ void kp_hd_ui_draw(KpApp *a, KpCanvas *c);
 void kp_hd_ui_lost(KpApp *a);
 /* The HD interface's coverage of the canvas composed last (the development checks; kp_hd_ui_count_coverage with its
  * items' HD frames read again for their alpha). */
-void kp_hd_ui_coverage(const KpApp *a, const KpCanvas *c, KpHdUiCoverage *out);
+void kp_hd_ui_coverage(KpApp *a, const KpCanvas *c, KpHdUiCoverage *out);
 /* The cursor's HD frame for kp_gfx (drawn: the interface draws a cursor this frame). */
 void kp_hd_ui_cursor(KpApp *a, int drawn);
 void kp_hd_ui_free(KpApp *a);

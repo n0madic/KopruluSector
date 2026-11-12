@@ -35,15 +35,23 @@
  * KP_HD_TRANSCODE_SETTINGS.kpd). Each pack's head (its bytes up to its frames' end) goes in the root too, which the
  * runtime opens the pack from before it reads any page. A variant the install lacks stops the repack.
  *
+ * The HD interface (ADR 0019, stage C6; from a Remastered install only): the consoles' art (console.kpd, CONW:
+ * KP_HD_UI_SCR_REPACK_CONSOLE) in the root, whatever the HD sets; for each variant of the HD sets asked its ui.kpd
+ * (HDUI, laid out by the placement table: kp_hd_ui_pack.h) in the variant's ui group (KP_HD_UI_SCR_GROUP) and its head
+ * (its bytes up to FRMS's end) in the root, and with any HD set each SD portrait movie's clip (HD2's WebM, else HD's)
+ * in the portraits' group (KP_HD_UI_SCR_PORTRAITS) under its own name, as the runtime finds it in an install.
+ *
  * Groups, for a build that fetches them when it needs them (the web): koprulu-core.mpq, what the program reads when it
  * starts (the base language's subtitles and the HD packs' heads too); a group per mission directory, its CHK and
  * speech (koprulu-<campaign>-<mission>.mpq); koprulu-music.mpq; the movies' sets, koprulu-cinematics.mpq (SD) and
  * koprulu-cinematics-hd2.mpq; a language's speech and text, koprulu-locale-<locale>.mpq; an HD set's containers,
- * koprulu-<set>.mpq. The core's listing names each group with the prefix of its names. A single repack is one
- * koprulu.mpq instead (the desktops), the movies' sets, each language and each HD set still apart in their groups,
- * which its listing names (a bundle takes the sets and languages it ships). The movies' and the HD sets' groups are
- * read by ranges (the web fetches a movie alone, an HD page alone): their files stored as they are, the core's listing
- * places each.
+ * koprulu-<set>.mpq; a variant's HD interface (its ui.kpd), koprulu-ui-<variant>.mpq; the HD portraits,
+ * koprulu-portraits.mpq. The core's listing names each group with the prefix of its names. A single repack is one
+ * koprulu.mpq instead (the desktops), the movies' sets, each language, each HD set, each interface variant and the
+ * portraits still apart in their groups, which its listing names (a bundle takes the sets and languages it ships). The
+ * movies', the HD sets', the interface's and the portraits' groups are read by ranges (the web fetches a movie alone,
+ * an HD page, an interface frame, a portrait alone): their files stored as they are, the core's listing places each;
+ * the interface's and the portraits' names no prefix's (found by their names).
  *
  * The listing (a line each):
  *     koprulu repack 4
@@ -109,12 +117,15 @@ typedef struct {
 	uint64_t movie_from, movie_bytes;   /* their SMKs, and they */
 	int raw_absent;                     /* Remastered names the install lacks or keeps empty (a language's: the base's) */
 	int hd_files, hd_pages, hd_encoded; /* the HD sets' containers, their packs' pages, the phones' transcoded now */
+	int ui_files, ui_console, portraits; /* the HD interface's ui.kpd, the consoles' art (1: in), the HD portraits */
 } KpRepackReport;
 
 /* The group file of a normalized name and the prefix of its group's names into out and prefix: a mission directory's
  * "campaign/<campaign>/<mission>/" (koprulu-<campaign>-<mission>.mpq), "music/" (koprulu-music.mpq), "sd/smk/"
  * (koprulu-cinematics.mpq), "hd2/smk/" (koprulu-cinematics-hd2.mpq), a language's but the base's "locales/<locale>/"
- * (koprulu-locale-<locale>.mpq, the locale in lower case); the core's is koprulu-core.mpq and "". */
+ * (koprulu-locale-<locale>.mpq, the locale in lower case), an HD set's "koprulu/<set>/" (koprulu-<set>.mpq), the HD
+ * interface's ui.kpd of a variant (koprulu-ui-<variant>.mpq, ""), the HD portraits' WebM (koprulu-portraits.mpq,
+ * ""); the core's is koprulu-core.mpq and "". */
 void kp_repack_group(const char *key, char *out, size_t size, char *prefix, size_t prefix_size);
 
 /* The repack of an install's files (res holds one install and no repack) into c->out: 0, or -1 with the reason (the

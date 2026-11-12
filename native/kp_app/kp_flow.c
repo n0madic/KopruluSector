@@ -123,9 +123,9 @@ static void console_art(KpFlow *f, KpUi *ui)
 {
 	ui->console_edges = f->flags->console_edges;
 	if (!f->console_art) {
-		say(f, "no console.kpd: the original's console; the converter's hd command writes it from a Remastered install");
+		say(f, "no Remastered console art in the data: the original's console");
 	} else if (kp_ui_set_console_art(ui, f->console_art, f->console_art_size) != 0) {
-		say(f, "console.kpd is not current: the original's console; regenerate the data with the converter");
+		say(f, "the console art is not current: the original's console; repack the install again (kp_convert repack)");
 	}
 }
 

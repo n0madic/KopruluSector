@@ -152,3 +152,33 @@ The stages that use them (C3, C5, C7) measure them.
   - `converter/emit/hd.py`'s packs, tilesets and water (it keeps the interface and portraits until C6) and `converter/formats/anim.py`;
   - `kp_hd_phone`'s transcoding modes and `tools/product.sh`'s phone transcoding;
   - the runtime's reads of `generated/hd/<variant>/packs/`, `tilesets/` and `water.kpd`.
+
+## Stage C6: the HD interface, portraits and console (2026-11-12)
+
+- **The placement table.** `kp_convert hd-ui-table` runs the Python converter's heuristics, now only in C (`kp_hd_ui_table.c`):
+  - where a frame moved (`place_frame`);
+  - which PCXs' HD art is the SD picture drawn again (`same_picture`);
+  - where a console's centre piece lies (`place_piece`).
+
+  It writes `defs/scr/hd-ui-bw-1.17.0.1.json`, committed and compiled as `SHUI`. An HD file is named by its CASC content key, not by a SHA-256: the index holds the key, so nothing is read. A file whose key is not the table's stays SD, with a log line that names the command. `tools/ci.sh` makes the table again and compares.
+- **From an install.** At start the runtime lays a variant's `ui.kpd` out by the table, from the DDS headers alone, in 70 to 77 ms. It reads and decodes a frame when the canvas first shows it, and builds the consoles' `CONW` in 164 ms. The portraits are Remastered's WebM, found by their own names.
+- **The repack.**
+  - A group per variant, `koprulu-ui-<variant>.mpq`, holds its `ui.kpd` (HD2's 35.9 MB, HD's 144.0 MB), read by ranges, with its head in the core.
+  - `koprulu-portraits.mpq` holds the portraits' WebM under their raw names (72.8 MB).
+  - The core holds `koprulu\console.kpd`.
+
+  A phone or the web carries only HD2's group.
+- **`HDPV` is gone:** one lookup by name serves both sources.
+- **Equal to the Python converter.** Before `converter hd` went, its output was recorded in `tests/golden/hdui/converter.json` (private):
+  - per variant, `ui.kpd`'s sections and each frame's size, format, place and image;
+  - `CONW`;
+  - the 621 portraits' clips.
+
+  `test_hd` compares the build from the install and a repack's groups: byte for byte. `kp_hd_ui_scr.c` and `kp_hd_ui_table.c` build with `-ffp-contract=off`, so they round as Python's doubles did.
+- **Removed:**
+  - `converter/emit/hd.py`, `hd_ui.py`, `hd_video.py`, `converter hd`, `converter console`;
+  - the `HDPV` reader;
+  - the runtime's reads of `generated/hd/` and `generated/data/console.kpd`;
+  - `tools/web_hd_heads.py` and `kp_load_check`.
+
+  FFmpeg is left only for the test fixtures (C7).

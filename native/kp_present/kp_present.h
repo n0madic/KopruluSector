@@ -426,7 +426,7 @@ int32_t kp_frame_table_frame(const KpFrameTable *t, const KpGrpMeta *g, int32_t 
 
 #define KP_HD_PACK_KIND "HDPK"
 #define KP_HD_TILESET_KIND "HDTS"
-#define KP_HD_SCHEMA 2      /* the tilesets', the water's, ui.kpd's container and portraits.kpd's */
+#define KP_HD_SCHEMA 2      /* the tilesets', the water's and ui.kpd's container */
 #define KP_HD_PACK_SCHEMA 3 /* the packs': their lit pages' lighting layers */
 #define KP_HD_PACK_HEAD_BYTES 12 /* u8 scale, u16 page size, u16 pages, u32 frames, u8 format, u16 lit pages */
 /* An HD terrain atlas layer's largest side and the most layers: GLES 3.0's least GL_MAX_TEXTURE_SIZE and
@@ -680,10 +680,10 @@ int kp_hd_terrain_build(KpHdTerrain *a, const KpHdTileset *t, const uint16_t *id
 int kp_hd_terrain_relink(KpHdTerrain *a, const uint16_t *ids);
 void kp_hd_terrain_free(KpHdTerrain *a);
 
-/* The interface's HD art (ui.kpd, HDUI; stage R4d, kp_hd_ui.c; converter/emit/hd_ui.py): per SD interface file (a GRP
+/* The interface's HD art (ui.kpd, HDUI; stage R4d, kp_hd_ui.c; stage C6: kp_hd_ui_scr.h): per SD interface file (a GRP
  * or a PCX, by its path) its frames' HD images, read from the file one at a time. */
 #define KP_HD_UI_KIND "HDUI"
-#define KP_HD_UI_SCHEMA 3 /* every frame's x, y: where it lies (converter/emit/hd_ui.py UI_SCHEMA) */
+#define KP_HD_UI_SCHEMA 3 /* every frame's x, y: where it lies */
 #define KP_HD_UI_PATH 64
 #define KP_HD_UI_CONSOLE 1 /* an asset's flag: a console's three pieces */
 #define KP_HD_UI_WIRE_LAYERS 8 /* a wireframe's HD frame: its parts' layers side by side, square */
@@ -763,22 +763,6 @@ typedef struct {
 } KpHdUiCoverage;
 /* The coverage of canvas v whose items 1..count (items[0] unused) the composite drew as `items` describes. */
 void kp_hd_ui_count_coverage(const KpUiCanvas *v, const KpHdUiCovered *items, int32_t count, KpHdUiCoverage *out);
-
-/* The HD portraits (portraits.kpd, HDPV; stage R4e, kp_hd_ui.c; converter/emit/hd_video.py): per SD portrait movie
- * (by its path) its HD clip, a WebM (kp_webm.h), read from the file when the movie is first shown. */
-#define KP_HD_VIDEO_KIND "HDPV"
-#define KP_HD_VIDEO_MAX 256 /* a clip's largest width and height */
-typedef struct {
-	int32_t clip_count;
-	const uint8_t *clips;   /* CLIP: 72 bytes each (into the caller's head bytes) */
-	uint32_t data;          /* DATA's offset in the file */
-} KpHdVideo;
-
-int kp_hd_video_open(KpHdVideo *v, const uint8_t *head, size_t n, size_t file_size, const char *name, KpError *err);
-/* The bytes of portraits.kpd to read before kp_hd_video_open, from its first ones; 0 when they are not its. */
-size_t kp_hd_video_head_size(const uint8_t *first, size_t n, size_t file_size);
-/* The clip of an SD movie's path (case and the separator ignored): its offset in the file and size; -1 none. */
-int32_t kp_hd_video_clip(const KpHdVideo *v, const char *path, size_t len, uint32_t *offset, uint32_t *size);
 
 /* The interface's HD atlas (kp_hd_ui.c): layers of size squared texels where the frames shown are placed along
  * shelves as they are first needed; full, it is emptied (kp_hd_ui_atlas_reset) and the frames placed again. */

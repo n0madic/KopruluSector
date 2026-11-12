@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import io
 import struct
 import tempfile
 import unittest
@@ -75,15 +74,6 @@ class KpfTest(unittest.TestCase):
         struct.pack_into("<H", bad, 8, 99)
         with self.assertRaisesRegex(kpf.ContainerError, "version"):
             kpf.parse(bytes(bad))
-
-    def test_section_table_reads_the_table_alone(self):
-        data = sample().to_bytes()
-        want = [(s.fourcc, s.offset, len(s.payload)) for s in kpf.parse(data).sections]
-        assert kpf.section_table(io.BytesIO(data)) == want
-        with self.assertRaisesRegex(kpf.ContainerError, "size"):
-            kpf.section_table(io.BytesIO(data[:-4]))
-        with self.assertRaisesRegex(kpf.ContainerError, "shorter"):
-            kpf.section_table(io.BytesIO(data[:kpf.HEADER_SIZE - 1]))
 
     def test_fixtures_parse(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -128,6 +128,9 @@ int kp_res_write_log(const KpRes *r, const char *path, char *err, size_t err_siz
 uint8_t *kp_res_raw_read(KpRes *r, const char *raw, size_t *size, char *err, size_t err_size);
 /* Its first `want` bytes and size as kp_res_head (a repack's Ogg of a WAV: the WAV's header and size). */
 uint8_t *kp_res_raw_head(KpRes *r, const char *raw, size_t want, size_t *got, uint64_t *total, char *err, size_t err_size);
+/* A Remastered install's file's content key (CASC's MD5 of its bytes, from the storage's index; ADR 0019, stage C6: the
+ * HD interface's placement table names its files' keys): 0, or -1 when no install names it (a repack keeps none). */
+int kp_res_raw_key(KpRes *r, const char *raw, uint8_t key[16]);
 /* Whether a repack lists the file (a group's read by ranges too, open or not: kp_res_raw_range) or the Remastered install
  * holds it (named and downloaded: kp_casc_held). */
 int kp_res_raw_held(KpRes *r, const char *raw);

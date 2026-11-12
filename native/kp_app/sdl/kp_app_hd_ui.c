@@ -1,11 +1,13 @@
 /*
- * The HD interface (ADR 0013, stage R4d): StarCraft: Remastered's art for the canvas's items (kp_ui's console pieces,
- * frames and pictures), from generated/hd/<variant>/ui.kpd of the variant --graphics and the scale pick. Each frame
- * the canvas's items are resolved to their HD frame and its rectangle on the logical screen, the frames not yet in the
- * atlas are read, decoded and placed there, and the item table goes to kp_gfx, which draws an item's image where the
- * canvas's item plane names it. A movie's item (a portrait, stage R4e) is drawn from its HD clip, Remastered's WebM
- * (HD2's, else HD's): read from a Remastered install (--data) when there is one, else from portraits.kpd; decoded on the
- * CPU (kp_webm.c) into a place of its own in the atlas, the SD movie's frame n the clip's frame n.
+ * The HD interface (ADR 0013, stage R4d; ADR 0019, stage C6): StarCraft: Remastered's art for the canvas's items
+ * (kp_ui's console pieces, frames and pictures) of the variant --graphics and the scale pick: laid out from a Remastered
+ * install's files by the placement table (kp_hd_ui_scr.h), or a repack's ui.kpd opened from its head in the core. Each
+ * frame the canvas's items are resolved to their HD frame and its rectangle on the logical screen, the frames not yet
+ * in the atlas are read (the install's DDS images decoded; the repack's from its open group, fetched by ranges on the
+ * web), decoded and placed there, and the item table goes to kp_gfx, which draws an item's image where the canvas's item
+ * plane names it. A movie's item (a portrait, stage R4e) is drawn from its HD clip, Remastered's WebM (HD2's, else
+ * HD's) by its own name, the install's or the repack's (its portraits' group): decoded on the CPU (kp_webm.c) into a
+ * place of its own in the atlas, the SD movie's frame n the clip's frame n.
  */
 #include "kp_app.h"
 
@@ -37,8 +39,9 @@ void kp_hd_ui_free(KpApp *a)
 	for (k = 0; k < KP_APP_HD_CLIPS; k++) clip_free(&u->clips[k]);
 	for (k = 0; k < KP_APP_HD_UI_FETCHES; k++) kp_fetch_free(u->fetches[k]);
 	free(u->failed_frames);
-	free(u->video_head);
 	free(u->head);
+	kp_hd_ui_scr_free(&u->scr);
+	kp_res_reader_free(u->reader);
 	free(u->items);
 	free(u->states);
 	kp_hd_ui_atlas_free(&u->atlas);
@@ -46,57 +49,65 @@ void kp_hd_ui_free(KpApp *a)
 	memcpy(u->failed, failed, sizeof failed);
 }
 
-/* portraits.kpd of a variant opened when it is there (the HD portraits). */
-static void open_video(KpApp *a, const char *variant)
+/* A repack's ui.kpd of the variant opened from its head in the core: 0, or -1 when the repack has none (logged when
+ * it cannot be read). */
+static int open_repack(KpApp *a, int variant)
 {
 	KpAppHdUi *u = &a->hd_ui;
-	char path[256];
-	size_t n, file_size, need;
-	uint8_t *first;
+	char name[160], why[256];
+	uint64_t size;
+	size_t n;
 	KpError e;
-	snprintf(path, sizeof path, "generated/hd/%s/portraits.kpd", variant);
-	if (!(first = kp_app_read_head(a, path, KP_HD_PACK_FIRST_READ, &n, &file_size))) return;
-	need = kp_hd_video_head_size(first, n, file_size);
-	free(first);
+	snprintf(name, sizeof name, KP_HD_UI_SCR_REPACK, kp_hd_scr_variant_name(variant));
+	if (kp_app_repack_where(a, name, &u->source, &size) != 0) return -1;
+	snprintf(name, sizeof name, KP_HD_UI_SCR_REPACK_HEAD, kp_hd_scr_variant_name(variant));
 	e.msg[0] = 0;
-	if (need == 0 || !(u->video_head = kp_app_read_head(a, path, need, &n, &file_size)) || n != need
-		|| kp_hd_video_open(&u->video, u->video_head, n, file_size, path, &e) != 0) {
-		SDL_Log("hd ui: %s: %s", path, need ? e.msg : "not an HD portraits file");
-		free(u->video_head);
-		u->video_head = NULL;
-		return;
+	if (!(u->head = kp_res_raw_read(a->res, name, &n, why, sizeof why))
+		|| kp_hd_ui_open(&u->index, u->head, n, (size_t)size, name, &e) != 0) {
+		SDL_Log("hd ui: %s: %s", name, u->head ? e.msg : why[0] ? why : "not in the repack");
+		return -1;
 	}
-	kp_app_path(a, path, u->video_path, sizeof u->video_path);
+	return 0;
 }
 
-/* ui.kpd of a variant opened, its atlas made; -1 when it is not there. */
+/* The variant's layout from a Remastered install: 0, or -1 when the install holds none (logged when it cannot be
+ * laid out). */
+static int open_install(KpApp *a, int variant)
+{
+	KpAppHdUi *u = &a->hd_ui;
+	KpError e;
+	uint64_t t0 = SDL_GetTicksNS();
+	if (!kp_hd_ui_scr_held(a->res, variant)) return -1;
+	if (kp_hd_ui_scr_build(a->res, u->reader, &a->data.files, variant, &u->scr, &e) != 0) {
+		SDL_Log("hd ui: %s", e.msg);
+		return -1;
+	}
+	if (u->scr.skipped) {
+		SDL_Log("hd ui: %d of Remastered's interface files are not those of the placement table (the first: %s): left "
+			"in SD; regenerate the table with kp_convert hd-ui-table", (int)u->scr.skipped, u->scr.first_skipped);
+	}
+	u->index = u->scr.index;
+	SDL_Log("hd ui: laid out from the install in %.1f ms", (double)(SDL_GetTicksNS() - t0) / 1e6);
+	return 0;
+}
+
+/* The variant's interface opened from the source, its atlas made; -1 when it is not there. */
 static int open_variant(KpApp *a, const char *variant)
 {
 	KpAppHdUi *u = &a->hd_ui;
-	char path[256];
-	size_t n, file_size, need;
-	uint8_t *first;
-	KpError e;
-	e.msg[0] = 0;
-	snprintf(path, sizeof path, "generated/hd/%s/ui.kpd", variant);
-	if (!(first = kp_app_read_head(a, path, KP_HD_PACK_FIRST_READ, &n, &file_size))) return -1;
-	need = kp_hd_ui_head_size(first, n, file_size);
-	free(first);
-	if (need == 0 || !(u->head = kp_app_read_head(a, path, need, &n, &file_size)) || n != need
-		|| kp_hd_ui_open(&u->index, u->head, n, file_size, path, &e) != 0) {
-		SDL_Log("hd ui: %s: %s", path, need ? e.msg : "not an HD interface file");
-		return -1;
-	}
-	kp_app_path(a, path, u->path, sizeof u->path);
+	int v = kp_hd_scr_variant_of(variant), install = kp_res_install(a->res) == KP_RES_SOURCE_CASC;
+	if (v < 0 || !(u->reader = kp_res_reader_new())) return -1;
+	if ((install ? open_install(a, v) : open_repack(a, v)) != 0) return -1;
 	if (kp_hd_ui_atlas_init(&u->atlas, u->index.scale == 4 ? UI_ATLAS_SIZE_HD : UI_ATLAS_SIZE_HD2, UI_ATLAS_LAYERS,
 			u->index.frame_count + KP_APP_HD_CLIPS) != 0 /* the frames, then a place for each clip */
 		|| !(u->failed_frames = (uint8_t *)calloc((size_t)(u->index.frame_count > 0 ? u->index.frame_count : 1), 1))) {
 		return -1;
 	}
-	open_video(a, variant);
+	u->open = 1;
 	snprintf(u->variant, sizeof u->variant, "%s", variant);
 	u->gfx_generation = 0; /* kp_gfx's atlas is made on the first frame */
-	SDL_Log("hd ui: StarCraft: Remastered's %s interface art", variant);
+	SDL_Log("hd ui: StarCraft: Remastered's %s interface art (%s)", variant,
+		install ? "the install's files" : "the repack's ui.kpd");
 	return 0;
 }
 
@@ -110,21 +121,21 @@ void kp_hd_ui_mode(KpApp *a, KpCanvas *c)
 	/* the first variant open or not known missing, of those the world can draw: its art never over the original's */
 	for (k = 0; (v = kp_app_hd_variant(a, k)) != NULL; k++) {
 		if (!kp_app_hd_variant_available(a, v)) continue;
-		if ((u->head && strcmp(v, u->variant) == 0) || !u->failed[variant_index(v)]) {
+		if ((u->open && strcmp(v, u->variant) == 0) || !u->failed[variant_index(v)]) {
 			want = v;
 			break;
 		}
 	}
-	if (want && (!u->head || strcmp(want, u->variant) != 0)) {
+	if (want && (!u->open || strcmp(want, u->variant) != 0)) {
 		kp_hd_ui_free(a);
 		if (open_variant(a, want) != 0) {
 			kp_hd_ui_free(a);
 			u->failed[variant_index(want)] = 1; /* not imported: not tried again */
 		}
-	} else if (!want && u->head) {
+	} else if (!want && u->open) {
 		kp_hd_ui_free(a);
 	}
-	on = u->head != NULL;
+	on = u->open;
 	if (a->flow.ui && a->flow.ui->hd != on) { /* the interface's image log; the cursor's frame drawn again into it */
 		kp_ui_set_hd(a->flow.ui, on);
 		a->cursor.key = -1;
@@ -164,6 +175,31 @@ static uint8_t *decode_frame(const KpHdUiFrame *f, uint8_t *data)
 	return rgba;
 }
 
+/* A frame's image read here (the install's, decoded; the repack's from its open group) as RGBA8, or NULL (logged). */
+static uint8_t *frame_read(KpAppHdUi *u, int32_t frame, const KpHdUiFrame *f)
+{
+	uint8_t *data;
+	KpError e;
+	if (u->scr.head) {
+		uint8_t *rgba = kp_hd_ui_scr_rgba(&u->scr, u->reader, frame, &e);
+		if (!rgba) SDL_Log("hd ui: %s", e.msg);
+		return rgba;
+	}
+	if (!(data = (uint8_t *)malloc(f->size ? f->size : 1))
+		|| kp_res_reader_read(u->reader, &u->source.place, f->offset, data, f->size) != 0) {
+		free(data);
+		return NULL;
+	}
+	return decode_frame(f, data);
+}
+
+/* A frame of the web's repack on its way: its bytes' range in the variant's ui group beside the page. */
+static KpFetch *frame_fetch(const KpAppHdUi *u, const KpHdUiFrame *f)
+{
+	uint64_t at = u->source.base + f->offset;
+	return at + f->size <= UINT32_MAX ? kp_fetch_start(u->source.url, (uint32_t)at, f->size) : NULL;
+}
+
 /* A frame's image read (fetched on the web) and decoded to RGBA8 (*rgba): 1, 0 while it is on its way, -1 when it
  * cannot be read (not asked for again). A fetch no draw asked for since the last one (its frame no longer shown) gives
  * its place to a new one. */
@@ -173,6 +209,12 @@ static int frame_texels(KpAppHdUi *u, int32_t frame, const KpHdUiFrame *f, uint8
 	uint8_t *data;
 	*rgba = NULL;
 	if (u->failed_frames[frame]) return -1;
+	if (!u->source.url[0]) {
+		if ((*rgba = frame_read(u, frame, f)) != NULL) return 1;
+		SDL_Log("hd ui: frame %d could not be read", (int)frame);
+		u->failed_frames[frame] = 1;
+		return -1;
+	}
 	for (k = 0; k < KP_APP_HD_UI_FETCHES && slot < 0; k++) {
 		if (u->fetches[k] && u->fetch_frames[k] == frame) slot = k;
 	}
@@ -181,7 +223,7 @@ static int frame_texels(KpAppHdUi *u, int32_t frame, const KpHdUiFrame *f, uint8
 			kp_fetch_free(u->fetches[k]);
 			u->fetches[k] = NULL;
 		}
-		if (!u->fetches[k] && (u->fetches[k] = kp_fetch_start(u->path, f->offset, f->size)) != NULL) {
+		if (!u->fetches[k] && (u->fetches[k] = frame_fetch(u, f)) != NULL) {
 			u->fetch_frames[k] = frame;
 			slot = k;
 		}
@@ -248,22 +290,22 @@ static int resolve(const KpAppHdUi *u, const KpUiCanvasItem *it, int32_t *frame,
 	return src[2] <= (float)f.w;
 }
 
-/* An SD portrait movie's HD clip in a Remastered install (hd_video.py SOURCES: HD2's, else HD's): its WebM, or NULL. */
-static uint8_t *casc_clip(KpApp *a, const char *path, size_t len, uint32_t *size)
+/* An SD portrait movie's HD clip (kp_hd_ui_scr_clip_name: HD2's, else HD's) by its own name: read from a Remastered
+ * install, or a repack's portraits' group (read now when it is open, fetched by its range on the web); NULL when the
+ * source has none. */
+static KpFetch *clip_fetch(KpApp *a, const char *path, size_t len)
 {
-	static const char *const SOURCES[] = { "HD2/", "" };
-	char name[KP_HD_UI_PATH + 16], err[256];
-	size_t k, n = len > 4 ? len - 4 : 0, got = 0; /* without ".smk" */
-	uint8_t *b = NULL;
-	for (k = 0; k < sizeof SOURCES / sizeof SOURCES[0] && !b; k++) {
-		size_t at = (size_t)snprintf(name, sizeof name, "%s", SOURCES[k]), i;
-		for (i = 0; i < n && at + 1 < sizeof name; i++) name[at++] = path[i] == '\\' ? '/' : (char)SDL_tolower(path[i]);
-		name[at] = 0;
-		SDL_strlcat(name, ".webm", sizeof name);
-		b = kp_res_raw_read(a->res, name, &got, err, sizeof err);
+	char name[KP_HD_UI_SCR_NAME], err[256];
+	int casc = kp_res_install(a->res) == KP_RES_SOURCE_CASC, v;
+	for (v = 0; v < KP_HD_SCR_VARIANTS; v++) {
+		KpFetch *f;
+		uint8_t *b;
+		size_t got = 0;
+		if (kp_hd_ui_scr_clip_name(path, len, v, name, sizeof name) != 0) return NULL;
+		if (!casc && (f = kp_app_repack_fetch(a, name)) != NULL) return f;
+		if (casc && (b = kp_res_raw_read(a->res, name, &got, err, sizeof err)) != NULL) return kp_fetch_done(b, got);
 	}
-	*size = (uint32_t)got;
-	return b;
+	return NULL;
 }
 
 /* The atlas place of a movie's item with the item's frame of its HD clip in it, and the clip's rectangle on the
@@ -274,12 +316,11 @@ static KpHdUiPlace *video(KpApp *a, const KpUiCanvasItem *it, float rect[4], flo
 	KpAppHdUi *u = &a->hd_ui;
 	KpAppHdClip *cl = NULL;
 	KpHdUiPlace *p;
-	uint32_t offset = 0, size = 0;
 	int32_t k, w, h;
-	int fresh, casc = a->res && kp_res_install(a->res) == KP_RES_SOURCE_CASC;
+	int fresh;
 	float cut;
-	if (it->w <= 0 || it->h <= 0 || it->path_len >= sizeof cl->path
-		|| (!casc && (!u->video_head || kp_hd_video_clip(&u->video, it->path, it->path_len, &offset, &size) < 0))) {
+	if (it->w <= 0 || it->h <= 0 || it->path_len >= sizeof cl->path || it->path_len < 4
+		|| SDL_strncasecmp(it->path + it->path_len - 4, ".smk", 4) != 0) { /* no movie's */
 		return NULL;
 	}
 	for (k = 0; k < KP_APP_HD_CLIPS && !cl; k++) {
@@ -295,23 +336,20 @@ static KpHdUiPlace *video(KpApp *a, const KpUiCanvasItem *it, float rect[4], flo
 		clip_free(cl);
 		memcpy(cl->path, it->path, it->path_len);
 		cl->uploaded = -1;
-		if (casc) {
-			cl->bytes = casc_clip(a, it->path, it->path_len, &cl->size);
-		} else {
-			cl->size = size;
-			cl->fetch = kp_fetch_start(u->video_path, offset, size);
-		}
+		cl->fetch = clip_fetch(a, it->path, it->path_len);
 	}
 	cl->used = ++u->clock;
 	if (cl->fetch) { /* the clip on its way (fetched on the web) */
 		if (kp_fetch_state(cl->fetch) == KP_FETCH_PENDING) return NULL;
-		cl->bytes = kp_fetch_take(cl->fetch, NULL);
+		size_t got = 0;
+		cl->bytes = kp_fetch_take(cl->fetch, &got);
+		cl->size = (uint32_t)got;
 		cl->fetch = NULL;
 	}
 	if (cl->bytes && !cl->movie) {
 		char err[256];
-		if (!(cl->movie = kp_webm_open(cl->bytes, cl->size, err, sizeof err)) || kp_webm_width(cl->movie) > KP_HD_VIDEO_MAX
-			|| kp_webm_height(cl->movie) > KP_HD_VIDEO_MAX) {
+		if (!(cl->movie = kp_webm_open(cl->bytes, cl->size, err, sizeof err)) || kp_webm_width(cl->movie) > KP_APP_HD_CLIP_MAX
+			|| kp_webm_height(cl->movie) > KP_APP_HD_CLIP_MAX) {
 			SDL_Log("hd ui: the HD portrait of %s could not be read%s%s", cl->path, cl->movie ? "" : ": ", cl->movie ? "" : err);
 			kp_webm_close(cl->movie);
 			cl->movie = NULL;
@@ -322,8 +360,8 @@ static KpHdUiPlace *video(KpApp *a, const KpUiCanvasItem *it, float rect[4], flo
 	if (!cl->movie) return NULL;
 	w = (int32_t)kp_webm_width(cl->movie);
 	h = (int32_t)kp_webm_height(cl->movie);
-	if (!(p = kp_hd_ui_atlas_place(&u->atlas, u->index.frame_count + (int32_t)(cl - u->clips), KP_HD_VIDEO_MAX,
-			  KP_HD_VIDEO_MAX, &fresh))) {
+	if (!(p = kp_hd_ui_atlas_place(&u->atlas, u->index.frame_count + (int32_t)(cl - u->clips), KP_APP_HD_CLIP_MAX,
+			  KP_APP_HD_CLIP_MAX, &fresh))) {
 		*full = 1;
 		return NULL;
 	}
@@ -358,7 +396,7 @@ void kp_hd_ui_draw(KpApp *a, KpCanvas *c)
 	KpAppHdUi *u = &a->hd_ui;
 	int32_t k, count;
 	int full = 0;
-	if (!c || !u->head || !c->canvas.ids) {
+	if (!c || !u->open || !c->canvas.ids) {
 		kp_gfx_ui_items(a->gfx, NULL, 0);
 		return;
 	}
@@ -470,13 +508,15 @@ void kp_hd_ui_draw(KpApp *a, KpCanvas *c)
 }
 
 /* A frame's texels read at once (the development checks); NULL while it is on its way (the web) or unreadable. */
-static uint8_t *frame_now(const KpAppHdUi *u, int32_t frame)
+static uint8_t *frame_now(KpAppHdUi *u, int32_t frame)
 {
 	KpHdUiFrame f;
 	KpFetch *fetch;
 	uint8_t *data;
 	kp_hd_ui_frame(&u->index, frame, &f);
-	if (u->failed_frames[frame] || !(fetch = kp_fetch_start(u->path, f.offset, f.size))) return NULL;
+	if (u->failed_frames[frame]) return NULL;
+	if (!u->source.url[0]) return frame_read(u, frame, &f);
+	if (!(fetch = frame_fetch(u, &f))) return NULL;
 	if (kp_fetch_state(fetch) == KP_FETCH_PENDING) {
 		kp_fetch_free(fetch);
 		return NULL;
@@ -485,9 +525,9 @@ static uint8_t *frame_now(const KpAppHdUi *u, int32_t frame)
 	return data ? decode_frame(&f, data) : NULL;
 }
 
-void kp_hd_ui_coverage(const KpApp *a, const KpCanvas *c, KpHdUiCoverage *out)
+void kp_hd_ui_coverage(KpApp *a, const KpCanvas *c, KpHdUiCoverage *out)
 {
-	const KpAppHdUi *u = &a->hd_ui;
+	KpAppHdUi *u = &a->hd_ui;
 	const KpUiCanvas *v = &c->canvas;
 	int32_t k, count = u->item_count, frames = u->index.frame_count;
 	KpHdUiCovered *items = (KpHdUiCovered *)calloc((size_t)count + 1, sizeof *items);
@@ -544,7 +584,7 @@ void kp_hd_ui_cursor(KpApp *a, int drawn)
 	int32_t frame;
 	int fresh, replaces, layered;
 	uint8_t *rgba = NULL;
-	if (!drawn || !u->head || !a->flow.ui || !(im = kp_ui_image_last(a->flow.ui, a->cursor.pixels))) {
+	if (!drawn || !u->open || !a->flow.ui || !(im = kp_ui_image_last(a->flow.ui, a->cursor.pixels))) {
 		kp_gfx_ui_cursor(a->gfx, NULL, NULL, 0);
 		return;
 	}
@@ -582,5 +622,5 @@ void kp_hd_ui_cursor(KpApp *a, int drawn)
 
 void kp_hd_ui_lost(KpApp *a)
 {
-	if (a->hd_ui.head) kp_hd_ui_atlas_reset(&a->hd_ui.atlas); /* its texels are gone with the context */
+	if (a->hd_ui.open) kp_hd_ui_atlas_reset(&a->hd_ui.atlas); /* its texels are gone with the context */
 }

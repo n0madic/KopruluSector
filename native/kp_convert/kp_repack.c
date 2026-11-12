@@ -11,6 +11,8 @@
 #include "kp_grpmeta.h"
 #include "kp_hd_scr.h"
 #include "kp_hd_transcode.h"
+#include "kp_hd_ui_pack.h"
+#include "kp_hd_ui_scr.h"
 #include "kp_json.h"
 #include "kp_locale.h"
 #include "kp_movie.h"
@@ -27,6 +29,8 @@
 #define HD_GROUP "koprulu-hd"            /* + the rest of an HD set's name + ".mpq" (KP_HD_REPACK_GROUP): read by ranges */
 #define HD_NAMES "koprulu/"              /* KP_HD_REPACK_PREFIX's start, normalized */
 #define HD_HEADS "koprulu/heads/"        /* KP_HD_REPACK_HEAD's: the core's */
+#define UI_NAMES "koprulu/ui/"           /* KP_HD_UI_SCR_REPACK's start, normalized: a variant's ui group's */
+#define UI_GROUP "koprulu-ui-"           /* KP_HD_UI_SCR_GROUP's start: + the variant + ".mpq" */
 #define LOCALE_GROUP "koprulu-locale-" /* + the locale in lower case + ".mpq" */
 #define LOCALES "locales/"
 #define WINDOW 64 /* the files read, then encoded, at a time (the music's WAVs are 17 MB each) */
@@ -106,10 +110,21 @@ static int base_locale(const char *locale, size_t n)
 	return 1;
 }
 
-/* Whether a group's files are read by ranges: the cinematics' and the HD sets' */
+/* Whether a group's files are read by ranges: the cinematics', the HD sets', the HD interface's variants' and the
+ * HD portraits' */
 static int ranged_group(const char *file)
 {
-	return strncmp(file, CINEMATICS, sizeof CINEMATICS - 1) == 0 || strncmp(file, HD_GROUP, sizeof HD_GROUP - 1) == 0;
+	return strncmp(file, CINEMATICS, sizeof CINEMATICS - 1) == 0 || strncmp(file, HD_GROUP, sizeof HD_GROUP - 1) == 0
+		|| strncmp(file, UI_GROUP, sizeof UI_GROUP - 1) == 0 || strcmp(file, KP_HD_UI_SCR_PORTRAITS) == 0;
+}
+
+/* Whether a normalized name is the HD interface's (stage C6): a variant's ui.kpd, a portrait's WebM (HD2's or HD's). */
+static int ui_name(const char *key)
+{
+	static const char HD2_PORTRAIT[] = "hd2/portrait/", PORTRAIT[] = "portrait/";
+	return strncmp(key, UI_NAMES, sizeof UI_NAMES - 1) == 0
+		|| ((strncmp(key, HD2_PORTRAIT, sizeof HD2_PORTRAIT - 1) == 0 || strncmp(key, PORTRAIT, sizeof PORTRAIT - 1) == 0)
+			&& ends_with(key, ".webm"));
 }
 
 void kp_repack_group(const char *key, char *out, size_t size, char *prefix, size_t prefix_size)
@@ -131,6 +146,17 @@ void kp_repack_group(const char *key, char *out, size_t size, char *prefix, size
 		size_t n = (size_t)(at - key) + 1;
 		snprintf(prefix, prefix_size, "%.*s", (int)n, key);
 		snprintf(out, size, LOCALE_GROUP "%.*s.mpq", (int)(n - sizeof LOCALES), key + sizeof LOCALES - 1);
+		return;
+	}
+	if (ui_name(key)) { /* read by ranges by their names alone: no prefix */
+		if (strncmp(key, UI_NAMES, sizeof UI_NAMES - 1) == 0) { /* "koprulu/ui/<variant>.kpd" */
+			const char *v = key + sizeof UI_NAMES - 1, *dot = strchr(v, '.');
+			char variant[32];
+			snprintf(variant, sizeof variant, "%.*s", (int)(dot ? (size_t)(dot - v) : strlen(v)), v);
+			snprintf(out, size, KP_HD_UI_SCR_GROUP, variant);
+		} else
+			snprintf(out, size, KP_HD_UI_SCR_PORTRAITS);
+		prefix[0] = 0;
 		return;
 	}
 	if (strncmp(key, HD_NAMES, sizeof HD_NAMES - 1) == 0 && strncmp(key, HD_HEADS, sizeof HD_HEADS - 1) != 0
@@ -287,9 +313,27 @@ static int movie_names(KpRes *res, const KpCineCatalog *catalog, Read **reads, i
 	return 0;
 }
 
+/* The HD portraits (stage C6): each SD portrait movie's clip as the runtime finds it (kp_hd_ui_scr_clip_name: HD2's,
+ * else HD's), under its own name. */
+static int portrait_names(KpRes *res, const KpData *d, Read **reads, int *count, int *cap)
+{
+	int k, v;
+	for (k = 0; k < d->ui.portraits.count; k++) {
+		const KpUiFile *f = &d->ui.portraits.files[k];
+		char name[KP_HD_UI_SCR_NAME];
+		for (v = 0; v < KP_HD_SCR_VARIANTS; v++) {
+			if (kp_hd_ui_scr_clip_name(f->path, f->path_len, v, name, sizeof name) != 0 || !kp_res_raw_held(res, name)) continue;
+			if (add_read(reads, count, cap, name, -1, 1) != 0) return -1;
+			break;
+		}
+	}
+	return 0;
+}
+
 /* The files to read, in order: the manifest's, the movies' (a 1.17 install's), the extra names the rest leave out; a
- * Remastered install's movies (movie_names), the languages' speech and texts (kp_locale_names: the files the runtime
- * builds a language from, Remastered's TrueType fonts with them, which the base's text takes too). */
+ * Remastered install's movies (movie_names), with an HD set the HD portraits (portrait_names), the languages' speech
+ * and texts (kp_locale_names: the files the runtime builds a language from, Remastered's TrueType fonts with them,
+ * which the base's text takes too). */
 static Read *plan(KpRes *res, const KpRepackConfig *c, const KpCineCatalog *catalog, const KpCineCatalog *movies,
 	int *count, char *err, size_t err_size)
 {
@@ -328,7 +372,8 @@ static Read *plan(KpRes *res, const KpRepackConfig *c, const KpCineCatalog *cata
 		}
 		failed = kp_locale_names(&d, KP_LOCALE_BASE, add_listed, &fonts, &e) != 0;
 		if (failed) snprintf(err, err_size, "the TrueType fonts: %s", e.msg);
-		if (!failed && movie_names(res, catalog, &reads, count, &cap) != 0) {
+		if (!failed && (movie_names(res, catalog, &reads, count, &cap) != 0
+				|| (c->hd_set_count > 0 && portrait_names(res, &d, &reads, count, &cap) != 0))) {
 			snprintf(err, err_size, "out of memory");
 			failed = 1;
 		}
@@ -543,6 +588,7 @@ static int store(Group *g, Job *j, KpBuf *ranges, KpRepackReport *rep, char *err
 		rep->movie_from += j->movie_from;
 		rep->movie_bytes += size;
 	}
+	if (j->read->raw && ui_name(j->read->stored)) rep->portraits++;
 	kp_buf_printf(&g->lines, " %s\n", name);
 	rep->statuses[j->status]++;
 	if (j->encoded) rep->encoded++;
@@ -653,29 +699,32 @@ static uint8_t *hd_phone(const KpRepackConfig *c, const uint8_t *bc, size_t bc_s
 	return out;
 }
 
-/* One container of an HD set into its group (stored: read by ranges), and a pack's head into the root: its first
- * bytes up to its frames' end (kp_hd_pack_head_size), which the runtime opens the pack from. 0, or -1 with err. */
-static int hd_put(Group *groups, int *group_count, const char *key, const char *head_key, const uint8_t *data, size_t size,
+/* A file into its group under its name, listed (compress: in a group not read by ranges): 0, or -1 with err. */
+static int put_listed(Group *groups, int *group_count, const char *key, const uint8_t *data, size_t size, int compress,
 	int single, KpBuf *ranges, char *err, size_t err_size)
 {
 	char name[KP_REPACK_NAME];
 	Group *g;
 	if (!(g = group_of(groups, group_count, key, single, err, err_size))) return -1;
 	mpq_name(key, name, sizeof name);
-	if (put(g, name, data, size, 0, KP_RES_CONVERTED, ranges, err, err_size) != 0) return -1;
+	if (put(g, name, data, size, compress, KP_RES_CONVERTED, ranges, err, err_size) != 0) return -1;
 	kp_buf_printf(&g->lines, " %s\n", name);
-	if (head_key) {
-		size_t n = kp_hd_pack_head_size(data, size < KP_HD_PACK_FIRST_READ ? size : KP_HD_PACK_FIRST_READ, size);
-		if (n == 0 || n > size) {
-			snprintf(err, err_size, "%s: no HD pack's head", name);
-			return -1;
-		}
-		if (!(g = group_of(groups, group_count, head_key, single, err, err_size))) return -1;
-		mpq_name(head_key, name, sizeof name);
-		if (put(g, name, data, n, 1, KP_RES_CONVERTED, ranges, err, err_size) != 0) return -1;
-		kp_buf_printf(&g->lines, " %s\n", name);
-	}
 	return 0;
+}
+
+/* A container into its group (an HD set's, a variant's ui group: stored, read by ranges), and its head into the root: its first
+ * head_size bytes (a pack's up to its frames' end, kp_hd_pack_head_size; ui.kpd's, kp_hd_ui_head_size), which the
+ * runtime opens it from. 0, or -1 with err. */
+static int hd_put(Group *groups, int *group_count, const char *key, const char *head_key, size_t head_size,
+	const uint8_t *data, size_t size, int single, KpBuf *ranges, char *err, size_t err_size)
+{
+	if (put_listed(groups, group_count, key, data, size, 0, single, ranges, err, err_size) != 0) return -1;
+	if (!head_key) return 0;
+	if (head_size == 0 || head_size > size) {
+		snprintf(err, err_size, "%s: no container's head", key);
+		return -1;
+	}
+	return put_listed(groups, group_count, head_key, data, head_size, 1, single, ranges, err, err_size);
 }
 
 /* An HD set built from the install's anims, tilesets and water (kp_hd_scr.h; a phone's transcoded, hd_phone) into its
@@ -734,7 +783,9 @@ static int hd_write(KpRes *res, const KpRepackConfig *c, Hd *h, const char *set,
 			free(data);
 			if (!(data = phone)) goto done;
 		}
-		if (hd_put(groups, group_count, key, is_pack ? head : NULL, data, size, c->single, ranges, err, err_size) != 0) {
+		if (hd_put(groups, group_count, key, is_pack ? head : NULL,
+				is_pack ? kp_hd_pack_head_size(data, size < KP_HD_PACK_FIRST_READ ? size : KP_HD_PACK_FIRST_READ, size) : 0,
+				data, size, c->single, ranges, err, err_size) != 0) {
 			free(data);
 			goto done;
 		}
@@ -747,6 +798,91 @@ done:
 	free(anims);
 	kp_res_reader_free(sheets.reader);
 	free(owner_of);
+	return rc;
+}
+
+/* --- the HD interface (ADR 0019, stage C6) --- */
+
+/* The variants of the HD sets asked, once each, whose interface the install holds. */
+static int ui_variants(KpRes *res, const KpRepackConfig *c, int variants[KP_HD_SCR_VARIANTS])
+{
+	int k, n = 0, v, format, i;
+	for (k = 0; k < c->hd_set_count; k++) {
+		if (kp_hd_scr_set(c->hd_sets[k], &v, &format) != 0 || !kp_hd_ui_scr_held(res, v)) continue;
+		for (i = 0; i < n && variants[i] != v; i++) {}
+		if (i == n) variants[n++] = v;
+	}
+	return n;
+}
+
+/* The HD interface's names, normalized: k -1 the consoles' art, then each variant's ui.kpd (k even) and its head. */
+static void ui_key(int k, const int *variants, char *out, size_t size)
+{
+	char name[KP_REPACK_NAME];
+	if (k < 0) snprintf(name, sizeof name, KP_HD_UI_SCR_REPACK_CONSOLE);
+	else snprintf(name, sizeof name, k % 2 ? KP_HD_UI_SCR_REPACK_HEAD : KP_HD_UI_SCR_REPACK, kp_hd_scr_variant_name(variants[k / 2]));
+	normalize(name, out, size);
+}
+
+/* A Remastered install's HD interface: the consoles' art (kp_hd_ui_scr_console) into the root, and each variant's
+ * ui.kpd (kp_hd_ui_pack) into its ui group with its head into the root. 0, or -1 with err. */
+static int ui_write(KpRes *res, const KpRepackConfig *c, Hd *h, Group *groups, int *group_count, KpBuf *ranges,
+	KpRepackReport *rep, char *err, size_t err_size)
+{
+	int variants[KP_HD_SCR_VARIANTS], n = ui_variants(res, c, variants), k, rc = -1;
+	KpResReader *reader = kp_res_reader_new();
+	char key[KP_REPACK_NAME], head[KP_REPACK_NAME];
+	KpError e;
+	uint8_t *data = NULL;
+	size_t size;
+	if (!reader) {
+		snprintf(err, err_size, "out of memory");
+		return -1;
+	}
+	if (kp_hd_ui_scr_held(res, KP_HD_SCR_HD2)) {
+		ui_key(-1, variants, key, sizeof key);
+		if (!(data = kp_hd_ui_scr_console(res, reader, &h->d.files, &size, &e))) {
+			snprintf(err, err_size, "the consoles' art: %s", e.msg);
+			goto done;
+		}
+		if (put_listed(groups, group_count, key, data, size, 1, c->single, ranges, err, err_size) != 0) goto done;
+		free(data);
+		data = NULL;
+		rep->ui_console = 1;
+	}
+	for (k = 0; k < n; k++) {
+		KpHdUiScr ui;
+		if (kp_hd_ui_scr_build(res, reader, &h->d.files, variants[k], &ui, &e) != 0) {
+			snprintf(err, err_size, "the HD interface: %s", e.msg);
+			goto done;
+		}
+		if (ui.skipped) {
+			char why[NOTE];
+			snprintf(why, sizeof why, "the HD interface %s: %d files not the placement table's (the first: %s) left in SD; "
+				"regenerate the table with kp_convert hd-ui-table", kp_hd_scr_variant_name(variants[k]), (int)ui.skipped,
+				ui.first_skipped);
+			say(c, why);
+		}
+		data = kp_hd_ui_pack(&ui, reader, kp_res_profile(res)->id, &size, &e);
+		kp_hd_ui_scr_free(&ui);
+		if (!data) {
+			snprintf(err, err_size, "the HD interface: %s", e.msg);
+			goto done;
+		}
+		ui_key(2 * k, variants, key, sizeof key);
+		ui_key(2 * k + 1, variants, head, sizeof head);
+		if (hd_put(groups, group_count, key, head, kp_hd_ui_head_size(data, size, size), data, size, c->single, ranges, err,
+				err_size) != 0) {
+			goto done;
+		}
+		free(data);
+		data = NULL;
+		rep->ui_files++;
+	}
+	rc = 0;
+done:
+	free(data);
+	kp_res_reader_free(reader);
 	return rc;
 }
 
@@ -839,7 +975,17 @@ int kp_repack_write(KpRes *res, const KpRepackConfig *c, KpRepackReport *rep, ch
 		if (!g) goto done;
 		g->planned++;
 	}
-	if (c->hd_set_count > 0 && hd_init(&hd, res, c, err, err_size) != 0) goto done;
+	if ((c->hd_set_count > 0 || kind == KP_RES_SOURCE_CASC) && hd_init(&hd, res, c, err, err_size) != 0) goto done;
+	if (kind == KP_RES_SOURCE_CASC) { /* the HD interface's files (ui_write) */
+		int variants[KP_HD_SCR_VARIANTS], n = ui_variants(res, c, variants);
+		char key[KP_REPACK_NAME];
+		for (k = kp_hd_ui_scr_held(res, KP_HD_SCR_HD2) ? -1 : 0; k < 2 * n; k++) {
+			Group *g;
+			ui_key(k, variants, key, sizeof key);
+			if (!(g = group_of(groups, &group_count, key, c->single, err, err_size))) goto done;
+			g->planned++;
+		}
+	}
 	for (k = 0; k < c->hd_set_count; k++) { /* the HD sets' containers and their packs' heads (hd_write) */
 		char key[KP_REPACK_NAME];
 		int n, heads;
@@ -927,6 +1073,7 @@ int kp_repack_write(KpRes *res, const KpRepackConfig *c, KpRepackReport *rep, ch
 	for (k = 0; k < c->hd_set_count; k++) {
 		if (hd_write(res, c, &hd, c->hd_sets[k], groups, &group_count, &ranges, rep, err, err_size) != 0) goto done;
 	}
+	if (kind == KP_RES_SOURCE_CASC && ui_write(res, c, &hd, groups, &group_count, &ranges, rep, err, err_size) != 0) goto done;
 	rc = finish(groups, group_count, root, kp_buf_text(&head), &ranges, c->out, rep, err, err_size);
 done:
 	hd_free(&hd);

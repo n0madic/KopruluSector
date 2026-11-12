@@ -1,6 +1,6 @@
 # The native build (plan phase S, ADR 0012): the simulation core kp_core (C99 in the common subset of C and C++,
 # ADR 0008), the presentation kp_present, the headless application kp_app_core, the command-line tools (kp_replay,
-# kp_bench, kp_load_check, kp_oracle), the C test runner kp_test (tests/c) and, with KP_APP, the product (kp_app over
+# kp_bench, kp_oracle), the C test runner kp_test (tests/c) and, with KP_APP, the product (kp_app over
 # SDL 3.4 with kp_gfx; tools/product.sh builds it for each platform).
 #
 #   cmake -S . -B build/cmake -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build/cmake
@@ -135,6 +135,8 @@ file(GLOB KP_APP_CORE_SOURCES CONFIGURE_DEPENDS ${KP_APP_DIR}/*.c)
 add_library(kp_app_core STATIC ${KP_APP_CORE_SOURCES})
 kp_target(kp_app_core CXX)
 target_include_directories(kp_app_core PUBLIC ${KP_APP_DIR})
+# the HD interface's console tiles crossfaded as written, no fused multiply-adds: the converter's texels (ADR 0019, C6)
+set_source_files_properties(${KP_APP_DIR}/kp_hd_ui_scr.c PROPERTIES COMPILE_OPTIONS -ffp-contract=off)
 # kp_res (ADR 0018); the video decoders (kp_cine.c, kp_webm.c)
 target_link_libraries(kp_app_core PUBLIC kp_present kp_storm kp_casc_c kp_vpx kp_nestegg kp_zlib) # zlib: kp_res_scr's SBIN
 
@@ -154,7 +156,9 @@ if(KP_ENCODERS)
 	add_library(kp_convert_lib STATIC ${KP_CONVERT_SOURCES})
 	kp_target(kp_convert_lib CXX)
 	# the icons' resampling rounded as written, no fused multiply-adds: the same pixels on every desktop
-	set_source_files_properties(${KP_CONVERT_DIR}/kp_icon.c PROPERTIES COMPILE_OPTIONS -ffp-contract=off)
+	# and the HD interface's placement measures (kp_hd_ui_table.c) added up as written
+	set_source_files_properties(${KP_CONVERT_DIR}/kp_icon.c ${KP_CONVERT_DIR}/kp_hd_ui_table.c PROPERTIES COMPILE_OPTIONS
+		-ffp-contract=off)
 	target_include_directories(kp_convert_lib PUBLIC ${KP_CONVERT_DIR})
 	find_package(Threads REQUIRED) # the encoders' workers
 	target_link_libraries(kp_convert_lib PUBLIC kp_app_core kp_json kp_vorbis Threads::Threads)
@@ -204,9 +208,6 @@ if(KP_ENCODERS) # its codecs are kp_convert's (kp_hd_transcode.c)
 	target_link_libraries(kp_hd_phone PRIVATE kp_convert_lib)
 	set_target_properties(kp_hd_phone PROPERTIES LINKER_LANGUAGE CXX)
 endif()
-add_executable(kp_load_check ${KP_TOOLS_DIR}/kp_load_check.c)
-kp_target(kp_load_check CXX)
-target_link_libraries(kp_load_check PRIVATE kp_core)
 add_executable(kp_oracle ${KP_TOOLS_DIR}/kp_oracle_main.c ${KP_TOOLS_DIR}/kp_oracle_cli_ui.c)
 kp_target(kp_oracle CXX)
 target_link_libraries(kp_oracle PRIVATE kp_oracle_lib)

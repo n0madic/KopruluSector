@@ -44,6 +44,7 @@ def tables() -> list[tuple[str, bytes]]:
     out += [("SLOT", kpd.slots_section(iscript.Table.load(PROFILE).header_animations))]
     out += built_tables()
     out += scr_tables(PROFILE)
+    out.append(("SHUI", hd_ui_table(PROFILE)))
     return sorted(out)
 
 
@@ -287,6 +288,26 @@ def scr_tables(profile_id: str) -> list[tuple[str, bytes]]:
     return [("SPAL", bytes(spal)), ("SPCX", struct.pack("<H", counts["pcx"]) + bytes(spcx)),
             ("SGRP", struct.pack("<H", counts["grp"]) + bytes(sgrp)),
             ("SSMK", struct.pack("<H", counts["smk"]) + bytes(ssmk)), ("STBL", bytes(stbl)), ("SBIN", bytes(sbin))]
+
+
+def hd_ui_table(profile_id: str) -> bytes:
+    """SHUI, the HD interface's placement table (defs/scr/hd-ui-<profile>.json, kp_convert hd-ui-table's; ADR 0019,
+    stage C6; native/kp_app/kp_hd_ui_scr.c reads it): u8 variants; per variant its name (u8 length, bytes), u16 files
+    and per file its CASC name and its 16-byte content key, u16 moved frames and per frame its SD path, u16 frame, i16
+    x, y, then the consoles' centre pieces' columns, i16 each (zerg, terran, protoss)."""
+    table = json.loads((ROOT / "defs/scr" / f"hd-ui-{profile_id}.json").read_text())
+    variants = [k for k in table if k not in ("comment", "profile")]
+    out = bytearray([len(variants)])
+    for v in variants:
+        t = table[v]
+        out += name_bytes(v) + struct.pack("<H", len(t["files"]))
+        for name, key in t["files"]:
+            out += name_bytes(name) + bytes.fromhex(key)
+        out += struct.pack("<H", len(t["moved"]))
+        for path, frame, x, y in t["moved"]:
+            out += name_bytes(path) + struct.pack("<Hhh", frame, x, y)
+        out += struct.pack("<3h", *t["consoles"])
+    return bytes(out)
 
 
 def c_bytes(data: bytes) -> list[str]:

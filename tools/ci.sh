@@ -43,11 +43,11 @@
 #     checks (play_1..5.kps: box selection, right clicks, the terrain, the fog and the palette pass against their CPU
 #     twins), the video options (video.kps: clicked through, the art following them), a save (save.kps: made during a
 #     transmission, loaded in its game and from its file, the saved view and minimap in the load's frame and its
-#     trigger wait ending), the touch layer (touch.kps: terran01 played by synthetic fingers) and, with the HD
-#     interface's art imported (generated/hd's ui.kpd) and KOPRULU_SCR, the HD art (hd_glue.kps, hd_game.kps on each
-#     race: the glue's screens and the game's screens and menus with no SD pixel where HD art exists, over Remastered's
-#     install, the world's packs laid out from its anims, and over its repack's sets; each language's walk on terran01
-#     too, without the interface's art its first screen); with KOPRULU_ORIGINAL or KOPRULU_SCR the install's repack
+#     trigger wait ending), the touch layer (touch.kps: terran01 played by synthetic fingers) and, with KOPRULU_SCR,
+#     the HD art (hd_glue.kps, hd_game.kps on each race: the glue's screens and the game's screens and menus with no SD
+#     pixel where HD art exists, over Remastered's install, the world's packs laid out from its anims and the
+#     interface's frames by the placement table, and over its repack's sets and interface groups; each language's walk
+#     on terran01 too); with KOPRULU_ORIGINAL or KOPRULU_SCR the install's repack
 #     (stage D8, kp_convert repack into build/repack: the 1.17 install's groups, Remastered's one koprulu.mpq and its
 #     HD sets' groups, stage C5: their packs, tilesets and water the Python converter's), the scripts over it writing what they write over the
 #     install and over the bundle's repack, and with a mission's group taken out the same over the install beside it,
@@ -246,6 +246,11 @@ if [ -n "${KOPRULU_SCR:-}" ]; then
   # a string refused fails the step (its first ones printed); the product's runs below play the languages it lists
   step "the languages: every string of each language the install holds (kp_convert locale-check; ADR 0019, stage C3)"
   logged build/locale_check.log 8 build/cmake/kp_convert locale-check "$KOPRULU_SCR" --out generated
+  # the HD interface's placement table made again from the install is the committed one (ADR 0019, stage C6: a
+  # Remastered update that changes its interface art fails here; the new table is kp_convert hd-ui-table's)
+  step "the HD interface's placement table is the install's (kp_convert hd-ui-table; ADR 0019, stage C6)"
+  build/cmake/kp_convert hd-ui-table "$KOPRULU_SCR" --out build/hd-ui-table.json | tail -3
+  cmp build/hd-ui-table.json "$(ls defs/scr/hd-ui-*.json)"
 fi
 if [ -n "${KOPRULU_ORIGINAL:-}" ]; then
   step "data readers (ADR 0018): every file of the input manifest read from the 1.17 install through kp_res, checked"
@@ -326,9 +331,9 @@ c_suites() {
 RES_ORIGINAL="KP_TEST_ORIGINAL=${KOPRULU_ORIGINAL:-}"
 RES_SCR="KP_TEST_SCR=${KOPRULU_SCR:-}"
 step "C suites (kp_test)"
-if [ ! -f generated/data/console.kpd ]; then
-  # the HUD's tests lay out over the console's pieces, which only a Remastered install has (ADR 0011)
-  echo "ci: no generated/data/console.kpd (python3 -m converter console --scr DIR): the HUD's tests in test_hud SKIP" >&2
+if [ -z "${KOPRULU_SCR:-}" ]; then
+  # the HUD's tests lay out over the consoles' art, which only a Remastered install has (ADR 0011; kp_t_console_art)
+  echo "ci: no KOPRULU_SCR: the HUD's tests of the console in test_hud SKIP" >&2
 fi
 c_suites native build/cmake/kp_test all "" "" KP_TEST_GLSLANG=1 "$RES_ORIGINAL" "$RES_SCR"
 # A current LLVM clang (17 or later, not Apple's) for what the default compiler's sanitizers lack: -fsanitize=function
@@ -363,7 +368,7 @@ fi
 cmake -S . -B build/cmake-asan -G Ninja -DKP_SANITIZE=ON -DKP_CXX_CHECK=OFF -DKP_ASTC=ON >/dev/null
 if [ -n "$LLVM_CLANG" ]; then
   step "the tools under ASan and UBSan (the C suites run in the LLVM build below)"
-  cmake --build build/cmake-asan --target kp_hd_phone kp_load_check >/dev/null
+  cmake --build build/cmake-asan --target kp_hd_phone >/dev/null
 else
   step "C suites under ASan and UBSan (no clang 17 or later for -fsanitize=function and leaks; KOPRULU_CLANG=<clang>)"
   cmake --build build/cmake-asan >/dev/null
@@ -381,10 +386,6 @@ if [ -n "$LLVM_CLANG" ]; then
     ASAN_OPTIONS=detect_leaks=1:strict_string_checks=1:detect_stack_use_after_return=1:check_initialization_order=1 \
     KP_TEST_GLSLANG=1 KP_TEST_LOGS=build/c-tests-asan-llvm "$RES_ORIGINAL" "$RES_SCR"
   build/cmake-asan-llvm/kp_hd_phone --selftest | tail -1 # the codecs without the ASTC encoder
-fi
-if [ -d generated ]; then
-  step "the converter's containers parsed under ASan and UBSan (console.kpd, the HD files)"
-  find generated -path generated/cache -prune -o -name "*.kpd" -print | sort | xargs build/cmake-asan/kp_load_check | tail -1
 fi
 if command -v emcmake >/dev/null && command -v node >/dev/null; then
   # the jobs are wasm's under node, their dispatch the host's runner
@@ -570,17 +571,20 @@ if [ -n "${KOPRULU_APP:-}" ]; then
     diff -r build/script/determinism_scr build/script/determinism_scr_repack
     # the repack's HD sets (ADR 0019, stage C5: hd2 and hd, kp_convert repack's default over a CASC install): each
     # pack opened from its head in the root as the runtime opens it, its pages, the tilesets and the water read from
-    # the set's group, the Python converter's (tests/golden/hd/converter.json, recorded before stage C5 deleted it)
-    step "Remastered's repack's HD sets: their packs, tilesets and water the Python converter's"
-    env KP_TEST_HD_REPACK=build/repack/scr build/cmake/kp_test test_hd:repack_equals_the_converters | tail -1
+    # the set's group, the Python converter's (tests/golden/hd/converter.json, recorded before stage C5 deleted it);
+    # the HD interface (stage C6): each variant's ui.kpd opened from its head and read from its group, the consoles'
+    # art and the portraits' clips, the Python converter's (tests/golden/hdui/converter.json)
+    step "Remastered's repack's HD sets and interface: their packs, tilesets, water, frames, consoles and portraits the Python converter's"
+    env KP_TEST_HD_REPACK=build/repack/scr build/cmake/kp_test test_hd:repack_equals_the_converters \
+      test_hd:repack_ui_equals_the_converters | tail -1
     # the languages' groups (ADR 0019, stages C2 and C3): their texts, maps' strings and TIME and voices' records are
     # the install's
     step "the languages from Remastered's repack: its language groups give what the install gives"
     env KP_TEST_SCR=build/repack/scr "$RES_ORIGINAL" build/cmake/kp_test test_locale:the_languages_equal_the_converters \
       test_speech:the_speech_equals_the_converters test_speech:the_speech_sound_records_replace_the_bases | tail -1
     # each language locale-check listed (ADR 0016; ADR 0019, stage C3: built from the install's files): the menu, from
-    # the install and from the repack's language group, and terran01's screens (with the HD art hd_game.kps's walk,
-    # without it the game's first screen) with the language's speech, none of them reaching a character with no glyph
+    # the install and from the repack's language group, and terran01's screens (hd_game.kps's walk in the install's HD
+    # art) with the language's speech, none of them reaching a character with no glyph
     for loc in $(sed -n 's/^\([a-z][a-z][A-Z][A-Z]\): [0-9]* tables, .*/\1/p' build/locale_check.log); do
       step "product in $loc: the menu, a mission's screens and speech, no character without a glyph (ADR 0016)"
       mkdir -p "build/locale_check/$loc"
@@ -590,17 +594,9 @@ if [ -n "${KOPRULU_APP:-}" ]; then
         --screenshot "build/locale_check/$loc/menu_repack.png"
       logs=("build/locale_menu_$loc.err" "build/locale_menu_$loc.log" "build/locale_menu_repack_$loc.err"
         "build/locale_menu_repack_$loc.log")
-      # TODO: with no generated/hd's ui.kpd once the interface's art is the install's (ADR 0019, stage C6)
-      if [ -d "${KOPRULU_GENERATED:-generated}/hd" ]; then
-        SCRIPT_RUN="locale_$loc" app_script hd_game 0 "$APP" "${language[@]}" --speech "$loc" --mission terran/terran01
-        logs+=("build/script_locale_$loc.err" "build/script_locale_$loc.log")
-        ls "build/script/locale_$loc"/*.png | wc -l
-      else
-        app_check "locale_game_$loc" "$APP" "${language[@]}" --speech "$loc" --mission terran/terran01 --play --after 3 \
-          --screenshot "build/locale_check/$loc/game.png"
-        logs+=("build/locale_game_$loc.err" "build/locale_game_$loc.log")
-        [ -s "build/locale_check/$loc/game.png" ]
-      fi
+      SCRIPT_RUN="locale_$loc" app_script hd_game 0 "$APP" "${language[@]}" --speech "$loc" --mission terran/terran01
+      logs+=("build/script_locale_$loc.err" "build/script_locale_$loc.log")
+      ls "build/script/locale_$loc"/*.png | wc -l
       if grep -hE "no glyph|language $loc:|speech $loc:|the base.s voices" "${logs[@]}"; then
         echo "ci: the product's language $loc: a character without a glyph, or the language's text or speech refused" >&2
         exit 1
@@ -661,15 +657,16 @@ if [ -n "${KOPRULU_APP:-}" ]; then
       grep -qE "^SPIKE cine check smk.starintr: subtitle 0 at " "build/cine_check_scr_repack_$variant.log"
     done
   fi
-  # the HD art (ADR 0019, stage C5): the world's packs laid out from Remastered's anims at a mission's start, and the
-  # repack's sets (koprulu-hd2.mpq, koprulu-hd.mpq) read as they are; each run's log names the source its art came from
-  # TODO: the interface's art from the install and the repack too, no generated/hd's ui.kpd (ADR 0019, stage C6)
-  if [ -n "${KOPRULU_SCR:-}" ] && [ -d "${KOPRULU_GENERATED:-generated}/hd" ]; then
+  # the HD art (ADR 0019, stages C5 and C6): the world's packs laid out from Remastered's anims at a mission's start
+  # and the interface's frames by the placement table, and the repack's sets (koprulu-hd2.mpq, koprulu-hd.mpq) and
+  # interface groups (koprulu-ui-<variant>.mpq, koprulu-portraits.mpq) read as they are; each run's log names the
+  # source its art came from
+  if [ -n "${KOPRULU_SCR:-}" ]; then
     for source in install repack; do
       if [ "$source" = install ]; then
-        data="$KOPRULU_SCR" art="the install's anims"
+        data="$KOPRULU_SCR" art="the install's anims" ui_art="the install's files"
       else
-        data=build/repack/scr art="the repack's hd2?"
+        data=build/repack/scr art="the repack's hd2?" ui_art="the repack's ui.kpd"
       fi
       for mission in glue terran/terran02 zerg/zerg02 protoss/protoss02; do
         step "product HD script on $mission from Remastered's $source: the screens and menus with no SD pixel where HD art exists"
@@ -681,6 +678,7 @@ if [ -n "${KOPRULU_APP:-}" ]; then
           SCRIPT_RUN="$run" app_script hd_game 0 "$APP" --data "$data" --mission "$mission"
           grep -qE "Remastered's hd2? art \($art\)" "build/script_$run.err"
         fi
+        grep -qE "Remastered's hd2? interface art \($ui_art\)" "build/script_$run.err"
         grep -E "^SPIKE hd check" "build/script_$run.log" | grep -vE ": [0-9]+ HD pixels; SD over HD art: 0 lost, 0 outside, 0 through, 0 waiting, 0 unreadable; 0 drawn outside the log; 0 log drops;" || true
       done
     done

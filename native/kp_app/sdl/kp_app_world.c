@@ -99,10 +99,7 @@ static int hd_format_usable_or_say(KpApp *a, int format)
 /* The pack an HD set's page format is read from: all its packs have the one format (load_hd_variant). */
 #define HD_FORMAT_PACK "terran"
 
-/* Where a repack's file of an HD set lies (ADR 0019, stage C5): in an open group (place: read on any thread), or in
- * the web's group beside the page (url, its bytes at base); its size. 0, or -1 when no repack holds it, or its group
- * is not there (a bundle ships the sets it draws). */
-static int repack_where(KpApp *a, const char *raw, KpHdSource *s, uint64_t *size)
+int kp_app_repack_where(KpApp *a, const char *raw, KpHdSource *s, uint64_t *size)
 {
 	char file[128];
 	uint32_t n;
@@ -136,7 +133,7 @@ static int repack_format(KpApp *a, const char *set)
 	uint8_t *first;
 	int format;
 	snprintf(name, sizeof name, KP_HD_REPACK_PACK, set, HD_FORMAT_PACK);
-	if (!kp_res_raw_held(a->res, name) || repack_where(a, name, &s, &size) != 0 || size > SIZE_MAX) return -1;
+	if (!kp_res_raw_held(a->res, name) || kp_app_repack_where(a, name, &s, &size) != 0 || size > SIZE_MAX) return -1;
 	snprintf(name, sizeof name, KP_HD_REPACK_HEAD, set, HD_FORMAT_PACK);
 	if (!kp_res_raw_held(a->res, name)) return -1;
 	if (!(first = kp_res_raw_head(a->res, name, KP_HD_PACK_FIRST_READ, &n, &total, why, sizeof why))) {
@@ -180,7 +177,7 @@ static int hd_pick(KpApp *a, const char *variant, int any, KpHdPick *out)
 int kp_world_hd_pick(KpApp *a, const char *variant, KpHdPick *out) { return hd_pick(a, variant, 0, out); }
 
 /* A repack's HD pack of the set, opened from its head in the core (KP_HD_REPACK_HEAD); its pages where the set's group
- * keeps it (repack_where). 0, or -1 (logged). */
+ * keeps it (kp_app_repack_where). 0, or -1 (logged). */
 static int open_repack_pack(KpApp *a, int k, const char *set, const char *pack)
 {
 	KpAppWorld *w = &a->world;
@@ -190,7 +187,7 @@ static int open_repack_pack(KpApp *a, int k, const char *set, const char *pack)
 	KpError e;
 	snprintf(head, sizeof head, KP_HD_REPACK_HEAD, set, pack);
 	snprintf(name, sizeof name, KP_HD_REPACK_PACK, set, pack);
-	if (repack_where(a, name, &w->hd_sources[k], &size) != 0 || size > SIZE_MAX) {
+	if (kp_app_repack_where(a, name, &w->hd_sources[k], &size) != 0 || size > SIZE_MAX) {
 		SDL_Log("world: %s is not in the data", name);
 		return -1;
 	}
@@ -293,16 +290,14 @@ static int hd_finish(KpApp *a)
 	return 0;
 }
 
-/* A repack's file of an HD set read now (its group open), or on its way (the web: its range in the group); NULL when no
- * repack holds it or it cannot be read (logged). */
-static KpFetch *repack_fetch(KpApp *a, const char *raw)
+KpFetch *kp_app_repack_fetch(KpApp *a, const char *raw)
 {
 	KpHdSource s;
 	uint64_t size;
 	size_t n = 0;
 	char why[256];
 	uint8_t *b;
-	if (repack_where(a, raw, &s, &size) != 0) return NULL;
+	if (kp_app_repack_where(a, raw, &s, &size) != 0) return NULL;
 	if (s.url[0]) return s.base + size <= UINT32_MAX ? kp_fetch_start(s.url, (uint32_t)s.base, (uint32_t)size) : NULL;
 	if (!(b = kp_res_raw_read(a->res, raw, &n, why, sizeof why))) SDL_Log("world: %s: %s", raw, why);
 	return kp_fetch_done(b, n);
@@ -318,8 +313,8 @@ static int load_tileset(KpApp *a, const KpHdPick *p)
 		char water[160];
 		snprintf(w->hd_tileset_name, sizeof w->hd_tileset_name, KP_HD_REPACK_TILESET, p->set, KP_TILESET_NAMES[tileset]);
 		snprintf(water, sizeof water, KP_HD_REPACK_WATER, p->set);
-		w->hd_fetches[0] = repack_fetch(a, w->hd_tileset_name);
-		w->hd_fetches[1] = repack_fetch(a, water);
+		w->hd_fetches[0] = kp_app_repack_fetch(a, w->hd_tileset_name);
+		w->hd_fetches[1] = kp_app_repack_fetch(a, water);
 	} else {
 		KpError e;
 		size_t n = 0;

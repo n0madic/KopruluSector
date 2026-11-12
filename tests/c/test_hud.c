@@ -2,6 +2,7 @@
  * presentation's canvas and layout (native/kp_present: kp_canvas_*, kp_layout_*) over the generated data, on kp_ui's
  * functions and fields and the oracle's games (kp_t_game). The rules of held keys and modifier sides are the SDL
  * host's own (native/kp_app/sdl/kp_app_input.c): their test here is what the window's keys do in kp_ui (kp_hud_key). */
+#include "kp_test_app.h"
 #include "kp_test_ui.h"
 #include "kp_text.h"
 #include "kp_hud.h"
@@ -11,7 +12,6 @@
 #include <ctype.h>
 #include <math.h>
 
-#define CONSOLE_ART "generated/data/console.kpd" /* the console's pieces (converter's console.kpd) */
 #define TERRAN01 "missions/terran/terran01"
 #define ADDON "scenarios/terran_addon"
 #define BUILD_TERRAN "scenarios/build_terran"
@@ -44,7 +44,7 @@
 #define OVERLAY_A KP_UI_CANVAS_OVERLAY_A
 
 static const char *const UI_FILES[] = { KP_T_DATA, NULL };
-static const char *const CONSOLE_FILES[] = { KP_T_DATA, CONSOLE_ART, NULL };
+static const char *const CONSOLE_FILES[] = { KP_T_DATA, NULL };
 static const char *const MENU_FILES[] = { KP_T_DATA, TERRAN01, NULL };
 static const char *const GLUE_FILES[] = { KP_T_DATA, NULL };
 
@@ -52,14 +52,14 @@ static int32_t half(int32_t v) { return v >= 0 ? v / 2 : -((1 - v) / 2); } /* ma
 static int64_t max64(int64_t a, int64_t b) { return a > b ? a : b; }
 static int64_t min64(int64_t a, int64_t b) { return a < b ? a : b; }
 
-/* Whether the original data, the console's pieces and the mission exist (the SKIP line for the first missing one). */
+/* Whether the original data and the mission exist (the SKIP line for the first missing one); with_hud skips a test
+ * without the consoles' art (kp_t_console_art: the Remastered install KP_TEST_SCR names). */
 static int ready(KpT *T, const char *label, const char *mission)
 {
-	const char *files[4];
+	const char *files[3];
 	files[0] = KP_T_DATA;
-	files[1] = CONSOLE_ART;
-	files[2] = mission;
-	files[3] = NULL;
+	files[1] = mission;
+	files[2] = NULL;
 	return kp_t_ready(T, label, files);
 }
 
@@ -97,17 +97,16 @@ static void free_hud(void *p)
  * made at 1000 ms, over the mission's tileset. */
 static Hud *with_hud(KpT *T, KpOracleGame *og, int32_t w, int32_t h)
 {
+	size_t size;
+	const uint8_t *console_art = kp_t_console_art(T, &size); /* skips the test before anything is made */
 	Hud *H = (Hud *)calloc(1, sizeof *H);
 	const KpMission *m = &og->data.mission;
 	const KpData *d = kp_t_data(T);
-	uint8_t *console_art;
-	size_t size;
 	KpError err;
 	kp_t_ok(T, H != NULL, "out of memory");
 	H->og = og;
 	H->g = og->g;
 	H->ui = interface(T);
-	console_art = kp_t_read(T, CONSOLE_ART, &size);
 	kp_t_eq(T, kp_ui_set_console_art(H->ui, console_art, size), 0, "console.kpd");
 	if (kp_tileset_from_files(&H->tileset, &d->files, (int)(m->tileset & 7), &err) != 0) {
 		free(H);
@@ -521,9 +520,8 @@ static void hd_coverage_sees_through_translucent_art(KpT *T)
 /* An interface with the console's pieces of a race (console.kpd). */
 static KpOracleUi *console_ui(KpT *T, int race)
 {
-	static const char PATH[] = CONSOLE_ART;
 	size_t size = 0;
-	const uint8_t *art = kp_t_read(T, PATH, &size);
+	const uint8_t *art = kp_t_console_art(T, &size);
 	KpOracleUi *u = kp_t_ui(T, 0);
 	kp_t_eq(T, kp_ui_set_console_art(u->ui, art, size), 0, "console.kpd");
 	kp_t_ok(T, kp_ui_load_console(u->ui, race) == 0, "ui: no console art");

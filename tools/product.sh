@@ -7,12 +7,13 @@
 # beside the page, fetched when needed (a mission's before it starts, the music's from the start, a movie's bytes by
 # their range as it begins), Android's read in place from the APK (stored uncompressed:
 # tools/native/android_app.sh's noCompress);
-# the vector fonts (third_party/fonts as fonts/); the console's pieces (generated/data/console.kpd); the HD art's sets
-# the repack holds (ADR 0019, stage C5: koprulu-<set>.mpq, kp_convert repack --hd from StarCraft: Remastered): HD2
-# and HD on a computer, HD2 on the web (its pages fetched by their ranges), on a phone HD2's pages in ASTC
-# (koprulu-hd2-astc.mpq), or in ETC2 with KOPRULU_PHONE_BLOCKS=etc2 for phones without ASTC, which otherwise draw the
-# original's art, and by default on ios-sim, whose context takes no ASTC (koprulu-hd2-etc2.mpq); the HD interface's
-# art and portraits where they were made (generated/hd/<variant>/ui.kpd and portraits.kpd, python3 -m converter hd);
+# the vector fonts (third_party/fonts as fonts/); the HD art's sets the repack holds (ADR 0019, stage C5:
+# koprulu-<set>.mpq, kp_convert repack --hd from StarCraft: Remastered): HD2 and HD on a computer, HD2 on the web (its
+# pages fetched by their ranges), on a phone HD2's pages in ASTC (koprulu-hd2-astc.mpq), or in ETC2 with
+# KOPRULU_PHONE_BLOCKS=etc2 for phones without ASTC, which otherwise draw the original's art, and by default on
+# ios-sim, whose context takes no ASTC (koprulu-hd2-etc2.mpq); with them their variants' HD interface
+# (koprulu-ui-<variant>.mpq, stage C6) and the HD portraits (koprulu-portraits.mpq), the web fetching a frame or a
+# portrait by its range; the console's pieces are the core's (koprulu\console.kpd from a Remastered install);
 # the cinematics (ADR 0015; ADR 0019, stage C4: the repack's koprulu-cinematics.mpq, the SD set: StarCraft:
 # Remastered's, or the 1.17 install's transcoded into WebM; koprulu-cinematics-hd2.mpq, Remastered's HD2 set) with
 # KOPRULU_CINEMATICS=auto|sd|hd2|both|none: the groups staged, whatever HD art is staged (a game of HD art with SD
@@ -102,12 +103,20 @@ case "$PLATFORM" in
   *) HD_SETS="hd2 hd" ;;
 esac
 HD_GROUPS="" # each name with a space before it (repack_files looks for " NAME ")
+UI_GROUPS=""  # the HD interface's of the sets' variants (stage C6) and the portraits' with any set
 for set in $HD_SETS; do
-  if [ -f "$GENERATED/$REPACK/koprulu-$set.mpq" ]; then HD_GROUPS="$HD_GROUPS koprulu-$set.mpq"; fi
+  if [ -f "$GENERATED/$REPACK/koprulu-$set.mpq" ]; then
+    HD_GROUPS="$HD_GROUPS koprulu-$set.mpq"
+    ui="koprulu-ui-${set%%-*}.mpq" # hd2-astc's interface is hd2's
+    if [ -f "$GENERATED/$REPACK/$ui" ]; then UI_GROUPS="$UI_GROUPS $ui"; fi
+  fi
 done
-echo "product: HD sets${HD_GROUPS:- none} (the repack's of $HD_SETS: kp_convert repack --hd from StarCraft: Remastered)" >&2
+if [ -n "$HD_GROUPS" ] && [ -f "$GENERATED/$REPACK/koprulu-portraits.mpq" ]; then
+  UI_GROUPS="$UI_GROUPS koprulu-portraits.mpq"
+fi
+echo "product: HD sets${HD_GROUPS:- none}${UI_GROUPS:+, interface$UI_GROUPS} (the repack's of $HD_SETS: kp_convert repack --hd from StarCraft: Remastered)" >&2
 # the files of the repack a bundle carries (relative to $GENERATED): the cinematics' groups KOPRULU_CINEMATICS
-# stages; the HD sets' groups of the platform; the languages' groups (their texts and speech) KOPRULU_LOCALES stages,
+# stages; the HD sets' groups of the platform and their interface's; the languages' groups (their texts and speech) KOPRULU_LOCALES stages,
 # not to the web
 # TODO: the web fetches a language's group when the language is chosen
 GENERATED_DIR="$(cd "$GENERATED" && pwd)"
@@ -134,6 +143,7 @@ repack_files() {
     case "$(basename "$f")" in
       koprulu-locale-*) case "$LANGUAGE_GROUPS " in *" $(basename "$f") "*) echo "$f" ;; esac ;;
       koprulu-cinematics*) case "$CINE_GROUPS " in *" $(basename "$f") "*) echo "$f" ;; esac ;;
+      koprulu-ui-* | koprulu-portraits.mpq) case "$UI_GROUPS " in *" $(basename "$f") "*) echo "$f" ;; esac ;;
       koprulu-hd*) case "$HD_GROUPS " in *" $(basename "$f") "*) echo "$f" ;; esac ;;
       *) echo "$f" ;;
     esac
@@ -148,22 +158,12 @@ stage_data() {
   mkdir -p "$STAGE/generated"
   (cd "$GENERATED"
     {
-      echo data/console.kpd # the console's pieces (Remastered's, whole: python3 -m converter console)
       # the web preloads the core, the other groups lie beside the page (stage_web_fetched)
       if [ "$PLATFORM" = web ]; then repack_files | grep '/koprulu-core\.mpq$'; else repack_files; fi
       if [ "$VARIANT" = debug ]; then # the test scenarios (their CHK, the scenarios' catalog)
         find scenarios -name '*.chk' -o -name index.txt
         find viewer -name '*.mcrc'
       fi
-      # the HD interface's art and portraits when made (python3 -m converter hd; ADR 0013): HD2 and HD on a computer,
-      # HD2 on a phone (decoded on the CPU into an RGBA atlas anyway: as they are), HD2 on the web fetched as byte
-      # ranges beside the page (stage_web_fetched)
-      # TODO: from Remastered's files at the runtime (ADR 0019, stage C6)
-      case "$PLATFORM" in
-        web) ;;
-        android|ios|ios-sim) if [ -d hd/hd2 ]; then find hd/hd2 -name ui.kpd -o -name portraits.kpd; fi ;;
-        *) if [ -d hd ]; then find hd -name ui.kpd -o -name portraits.kpd; fi ;;
-      esac
     } | while read -r f; do
       mkdir -p "$STAGE/generated/$(dirname "$f")"
       ln "$f" "$STAGE/generated/$f" 2>/dev/null || cp "$f" "$STAGE/generated/$f"
@@ -178,9 +178,10 @@ stage_data() {
     mkdir -p "$STAGE/generated/icon"
     cp "$ICON/icon-256.png" "$STAGE/generated/icon/"
   fi
-  if [ "$PLATFORM" = web ]; then # shellcheck disable=SC2046
-    python3 tools/web_hd_heads.py "$GENERATED" "$STAGE/generated" \
-      --ranged $(for g in $CINE_GROUPS $HD_GROUPS; do echo "$REPACK/$g"; done)
+  if [ "$PLATFORM" = web ]; then # the groups fetched by ranges and their sizes ("path size": kp_app_web_beside)
+    for g in $CINE_GROUPS $HD_GROUPS $UI_GROUPS; do
+      echo "generated/$REPACK/$g $(wc -c <"$GENERATED/$REPACK/$g" | tr -d ' ')"
+    done >"$STAGE/generated/web_sizes.txt"
   fi
   # a debug build's scripts (ADR 0017): a phone's --script reads generated/scripts/NAME.kps from its assets
   if [ "$VARIANT" = debug ]; then
@@ -190,16 +191,14 @@ stage_data() {
   echo "product: data $(du -sh "$STAGE" | cut -f1)"
 }
 
-# The web's HD2 (stage R4b): the page preloads the interface's files' heads and the sizes of the files fetched
-# (stage_data, tools/web_hd_heads.py) and fetches the rest as byte ranges from the files beside it (a server with
-# Range requests: tools/web_serve.py); the repack's groups but its core, fetched whole (ADR 0018, stage D8b), the
-# cinematics' by each movie's range (ADR 0019, stage C4), the HD set's by each page's (stage C5).
+# The web's groups beside the page (stage R4b; a server with Range requests: tools/web_serve.py): the repack's groups
+# but its core, fetched whole (ADR 0018, stage D8b), the cinematics' by each movie's range (ADR 0019, stage C4), the
+# HD set's by each page's (stage C5), the interface's by each frame's and the portraits' by each clip's (stage C6);
+# web_sizes.txt (stage_data) names the ranged ones and their sizes.
 stage_web_fetched() {
   local src f
   src="$(cd "$GENERATED" && pwd)"
-  { [ -d "$src/hd/hd2" ] && (cd "$src" && find hd/hd2 -name ui.kpd -o -name portraits.kpd)
-    repack_files | grep -v '/koprulu-core\.mpq$'
-  } | while read -r f; do
+  repack_files | grep -v '/koprulu-core\.mpq$' | while read -r f; do
     mkdir -p "$OUT/generated/$(dirname "$f")"
     ln "$src/$f" "$OUT/generated/$f" 2>/dev/null || cp "$src/$f" "$OUT/generated/$f"
   done

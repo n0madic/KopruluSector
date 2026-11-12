@@ -1,5 +1,5 @@
 /*
- * The interface's HD art (ADR 0013, stage R4d; converter/emit/hd_ui.py): ui.kpd (HDUI) opened from its first bytes,
+ * The interface's HD art (ADR 0013, stage R4d; ADR 0019, stage C6: kp_hd_ui_scr.h): ui.kpd (HDUI) opened from its first bytes,
  * its assets found by the SD file's path, and the atlas where the frames the canvas shows are placed as they are first
  * needed (kp_app reads and decodes them, kp_gfx holds the texels).
  */
@@ -262,73 +262,6 @@ void kp_hd_ui_count_coverage(const KpUiCanvas *v, const KpHdUiCovered *items, in
 			}
 		}
 	}
-}
-
-/* --- the HD portraits --- */
-
-#define CLIP_RECORD (KP_HD_UI_PATH + 8)
-
-size_t kp_hd_video_head_size(const uint8_t *first, size_t n, size_t file_size)
-{
-	static const char *const NAMES[] = { "HEAD", "CLIP" };
-	return kp_present_head_size(first, n, file_size, NAMES, 2);
-}
-
-int kp_hd_video_open(KpHdVideo *v, const uint8_t *head_bytes, size_t n, size_t file_size, const char *name,
-	KpError *err)
-{
-	KpKpf c;
-	KpKpfExpect expect;
-	const KpKpfSection *head, *clips, *data;
-	int rc = -1;
-	int32_t k;
-	memset(v, 0, sizeof *v);
-	if (kp_kpf_parse_prefix(&c, head_bytes, n, file_size, name, err) != 0) return -1;
-	memset(&expect, 0, sizeof expect);
-	expect.kind = KP_HD_VIDEO_KIND;
-	expect.schema_version = KP_HD_SCHEMA;
-	if (kp_kpf_check(&c, &expect, err) != 0) goto done;
-	if (!(head = kp_kpf_require(&c, "HEAD", err)) || !(clips = kp_kpf_require(&c, "CLIP", err))
-		|| !(data = kp_kpf_require(&c, "DATA", err))) {
-		goto done;
-	}
-	if (!head->data || !clips->data || head->size < 2) {
-		kp_present_fail(err, name, "HEAD or CLIP past the bytes read");
-		goto done;
-	}
-	v->clip_count = (int32_t)kp_le_u16(head->data);
-	if (clips->size != (size_t)v->clip_count * CLIP_RECORD) {
-		kp_present_fail(err, name, "HEAD or CLIP size");
-		goto done;
-	}
-	for (k = 0; k < v->clip_count; k++) {
-		const uint8_t *r = clips->data + (size_t)k * CLIP_RECORD;
-		if (r[KP_HD_UI_PATH - 1] != 0
-			|| (uint64_t)kp_le_u32(r + KP_HD_UI_PATH) + kp_le_u32(r + KP_HD_UI_PATH + 4) > data->size) {
-			kp_present_fail(err, name, "a clip past DATA");
-			goto done;
-		}
-	}
-	v->clips = clips->data;
-	v->data = data->offset;
-	rc = 0;
-done:
-	kp_kpf_free(&c);
-	return rc;
-}
-
-int32_t kp_hd_video_clip(const KpHdVideo *v, const char *path, size_t len, uint32_t *offset, uint32_t *size)
-{
-	int32_t k;
-	if (len >= KP_HD_UI_PATH) return -1;
-	for (k = 0; k < v->clip_count; k++) {
-		const uint8_t *r = v->clips + (size_t)k * CLIP_RECORD;
-		if (!path_is(r, path, len)) continue;
-		if (offset) *offset = v->data + kp_le_u32(r + KP_HD_UI_PATH);
-		if (size) *size = kp_le_u32(r + KP_HD_UI_PATH + 4);
-		return k;
-	}
-	return -1;
 }
 
 /* --- the atlas --- */

@@ -15,6 +15,10 @@ extern "C" {
  * open. */
 KpRes *kp_t_install(KpT *T, const char *env);
 
+/* The consoles' art (console.kpd, CONW) built from the StarCraft: Remastered install KP_TEST_SCR names as the runtime
+ * builds it (kp_hd_ui_scr_console_art), once a process; skips the test without the install or its HD2 consoles. */
+const uint8_t *kp_t_console_art(KpT *T, size_t *size);
+
 /* --- a Smacker movie written for a test (test_movies.c, test_convert.c) --- */
 
 /* Smacker's bits, the least significant first */

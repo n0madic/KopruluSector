@@ -31,7 +31,8 @@
  *       ("ruRU,deDE"; "none"; by default every language of the profile but the base's the install holds);
  *       --hd: the HD sets that go in, each its koprulu-<set>.mpq (the packs, tilesets and water built from a
  *       Remastered install's anims; "hd2", "hd", for phones "hd2-astc", "hd2-etc2": transcoded once into --cache;
- *       "none"; by default the install's hd2 and hd)
+ *       "none"; by default the install's hd2 and hd), their variants' interface, each koprulu-ui-<variant>.mpq,
+ *       and the HD portraits, koprulu-portraits.mpq (the consoles' art goes in the core from any Remastered install)
  *   locale-check DIR [--locale L|all] [--out generated]
  *       each language (all: every one of the profile's but the base's the install holds) built from the source's
  *       files as the game builds it (kp_locale.h): its texts, every campaign mission's strings and the glyphs, a
@@ -42,6 +43,10 @@
  *       the test scenarios (kp_scenario.h): <out>/scenarios/<name>.chk of each spec and their list
  *       <out>/scenarios/index.txt, a line each: name, base mission, tileset, width, height, resource packs ("a,b,c",
  *       "-" none; the profile's compiled SPAK, which python3 -m converter scr-manifest records)
+ *   hd-ui-table DIR [--out PATH]
+ *       the HD interface's placement table of a StarCraft: Remastered install (kp_hd_ui_table.h; ADR 0019, stage C6)
+ *       into PATH, by default defs/scr/hd-ui-<profile>.json (tools/defs_c.py compiles it): run again when Remastered's
+ *       interface art changes (the runtime and repack leave a file whose content key is not the table's in SD)
  *   terrain DIR [--out generated]
  *       the terrain checks' CRCs: <out>/viewer/<tileset>.mcrc, the CRC-32 of each megatile's 32 x 32 indices
  *       (koprulu --autotest compares the drawn terrain with them)
@@ -60,6 +65,7 @@
 #include "kp_data.h"
 #include "kp_fs.h"
 #include "kp_hd_scr.h"
+#include "kp_hd_ui_table.h"
 #include "kp_icon.h"
 #include "kp_json.h"
 #include "kp_kpf.h"
@@ -519,6 +525,10 @@ static int cmd_repack(int argc, char **argv)
 			for (i = 0; i < c.hd_set_count; i++) printf(" %s", hd_sets[i]);
 			printf(": %d containers, %d pages, %d transcoded now\n", rep->hd_files, rep->hd_pages, rep->hd_encoded);
 		}
+		if (rep->ui_console || rep->ui_files || rep->portraits) {
+			printf("the HD interface: %d variants' ui.kpd, %d portraits%s\n", rep->ui_files, rep->portraits,
+				rep->ui_console ? ", the consoles' art" : "");
+		}
 	}
 	free(rep);
 	free(extra);
@@ -968,6 +978,49 @@ static int cmd_terrain(int argc, char **argv)
 	return failed ? 1 : 0;
 }
 
+static int cmd_hd_ui_table(int argc, char **argv)
+{
+	const char *dir = NULL, *out = NULL;
+	char path[PATH], err[MESSAGE];
+	int i, shown = 0, changed;
+	KpFiles files;
+	KpRes *res;
+	KpError e;
+	char *json;
+	size_t size;
+	for (i = 0; i < argc; i++) {
+		if (strcmp(argv[i], "--out") == 0 && i + 1 < argc) out = argv[++i];
+		else if (argv[i][0] == '-' || dir) return -1;
+		else dir = argv[i];
+	}
+	if (!dir || !(res = open_sources(&dir, 1, &shown))) return dir ? 2 : -1;
+	if (kp_res_install(res) != KP_RES_SOURCE_CASC) {
+		fprintf(stderr, "kp_convert: %s is no StarCraft: Remastered install\n", dir);
+		kp_res_close(res);
+		return 2;
+	}
+	if (!out) {
+		snprintf(path, sizeof path, "defs/scr/hd-ui-%s.json", kp_res_profile(res)->id);
+		out = path;
+	}
+	kp_res_files(res, &files);
+	memset(&e, 0, sizeof e);
+	if (!(json = kp_hd_ui_table_json(res, &files, &size, &e))) {
+		fprintf(stderr, "kp_convert: %s\n", e.msg);
+		kp_res_close(res);
+		return 1;
+	}
+	changed = kp_fs_write_if_changed(out, json, size, err, sizeof err);
+	free(json);
+	kp_res_close(res);
+	if (changed < 0) {
+		fprintf(stderr, "kp_convert: %s\n", err);
+		return 1;
+	}
+	printf("hd-ui-table: %s %s\n", out, changed ? "written" : "the same");
+	return 0;
+}
+
 static const struct {
 	const char *name, *usage;
 	int (*run)(int argc, char **argv);
@@ -981,6 +1034,7 @@ static const struct {
 	{ "locale-check", "locale-check DIR [--locale L|all] [--out DIR]", cmd_locale_check },
 	{ "scenarios", "scenarios DIR [--specs DIR] [--out DIR]", cmd_scenarios },
 	{ "terrain", "terrain DIR [--out DIR]", cmd_terrain },
+	{ "hd-ui-table", "hd-ui-table DIR [--out PATH]", cmd_hd_ui_table },
 };
 
 static int usage(void)

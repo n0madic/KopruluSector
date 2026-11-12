@@ -562,7 +562,7 @@ int kp_dev_check_hd(KpApp *a, const char *label, uint32_t dropped)
 	const KpCanvas *c = kp_flow_glue_active(&a->flow) ? &a->flow.glue.canvas : a->flow.hud.canvas;
 	KpHdUiCoverage cov;
 	int64_t sd;
-	if (!a->hd_ui.head || !c) {
+	if (!a->hd_ui.open || !c) {
 		kp_dev_line("hd check: no HD interface (--data with StarCraft: Remastered's HD art, a scale of 2 or more)");
 		return -1;
 	}

@@ -36,6 +36,8 @@ enum { KP_HD_SCR_HD2, KP_HD_SCR_HD, KP_HD_SCR_VARIANTS };
 
 const char *kp_hd_scr_variant_name(int variant);
 int32_t kp_hd_scr_variant_scale(int variant);
+/* Its files' prefix in the install ("HD2/", ""). */
+const char *kp_hd_scr_variant_prefix(int variant);
 /* A variant by its name ("hd2", "hd"), -1 none. */
 int kp_hd_scr_variant_of(const char *name);
 /* The suffix of a variant's k-th set's name in a repack, in the order the runtime prefers them where the context takes

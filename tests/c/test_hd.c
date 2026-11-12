@@ -2,7 +2,10 @@
  * frames, a page's blocks laid out from the anims' sheets, and over the install KP_TEST_SCR names (skipped without it)
  * every pack's FRMS and pages, the tilesets and the water's normal maps equal to what the Python converter wrote before
  * stage C5 deleted it (tests/golden/hd/converter.json: their sections' SHA-256); with KP_TEST_HD_REPACK
- * the same of a repack's HD sets (kp_convert repack --hd hd2,hd: the packs opened from their heads in the core). */
+ * the same of a repack's HD sets (kp_convert repack --hd hd2,hd: the packs opened from their heads in the core). Stage
+ * C6: each variant's HD interface laid out from the install by the placement table, the consoles' CONW and the HD
+ * portraits' clips equal to the Python converter's ui.kpd, console.kpd and portraits.kpd (tests/golden/hdui/
+ * converter.json), from the install and (KP_TEST_HD_REPACK) from a repack's ui group and core. */
 #include "kp_test_app.h"
 
 #include <stdio.h>
@@ -12,15 +15,20 @@
 #include "kp_data.h"
 #include "kp_grpmeta.h"
 #include "kp_hd_scr.h"
+#include "kp_hd_ui_scr.h"
 #include "kp_json.h"
 #include "kp_mission.h"
 #include "kp_present.h"
 #include "kp_sha256.h"
+#ifdef KP_ENCODERS
+#include "kp_hd_ui_pack.h"
+#endif
 
 #define SCR "KP_TEST_SCR"
 #define REPACK "KP_TEST_HD_REPACK" /* a repack whose BC sets (hd2, hd) are compared */
 #define CONVERTER "tests/golden/hd/converter.json" /* converter hd's output, recorded before stage C5 */
 #define PACK_SHARDS 12
+#define UI_CONVERTER "tests/golden/hdui/converter.json" /* converter hd's ui.kpd and console, recorded before stage C6 */
 
 /* --- the packer --- */
 
@@ -469,6 +477,160 @@ static void repack_equals_the_converters(KpT *T)
 	kp_t_ok(T, sets > 0, "the repack has an HD set");
 }
 
+/* The layout's assets and frames against the golden's (its SD paths in order; each frame's size, format, place and,
+ * with BC blocks, the SHA-256 of its image). */
+static void layout_equals(KpT *T, const KpHdUiScr *ui, KpResReader *h, const KpJson *golden, const char *variant)
+{
+	const KpJson *assets = kp_json_get(golden, "assets");
+	int32_t k, j;
+	kp_t_eq(T, ui->index.asset_count, kp_json_len(assets), "%s's assets", variant);
+	kp_t_eq(T, ui->index.frame_count, kp_json_field_int(golden, "frames", -1), "%s's frames", variant);
+	for (k = 0; k < ui->index.asset_count; k++) {
+		const KpJson *a = kp_json_at(assets, k), *frames = kp_json_get(a, "frames");
+		const uint8_t *r = ui->index.assets + (size_t)k * (KP_HD_UI_PATH + 8);
+		int32_t first = (int32_t)kp_le_u32(r + KP_HD_UI_PATH), count = (int32_t)kp_le_u16(r + KP_HD_UI_PATH + 4);
+		kp_t_eq_str(T, (const char *)r, kp_json_str(kp_json_get(a, "path"), "(none)"), "%s's asset %d", variant, (int)k);
+		kp_t_eq(T, first, kp_json_field_int(a, "first", -1), "%s's %s's first frame", variant, (const char *)r);
+		kp_t_eq(T, count, kp_json_len(frames), "%s's %s's frames", variant, (const char *)r);
+		kp_t_eq(T, kp_le_u16(r + KP_HD_UI_PATH + 6), kp_json_field_int(a, "flags", -1), "%s's %s's flags", variant, (const char *)r);
+		for (j = 0; j < count; j++) {
+			const KpJson *g = kp_json_at(frames, j);
+			KpHdUiFrame f;
+			char what[160];
+			kp_hd_ui_frame(&ui->index, first + j, &f);
+			snprintf(what, sizeof what, "%s's %s frame %d", variant, (const char *)r, (int)j);
+			kp_t_eq(T, f.w, kp_json_field_int(g, "w", -1), "%s's width", what);
+			kp_t_eq(T, f.h, kp_json_field_int(g, "h", -1), "%s's height", what);
+			kp_t_eq(T, f.format, kp_json_field_int(g, "format", -1), "%s's format", what);
+			kp_t_eq(T, f.x, kp_json_field_int(g, "x", -1), "%s's x", what);
+			kp_t_eq(T, f.y, kp_json_field_int(g, "y", -1), "%s's y", what);
+			if (f.format != KP_HD_UI_PNG) {
+				KpError e;
+				size_t n;
+				uint8_t *image = kp_hd_ui_scr_image(ui, h, first + j, &n, &e);
+				kp_t_ok(T, image != NULL, "%s: %s", what, image ? "" : e.msg);
+				same_sha(T, image, n, kp_json_get(g, "sha256"), what);
+				free(image);
+			}
+		}
+	}
+}
+
+/* Each HD portrait's clip as the runtime finds it in the source (kp_hd_ui_scr_clip_name: HD2's, else HD's) against
+ * the converter's portraits.kpd's. */
+static void portraits_equal(KpT *T, KpRes *res, const KpJson *golden)
+{
+	const KpJson *clips = kp_json_get(kp_json_get(golden, "portraits"), "clips");
+	int k, v;
+	kp_t_ok(T, kp_json_len(clips) > 0, "the golden's portraits");
+	for (k = 0; k < kp_json_len(clips); k++) {
+		const KpJson *c = kp_json_at(clips, k);
+		const char *path = kp_json_str(kp_json_get(c, "path"), "");
+		char name[KP_HD_UI_SCR_NAME], why[256];
+		uint8_t *b = NULL;
+		size_t n = 0;
+		for (v = 0; v < KP_HD_SCR_VARIANTS && !b; v++) {
+			kp_t_eq(T, kp_hd_ui_scr_clip_name(path, strlen(path), v, name, sizeof name), 0, "%s's clip name", path);
+			b = kp_res_raw_read(res, name, &n, why, sizeof why);
+		}
+		kp_t_ok(T, b != NULL, "%s's clip: %s", path, why);
+		same_sha(T, b, n, kp_json_get(c, "sha256"), name);
+		free(b);
+	}
+}
+
+/* The consoles' art (console.kpd's CONW) against the converter's. */
+static void console_equals(KpT *T, const uint8_t *b, size_t n, const KpJson *golden)
+{
+	KpKpf c;
+	KpError e;
+	kp_t_eq(T, kp_kpf_parse(&c, b, n, "console.kpd", 1, &e), 0, "console.kpd parses: %s", e.msg);
+	same_sha(T, kp_kpf_find(&c, KP_UI_CONSOLE_KIND)->data, kp_kpf_find(&c, KP_UI_CONSOLE_KIND)->size,
+		kp_json_get(kp_json_get(golden, "console"), "CONW"), "CONW");
+	kp_kpf_free(&c);
+}
+
+/* Each variant's HD interface laid out from the install, and with the encoders' kp_convert its ui.kpd as kp_convert
+ * repack writes it, against the converter's; the consoles' CONW; the portraits. */
+static void ui_equals_the_converters(KpT *T)
+{
+	const KpJson *golden;
+	KpResReader *h;
+	Scr *s;
+	int variant;
+	uint8_t *b;
+	size_t n;
+	KpError e;
+	if (!getenv(SCR)) kp_t_skip(T, "%s not set", SCR);
+	golden = kp_t_golden(T, UI_CONVERTER);
+	s = scr(T);
+	kp_t_ok(T, (h = kp_res_reader_new()) != NULL, "out of memory");
+	kp_t_defer(T, free_reader, h);
+	for (variant = 0; variant < KP_HD_SCR_VARIANTS; variant++) {
+		const char *name = kp_hd_scr_variant_name(variant);
+		const KpJson *g = kp_json_get(golden, name);
+		KpHdUiScr ui;
+		if (!kp_hd_ui_scr_held(s->res, variant)) kp_t_skip(T, "the install holds no %s interface", name);
+		kp_t_eq(T, kp_hd_ui_scr_build(s->res, h, &s->data.files, variant, &ui, &e), 0, "%s's layout: %s", name, e.msg);
+		kp_t_eq(T, ui.skipped, 0, "%s: no file other than the table's (first %s)", name, ui.first_skipped);
+		layout_equals(T, &ui, h, g, name);
+#ifdef KP_ENCODERS
+		b = kp_hd_ui_pack(&ui, h, kp_res_profile(s->res)->id, &n, &e);
+		kp_hd_ui_scr_free(&ui);
+		kp_t_ok(T, b != NULL, "%s's ui.kpd: %s", name, b ? "" : e.msg);
+		sections_equal(T, b, n, kp_json_get(g, "sections"), name);
+		free(b);
+#else
+		kp_hd_ui_scr_free(&ui);
+#endif
+	}
+	kp_t_ok(T, (b = kp_hd_ui_scr_console_art(s->res, &s->data.files, &n, &e)) != NULL, "console.kpd: %s", e.msg);
+	kp_t_defer(T, free_ptr, b);
+	console_equals(T, b, n, golden);
+	portraits_equal(T, s->res, golden);
+}
+
+/* A repack's HD interface (KP_TEST_HD_REPACK): each variant's ui.kpd opened from its head in the core as the runtime
+ * opens it and read whole from the ui group, its sections; the consoles' art in the core; the portraits in the ui
+ * group: all against the converter's. */
+static void repack_ui_equals_the_converters(KpT *T)
+{
+	const KpJson *golden;
+	KpRes *res;
+	int variant, sets = 0;
+	uint8_t *b;
+	size_t n;
+	char why[256];
+	KpError e;
+	if (!getenv(REPACK)) kp_t_skip(T, "%s not set", REPACK);
+	golden = kp_t_golden(T, UI_CONVERTER);
+	res = kp_t_install(T, REPACK);
+	for (variant = 0; variant < KP_HD_SCR_VARIANTS; variant++) {
+		const char *set = kp_hd_scr_variant_name(variant);
+		char name[160];
+		uint8_t *head;
+		KpResPlace place;
+		KpHdUi ui;
+		snprintf(name, sizeof name, KP_HD_UI_SCR_REPACK_HEAD, set);
+		if (!kp_res_raw_held(res, name)) continue;
+		sets++;
+		kp_t_ok(T, (head = kp_res_raw_read(res, name, &n, why, sizeof why)) != NULL, "%s: %s", name, why);
+		kp_t_defer(T, free_ptr, head);
+		snprintf(name, sizeof name, KP_HD_UI_SCR_REPACK, set);
+		kp_t_ok(T, kp_res_raw_place(res, name, &place) && place.kind == KP_RES_SOURCE_REPACK, "%s in an open group", name);
+		kp_t_eq(T, kp_hd_ui_open(&ui, head, n, (size_t)place.size, name, &e), 0, "%s opens from its head: %s", name, e.msg);
+		kp_t_eq(T, ui.frame_count, kp_json_field_int(kp_json_get(golden, set), "frames", -1), "%s's frames", name);
+		kp_t_ok(T, (b = kp_res_raw_read(res, name, &n, why, sizeof why)) != NULL, "%s: %s", name, why);
+		sections_equal(T, b, n, kp_json_get(kp_json_get(golden, set), "sections"), name);
+		free(b);
+	}
+	kp_t_ok(T, sets > 0, "the repack has an HD interface");
+	kp_t_ok(T, (b = kp_res_raw_read(res, KP_HD_UI_SCR_REPACK_CONSOLE, &n, why, sizeof why)) != NULL, "console.kpd: %s", why);
+	kp_t_defer(T, free_ptr, b);
+	console_equals(T, b, n, golden);
+	portraits_equal(T, res, golden);
+}
+
 static const KpTest TESTS[] = {
 	{ "packer_keeps_a_group_together", packer_keeps_a_group_together, 0 },
 	{ "packer_fills_only_the_open_pages", packer_fills_only_the_open_pages, 0 },
@@ -478,6 +640,8 @@ static const KpTest TESTS[] = {
 	{ "packs_equal_the_converters", packs_equal_the_converters, PACK_SHARDS },
 	{ "tilesets_and_water_equal_the_converters", tilesets_and_water_equal_the_converters, 0 },
 	{ "repack_equals_the_converters", repack_equals_the_converters, PACK_SHARDS },
+	{ "ui_equals_the_converters", ui_equals_the_converters, 0 },
+	{ "repack_ui_equals_the_converters", repack_ui_equals_the_converters, 0 },
 };
 
 KP_SUITE(kp_suite_hd, "test_hd", TESTS);

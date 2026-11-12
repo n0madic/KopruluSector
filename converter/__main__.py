@@ -1,13 +1,10 @@
 """Converter CLI. Run from the repository root: python3 -m converter <command> ...
 
-kp_convert (native/kp_convert, ADR 0019) has verify, extract, the repack, the test scenarios, the terrain checks and
-the icon; what is left here goes to it by stage C7 (docs/phaseC.md).
+kp_convert (native/kp_convert, ADR 0019) has verify, extract, the repack (the HD art, interface and consoles too), the
+test scenarios, the terrain checks, the icon and the HD interface's placement table; what is left here goes to it by
+stage C7 (docs/phaseC.md).
 
 Commands:
-  console --scr DIR [--out generated]
-                               write the console's pieces generated/data/console.kpd from StarCraft:
-                               Remastered's art (the only SD container the converter still writes; `hd`
-                               writes it too)
   scr-manifest --data DIR [--scr DIR] [--out generated]
                                read everything the conversion reads from the profile's install (the
                                game's data, the campaign's scenarios and sounds, the test scenarios and
@@ -15,9 +12,6 @@ Commands:
                                hashes --scr is checked against, and defs/campaign/packs-<profile>.json,
                                the missions' resource packs; the scenarios' CHKs and the terrain checks
                                go to --out; with --scr also defs/scr/texts-<profile>.json
-  hd --scr DIR [--variant hd2|hd|all] [--out generated]
-                               write StarCraft: Remastered's HD art (x2, x4) as generated/hd/<variant>/
-                               packs/<pack>.kpd and tilesets/<name>.kpd for the HD renderer (--graphics)
   dump FILE [--section XXXX]   print a .kpd container in readable form
   scr-compare --data DIR --scr DIR
                                compare Remastered's DAT tables and scripts with the profile's
@@ -40,16 +34,6 @@ from .mpq.profile import DEFAULT_PROFILE, Profile, Resolver
 from .mpq.stormlib import StormLibError
 
 log = logging.getLogger("converter")
-
-
-def _console(args: argparse.Namespace) -> int:
-    """The console's pieces (generated/data/console.kpd) from StarCraft: Remastered's art."""
-    from .casc.source import ScrSource
-    from .emit import hd_ui
-
-    with ScrSource(args.scr, Profile.load(args.profile)) as source:
-        hd_ui.write_console(source, Path(args.out))
-    return 0
 
 
 def _scr_manifest(args: argparse.Namespace) -> int:
@@ -86,19 +70,6 @@ def _scr_manifest(args: argparse.Namespace) -> int:
                 texts = build_texts(lambda n: source.inner.read(n)[1], list(source.files), storage)
             write_texts(texts_path(profile.id), profile.id, texts)
             log.info("%s: %d string tables, %d dialogs", texts_path(profile.id), len(texts["tbl"]), len(texts["bin"]))
-    return 0
-
-
-def _hd(args: argparse.Namespace) -> int:
-    """StarCraft: Remastered's HD interface art and portraits (generated/hd/<variant>/; ADR 0013; the world: ADR 0019)."""
-    from .casc.source import ScrSource
-    from .emit import hd, hd_ui
-
-    with ScrSource(args.scr, Profile.load(args.profile)) as source:
-        portraits = None  # written once, linked into the other variant (both take HD2's clips)
-        for variant in (hd.VARIANTS if args.variant == "all" else (args.variant,)):
-            portraits = hd.generate(source, Path(args.out), variant, portraits)["portraits"]
-        hd_ui.write_console(source, Path(args.out))
     return 0
 
 
@@ -153,21 +124,12 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="converter")
     parser.add_argument("--profile", default=DEFAULT_PROFILE)
     sub = parser.add_subparsers(dest="command", required=True)
-    p = sub.add_parser("console", help="write the console's pieces from StarCraft: Remastered's art")
-    p.add_argument("--scr", required=True, help="a StarCraft: Remastered install (.build.info and Data/)")
-    p.add_argument("--out", default="generated")
-    p.set_defaults(func=_console)
     p = sub.add_parser("scr-manifest", help="read everything from the profile's install and record the Remastered "
                                             "manifest and the missions' packs")
     p.add_argument("--data", required=True)
     p.add_argument("--scr", help="a StarCraft: Remastered install: also write the text tables")
     p.add_argument("--out", default="generated")
     p.set_defaults(func=_scr_manifest)
-    p = sub.add_parser("hd", help="write StarCraft: Remastered's HD interface art and portraits for the HD renderer")
-    p.add_argument("--scr", required=True, help="a StarCraft: Remastered install (.build.info and Data/)")
-    p.add_argument("--variant", choices=("hd2", "hd", "all"), default="all")
-    p.add_argument("--out", default="generated")
-    p.set_defaults(func=_hd)
     p = sub.add_parser("dump", help="print a Koprulu container")
     p.add_argument("file")
     p.add_argument("--section")

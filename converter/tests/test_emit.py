@@ -8,7 +8,7 @@ from pathlib import Path
 
 from converter.emit import atlas
 from converter.emit import files
-from converter.emit.files import (ROOT, cached, link_file, project_path, write_atomic, write_if_changed,
+from converter.emit.files import (ROOT, cached, project_path, write_atomic, write_if_changed,
                                   write_parts_if_changed)
 
 
@@ -39,17 +39,6 @@ class EmitTest(unittest.TestCase):
             assert cached(root / "c", b"key", ".bin", make, ok) == b"MOVIE data" and len(made) == 2
             assert path.read_bytes() == b"MOVIE data"
             assert cached(None, b"key", ".bin", make, ok) == b"MOVIE data" and len(made) == 3  # no cache
-
-    def test_link_file_shares_the_file(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            src, dst = Path(tmp) / "hd2" / "p.kpd", Path(tmp) / "hd" / "p.kpd"
-            write_if_changed(src, b"clips")
-            write_if_changed(dst, b"old")
-            link_file(src, dst)
-            assert dst.read_bytes() == b"clips" and dst.samefile(src)
-            link_file(src, dst)  # already the same file
-            write_if_changed(src, b"new clips")  # written whole into a new file: the link keeps the old bytes
-            assert dst.read_bytes() == b"clips"
 
     def test_pieces_are_compared_and_written_without_joining(self):
         with tempfile.TemporaryDirectory() as tmp, mock.patch.object(files, "COMPARE_CHUNK", 3):

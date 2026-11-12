@@ -62,21 +62,6 @@ def write_parts_if_changed(path: Path, parts: Sequence[bytes]) -> bool:
     return True
 
 
-def link_file(source: Path, path: Path) -> None:
-    """path as a hard link to source (a copy where links are refused), replacing what was there."""
-    if path.exists() and path.samefile(source):
-        return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f".{path.name}.link")
-    tmp.unlink(missing_ok=True)
-    try:
-        os.link(source, tmp)
-    except OSError:
-        write_atomic(path, source.read_bytes())
-        return
-    os.replace(tmp, path)
-
-
 def cached(cache: Path | None, key: bytes, suffix: str, make: Callable[[], bytes],
            complete: Callable[[bytes], bool]) -> bytes:
     """make()'s bytes, kept in cache/<SHA-256 of key><suffix> (none without a cache): read back when there and

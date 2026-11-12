@@ -1828,41 +1828,6 @@ static void hd_ui_frame_place(KpT *T)
 	kp_t_ok(T, r[0] == 0 && r[1] == 0 && r[2] == 64 && r[3] == 64, "a wireframe's layer on its GRP canvas");
 }
 
-/* portraits.kpd (HDPV) opened from its head; a clip by its SD movie's path (case and separator ignored), at DATA's
- * offset plus its own. */
-static void hd_video_index(KpT *T)
-{
-	uint8_t head[2] = { 2, 0 }, clips[2 * 72], data[12];
-	KpKpfOut sections[3] = { { "HEAD", head, sizeof head, 0 }, { "CLIP", clips, sizeof clips, 0 },
-		{ "DATA", data, sizeof data, 0 } };
-	uint8_t *file;
-	size_t size, need;
-	uint32_t offset, n;
-	KpHdVideo v;
-	KpError e;
-	memset(clips, 0, sizeof clips);
-	memset(data, 0x11, 4);
-	memset(data + 4, 0x22, 8);
-	memcpy(clips, "portrait\\tmarine\\tmatlk00.smk", 29);
-	clips[68] = 4;
-	memcpy(clips + 72, "portrait\\zling\\zzefid00.smk", 27);
-	clips[72 + 64] = 4, clips[72 + 68] = 8;
-	kp_t_eq(T, kp_kpf_build(KP_HD_VIDEO_KIND, KP_HD_SCHEMA, 0, "test", NULL, sections, 3, &file, &size), 0, "built");
-	kp_t_defer(T, free, file);
-	need = kp_hd_video_head_size(file, size, size);
-	kp_t_ok(T, need > 0 && need < size, "the head ends before DATA");
-	kp_t_eq(T, kp_hd_video_open(&v, file, need, size, "portraits", &e), 0, "opened");
-	kp_t_ok(T, kp_hd_video_clip(&v, "Portrait/ZLing/ZZEFID00.SMK", 27, &offset, &n) == 1 && n == 8
-		&& file[offset] == 0x22 && file[offset + 7] == 0x22, "a clip by its path, in DATA");
-	kp_t_ok(T, kp_hd_video_clip(&v, "portrait\\tmarine\\tmatlk00.smk", 29, &offset, &n) == 0 && n == 4
-		&& file[offset] == 0x11, "the first clip");
-	kp_t_eq(T, kp_hd_video_clip(&v, "portrait\\tmarine\\tmatlk0", 24, NULL, NULL), -1, "a prefix is no match");
-	head[0] = 3; /* a clip more than CLIP holds */
-	kp_t_eq(T, kp_kpf_build(KP_HD_VIDEO_KIND, KP_HD_SCHEMA, 0, "test", NULL, sections, 3, &file, &size), 0, "built");
-	kp_t_defer(T, free, file);
-	kp_t_eq(T, kp_hd_video_open(&v, file, size, size, "portraits", &e), -1, "HEAD against CLIP");
-}
-
 /* The map's megatiles into atlas slots in the order of their first cell; a tile's block rows at its slot. */
 static void hd_terrain_atlas_slots(KpT *T)
 {
@@ -2400,7 +2365,6 @@ static const KpTest TESTS[] = {
 	{ "hd_terrain_atlas_layers", hd_terrain_atlas_layers, 0 },
 	{ "terrain_creep_edges", terrain_creep_edges, 0 },
 	{ "hd_water_masks_and_normals", hd_water_masks_and_normals, 0 },
-	{ "hd_video_index", hd_video_index, 0 },
 	{ "hd_ui_index_and_atlas", hd_ui_index_and_atlas, 0 },
 	{ "hd_ui_frame_place", hd_ui_frame_place, 0 },
 	{ "palette_tone_follows_the_fades", palette_tone_follows_the_fades, 0 },

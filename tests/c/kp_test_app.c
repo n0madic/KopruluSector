@@ -1,9 +1,12 @@
 /* The product's helpers of the C suites (kp_test_app.h). */
 #include "kp_test_app.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+#include "kp_data.h"
+#include "kp_hd_ui_scr.h"
 #include "kp_kpf.h" /* kp_le_put32 */
 
 /* kp_res_close as a deferred cleanup (a call through another function type is undefined) */
@@ -22,6 +25,26 @@ KpRes *kp_t_install(KpT *T, const char *env)
 	kp_t_ok(T, r != NULL, "%s: %s", dir, err);
 	kp_t_defer(T, res_close, r);
 	return r;
+}
+
+const uint8_t *kp_t_console_art(KpT *T, size_t *size)
+{
+	/* kept for the process's later tests (the build reads the install's DDS consoles and SD PCXs) */
+	static uint8_t *art;
+	static size_t art_size;
+	static char why[sizeof ((KpError *)0)->msg];
+	if (!art && !why[0]) {
+		KpRes *r = kp_t_install(T, "KP_TEST_SCR");
+		KpData d;
+		KpError e;
+		if (kp_data_build(&d, r, NULL, 0, NULL, 0, &e) != 0) kp_t_fail(T, "the install's data: %s", e.msg);
+		art = kp_hd_ui_scr_console_art(r, &d.files, &art_size, &e);
+		kp_data_free(&d);
+		if (!art) snprintf(why, sizeof why, "%s", e.msg[0] ? e.msg : "the install holds no HD2 consoles");
+	}
+	if (!art) kp_t_skip(T, "no consoles' art: %s", why);
+	if (size) *size = art_size;
+	return art;
 }
 
 void kp_t_bits(KpTBits *o, uint32_t v, int n)

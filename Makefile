@@ -1,6 +1,5 @@
 # Shortcuts for converting the original data and building the game. `make` alone prints the help.
-# The real work is done by kp_convert (built here), `python3 -m converter` and tools/product.sh; this file only chains
-# them.
+# The real work is done by kp_convert (built here) and tools/product.sh; this file only chains them.
 # Works with the GNU make 3.81 that macOS ships.
 
 SHELL := /bin/bash
@@ -11,15 +10,13 @@ SCR      ?=
 OUT      ?= generated
 PYTHON   ?= python3
 VARIANT  ?= release
-HD       ?= hd2
 PORT     ?= 8793
 ARGS     ?=
 BUILD_DIR ?= build/app
 TOOLS_DIR ?= build/cmake
 
-CONVERTER := $(PYTHON) -m converter
-# The C converter (ADR 0019): verify, the repack (the cinematics too), the test scenarios, the terrain checks and the
-# icon
+# The C converter (ADR 0019): verify, the repack (the cinematics, the languages, the HD art and interface too), the
+# test scenarios, the terrain checks, the icon and the HD interface's placement table
 KP_CONVERT := $(TOOLS_DIR)/kp_convert
 
 # The bundles read the converter's output from here (tools/product.sh)
@@ -28,8 +25,8 @@ export KOPRULU_GENERATED := $(OUT)
 PLATFORMS := macos web android ios ios-sim linux windows
 
 .DEFAULT_GOAL := help
-.PHONY: help convert convert-remastered remastered-extras check-source check-sc check-scr verify repack console \
-	scenarios terrain icon hd locale-check convert-tool toolchain app run test serve \
+.PHONY: help convert check-source check-sc check-scr verify repack \
+	scenarios terrain icon hd-ui-table locale-check convert-tool toolchain app run test serve \
 	install-android clean $(PLATFORMS)
 
 help:
@@ -38,20 +35,18 @@ help:
 	@echo "Convert (SC = a StarCraft: Brood War 1.17.0.1 folder, SCR = a StarCraft: Remastered folder):"
 	@echo "  make convert SC=DIR          verify, the repack, the test scenarios, the terrain checks and the icon"
 	@echo "                               from 1.17"
-	@echo "  make convert SCR=DIR         the repack, the test scenarios, the terrain checks and the console's"
-	@echo "                               pieces from Remastered"
+	@echo "  make convert SCR=DIR         the repack, the test scenarios and the terrain checks from Remastered"
 	@echo "  make repack SC=DIR|SCR=DIR   the original files the game reads: OUT/repack (groups: the phones, the"
 	@echo "                               web) and OUT/repack-single (one koprulu.mpq: the computers), the"
 	@echo "                               cinematics apart in both (1.17's transcoded into WebM, Remastered's"
 	@echo "                               SD and HD2 sets as they are); from Remastered a group per language it"
-	@echo "                               holds (its texts and speech) and the HD art's sets (the computers' hd2"
-	@echo "                               and hd, the web's hd2, the phones' hd2-astc and hd2-etc2)"
-	@echo "  make console SCR=DIR         the console's pieces OUT/data/console.kpd from Remastered's art"
+	@echo "                               holds (its texts and speech), the HD art's sets (the computers' hd2"
+	@echo "                               and hd, the web's hd2, the phones' hd2-astc and hd2-etc2) with their"
+	@echo "                               interface and portraits, and the consoles' art"
 	@echo "  make scenarios SC=DIR|SCR=DIR  the test scenarios' CHKs OUT/scenarios/ (tests, the oracle's tools)"
 	@echo "  make terrain SC=DIR|SCR=DIR    the terrain checks' CRCs OUT/viewer/ (koprulu --autotest)"
-	@echo "  make convert-remastered SCR=DIR"
-	@echo "                               all of the above from Remastered plus the HD interface's art"
-	@echo "  make hd SCR=DIR [HD=hd2|hd|all]  the HD interface's art and portraits OUT/hd/<variant>/"
+	@echo "  make hd-ui-table SCR=DIR     the HD interface's placement table defs/scr/ made again (after a"
+	@echo "                               Remastered update that changes its interface art)"
 	@echo "  make locale-check SCR=DIR    every string of each language Remastered holds checked, the reports"
 	@echo "                               OUT/reports/locale-<LOC>.json"
 	@echo ""
@@ -84,27 +79,16 @@ check-sc:
 check-scr:
 	@if [ -z "$(strip $(SCR))" ]; then echo "make: $(MAKECMDGOALS) needs SCR=<StarCraft: Remastered folder>" >&2; exit 2; fi
 
-# The game reads the original files (ADR 0018): the repack, and the console's pieces (Remastered's art) for SCR; the
-# test scenarios and the terrain checks serve the tests and a debug bundle. The icon needs StarCraft.exe, so only from
-# 1.17.
+# The game reads the original files (ADR 0018): the repack; the test scenarios and the terrain checks serve the tests
+# and a debug bundle. The icon needs StarCraft.exe, so only from 1.17.
 convert: check-source
 ifneq ($(strip $(SC)),)
 	$(MAKE) verify
 endif
 	$(MAKE) repack scenarios terrain
-ifneq ($(strip $(SCR)),)
-	$(MAKE) console
-endif
 ifneq ($(strip $(SC)),)
 	$(MAKE) icon
 endif
-
-convert-remastered: check-scr
-	$(MAKE) convert SC=
-	$(MAKE) remastered-extras
-
-remastered-extras: check-scr
-	$(MAKE) hd
 
 locale-check: check-scr convert-tool
 	$(KP_CONVERT) locale-check "$(SCR)" --out "$(OUT)"
@@ -118,9 +102,6 @@ scenarios: check-source convert-tool
 terrain: check-source convert-tool
 	$(KP_CONVERT) terrain "$(SOURCE)" --out "$(OUT)"
 
-console: check-scr
-	$(CONVERTER) console --scr "$(SCR)" --out "$(OUT)"
-
 # The game's data (ADR 0018): the original files repacked, in groups and in one file (the cinematics, the languages and
 # the HD sets apart in both). The HD art's sets (ADR 0019, stage C5) come from Remastered: the groups take the web's
 # HD2 and the phones' (its pages in ASTC, or in ETC2 for phones without ASTC), the single file the computers' HD2 and
@@ -133,9 +114,10 @@ repack: check-source convert-tool
 icon: check-sc convert-tool
 	$(KP_CONVERT) icon "$(SC)" --out "$(OUT)"
 
-# TODO: the HD interface's art and portraits from Remastered's files at the runtime (ADR 0019, stage C6)
-hd: check-scr
-	$(CONVERTER) hd --scr "$(SCR)" --variant $(HD) --out "$(OUT)"
+# The HD interface's placement table (ADR 0019, stage C6), committed: the runtime and the repack lay the interface's
+# frames out by it, and leave in SD the files whose content Remastered changed since
+hd-ui-table: check-scr convert-tool
+	$(KP_CONVERT) hd-ui-table "$(SCR)"
 
 # kp_convert with the ASTC encoder (the phones' HD sets)
 convert-tool: toolchain

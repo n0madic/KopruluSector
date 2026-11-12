@@ -16,7 +16,7 @@ The converter becomes `kp_convert`, in C, sharing its builders with the runtime.
 | C3 | Language texts: `kp_locale.c` (the six tables, dialogs by `defs/l10n`, `rez\*.txt`, the maps' STR, subtitles, the glyphs at start, VFNT from TTF); `kp_convert locale-check`; the text overlays and `glyphs.kpd` go | done 2026-11-12 |
 | C4 | Cinematics: the 1.17 SMK transcoded to VP9 and Vorbis in our own WebM by `kp_convert repack`; Remastered's WebM as they are; `CINE` and FFmpeg go | done 2026-11-12 |
 | C5 | The HD world: `kp_anim.c`, `images.rel`, the grouped packer, the HD page thread over anim; `HDTS`/`HDWA` from the originals; `HDPK`/`HDTS`/`HDWA` in the `hd2`/`hd` groups, the phones' sets transcoded by `kp_convert` | done 2026-11-12 |
-| C6 | The HD interface, portraits, console: `kp_convert hd-ui-table` writes `defs/scr/hd-ui-bw-1.17.0.1.json`; `HDUI`/`CONW` built from the originals; `HDUI`/`HDPV`/`CONW` in the `ui` group | |
+| C6 | The HD interface, portraits, console: `kp_convert hd-ui-table` writes `defs/scr/hd-ui-bw-1.17.0.1.json`; `HDUI`/`CONW` built from the originals; `HDUI` in a group per variant, the portraits' WebM in their own group, `CONW` in the core (`HDPV` gone) | done 2026-11-12 |
 | C7 | `converter/` deleted; the readers for research moved to `tools/research/`; the bundles carry `koprulu*.mpq` only; the Fold7 run | |
 
 ## C0 as built (2026-11-11)
@@ -241,6 +241,99 @@ Each is cached as `<sha256>-q3-s<serial>-speech.ogg`. From `/Applications/StarCr
 - The web's movies are not covered by `tools/ci.sh` (checked in the browser pane by hand); `--cine-check` cannot run there.
 - The fixture movies (`cine0.webm`, `cine1.webm`) are still made by FFmpeg (C7).
 
+
+## C6 as built (2026-11-12)
+
+**The placement table** (`native/kp_convert/kp_hd_ui_table.c`, `defs/scr/hd-ui-bw-1.17.0.1.json`, 17 KB).
+- `kp_convert hd-ui-table DIR [--out PATH]` runs the Python converter's heuristics over a Remastered install. They live only here:
+  - `place_frame`: where a GRP's HD frame lies when it is not at its usual place;
+  - `same_picture`: which PCXs' HD art is the SD picture drawn again;
+  - `place_piece`: where a console's centre piece lies.
+- It writes, per variant:
+  - each HD file the layout takes, with its CASC content key;
+  - each moved frame's place;
+  - the three consoles' centres.
+
+  On 1.23.10: HD2 has 69 files, 62 frames moved, 128 pictures drawn again and 6 kept in SD. HD has 73 files, 62, 124 and 6. It runs in 2.5 s.
+- `tools/defs_c.py` compiles it as `SHUI` into `kp_defs_bw_1_17_0_1.c`.
+- `tools/ci.sh` makes the table again from the install and compares it with the committed one.
+
+**The layout from the install** (`native/kp_app/kp_hd_ui_scr.c`).
+- `kp_hd_ui_scr_build` lays a variant out by the table: each SD file of `kp_ui_data_art_paths` with HD art, its frames' sizes and formats from their DDS headers (ranged reads), their places. It gives `ui.kpd`'s HEAD, ASET and FRMS as the Python converter wrote them: HD2's 2,180 frames, HD's 2,184.
+- A frame's image is read and decoded when the canvas first shows it (`kp_hd_ui_scr_image`, `kp_hd_ui_scr_rgba`).
+- `kp_hd_ui_scr_console` builds `console.kpd` (`CONW`) from the install's HD2 consoles and the SD consoles' PCXs: the wings' tiles and the cells at one texel per logical pixel.
+- `kp_hd_ui_scr_console_art` returns the repack's `koprulu\console.kpd` where there is one, else builds `CONW` from the install. A 1.17 install has none, so the original's console is drawn.
+- `kp_hd_ui_scr.c` and `kp_hd_ui_table.c` build with `-ffp-contract=off`, so a wing tile's crossfade and the heuristics' sums round as Python's doubles did.
+
+**The runtime** (`sdl/kp_app_hd_ui.c`, `sdl/kp_app_files.c`).
+- **Opening a variant.** Over a CASC install, the variant is laid out at start. Over a repack, its `ui.kpd` opens from its head in the core (`koprulu\heads\ui\<variant>.kpd`, its bytes up to FRMS's end). The log names the source: `interface art (the install's files)` or `(the repack's ui.kpd)`.
+- **Reading frames.**
+  - From the install: read and decoded on demand.
+  - From the repack: read at the place the listing gives within `koprulu-ui-<variant>.mpq`.
+  - On the web: each frame fetched alone by a Range request.
+- **Portraits.** A portrait's HD clip is found by its own name, `HD2/portrait/…/….webm` (HD2's, else HD's), as the install and the repack name it:
+  - `kp_res_raw_read` on a computer;
+  - `kp_res_raw_range` and a fetch on the web.
+
+  Only the portrait set's movies have clips. The glue's movies stay SD: Remastered's are larger than the clip places.
+- **Start-up cost.**
+  - The layout at start: 70 to 77 ms (HD2 or HD).
+  - The consoles' art: 164 ms from the install, 2.4 ms from the repack.
+
+**The repack** (`native/kp_convert/kp_hd_ui_pack.c`, `kp_repack.c`).
+- For each variant of the HD sets asked (`hd2-astc`'s is `hd2`), `kp_hd_ui_pack` writes the `ui.kpd` of its layout (`HDUI`): PNGs by `kp_icon_png`, BC blocks as the DDS holds them.
+  - It goes in `koprulu-ui-<variant>.mpq`, stored uncompressed and read by ranges, its names under no prefix.
+  - Its head goes in the core.
+- With any HD set, each portrait's WebM goes in `koprulu-portraits.mpq` under its raw name (HD2's, else HD's): 621 clips, 72.8 MB.
+- From any Remastered install with HD2, `koprulu\console.kpd` goes in the core (compressed).
+- On 1.23.10:
+  - `koprulu-ui-hd2.mpq` is 35.9 MB and `koprulu-ui-hd.mpq` 144.0 MB;
+  - the `hd2 hd` `--single` repack takes 50 s (37 s in C5);
+  - the `hd2` groups take 18.3 s.
+- The report adds `the HD interface: N variants' ui.kpd, M portraits, the consoles' art`.
+
+**The bundles** (`tools/product.sh`).
+- A bundle carries the interface groups of its HD sets' variants (`UI_GROUPS`), and `koprulu-portraits.mpq` with any set.
+- The console's pieces come from the core: `data/console.kpd` is no longer staged.
+- The web lists its ranged groups and their sizes in `web_sizes.txt`, now written by `product.sh` itself. `tools/web_hd_heads.py` is removed, since no heads are preloaded any more.
+
+**Tests.**
+- **`test_hd.ui_equals_the_converters`** (`KP_TEST_SCR`): each variant's layout, its packed `ui.kpd` sections, `CONW` and the 621 portraits' clips. They are checked against `tests/golden/hdui/converter.json` (private), recorded from `converter hd` before this stage removed it.
+- **`test_hd.repack_ui_equals_the_converters`** (`KP_TEST_HD_REPACK`): each variant's `ui.kpd` opened from its head and read from its group, the core's `console.kpd`, and the portraits' group, against the same golden.
+- **`test_hud`'s console tests** lay out over `kp_t_console_art`: `CONW` built once a process from `KP_TEST_SCR`. Without it they skip, as they did without `generated/data/console.kpd`.
+- **`tools/ci.sh`:**
+  - the table made again equals the committed one;
+  - the repack's interface against the golden;
+  - `hd_glue.kps` and `hd_game.kps` over the install and its repack, each log checked for the interface's source;
+  - each language's `hd_game.kps` walk, now always run, since the interface no longer needs `generated/hd`.
+
+**Verified.**
+- `test_hd` over the install and the `hd2 hd` repack: byte for byte the converter's.
+- `test_hud`: 82 tests, none skipped, over the install's `CONW`.
+- `hd_glue.kps` (89 steps) and `hd_game.kps` on terran02, zerg02 and protoss02 (159 steps) over the install and over the repack: 0 failures, and no SD pixel over HD art. `hd_glue.kps` was also run in HD at 1280 × 960.
+- The web bundle in the browser pane: terran02 in HD2, the console and frames fetched by ranges from `koprulu-ui-hd2.mpq`, the portraits from `koprulu-portraits.mpq` (206), with no error.
+
+**Decisions taken in C6:**
+- **The table names each HD file by its CASC content key** (the MD5 the index holds), not by the SHA-256 the plan named. The key comes from the index without reading the file, and the install's HD files are hundreds of megabytes in all. A file whose key differs is left in SD, with the log line `regenerate the table with kp_convert hd-ui-table`.
+- **`HDPV` (`portraits.kpd`) is gone.** The portraits are Remastered's WebM under their own names, in the install and in the repack alike, so one lookup serves both sources.
+- **A group per interface variant, and one for the portraits.** HD's `ui.kpd` is 144 MB and HD2's 36 MB. The phones and the web carry only HD2's; every HD bundle carries the portraits.
+- **`console.kpd` in the core, whatever HD sets are asked:** every kind of graphics composes the console from it, the original's art included (ADR 0011).
+- **The layout is built at start** (70 to 77 ms) and the consoles' art too (164 ms). Neither waits for a thread.
+- **The `ui` group's names have no prefix:** the runtime finds a frame's container and a portrait by their names alone.
+
+**Removed:**
+- the Python `converter/emit/hd.py`, `hd_ui.py`, `hd_video.py` and their tests;
+- `converter hd` and `converter console`, and `emit/files.py`'s `link_file`;
+- the Makefile's `hd`, `console`, `convert-remastered` and `remastered-extras` (`make hd-ui-table` added);
+- `HDPV` (`kp_hd_video_*`, `test_present.hd_video_index`);
+- the runtime's reads of `generated/hd/<variant>/ui.kpd`, `portraits.kpd` and `generated/data/console.kpd`;
+- `tools/web_hd_heads.py`;
+- `kp_load_check` and CI's ASan parse of `generated/*.kpd`: nothing writes such files now. The sanitizer suites parse the built containers in `test_hd` and `test_hud`.
+
+**Open after C6:**
+- `generated/hd/`, `generated/data/console.kpd`, `generated/locale/` and `generated/video/` stay on disk where the Python converter wrote them. Nothing reads them; remove them by hand.
+- The consoles' art from an install costs 164 ms at every start; it could move to a thread.
+- Phones from the interface groups are not run yet (C7's Fold7 run).
 
 ## C5 as built (2026-11-12)
 

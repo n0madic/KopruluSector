@@ -90,6 +90,11 @@ void kp_ui_dialogs_free(KpUiDialogs *d);
 int kp_ui_bin_files(const uint8_t *bin, size_t size, int (*add)(void *ctx, const uint8_t *path, size_t n), void *ctx,
 	char *err, size_t err_size);
 
+/* The interface's art files the HD interface replaces (converter hd_ui.py sd_paths; ADR 0019, stage C6): each theme's
+ * Dlg.grp, the dialogs' GRPs, the interface's GRPs and PCXs, then GFIL's files without the credits' (kpd.glue_file_paths
+ * without has), the GRPs and PCXs among them, the first spelling of a path; through add (0, or -1 to stop with err
+ * set). 0, or -1 with err. */
+int kp_ui_data_art_paths(const KpFiles *f, int (*add)(void *ctx, const char *path, size_t n), void *ctx, KpError *err);
 /* The parts built from the original files and the data set's DAT (the ghosts', sounds' and portraits' columns); the
  * vector fonts are the app's (NULL, 0: none; their bytes must outlive d). */
 int kp_ui_data_from_files(KpUiData *d, const KpFiles *files, const KpDat *dat, const KpUiFile *vector_fonts,

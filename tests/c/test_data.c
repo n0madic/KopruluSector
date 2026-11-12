@@ -1079,13 +1079,13 @@ static void palettes_game_tables(KpT *T)
 /* The executable's tables compiled in (kp_defs.h, ADR 0018 stage D2), each found by its fourcc: the converter's tables
  * (tools/defs_c.py), and the lists the runtime builds its structures from the original files with (stage D3: the
  * tilesets' cycles, the fonts' paths, the interface's dialogs and files; stage D4: the CHK loader tables and the
- * missions' packs). */
+ * missions' packs; ADR 0019's stage C6: the HD interface's placement table). */
 static const char *const DEFS_TABLES[] = { "ACCL", "BTNS", "CHEA", "COLS", "ESTB", "MUSI", "RQOR", "RQRS", "RQTU",
 	"RQUN", "RQUP", "SLOT", "STLY", "TABL", "VOLT" };
 static const char *const BUILT_TABLES[] = { "CHKL", "CINM", "CYC0", "CYC1", "CYC2", "CYC3", "CYC4", "CYC5", "CYC6",
 	"CYC7", "FNTP", "KBIN", "KEXT", "KLAB", "LANG", "LCPG", "LEXC", "LKEP", "LLAY", "LOWN", "LROW", "LSTR", "LTPL", "LTXT",
-	"MPAK", "SBIN", "SGRP", "SPAK", "SPAL", "SPCX", "SPEX", "SSMK", "STBL", "UBIN", "UCRD", "UDGR", "UGLF", "UGRP", "UPCX",
-	"UTHF", "UTHM" };
+	"MPAK", "SBIN", "SGRP", "SHUI", "SPAK", "SPAL", "SPCX", "SPEX", "SSMK", "STBL", "UBIN", "UCRD", "UDGR", "UGLF", "UGRP",
+	"UPCX", "UTHF", "UTHM" };
 #define DEFS_COUNT (sizeof DEFS_TABLES / sizeof DEFS_TABLES[0])
 #define BUILT_COUNT (sizeof BUILT_TABLES / sizeof BUILT_TABLES[0])
 

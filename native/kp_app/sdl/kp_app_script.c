@@ -238,7 +238,7 @@ static int host_value(void *ud, const KpScriptRun *run, const KpScriptRef *ref, 
 	case H_ART_LIT: *out = a->world.hd_lit != 0; break;
 	case H_ART_LIT_PAGES: *out = kp_world_hd_lit_pages(a); break;
 	case H_ART_FX: *out = a->world.fx != 0; break;
-	case H_HD_UI: *out = a->hd_ui.head != NULL; break;
+	case H_HD_UI: *out = a->hd_ui.open; break;
 	case H_CURSOR_SHOWN: *out = a->cursor.shown != 0; break;
 	case H_MOUSE_X: *out = a->mouse_lx; break;
 	case H_MOUSE_Y: *out = a->mouse_ly; break;

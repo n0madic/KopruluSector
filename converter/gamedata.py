@@ -2,9 +2,7 @@
 iscript, aiscript, fonts, palettes, portraits, sounds, tilesets, ui, grpmeta and campaign containers.
 
 `build` makes every one; `scr-manifest` runs it over the reference install so that the input manifest holds each file they
-read. Nothing
-is written: the runtime reads the original files (stage D5), and of the converted containers only `console.kpd` remains
-(`converter console`, converter/emit/hd_ui.py).
+read. Nothing is written: the runtime reads the original files (stage D5).
 """
 from __future__ import annotations
 

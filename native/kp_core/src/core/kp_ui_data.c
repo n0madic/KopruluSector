@@ -389,8 +389,9 @@ static int credit_tags(Paths *l, const uint8_t *t, size_t n)
 }
 
 /* GFIL (kpd.glue_file_paths): each theme's Backgnd.pcx, the themes' popup backgrounds, the dialogs' images and SMK
- * nodes in order, the glue's files, the credits' scripts and what their tags name; the first spelling of a path. */
-static int glue_paths(KpUiData *d, const KpFiles *f, Paths *l, KpError *err)
+ * nodes in order, the glue's files, with_credits the credits' scripts and what their tags name; the first spelling of a
+ * path. */
+static int glue_paths(const KpFiles *f, Paths *l, int with_credits, KpError *err)
 {
 	const KpDefsTable *themes, *theme_files, *bins, *glue, *credits, *estb = kp_defs_table(f->profile, "ESTB");
 	int nt, ntf, nb, ng, nc, k, j;
@@ -431,7 +432,7 @@ static int glue_paths(KpUiData *d, const KpFiles *f, Paths *l, KpError *err)
 		Name n = name_at(glue, k);
 		if (paths_add(l, n.p, n.n, 1) != 0) goto oom;
 	}
-	{ /* credits_paths: the establishing and finale texts (ESTB's names), the credits, the epilogs */
+	if (with_credits) { /* credits_paths: the establishing and finale texts (ESTB's names), the credits, the epilogs */
 		size_t at = 1;
 		int count = estb->data[0];
 		char why[KP_ERROR_SIZE];
@@ -463,10 +464,45 @@ static int glue_paths(KpUiData *d, const KpFiles *f, Paths *l, KpError *err)
 			if (j != 0) goto oom;
 		}
 	}
-	(void)d;
 	return 0;
 oom:
 	return fail(err, "out of memory");
+}
+
+int kp_ui_data_art_paths(const KpFiles *f, int (*add)(void *ctx, const char *path, size_t n), void *ctx, KpError *err)
+{
+	const KpDefsTable *themes, *dgr, *grp, *pcx;
+	int nt, nd, ng, np, k, rc = -1;
+	Paths l;
+	char path[300];
+	memset(&l, 0, sizeof l);
+	if (!(themes = names_table(f, "UTHM", &nt, err)) || !(dgr = names_table(f, "UDGR", &nd, err))
+		|| !(grp = names_table(f, "UGRP", &ng, err)) || !(pcx = names_table(f, "UPCX", &np, err)))
+		return -1;
+	for (k = 0; k < nt; k++) {
+		Name t = name_at(themes, k);
+		snprintf(path, sizeof path, "glue\\%.*s\\Dlg.grp", (int)t.n, (const char *)t.p);
+		if (paths_addz(&l, path, 1) != 0) goto oom;
+	}
+	for (k = 0; k < nd + ng + np; k++) {
+		Name n = k < nd ? name_at(dgr, k) : k < nd + ng ? name_at(grp, k - nd) : name_at(pcx, k - nd - ng);
+		if (paths_add(&l, n.p, n.n, 1) != 0) goto oom;
+	}
+	if (glue_paths(f, &l, 0, err) != 0) goto done;
+	for (k = 0; k < l.count; k++) {
+		size_t n = l.lens[k];
+		const char *p = l.paths[k];
+		if (n < 4 || p[n - 4] != '.') continue;
+		if (!same_path(p + n - 3, 3, (const uint8_t *)"grp", 3) && !same_path(p + n - 3, 3, (const uint8_t *)"pcx", 3)) continue;
+		if (add(ctx, p, n) != 0) goto done;
+	}
+	rc = 0;
+	goto done;
+oom:
+	fail(err, "out of memory");
+done:
+	paths_free(&l);
+	return rc;
 }
 
 /* A path list read whole into a KpUiFiles (no dedupe). */
@@ -503,7 +539,7 @@ static int file_lists(KpUiData *d, const KpFiles *f, KpError *err)
 		if (paths_add(&l, n.p, n.n, 0) != 0) goto oom;
 	}
 	if (read_names(d, f, &l, &d->pcx, err) != 0) return -1;
-	if (glue_paths(d, f, &l, err) != 0) {
+	if (glue_paths(f, &l, 1, err) != 0) {
 		paths_free(&l);
 		return -1;
 	}

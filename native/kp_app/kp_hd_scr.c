@@ -41,6 +41,7 @@ static const struct {
 
 const char *kp_hd_scr_variant_name(int variant) { return VARIANTS[variant].name; }
 int32_t kp_hd_scr_variant_scale(int variant) { return VARIANTS[variant].scale; }
+const char *kp_hd_scr_variant_prefix(int variant) { return VARIANTS[variant].prefix; }
 
 int kp_hd_scr_variant_of(const char *name)
 {
