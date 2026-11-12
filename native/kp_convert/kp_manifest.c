@@ -390,9 +390,17 @@ static int by_key(const void *a, const void *b)
 	return strcmp((*(const Entry *const *)a)->key, (*(const Entry *const *)b)->key);
 }
 
-static int by_text(const void *a, const void *b)
+/* A name looked for and not found: its key, its place in the order it was looked for */
+typedef struct {
+	char *key;
+	int order;
+} Absent;
+
+static int by_absent(const void *a, const void *b)
 {
-	return strcmp(*(const char *const *)a, *(const char *const *)b);
+	const Absent *x = (const Absent *)a, *y = (const Absent *)b;
+	int c = strcmp(x->key, y->key);
+	return c ? c : x->order - y->order;
 }
 
 /* The folder of a key (up to its last '\\'), its length. */
@@ -572,7 +580,7 @@ char *kp_manifest_text(KpManifest *m, const char *profile_id, const char *commit
 	KpManifestCounts *counts, char *err, size_t err_size)
 {
 	Entry **sorted = NULL;
-	char **absent = NULL;
+	Absent *absent = NULL;
 	Member *members = NULL;
 	KpBuf b;
 	int k, n = 0, member_count = 0, groups = 0, absent_count = 0;
@@ -584,7 +592,7 @@ char *kp_manifest_text(KpManifest *m, const char *profile_id, const char *commit
 		return NULL;
 	}
 	if (!(sorted = (Entry **)malloc((size_t)(m->count ? m->count : 1) * sizeof *sorted))
-		|| !(absent = (char **)malloc((size_t)(m->absent_count ? m->absent_count : 1) * sizeof *absent))
+		|| !(absent = (Absent *)malloc((size_t)(m->absent_count ? m->absent_count : 1) * sizeof *absent))
 		|| !(members = (Member *)malloc((size_t)(m->count ? m->count : 1) * sizeof *members))) {
 		snprintf(err, err_size, "out of memory");
 		goto done;
@@ -626,7 +634,7 @@ char *kp_manifest_text(KpManifest *m, const char *profile_id, const char *commit
 			members[member_count++].name = sorted[k]->name;
 		}
 	}
-	/* the names looked for and not found, but for a file read (by key), once each, by key */
+	/* the names looked for and not found, but for a file read (by key), once each in their first spelling, by key */
 	for (k = 0; k < m->absent_count; k++) {
 		char *key = spelled(m->absent[k], 1);
 		size_t s;
@@ -637,22 +645,19 @@ char *kp_manifest_text(KpManifest *m, const char *profile_id, const char *commit
 		}
 		for (s = hash_key(key) & (m->slot_cap - 1); m->slot_cap && m->slots[s]; s = (s + 1) & (m->slot_cap - 1))
 			if (strcmp(m->entries[m->slots[s] - 1].key, key) == 0) found = 1;
-		if (found) free(key);
-		else absent[absent_count++] = key;
+		if (found) {
+			free(key);
+		} else {
+			absent[absent_count].key = key;
+			absent[absent_count++].order = k;
+		}
 	}
-	qsort(absent, (size_t)absent_count, sizeof *absent, by_text);
+	qsort(absent, (size_t)absent_count, sizeof *absent, by_absent);
 	kp_buf_str(&b, "\n ],\n \"absent\": [\n  ");
 	for (k = 0; k < absent_count; k++) {
-		int i;
-		if (k && strcmp(absent[k], absent[k - 1]) == 0) continue;
-		for (i = 0; i < m->absent_count; i++) { /* the first spelling */
-			char *key = spelled(m->absent[i], 1);
-			int same = key && strcmp(key, absent[k]) == 0;
-			free(key);
-			if (same) break;
-		}
+		if (k && strcmp(absent[k].key, absent[k - 1].key) == 0) continue;
 		if (counts->absent) kp_buf_str(&b, ",\n  ");
-		json_string(&b, m->absent[i]);
+		json_string(&b, m->absent[absent[k].order]);
 		counts->absent++;
 	}
 	kp_buf_str(&b, "\n ],\n \"palettes\": {\n  ");
@@ -673,7 +678,7 @@ char *kp_manifest_text(KpManifest *m, const char *profile_id, const char *commit
 	text = b.data;
 	b.data = NULL;
 done:
-	for (k = 0; k < absent_count; k++) free(absent[k]);
+	for (k = 0; k < absent_count; k++) free(absent[k].key);
 	free(absent);
 	free(sorted);
 	free(members);

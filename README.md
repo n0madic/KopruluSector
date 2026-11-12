@@ -132,7 +132,7 @@ WAVs). The Ogg files' bytes can differ between processors, never what they decod
 carry the repack: a computer's the one file of `--single`, a phone's and the web's the groups (`make repack` writes
 both). From Remastered each language the install holds gets a group of its own, `koprulu-locale-<loc>.mpq`, even with
 `--single`: its texts (the XML strings, the glue's text files, the subtitles), maps, spoken lines and unit voices, a
-sound in Ogg Vorbis at 22,050 Hz mono when that is smaller (`--locales "ruRU deDE"` or `none` picks them); the core
+sound in Ogg Vorbis at 22,050 Hz mono when that is smaller (`--locales ruRU,deDE` or `none` picks them); the core
 holds Remastered's TrueType fonts the languages' glyphs are drawn from. The cinematics are groups of their own too,
 `koprulu-cinematics.mpq` (the SD set) and, from Remastered, `koprulu-cinematics-hd2.mpq`: Remastered's WebM as they
 are, the subtitles in the language groups; the 1.17 install's Smacker movies transcoded into WebM (VP9 4:4:4 and Ogg

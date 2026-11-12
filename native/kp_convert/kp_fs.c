@@ -92,13 +92,23 @@ uint8_t *kp_fs_read(const char *path, size_t *size, char *err, size_t err_size)
 	return b;
 }
 
+static unsigned long process_id(void)
+{
+#ifdef _WIN32
+	return (unsigned long)GetCurrentProcessId();
+#else
+	return (unsigned long)getpid();
+#endif
+}
+
 int kp_fs_write(const char *path, const void *data, size_t size, char *err, size_t err_size)
 {
 	char tmp[KP_FS_PATH];
 	FILE *f;
 	int ok;
-	/* apart from another thread's file of the same name: the address of a local, on that call's own stack */
-	snprintf(tmp, sizeof tmp, "%s.%lx.tmp", path, (unsigned long)(uintptr_t)&f);
+	/* apart from another process's (its id) and another thread's (the address of a local, on that call's own stack)
+	 * file of the same name: two runs over one cache write the same entries */
+	snprintf(tmp, sizeof tmp, "%s.%lu.%lx.tmp", path, process_id(), (unsigned long)(uintptr_t)&f);
 	if (!(f = fopen(tmp, "wb"))) {
 		snprintf(err, err_size, "cannot write %s: %s", tmp, strerror(errno));
 		return -1;

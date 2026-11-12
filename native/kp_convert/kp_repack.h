@@ -100,7 +100,7 @@ typedef struct {
 } KpRepackConfig;
 
 typedef struct {
-	int group_count;
+	int group_count; /* the archives written, in the order of their files' names */
 	struct {
 		char file[64];
 		int files;

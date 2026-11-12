@@ -224,8 +224,9 @@ uint8_t *kp_webm_write(const KpWebmMovie *m, size_t *out_size, char *err, size_t
 		snprintf(err, err_size, "the sound has no packets past its headers");
 		return NULL;
 	}
-	/* each sound packet's first sample: what the blocks before it decode (Vorbis: a block's last quarter and the
-	 * next's first quarter overlap, the first block gives none) */
+	/* each sound packet's first sample: what the packets before it decode (Vorbis: a packet decodes the last quarter
+	 * of the block before it overlapped with its own block's first quarter, the first packet none; so the first two
+	 * start at 0) */
 	if (s) {
 		if (!(starts = (uint64_t *)malloc((size_t)sound_packets * sizeof *starts))) {
 			snprintf(err, err_size, "out of memory");
@@ -233,8 +234,8 @@ uint8_t *kp_webm_write(const KpWebmMovie *m, size_t *out_size, char *err, size_t
 		}
 		for (j = 0; j < sound_packets; j++) {
 			int k = KP_VORBIS_HEADERS + j;
-			if (j > 0) decoded += s->blocks[k - 1] / 4 + s->blocks[k] / 4;
 			starts[j] = decoded;
+			if (j > 0) decoded += s->blocks[k - 1] / 4 + s->blocks[k] / 4;
 		}
 		/* the end's excess: decoded past the last packet's granule (the sound's length), at most its block's */
 		if (s->granules[s->count - 1] >= 0 && (uint64_t)s->granules[s->count - 1] < decoded)

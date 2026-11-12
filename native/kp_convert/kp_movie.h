@@ -23,7 +23,7 @@ extern "C" {
 #define KP_MOVIE_CPU_USED 2
 #define KP_MOVIE_KEY_INTERVAL 128 /* libvpx's own longest distance between key frames, named so that it stays */
 /* What a movie's WebM is kept in the cache by, past its SMK's SHA-256: the settings and the writer's version */
-#define KP_MOVIE_SETTINGS "vp9-q32-c2-k128-vorbis-q3-webm1"
+#define KP_MOVIE_SETTINGS "vp9-q32-c2-k128-vorbis-q3-webm2" /* webm2: a sound block's time its first sample's */
 
 /* A movie's VP9 packets: one a frame. */
 typedef struct {

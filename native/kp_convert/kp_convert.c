@@ -62,6 +62,7 @@
 #ifndef _WIN32
 #define _POSIX_C_SOURCE 200809L
 #endif
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -93,7 +94,8 @@
 #define SHOWN_FAILURES 5
 #define SHOWN_MISSING 10
 #define LOCALES_MAX 16
-#define LOCALE_ID 16
+#define HD_SETS_MAX 8
+#define LIST_ID 16 /* a language's or an HD set's name in --locales, --locale or --hd */
 
 /* The kinds of file the measurements are kept for: the game reads the core at its start and at a mission's, the
  * mission's speech with the mission, the music as it plays. */
@@ -255,8 +257,11 @@ static int cmd_verify(int argc, char **argv)
 	int count = 0, i;
 	for (i = 0; i < argc; i++) {
 		if (strcmp(argv[i], "--res-log") == 0 && i + 1 < argc) res_log = argv[++i];
-		else if (argv[i][0] == '-' || count == DIRS_MAX) return -1;
-		else dirs[count++] = argv[i];
+		else if (argv[i][0] == '-') return -1;
+		else if (count == DIRS_MAX) {
+			fprintf(stderr, "kp_convert: verify: at most %d folders\n", DIRS_MAX);
+			return 2;
+		} else dirs[count++] = argv[i];
 	}
 	return count ? read_all(dirs, count, res_log, NULL) : -1;
 }
@@ -327,21 +332,23 @@ static char **unlisted_names(const char *path, char **text, int *count)
 		if (tab && strncmp(tab + 1, "unlisted\t", 9) == 0) {
 			*tab = 0;
 			if (*count == cap) {
-				char **grown = (char **)realloc(names, (size_t)(cap = cap ? 2 * cap : 64) * sizeof *grown);
-				if (!grown) break;
+				int grown_cap = cap ? 2 * cap : 64;
+				char **grown = (char **)realloc(names, (size_t)grown_cap * sizeof *grown);
+				if (!grown) goto memory;
 				names = grown;
+				cap = grown_cap;
 			}
 			names[(*count)++] = line;
 		}
 		line = end ? end + 1 : NULL;
 	}
-	if (!names) names = (char **)calloc(1, sizeof *names);
-	return names;
-}
-
-static int cmp_files(const void *a, const void *b)
-{
-	return strcmp(((const char *)a), ((const char *)b));
+	if (names || (names = (char **)calloc(1, sizeof *names)) != NULL) return names;
+memory: /* no repack with only some of the log's names */
+	fprintf(stderr, "kp_convert: out of memory\n");
+	free(names);
+	free(*text);
+	*text = NULL;
+	return NULL;
 }
 
 static int cmd_icon(int argc, char **argv)
@@ -380,78 +387,98 @@ static int cmd_icon(int argc, char **argv)
 	return written < 0;
 }
 
-/* The languages whose speech a repack takes (stage C2): --locales' list (comma apart; "none" no language), else every
- * language of the profile's LANG but the first (the base's) whose speech the install holds (KP_DATA_SPEECH_MARKER).
- * Their count, or -1 with a line. */
-static int repack_locales(KpRes *res, const char *spec, char ids[LOCALES_MAX][LOCALE_ID], const char **out)
+/* Whether two names are the same in any case ("ruru" is "ruRU") */
+static int same_name(const char *a, const char *b)
 {
-	const KpDefsTable *lang = kp_defs_table(kp_res_profile(res), "LANG");
+	for (; *a && tolower((unsigned char)*a) == tolower((unsigned char)*b); a++, b++) {}
+	return tolower((unsigned char)*a) == tolower((unsigned char)*b);
+}
+
+/* An option's list, comma apart ("ruRU,deDE"; "none" none), into ids and out, each name once (a name given twice would
+ * be written twice): their count, or -1 with a line. */
+static int list_option(const char *option, const char *spec, const char *example, char ids[][LIST_ID], int max,
+	const char **out)
+{
+	const char *at = spec;
 	int n = 0, k;
-	if (spec) {
-		const char *at = spec;
-		if (strcmp(spec, "none") == 0) return 0;
-		while (*at) {
-			size_t len = strcspn(at, ",");
-			if (len == 0 || len >= LOCALE_ID || n == LOCALES_MAX) {
-				fprintf(stderr, "kp_convert: --locales %s: a list of locales (\"ruRU,deDE\") or none\n", spec);
-				return -1;
-			}
-			snprintf(ids[n], LOCALE_ID, "%.*s", (int)len, at);
-			out[n] = ids[n];
-			n++;
-			at += len + (at[len] == ',');
+	if (strcmp(spec, "none") == 0) return 0;
+	while (*at) {
+		size_t len = strcspn(at, ",");
+		if (len == 0 || len >= LIST_ID || n == max) {
+			fprintf(stderr, "kp_convert: %s %s: a list (\"%s\") or none\n", option, spec, example);
+			return -1;
 		}
-		return n;
-	}
-	if (lang && lang->size >= 1) {
-		size_t at = 1;
-		for (k = 0; k < lang->data[0] && at < lang->size; k++) {
-			size_t id_n = lang->data[at], name_n;
-			char marker[128];
-			if (at + 1 + id_n >= lang->size) break;
-			name_n = lang->data[at + 1 + id_n];
-			if (k > 0 && id_n < LOCALE_ID && n < LOCALES_MAX) {
-				snprintf(ids[n], LOCALE_ID, "%.*s", (int)id_n, (const char *)lang->data + at + 1);
-				snprintf(marker, sizeof marker, KP_DATA_SPEECH_MARKER, ids[n]);
-				if (!kp_res_raw_held(res, marker)) snprintf(marker, sizeof marker, KP_LOCALE_PROBE, ids[n]);
-				if (kp_res_raw_held(res, marker)) {
-					out[n] = ids[n];
-					n++;
-				}
-			}
-			at += 2 + id_n + name_n;
+		snprintf(ids[n], LIST_ID, "%.*s", (int)len, at);
+		for (k = 0; k < n && !same_name(ids[k], ids[n]); k++) {}
+		if (k < n) {
+			fprintf(stderr, "kp_convert: %s %s: %s twice\n", option, spec, ids[n]);
+			return -1;
 		}
+		out[n] = ids[n];
+		n++;
+		at += len + (at[len] == ',');
 	}
 	return n;
 }
 
-#define HD_SETS_MAX 8
-#define HD_SET 16
-
-/* The HD sets a repack takes (ADR 0019, stage C5): --hd's list (comma apart; "none" no set), else the BC sets of each
- * variant whose anims a Remastered install holds (hd2, hd). Their count, or -1 with a line. */
-static int repack_hd_sets(KpRes *res, const char *spec, char ids[HD_SETS_MAX][HD_SET], const char **out)
+/* The languages a repack (stage C2) or locale-check takes: option's list (list_option), each one of the profile's LANG
+ * but the first (the base's, whose texts and speech are the core's), spelled as the profile does; else every one of
+ * those whose speech or texts the install holds (KP_DATA_SPEECH_MARKER, KP_LOCALE_PROBE). Their count, or -1 with a
+ * line. */
+static int repack_locales(KpRes *res, const char *option, const char *spec, char ids[LOCALES_MAX][LIST_ID], const char **out)
 {
-	int n = 0, v;
+	const KpDefsProfile *p = kp_res_profile(res);
+	const KpDefsTable *lang = kp_defs_table(p, "LANG");
+	char profile[LOCALES_MAX][LIST_ID];
+	int count = 0, n = 0, k, i;
+	if (lang && lang->size >= 1) {
+		size_t at = 1;
+		for (k = 0; k < lang->data[0] && at < lang->size; k++) {
+			size_t id_n = lang->data[at], name_n;
+			if (at + 1 + id_n >= lang->size) break;
+			name_n = lang->data[at + 1 + id_n];
+			if (k > 0 && id_n < LIST_ID && count < LOCALES_MAX)
+				snprintf(profile[count++], LIST_ID, "%.*s", (int)id_n, (const char *)lang->data + at + 1);
+			at += 2 + id_n + name_n;
+		}
+	}
 	if (spec) {
-		const char *at = spec;
-		if (strcmp(spec, "none") == 0) return 0;
-		while (*at) {
-			size_t len = strcspn(at, ",");
-			if (len == 0 || len >= HD_SET || n == HD_SETS_MAX) {
-				fprintf(stderr, "kp_convert: --hd %s: a list of HD sets (\"hd2,hd2-astc\") or none\n", spec);
+		if ((n = list_option(option, spec, "ruRU,deDE", ids, LOCALES_MAX, out)) <= 0) return n;
+		for (k = 0; k < n; k++) {
+			for (i = 0; i < count && !same_name(profile[i], ids[k]); i++) {}
+			if (i == count) {
+				if (same_name(ids[k], KP_LOCALE_BASE))
+					fprintf(stderr, "kp_convert: %s: %s is the base language (its texts and speech are the core's)\n", option, ids[k]);
+				else
+					fprintf(stderr, "kp_convert: %s: profile %s has no language %s\n", option, p->id, ids[k]);
 				return -1;
 			}
-			snprintf(ids[n], HD_SET, "%.*s", (int)len, at);
-			out[n] = ids[n];
-			n++;
-			at += len + (at[len] == ',');
+			snprintf(ids[k], LIST_ID, "%s", profile[i]);
 		}
 		return n;
 	}
+	for (i = 0; i < count; i++) {
+		char marker[128];
+		snprintf(marker, sizeof marker, KP_DATA_SPEECH_MARKER, profile[i]);
+		if (!kp_res_raw_held(res, marker)) snprintf(marker, sizeof marker, KP_LOCALE_PROBE, profile[i]);
+		if (!kp_res_raw_held(res, marker)) continue;
+		snprintf(ids[n], LIST_ID, "%s", profile[i]);
+		out[n] = ids[n];
+		n++;
+	}
+	return n;
+}
+
+/* The HD sets a repack takes (ADR 0019, stage C5): --hd's list (list_option; kp_repack_write refuses a name that is
+ * no set), else the BC sets of each variant whose anims a Remastered install holds (hd2, hd). Their count, or -1 with a
+ * line. */
+static int repack_hd_sets(KpRes *res, const char *spec, char ids[HD_SETS_MAX][LIST_ID], const char **out)
+{
+	int n = 0, v;
+	if (spec) return list_option("--hd", spec, "hd2,hd2-astc", ids, HD_SETS_MAX, out);
 	for (v = 0; v < KP_HD_SCR_VARIANTS && kp_res_install(res) == KP_RES_SOURCE_CASC; v++) {
 		if (!kp_hd_scr_held(res, v)) continue;
-		snprintf(ids[n], HD_SET, "%s", kp_hd_scr_variant_name(v));
+		snprintf(ids[n], LIST_ID, "%s", kp_hd_scr_variant_name(v));
 		out[n] = ids[n];
 		n++;
 	}
@@ -463,8 +490,8 @@ static int cmd_repack(int argc, char **argv)
 	KpRepackConfig c;
 	KpRepackReport *rep;
 	const char *dir = NULL, *res_log = NULL, *locales_spec = NULL, *locales[LOCALES_MAX], *hd_spec = NULL, *hd_sets[HD_SETS_MAX];
-	char err[MESSAGE], **extra = NULL, *log_text = NULL, groups[KP_REPACK_GROUPS][64], ids[LOCALES_MAX][LOCALE_ID];
-	char hd_ids[HD_SETS_MAX][HD_SET];
+	char err[MESSAGE], **extra = NULL, *log_text = NULL, ids[LOCALES_MAX][LIST_ID];
+	char hd_ids[HD_SETS_MAX][LIST_ID];
 	int i, shown = 0, rc, files = 0, statuses_shown = 0;
 	KpRes *res;
 	memset(&c, 0, sizeof c);
@@ -491,7 +518,7 @@ static int cmd_repack(int argc, char **argv)
 		free(log_text);
 		return 2;
 	}
-	if ((c.locale_count = repack_locales(res, locales_spec, ids, locales)) < 0
+	if ((c.locale_count = repack_locales(res, "--locales", locales_spec, ids, locales)) < 0
 		|| (c.hd_set_count = repack_hd_sets(res, hd_spec, hd_ids, hd_sets)) < 0 || !(rep = (KpRepackReport *)malloc(sizeof *rep))) {
 		if (c.locale_count >= 0 && c.hd_set_count >= 0) fprintf(stderr, "kp_convert: out of memory\n");
 		free(extra);
@@ -511,14 +538,10 @@ static int cmd_repack(int argc, char **argv)
 	if (rc != 0) {
 		fprintf(stderr, "kp_convert: %s\n", err);
 	} else {
-		for (i = 0; i < rep->group_count; i++) snprintf(groups[i], sizeof groups[i], "%s", rep->groups[i].file);
-		qsort(groups, (size_t)rep->group_count, sizeof groups[0], cmp_files);
 		for (i = 0; i < rep->group_count; i++) {
-			int k;
-			for (k = 0; strcmp(rep->groups[k].file, groups[i]) != 0; k++) {}
-			printf("%s: %d files, %.1f MB (%.1f MB of files)\n", groups[i], rep->groups[k].files,
-				(double)rep->groups[k].archive / 1e6, (double)rep->groups[k].bytes / 1e6);
-			files += rep->groups[k].files;
+			printf("%s: %d files, %.1f MB (%.1f MB of files)\n", rep->groups[i].file, rep->groups[i].files,
+				(double)rep->groups[i].archive / 1e6, (double)rep->groups[i].bytes / 1e6);
+			files += rep->groups[i].files;
 		}
 		printf("%s: %d files (", c.out, files);
 		for (i = 0; i < KP_RES_STATUS_COUNT; i++)
@@ -625,9 +648,12 @@ static int scenario(KpRes *res, const KpCampaign *campaign, const char *path, co
 		fprintf(stderr, "kp_convert: %s: %s\n", path, err);
 		goto done;
 	}
-	if (kp_chk_read(&read, chk, chk_size, p, 1, err, sizeof err) != 0 || !(era = kp_chk_section(&read, "ERA "))
-		|| !(dim = kp_chk_section(&read, "DIM ")) || era->size < 2 || dim->size < 4) {
+	if (kp_chk_read(&read, chk, chk_size, p, 1, err, sizeof err) != 0) {
 		fprintf(stderr, "kp_convert: %s: the scenario does not load: %s\n", name, err);
+		goto done;
+	}
+	if (!(era = kp_chk_section(&read, "ERA ")) || !(dim = kp_chk_section(&read, "DIM ")) || era->size < 2 || dim->size < 4) {
+		fprintf(stderr, "kp_convert: %s: the scenario has no tileset (ERA) or size (DIM)\n", name);
 		goto done;
 	}
 	if (!(payload = kp_mission_packs_entry(p, "SPAK", name, &payload_size))) {
@@ -769,6 +795,7 @@ static int locale_report(const KpData *d, const char *locale, const char *out)
 	/* the glyphs of the language's texts, as the game builds them before any mission */
 	if ((glyphs = kp_locale_glyphs(&g, &d->ui, &d->raw, &l, &glyphs_found, &e)) < 0) {
 		fprintf(stderr, "kp_convert: %s %s\n", locale, e.msg);
+		kp_locale_found_free(&glyphs_found);
 		kp_locale_free(&l);
 		return -1;
 	}
@@ -806,13 +833,10 @@ static int locale_report(const KpData *d, const char *locale, const char *out)
 		kp_mission_free(&m);
 		free(strs);
 		if (rc < 0) { /* the map is damaged, or its strings do not fit the base's: the mission's own text */
-			size_t n = (size_t)snprintf(err, sizeof err, "%s: %s", name, e.msg) + 1;
-			char *line = (char *)malloc(n < sizeof err ? n : sizeof err);
-			if (line) {
-				memcpy(line, err, n < sizeof err ? n : sizeof err);
-				line[(n < sizeof err ? n : sizeof err) - 1] = 0;
-				push_line(&missions_found.problems, &missions_found.problem_count, &missions_found.problem_cap, line);
-			}
+			char *line;
+			snprintf(err, sizeof err, "%s: %s", name, e.msg);
+			if ((line = (char *)malloc(strlen(err) + 1)) != NULL)
+				push_line(&missions_found.problems, &missions_found.problem_count, &missions_found.problem_cap, strcpy(line, err));
 			kp_buf_printf(&b, ": {}");
 			continue;
 		}
@@ -858,7 +882,7 @@ static int locale_report(const KpData *d, const char *locale, const char *out)
 static int cmd_locale_check(int argc, char **argv)
 {
 	const char *dir = NULL, *only = "all", *out = "generated", *locales[LOCALES_MAX];
-	char ids[LOCALES_MAX][LOCALE_ID], path[PATH], err[MESSAGE];
+	char ids[LOCALES_MAX][LIST_ID], path[PATH], err[MESSAGE];
 	int i, count, shown = 0, failed = 0, checked = 0;
 	KpData d;
 	KpError e;
@@ -876,7 +900,7 @@ static int cmd_locale_check(int argc, char **argv)
 		return 1;
 	}
 	if (!(res = open_sources(&dir, 1, &shown))) return 2;
-	if ((count = repack_locales(res, strcmp(only, "all") == 0 ? NULL : only, ids, locales)) < 0) {
+	if ((count = repack_locales(res, "--locale", strcmp(only, "all") == 0 ? NULL : only, ids, locales)) < 0) {
 		kp_res_close(res);
 		return 2;
 	}
@@ -993,6 +1017,7 @@ static int cmd_terrain(int argc, char **argv)
 			break;
 		}
 		if (!(crcs = (uint8_t *)malloc(4 * (size_t)ts.sheet_count + 1))) {
+			fprintf(stderr, "kp_convert: out of memory\n");
 			kp_tileset_free(&ts);
 			failed = 1;
 			break;

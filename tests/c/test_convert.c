@@ -1013,6 +1013,133 @@ static KpWebmStreams *streams_of(KpT *T, const uint8_t *webm, size_t size)
 	return st;
 }
 
+/* An EBML element's ID (its marker kept) or size (its marker dropped) at *at: its value, or -1 past the end */
+static int64_t ebml_vint(const uint8_t *b, size_t size, size_t *at, int id)
+{
+	int len = 1, k;
+	uint64_t v;
+	if (*at >= size || b[*at] == 0) return -1;
+	while (len < 8 && !(b[*at] & (0x80 >> (len - 1)))) len++;
+	if (*at + (size_t)len > size) return -1;
+	v = id ? b[*at] : (uint64_t)(b[*at] & (0xff >> len));
+	for (k = 1; k < len; k++) v = v << 8 | b[*at + (size_t)k];
+	*at += (size_t)len;
+	return (int64_t)v;
+}
+
+/* The milliseconds of a WebM's blocks of track 2 (the sound's), in order: the segment, its clusters and block groups
+ * walked into (their children follow them), every other element skipped whole; a cluster's timestamp plus a block's
+ * own. Their count. */
+static int sound_block_ms(const uint8_t *b, size_t size, int64_t *ms, int max)
+{
+	size_t at = 0;
+	int64_t cluster = 0;
+	int n = 0;
+	while (at < size) {
+		int64_t id = ebml_vint(b, size, &at, 1), len = ebml_vint(b, size, &at, 0), k;
+		if (id < 0 || len < 0 || at + (size_t)len > size) break;
+		if (id == 0x18538067 || id == 0x1F43B675 || id == 0xA0) continue; /* Segment, Cluster, BlockGroup */
+		if (id == 0xE7) { /* Timestamp */
+			for (cluster = 0, k = 0; k < len; k++) cluster = cluster << 8 | b[at + (size_t)k];
+		} else if (id == 0xA3 || id == 0xA1) { /* SimpleBlock, Block: track, a signed 16-bit time, flags */
+			size_t p = at;
+			if (ebml_vint(b, size, &p, 0) == 2 && n < max) ms[n++] = cluster + (int16_t)(b[p] << 8 | b[p + 1]);
+		}
+		at += (size_t)len;
+	}
+	return n;
+}
+
+/* Each sound packet's first sample: the samples libvorbis decodes from the packets before it */
+static void sound_starts(KpT *T, const KpVorbisPackets *s, int64_t *starts)
+{
+	vorbis_info vi;
+	vorbis_comment vc;
+	vorbis_dsp_state vd;
+	vorbis_block vb;
+	int64_t decoded = 0;
+	int k;
+	vorbis_info_init(&vi);
+	vorbis_comment_init(&vc);
+	for (k = 0; k < s->count; k++) {
+		ogg_packet op;
+		float **pcm;
+		int n;
+		memset(&op, 0, sizeof op);
+		op.packet = s->data + (k ? s->ends[k - 1] : 0);
+		op.bytes = (long)(s->ends[k] - (k ? s->ends[k - 1] : 0));
+		op.b_o_s = k == 0;
+		op.packetno = k;
+		op.granulepos = -1;
+		if (k < KP_VORBIS_HEADERS) {
+			kp_t_ok(T, vorbis_synthesis_headerin(&vi, &vc, &op) == 0, "header %d", k);
+			if (k == KP_VORBIS_HEADERS - 1) {
+				kp_t_ok(T, vorbis_synthesis_init(&vd, &vi) == 0, "the decoder");
+				vorbis_block_init(&vd, &vb);
+			}
+			continue;
+		}
+		starts[k - KP_VORBIS_HEADERS] = decoded;
+		if (vorbis_synthesis(&vb, &op) == 0) vorbis_synthesis_blockin(&vd, &vb);
+		while ((n = vorbis_synthesis_pcmout(&vd, &pcm)) > 0) {
+			decoded += n;
+			vorbis_synthesis_read(&vd, n);
+		}
+	}
+	vorbis_block_clear(&vb);
+	vorbis_dsp_clear(&vd);
+	vorbis_comment_clear(&vc);
+	vorbis_info_clear(&vi);
+}
+
+/* A WebM's sound blocks are timed by their first sample, as FFmpeg times them: what libvorbis decodes from the packets
+ * before each (the first two at 0; webm1 put each one a packet late). */
+static void webm_sound_blocks_start_at_their_first_sample(KpT *T)
+{
+	uint8_t *frames = (uint8_t *)malloc((size_t)MOVIE_FRAMES * 3 * MOVIE_PLANE), *webm;
+	KpMovieVideo *v = (KpMovieVideo *)calloc(1, sizeof *v);
+	KpVorbisPackets *sound = (KpVorbisPackets *)calloc(1, sizeof *sound);
+	KpWebmMovie m;
+	int64_t *starts = NULL, *ms = NULL;
+	size_t wav_size = 0, size = 0;
+	const uint8_t *wav;
+	char err[256];
+	int j, packets, blocks;
+	kp_t_ok(T, frames && v && sound, "memory");
+	kp_t_defer(T, free, frames);
+	kp_t_defer(T, movie_video_free, v);
+	kp_t_defer(T, vorbis_free, sound);
+	kp_t_ok(T, kp_movie_vp9(MOVIE_W, MOVIE_H, MOVIE_RATE_NUM, MOVIE_RATE_DEN, MOVIE_FRAMES, movie_frame, frames, v, err,
+		sizeof err) == 0, "%s", err);
+	wav = wav_new(T, SOUND_FRAMES, 2, 16, 1, &wav_size);
+	kp_t_ok(T, kp_vorbis_from_wav(wav, wav_size, KP_OGG_QUALITY, sound, err, sizeof err) == 0, "%s", err);
+	packets = sound->count - KP_VORBIS_HEADERS;
+	kp_t_ok(T, packets > 2 && (starts = (int64_t *)calloc((size_t)packets, sizeof *starts)) != NULL
+		&& (ms = (int64_t *)calloc((size_t)packets + 1, sizeof *ms)) != NULL, "memory");
+	kp_t_defer(T, free, starts);
+	kp_t_defer(T, free, ms);
+	sound_starts(T, sound, starts);
+	memset(&m, 0, sizeof m);
+	m.width = MOVIE_W;
+	m.height = MOVIE_H;
+	m.shown_w = MOVIE_W;
+	m.frame_ns = MOVIE_FRAME_NS;
+	m.packets = v->packets;
+	m.sizes = v->sizes;
+	m.frames = v->count;
+	m.sound = sound;
+	webm = kp_webm_write(&m, &size, err, sizeof err);
+	kp_t_ok(T, webm != NULL, "%s", err);
+	kp_t_defer(T, free, webm);
+	blocks = sound_block_ms(webm, size, ms, packets + 1);
+	kp_t_eq(T, blocks, packets, "a block a sound packet");
+	kp_t_eq(T, starts[1], 0, "the second packet starts at 0 too (the first decodes nothing)");
+	kp_t_ok(T, starts[2] > 0, "the third starts past 0");
+	for (j = 0; j < packets; j++)
+		kp_t_eq(T, ms[j], starts[j] * 1000 / (int64_t)sound->rate, "sound block %d's milliseconds (its first sample %lld)", j,
+			(long long)starts[j]);
+}
+
 /* A movie written as WebM reads back as the player takes it: the VP9 packets and their key frames, the frame's
  * duration (the rate 50000/3333 again), the Vorbis sound decoded to exactly its samples (its last block's
  * DiscardPadding trimmed), the same bytes twice; without sound, none. */
@@ -1405,6 +1532,7 @@ SKIPPED(icon_writes_every_platforms_files)
 SKIPPED(fs_lists_writes_removes)
 SKIPPED(work_runs_every_job_once)
 SKIPPED(webm_reads_back)
+SKIPPED(webm_sound_blocks_start_at_their_first_sample)
 SKIPPED(movies_equal_the_converters)
 SKIPPED(manifest_describes_what_was_read)
 SKIPPED(manifest_refuses_what_it_cannot_describe)
@@ -1426,6 +1554,7 @@ static const KpTest TESTS[] = {
 	{ "fs_lists_writes_removes", fs_lists_writes_removes, 0 },
 	{ "work_runs_every_job_once", work_runs_every_job_once, 0 },
 	{ "webm_reads_back", webm_reads_back, 0 },
+	{ "webm_sound_blocks_start_at_their_first_sample", webm_sound_blocks_start_at_their_first_sample, 0 },
 	{ "movies_equal_the_converters", movies_equal_the_converters, 0 },
 	{ "manifest_describes_what_was_read", manifest_describes_what_was_read, 0 },
 	{ "manifest_refuses_what_it_cannot_describe", manifest_refuses_what_it_cannot_describe, 0 },

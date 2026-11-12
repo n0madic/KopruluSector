@@ -254,36 +254,77 @@ static int add_listed(void *ctx, const char *name)
 	return add_raw(l->reads, l->count, l->cap, l->from, name);
 }
 
-/* A language's speech (stage C2): each campaign mission's map and lines, then the voices of sfxdata's sounds, as the
- * runtime reads them (kp_host_game_speech, kp_app_audio.c's speech_file). */
-static int speech_names(const KpData *d, const char *locale, Read **reads, int *count, int *cap, char *err, size_t err_size)
+/* A campaign mission's speech but for the language: its name (map) or one of its lines' WAV paths */
+typedef struct {
+	char name[KP_REPACK_NAME];
+	int map;
+} SpeechName;
+
+typedef struct {
+	SpeechName *names;
+	int count, cap;
+} SpeechNames;
+
+static int push_speech(SpeechNames *l, const char *name, int map)
+{
+	if (l->count == l->cap) {
+		int cap = l->cap ? 2 * l->cap : 256;
+		SpeechName *grown = (SpeechName *)realloc(l->names, (size_t)cap * sizeof *grown);
+		if (!grown) return -1;
+		l->names = grown;
+		l->cap = cap;
+	}
+	snprintf(l->names[l->count].name, sizeof l->names[0].name, "%s", name);
+	l->names[l->count++].map = map;
+	return 0;
+}
+
+/* Each campaign mission's name then its lines' WAV paths, in order: each mission read once for every language's
+ * speech_names. 0, or -1 with err; l->names is the caller's to free either way. */
+static int mission_speech(const KpData *d, SpeechNames *l, char *err, size_t err_size)
 {
 	static const char MISSIONS[] = "missions/";
-	char path[KP_REPACK_NAME];
-	int from = *count, k, n;
-	uint32_t s;
+	int k, n;
+	memset(l, 0, sizeof *l);
 	for (k = 0; k < d->mission_count; k++) {
 		const KpDataMission *entry = &d->missions[k];
 		KpMission m;
 		KpError e;
 		if (!entry->catalog || !entry->directory[0] || strncmp(entry->key, MISSIONS, sizeof MISSIONS - 1) != 0) continue;
-		snprintf(path, sizeof path, KP_HOST_SPEECH_MAP, locale, entry->key + sizeof MISSIONS - 1);
-		if (add_raw(reads, count, cap, from, path) != 0) goto memory;
+		if (push_speech(l, entry->key + sizeof MISSIONS - 1, 1) != 0) goto memory;
 		if (kp_data_mission(d, entry, NULL, 0, &m, &e) != 0) {
 			snprintf(err, err_size, "%s: %s", entry->key, e.msg);
 			return -1;
 		}
 		for (n = 0; n < m.sound_count; n++) {
 			char wav[KP_REPACK_NAME];
-			if (kp_mission_sound_path(&m, entry->directory, m.sounds[n].string_id, wav, sizeof wav) != 1
-				|| kp_ui_data_speech_path(locale, wav, ".ogg", path, sizeof path) != 0)
-				continue;
-			if (add_raw(reads, count, cap, from, path) != 0) {
+			if (kp_mission_sound_path(&m, entry->directory, m.sounds[n].string_id, wav, sizeof wav) != 1) continue;
+			if (push_speech(l, wav, 0) != 0) {
 				kp_mission_free(&m);
 				goto memory;
 			}
 		}
 		kp_mission_free(&m);
+	}
+	return 0;
+memory:
+	snprintf(err, err_size, "out of memory");
+	return -1;
+}
+
+/* A language's speech (stage C2): each campaign mission's map and lines (missions, mission_speech's), then the voices
+ * of sfxdata's sounds, as the runtime reads them (kp_host_game_speech, kp_app_audio.c's speech_file). */
+static int speech_names(const KpData *d, const SpeechNames *missions, const char *locale, Read **reads, int *count,
+	int *cap, char *err, size_t err_size)
+{
+	char path[KP_REPACK_NAME];
+	int from = *count, k;
+	uint32_t s;
+	for (k = 0; k < missions->count; k++) {
+		const SpeechName *n = &missions->names[k];
+		if (n->map) snprintf(path, sizeof path, KP_HOST_SPEECH_MAP, locale, n->name);
+		else if (kp_ui_data_speech_path(locale, n->name, ".ogg", path, sizeof path) != 0) continue;
+		if (add_raw(reads, count, cap, from, path) != 0) goto memory;
 	}
 	for (s = 0; s < d->ui.sound_path_count; s++) {
 		if (!d->ui.sound_paths[s] || kp_ui_data_speech_path(locale, d->ui.sound_paths[s], ".wav", path, sizeof path) != 0) continue;
@@ -331,11 +372,11 @@ static int portrait_names(KpRes *res, const KpData *d, Read **reads, int *count,
 }
 
 /* The files to read, in order: the manifest's, the movies' (a 1.17 install's), the extra names the rest leave out; a
- * Remastered install's movies (movie_names), with an HD set the HD portraits (portrait_names), the languages' speech
- * and texts (kp_locale_names: the files the runtime builds a language from, Remastered's TrueType fonts with them,
- * which the base's text takes too). */
-static Read *plan(KpRes *res, const KpRepackConfig *c, const KpCineCatalog *catalog, const KpCineCatalog *movies,
-	int *count, char *err, size_t err_size)
+ * Remastered install's (d its data) movies (movie_names), with an HD set the HD portraits (portrait_names), the
+ * languages' speech and texts (kp_locale_names: the files the runtime builds a language from, Remastered's TrueType
+ * fonts with them, which the base's text takes too). */
+static Read *plan(KpRes *res, const KpRepackConfig *c, const KpData *d, const KpCineCatalog *catalog,
+	const KpCineCatalog *movies, int *count, char *err, size_t err_size)
 {
 	const KpDefsProfile *p = kp_res_profile(res);
 	Read *reads = NULL;
@@ -361,31 +402,28 @@ static Read *plan(KpRes *res, const KpRepackConfig *c, const KpCineCatalog *cata
 		if (add_read(&reads, count, &cap, c->extra[k], -1, 0) != 0) goto memory;
 	}
 	if (kp_res_install(res) == KP_RES_SOURCE_CASC) {
-		KpData d;
 		KpError e;
 		RawList fonts = { &reads, count, &cap, *count };
-		int failed;
-		if (kp_data_build(&d, res, NULL, 0, NULL, 0, &e) != 0) {
-			snprintf(err, err_size, "the languages: %s", e.msg);
-			free(reads);
-			return NULL;
-		}
-		failed = kp_locale_names(&d, KP_LOCALE_BASE, add_listed, &fonts, &e) != 0;
+		int failed = kp_locale_names(d, KP_LOCALE_BASE, add_listed, &fonts, &e) != 0;
 		if (failed) snprintf(err, err_size, "the TrueType fonts: %s", e.msg);
 		if (!failed && (movie_names(res, catalog, &reads, count, &cap) != 0
-				|| (c->hd_set_count > 0 && portrait_names(res, &d, &reads, count, &cap) != 0))) {
+				|| (c->hd_set_count > 0 && portrait_names(res, d, &reads, count, &cap) != 0))) {
 			snprintf(err, err_size, "out of memory");
 			failed = 1;
 		}
-		for (k = 0; k < c->locale_count && !failed; k++) {
-			RawList text = { &reads, count, &cap, *count }; /* the language's own: its speech's names too */
-			failed = speech_names(&d, c->locales[k], &reads, count, &cap, err, err_size) != 0;
-			if (!failed && kp_locale_names(&d, c->locales[k], add_listed, &text, &e) != 0) {
-				snprintf(err, err_size, "%s", e.msg);
-				failed = 1;
+		if (!failed && c->locale_count > 0) {
+			SpeechNames missions;
+			failed = mission_speech(d, &missions, err, err_size) != 0;
+			for (k = 0; k < c->locale_count && !failed; k++) {
+				RawList text = { &reads, count, &cap, *count }; /* the language's own: its speech's names too */
+				failed = speech_names(d, &missions, c->locales[k], &reads, count, &cap, err, err_size) != 0;
+				if (!failed && kp_locale_names(d, c->locales[k], add_listed, &text, &e) != 0) {
+					snprintf(err, err_size, "%s", e.msg);
+					failed = 1;
+				}
 			}
+			free(missions.names);
 		}
-		kp_data_free(&d);
 		if (failed) {
 			free(reads);
 			return NULL;
@@ -399,7 +437,7 @@ memory:
 }
 
 /* A language's line or voice (a raw job's .ogg or .wav) as Ogg Vorbis mono at 22,050 Hz from the cache, or encoded
- * and kept there (<source SHA-256>-q3-s<serial>-speech.ogg), in its place when smaller: a voice's as a WAV's Ogg (its
+ * and kept there (<source SHA-256>-q3-s<serial>-<KP_OGG_SPEECH_SETTINGS>.ogg), in its place when smaller: a voice's as a WAV's Ogg (its
  * header listed), a line's as its bytes. */
 static void encode_speech(const KpRepackConfig *c, Job *j)
 {
@@ -414,7 +452,8 @@ static void encode_speech(const KpRepackConfig *c, Job *j)
 	kp_sha256(j->data, j->size, j->wav_sha);
 	if (c->cache) {
 		kp_sha256_hex(j->wav_sha, hex);
-		snprintf(path, sizeof path, "%s/%s-q%d-s%u-speech.ogg", c->cache, hex, (int)(KP_OGG_QUALITY * 10.0f + 0.5f), serial);
+		snprintf(path, sizeof path, "%s/%s-q%d-s%u-" KP_OGG_SPEECH_SETTINGS ".ogg", c->cache, hex,
+			(int)(KP_OGG_QUALITY * 10.0f + 0.5f), serial);
 		ogg = kp_fs_read(path, &size, why, sizeof why);
 	}
 	if (!ogg) {
@@ -599,7 +638,8 @@ static int store(Group *g, Job *j, KpBuf *ranges, KpRepackReport *rep, char *err
 
 #define HD_PACKS 16
 
-/* What the HD sets are built from: the install's data, its grpmeta, the SD packs' names (its atlases', in order). */
+/* What a Remastered install's files are planned and its HD sets and interface built from: the install's data; with an
+ * HD set its grpmeta, the SD packs' names (its atlases', in order). */
 typedef struct {
 	KpData d;
 	KpGrpMeta grp;
@@ -615,7 +655,8 @@ static void hd_free(Hd *h)
 	h->built = 0;
 }
 
-/* The install's data, grpmeta and packs (a Remastered install holding each set's anims): 0, or -1 with err. */
+/* The install's data, with an HD set grpmeta and packs (a Remastered install holding each set's anims): 0, or -1 with
+ * err. */
 static int hd_init(Hd *h, KpRes *res, const KpRepackConfig *c, char *err, size_t err_size)
 {
 	KpError e;
@@ -634,15 +675,15 @@ static int hd_init(Hd *h, KpRes *res, const KpRepackConfig *c, char *err, size_t
 		}
 	}
 	if (kp_data_build(&h->d, res, NULL, 0, NULL, 0, &e) != 0) {
-		snprintf(err, err_size, "the HD sets: %s", e.msg);
+		snprintf(err, err_size, "the install's data: %s", e.msg);
 		return -1;
 	}
+	h->built = 1; /* hd_free frees the rest too: kp_grpmeta_free takes a grpmeta zeroed or refused */
+	if (c->hd_set_count == 0) return 0;
 	if (kp_grpmeta_from_files(&h->grp, &h->d.files, &h->d.dat, &e) != 0) {
-		kp_data_free(&h->d);
 		snprintf(err, err_size, "the HD sets: %s", e.msg);
 		return -1;
 	}
-	h->built = 1;
 	for (a = 1; a <= h->grp.atlas_count; a++) {
 		const KpLabel *pack = &h->grp.atlases[a].pack;
 		for (k = 0; k < h->pack_count; k++) {
@@ -892,7 +933,7 @@ static int cmp_groups(const void *a, const void *b)
 }
 
 /* Each archive's listing written and the archive closed; the root's names the groups that hold files, then places the
- * files of those read by ranges (ranges). */
+ * files of those read by ranges (ranges). rep's groups in the order of their files' names. */
 static int finish(Group *groups, int count, const char *root, const char *head, const KpBuf *ranges, const char *out,
 	KpRepackReport *rep, char *err, size_t err_size)
 {
@@ -917,7 +958,7 @@ static int finish(Group *groups, int count, const char *root, const char *head, 
 		kp_buf_free(&listing);
 	}
 	for (k = 0; k < count; k++) {
-		Group *g = &groups[k];
+		Group *g = sorted[k];
 		char path[PATH];
 		if (kp_mpq_close(g->mpq) != 0 && !failed) {
 			snprintf(err, err_size, "cannot write %s/%s", out, g->file);
@@ -967,7 +1008,8 @@ int kp_repack_write(KpRes *res, const KpRepackConfig *c, KpRepackReport *rep, ch
 		snprintf(err, err_size, "the profile's movies (CINM) do not read");
 		return -1;
 	}
-	if (!(reads = plan(res, c, &catalog, kind == KP_RES_SOURCE_MPQ ? &catalog : NULL, &count, err, err_size))) return -1;
+	if ((c->hd_set_count > 0 || kind == KP_RES_SOURCE_CASC) && hd_init(&hd, res, c, err, err_size) != 0) goto done;
+	if (!(reads = plan(res, c, &hd.d, &catalog, kind == KP_RES_SOURCE_MPQ ? &catalog : NULL, &count, err, err_size))) goto done;
 	if (!(groups = (Group *)calloc(KP_REPACK_GROUPS, sizeof *groups)) || !(jobs = (Job *)calloc(WINDOW, sizeof *jobs))) {
 		snprintf(err, err_size, "out of memory");
 		goto done;
@@ -977,7 +1019,6 @@ int kp_repack_write(KpRes *res, const KpRepackConfig *c, KpRepackReport *rep, ch
 		if (!g) goto done;
 		g->planned++;
 	}
-	if ((c->hd_set_count > 0 || kind == KP_RES_SOURCE_CASC) && hd_init(&hd, res, c, err, err_size) != 0) goto done;
 	if (kind == KP_RES_SOURCE_CASC) { /* the HD interface's files (ui_write) */
 		int variants[KP_HD_SCR_VARIANTS], n = ui_variants(res, c, variants);
 		char key[KP_REPACK_NAME];

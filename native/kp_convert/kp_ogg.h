@@ -50,6 +50,9 @@ void kp_vorbis_packets_free(KpVorbisPackets *p);
  * takes or an Ogg Vorbis, decoded, its channels averaged, twice KP_OGG_SPEECH_RATE halved to it (another rate stays),
  * encoded as kp_ogg_from_wav does. malloc'd bytes and *out_size, or NULL with the reason. */
 #define KP_OGG_SPEECH_RATE 22050
+/* What a speech Ogg is kept in the cache by, past its source's SHA-256, quality and serial: another rate, low-pass or
+ * mix-down takes another tag */
+#define KP_OGG_SPEECH_SETTINGS "speech"
 uint8_t *kp_ogg_speech(const uint8_t *data, size_t size, float quality, uint32_t serial, size_t *out_size, char *err,
 	size_t err_size);
 

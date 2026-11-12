@@ -815,3 +815,41 @@ data with no language beside the base, as the 1.17 install's.
   message and the rest pass; with no data and no goldens (`KP_TEST_PUBLIC=1`) all pass, the data's tests skipped;
   `test_res` and `test_convert` check the origin of an install, of a repack written from a 1.17 install, of a listing
   naming `remastered` beside a 1.17 install and of one naming none.
+
+## After C7: `kp_convert`'s review (2026-11-12)
+
+A review of the whole `native/kp_convert/` module found these, now fixed:
+
+- **The movies' sound blocks were timed one packet late.** A Vorbis packet decodes the overlap of its block with the
+  one before it, the first packet nothing, so a block's first sample is what the packets before it decode.
+  `kp_webm_write` gave each block the samples up to and including its own (0, 17, 40, 63 ms against FFmpeg's 0, 12,
+  29, 53 ms on Remastered's WebM). The runtime's reader ignores the sound's timestamps, so nothing played wrong.
+  `KP_MOVIE_SETTINGS` ends in `webm2` now: the cache's `webm1` files are left unused and the next repack of a 1.17
+  install transcodes its 28 movies again (about 146 s on 14 cores). `test_convert.webm_sound_blocks_start_at_their_first_sample`
+  walks the written WebM's blocks and compares each sound block's time with the samples libvorbis decodes from the
+  packets before it (the old writer: block 1 at 17 ms instead of 0).
+- **`--locales`, `--locale` and `--hd` check their lists.** A name given twice (in any case) was written twice; the
+  base language (`enUS`, whose texts and speech are the core's) or a language the profile lacks reached the repack's
+  plan and `locale-check`. Each name must now be given once; a language must be one of the profile's `LANG` but the
+  base, and is spelled as the profile does (`ruru` is `ruRU`). An unknown HD set is refused before the plan.
+  README's example was `--locales "ruRU deDE"` (one name with a space); it is `ruRU,deDE`.
+- **Running out of memory.** `ogg_mono` used the decoder's state when `vorbis_synthesis_init` refused the headers;
+  `kp_manifest_text`'s absent names could index past their array when a key could not be spelled (each now keeps
+  its first spelling's place); `--res-log`'s names leaked the log when the list could not grow; `kp_convert terrain`
+  failed with no word; `locale_report` leaked the glyphs' findings when the glyphs could not be built.
+- **The cache's names.** `kp_fs_write`'s temporary name holds the process's id beside the stack address, so two
+  repacks over one cache no longer write the same temporary file. A speech Ogg's name takes its settings from
+  `KP_OGG_SPEECH_SETTINGS` (`speech`: the same names as before).
+- **Messages.** `kp_convert scenarios` said "the scenario does not load:" with no reason when its CHK had no `ERA` or
+  `DIM`; `kp_convert verify` with more than 8 folders printed only its usage.
+- **Work done once.** `kp_repack_write` built the install's `KpData` twice (the plan's and the HD sets'): `hd_init`
+  builds it before the plan, and grpmeta and the packs only with an HD set. Each campaign mission's map is read once
+  for every language's speech names instead of once per language. `finish` reports the groups in their files' order
+  (`KpRepackReport.groups`), so `cmd_repack` prints them without sorting a copy.
+- **Simpler.** `kp_hd_ui_table.c`'s own growing text is `KpBuf` (the table is the same byte for byte:
+  `kp_convert hd-ui-table /Applications/StarCraft` writes `defs/scr/hd-ui-bw-1.17.0.1.json` unchanged); one copy of
+  a line in `locale_report` instead of three size checks.
+- **Checked:** the refusals by hand (`--hd hd2,HD2`, `--hd hd2,,hd`, `--locales enUS`, `xxXX`, `ruRU,ruru`,
+  `--hd nope`, `locale-check --locale enus`, `verify` with 9 folders); a repack of the 1.17 install (2 min 42 s, its
+  28 movies transcoded as `webm2`), each movie decoded to its end by FFmpeg with no error and its sound blocks at 0,
+  0, 17, 40, 63 ms by `ffprobe`; the full CI over that repack (the suites 578 of 578, with ASan and UBSan too).

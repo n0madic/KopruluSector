@@ -349,7 +349,7 @@ static int ogg_mono(const uint8_t *ogg, size_t size, Mono *m, uint32_t *rate, ch
 	vorbis_block vb;
 	ogg_page og;
 	ogg_packet op;
-	int headers = 0, stream = 0, rc = -1;
+	int headers = 0, stream = 0, dsp = 0, rc = -1;
 	char *buf;
 	ogg_sync_init(&oy);
 	vorbis_info_init(&vi);
@@ -375,8 +375,12 @@ static int ogg_mono(const uint8_t *ogg, size_t size, Mono *m, uint32_t *rate, ch
 					goto done;
 				}
 				if (++headers == 3) {
-					vorbis_synthesis_init(&vd, &vi);
+					if (vorbis_synthesis_init(&vd, &vi) != 0) { /* headers it read but cannot decode by */
+						snprintf(err, err_size, "not Ogg Vorbis");
+						goto done;
+					}
 					vorbis_block_init(&vd, &vb);
+					dsp = 1;
 				}
 				continue;
 			}
@@ -396,7 +400,7 @@ static int ogg_mono(const uint8_t *ogg, size_t size, Mono *m, uint32_t *rate, ch
 		rc = 0;
 	}
 done:
-	if (headers == 3) {
+	if (dsp) {
 		vorbis_block_clear(&vb);
 		vorbis_dsp_clear(&vd);
 	}

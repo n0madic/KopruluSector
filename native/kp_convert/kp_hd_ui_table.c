@@ -10,7 +10,6 @@
 #include "kp_hd_ui_table.h"
 
 #include <math.h>
-#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -18,6 +17,7 @@
 #include "kp_grp.h"
 #include "kp_hd_scr.h"
 #include "kp_hd_ui_scr.h"
+#include "kp_json.h"
 #include "kp_scr.h"
 #include "kp_ui.h"
 #include "kp_ui_data.h"
@@ -39,41 +39,6 @@ static int fail(KpError *err, const char *what, const char *why)
 }
 
 static double luma(double r, double g, double b) { return 0.3 * r + 0.59 * g + 0.11 * b; }
-
-/* A growing text (the table's JSON). */
-typedef struct {
-	char *p;
-	size_t n, cap;
-	int bad;
-} Text;
-
-static void text_add(Text *t, const char *fmt, ...)
-{
-	va_list ap;
-	int w;
-	va_start(ap, fmt);
-	w = vsnprintf(NULL, 0, fmt, ap);
-	va_end(ap);
-	if (t->bad || w < 0) {
-		t->bad = 1;
-		return;
-	}
-	if (t->n + (size_t)w + 1 > t->cap) {
-		size_t cap = t->cap ? t->cap : 4096;
-		char *g;
-		while (cap < t->n + (size_t)w + 1) cap *= 2;
-		if (!(g = (char *)realloc(t->p, cap))) {
-			t->bad = 1;
-			return;
-		}
-		t->p = g;
-		t->cap = cap;
-	}
-	va_start(ap, fmt);
-	vsnprintf(t->p + t->n, (size_t)w + 1, fmt, ap);
-	va_end(ap);
-	t->n += (size_t)w;
-}
 
 /* --- place_frame --- */
 
@@ -307,7 +272,7 @@ typedef struct {
 	int32_t scale;
 	char (*files)[KP_HD_UI_SCR_NAME]; /* written, in order */
 	int file_count, file_cap;
-	Text moved;       /* the moved frames' JSON rows */
+	KpBuf moved;      /* the moved frames' JSON rows */
 	int moved_count, drawn_anew, kept;
 	int32_t centre[3];
 	KpError *err;
@@ -350,9 +315,10 @@ static int moved_row(Table *t, const char *path, size_t len, uint32_t frame, con
 		row[n++] = c;
 	}
 	row[n] = 0;
-	text_add(&t->moved, "%s    [\"%s\", %u, %d, %d]", t->moved_count ? ",\n" : "", row, (unsigned)frame, (int)at[0], (int)at[1]);
+	kp_buf_printf(&t->moved, "%s    [\"%s\", %u, %d, %d]", t->moved_count ? ",\n" : "", row, (unsigned)frame, (int)at[0],
+		(int)at[1]);
 	t->moved_count++;
-	return t->moved.bad ? fail(t->err, path, "out of memory") : 0;
+	return 0;
 }
 
 /* An SD GRP's frames' masks (1 opaque): its rows decoded, else a dialog GRP's plain rows (index 0 transparent); NULL
@@ -521,10 +487,10 @@ static int entry(void *ctx, const char *path, size_t len)
 
 char *kp_hd_ui_table_json(KpRes *r, const KpFiles *sd, size_t *size, KpError *err)
 {
-	Text out;
+	KpBuf out;
 	int v, k, rc = 0;
-	memset(&out, 0, sizeof out);
-	text_add(&out, "{\n \"comment\": \"StarCraft: Remastered's HD interface over profile %s's (ADR 0019, stage C6; "
+	kp_buf_init(&out);
+	kp_buf_printf(&out, "{\n \"comment\": \"StarCraft: Remastered's HD interface over profile %s's (ADR 0019, stage C6; "
 		"native/kp_app/kp_hd_ui_scr.h): per variant the HD files its layout takes (the pictures among them the SD ones "
 		"drawn again) and their content keys (CASC's MD5 of their bytes), the GRP frames off their usual place (the SD "
 		"path, the frame, x, y in HD pixels from the SD frame's top-left) and each console's centre piece's column "
@@ -542,7 +508,7 @@ char *kp_hd_ui_table_json(KpRes *r, const KpFiles *sd, size_t *size, KpError *er
 		if (kp_ui_data_art_paths(sd, entry, &t, err) != 0) {
 			rc = -1;
 		} else {
-			text_add(&out, " \"%s\": {\n  \"files\": [\n", kp_hd_scr_variant_name(v));
+			kp_buf_printf(&out, " \"%s\": {\n  \"files\": [\n", kp_hd_scr_variant_name(v));
 			for (k = 0; k < t.file_count && rc == 0; k++) {
 				uint8_t key[KEY_SIZE];
 				char hex[2 * KEY_SIZE + 1];
@@ -552,22 +518,22 @@ char *kp_hd_ui_table_json(KpRes *r, const KpFiles *sd, size_t *size, KpError *er
 					break;
 				}
 				for (i = 0; i < KEY_SIZE; i++) snprintf(hex + 2 * i, 3, "%02x", key[i]);
-				text_add(&out, "   [\"%s\", \"%s\"]%s\n", t.files[k], hex, k + 1 < t.file_count ? "," : "");
+				kp_buf_printf(&out, "   [\"%s\", \"%s\"]%s\n", t.files[k], hex, k + 1 < t.file_count ? "," : "");
 			}
-			text_add(&out, "  ],\n  \"moved\": [\n%s\n  ],\n  \"consoles\": [%d, %d, %d]\n }%s\n", t.moved.p ? t.moved.p : "",
+			kp_buf_printf(&out, "  ],\n  \"moved\": [\n%s\n  ],\n  \"consoles\": [%d, %d, %d]\n }%s\n", kp_buf_text(&t.moved),
 				(int)t.centre[0], (int)t.centre[1], (int)t.centre[2], v + 1 < KP_HD_SCR_VARIANTS ? "," : "");
 			printf("hd-ui-table %s: %d files, %d frames moved, %d pictures drawn anew, %d kept in SD\n",
 				kp_hd_scr_variant_name(v), t.file_count, t.moved_count, t.drawn_anew, t.kept);
 		}
 		free(t.files);
-		free(t.moved.p);
+		kp_buf_free(&t.moved);
 	}
-	text_add(&out, "}\n");
-	if (rc == 0 && out.bad) rc = fail(err, "the table", "out of memory");
+	kp_buf_str(&out, "}\n");
 	if (rc != 0) {
-		free(out.p);
+		kp_buf_free(&out);
 		return NULL;
 	}
-	*size = out.n;
-	return out.p;
+	kp_buf_text(&out);
+	*size = out.size;
+	return out.data;
 }
