@@ -610,11 +610,11 @@ extern const uint8_t KP_UI_WIRE_INDEXES[KP_UI_WIRE_COLOURS];
 #define KP_UI_CONSOLE_CUT_1 138
 #define KP_UI_CONSOLE_CUT_2 408
 
-/* The console's shape on a screen other than the original's (not the original's: ADR 0011, 2026-11-05; console.kpd,
- * converter/emit/hd_ui.py): StarCraft: Remastered's pieces and the tiles of their wings at one cell per logical pixel. A
- * cell: 0 none, else 1 + its colour's place in the race's table, KP_UI_CONSOLE_FRINGE where the art covers less than half
- * the logical pixel (the HD art's edge: its silhouette, no SD pixel). x, y in the console PCX; a tile repeats every
- * period columns from x. */
+/* The console's shape on a screen other than the original's (not the original's: ADR 0011, 2026-11-05; console.kpd, the
+ * Python converter's emit/hd_ui.py): StarCraft: Remastered's pieces and the tiles of their wings at one cell per
+ * logical pixel. A cell: 0 none, else 1 + its colour's place in the race's table, KP_UI_CONSOLE_FRINGE where the art
+ * covers less than half the logical pixel (the HD art's edge: its silhouette, no SD pixel). x, y in the console PCX; a
+ * tile repeats every period columns from x. */
 #define KP_UI_CONSOLE_KIND "CONW"
 #define KP_UI_CONSOLE_SCHEMA 1
 #define KP_UI_CONSOLE_FRINGE 0x80

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<strings>
+  <string>
+    <id>a-1</id>
+    <value>Plain &amp; &lt;simple&gt;</value>
+  </string>
+  <string><id>b-2</id><value>Café — € 5two</value></string>
+  <string> <id>a-1</id> <value>the last of equal ids</value> </string>
+  <string><id>c-3</id><value>\\4red\n\0041 \t end\</value></string>
+</strings>

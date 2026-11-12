@@ -34,13 +34,12 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tools"))
 sys.path.insert(0, str(ROOT / "tools" / "research"))
 
 import oracle_cli  # noqa: E402
 import viewer_compose_check as vc  # noqa: E402
-from converter.mpq.profile import Profile, Resolver  # noqa: E402
+from scdata.mpq.profile import Profile, Resolver  # noqa: E402
 from sc_emulator import capture  # noqa: E402
 
 log = logging.getLogger("compose_capture")

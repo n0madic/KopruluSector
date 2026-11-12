@@ -1,7 +1,7 @@
 # Dependency analyzer
 
-Code: `converter/analyze/`. It gives each mission the resource packs it loads before it starts ([`PACK`](formats/kpm.md#pack)):
-- a campaign mission's, through `converter/missions.py` `survey`, which `python3 -m converter scr-manifest` records in `defs/campaign/packs-<profile>.json` (compiled into the runtime as the profile's `MPAK`, `tools/defs_c.py`);
+Code: `tools/research/scdata/analyze/`. It gives each mission the resource packs it loads before it starts ([`PACK`](formats/kpm.md#pack)):
+- a campaign mission's, through `tools/research/scdata/missions.py` `survey`, which `python3 tools/research/scr_manifest.py` records in `defs/campaign/packs-<profile>.json` (compiled into the runtime as the profile's `MPAK`, `tools/defs_c.py`);
 - a test scenario's, on its line of `generated/scenarios/index.txt` (`kp_convert scenarios`).
 
 Since [ADR 0018](adr/0018-original-data-at-run-time.md) (stage D8d) the converter writes no per-mission profile or campaign report (`reports/profiles/`, `reports/analysis.json`); the figures below were taken from them.
@@ -16,7 +16,7 @@ Since [ADR 0018](adr/0018-original-data-at-run-time.md) (stage D8d) the converte
 | Production | A human player can make a unit that is available in the mission's `PUNI` result and has a native recipe whose `ff02` producer is reachable from the units the player starts with or that triggers create. Hardcoded transitions add larva, egg, cocoon and lurker egg. | Recipe table `0x50da88` (91 recipes, `defs/requirements/`, compared with the executable) | Synthetic closure test |
 | Computer players | Produce what their AI closure names. | | |
 | Resources | Units → flingy → sprite → image, subunits, infestation, construction image, weapons → flingy, selection circle images, IScript closure of every image, unit sounds and portraits. Spell weapons come from `orders.dat` for every enabled technology. | DAT layouts | |
-| Packs | Pack of every GRP, sound and portrait. `effects` is always included: native code creates fixed images (selection circles, shield hit, damage overlays, spell effects). | `converter/packs.py` | |
+| Packs | Pack of every GRP, sound and portrait. `effects` is always included: native code creates fixed images (selection circles, shield hit, damage overlays, spell effects). | `tools/research/scdata/packs.py` | |
 
 **Upper bounds.** These are static upper bounds. They include random branches, disabled actions and units the mission makes available without ever using. An included item is not evidence that it runs. Techs and upgrades are the entries the mission enables for a human player's race; research buildings are not checked.
 
@@ -24,7 +24,7 @@ Since [ADR 0018](adr/0018-original-data-at-run-time.md) (stage D8d) the converte
 
 The ranking measure is the number of distinct mechanisms a mission needs: unit types, AI opcode types, trigger condition and action types, IScript opcode types, enabled techs and upgrades.
 
-`terran/terran01` (Wasteland) has the smallest set: 12 unit types, no AI script, 16 action and 3 condition types. Its packs are terran, zerg, neutral, effects and doodads. It is also the first candidate, because the emulator trace of a win without cheats exists. **M1 = terran/terran01** (test `converter/tests/test_analyze.py::test_m1_choice`).
+`terran/terran01` (Wasteland) has the smallest set: 12 unit types, no AI script, 16 action and 3 condition types. Its packs are terran, zerg, neutral, effects and doodads. It is also the first candidate, because the emulator trace of a win without cheats exists. **M1 = terran/terran01** (test `tools/research/scdata/tests/test_analyze.py::test_m1_choice`).
 
 ## Campaign scope
 

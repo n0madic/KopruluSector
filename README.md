@@ -19,17 +19,17 @@ mission to the epilog, on your own copy of the original data.
 Not included: multiplayer, Battle.net, replays and custom (UMS) maps.
 
 > **No game data is included.** This repository holds only code and its own definitions. You need a legal copy of
-> StarCraft: Brood War 1.17.0.1 or StarCraft: Remastered. The converter turns it into the game's data on your
-> machine. Builds contain that data, so they are for your own use and must not be shared.
+> StarCraft: Brood War 1.17.0.1 or StarCraft: Remastered. The game reads it on your machine, from the install itself
+> or from `kp_convert`'s repack of it. Builds contain that data, so they are for your own use and must not be shared.
 
 ## Requirements
 
 | What | For |
 |---|---|
-| Python 3.10+ with [Pillow](https://pypi.org/project/Pillow/) (optional) | no part of the conversion ([ADR 0019](docs/adr/0019-install-or-repack-converter-in-c.md)): the web build's server (`tools/web_serve.py`), the research tools and the Python converter's remaining checks until [stage C7](docs/phaseC.md) (`python3 -m pip install Pillow`) |
-| [StormLib](https://github.com/ladislav-zezula/StormLib) (`brew install stormlib`, Debian/Ubuntu `libstorm-dev`) | the Python converter's tests and the research tools that read the 1.17 install's MPQ archives. `kp_convert` and the game build their own from the sources `tools/toolchain/fetch.sh` downloads. `KOPRULU_STORMLIB` names the library when the loader does not find it (on Windows `StormLib.dll` or `storm.dll`) |
+| Python 3.10+ with [Pillow](https://pypi.org/project/Pillow/) (optional) | no part of the game or of its data ([ADR 0019](docs/adr/0019-install-or-repack-converter-in-c.md)): the web build's server (`tools/web_serve.py`), the compiled tables' generator (`tools/defs_c.py`), the research tools and their readers (`tools/research/scdata`), the oracles and the checks of `tools/ci.sh` that use them (`python3 -m pip install Pillow`) |
+| [StormLib](https://github.com/ladislav-zezula/StormLib) (`brew install stormlib`, Debian/Ubuntu `libstorm-dev`) | the research tools and their tests, which read the 1.17 install's MPQ archives. `kp_convert` and the game build their own from the sources `tools/toolchain/fetch.sh` downloads. `KOPRULU_STORMLIB` names the library when the loader does not find it (on Windows `StormLib.dll` or `storm.dll`) |
 | GNU make (optional) | the shortcuts of the [Makefile](#quick-start-with-make) |
-| FFmpeg (`ffmpeg`, `ffprobe` on the `PATH`) | the HD portraits (`hd` decodes Remastered's movies) and the test fixtures; the repack's movies, sounds, music and speech are encoded by `kp_convert` itself |
+| FFmpeg (`ffmpeg`, `ffprobe` on the `PATH`) (optional) | research only: the golden of the 1.17 movies' decodes (`tools/oracle/export_smk_ffmpeg.py`, which `tools/ci.sh` checks when FFmpeg is there) and the research readers' Remastered movies. The game decodes, and `kp_convert` encodes, the movies, sounds, music and speech with their own libraries |
 | CMake 3.20+, Ninja, a C compiler (Clang or GCC) | every build |
 | curl, `patch` | `tools/toolchain/fetch.sh` downloads the pinned SDL 3.4 sources, the readers of the original data (StormLib, CascLib, zlib, bzip2), the video decoders (libvpx, nestegg) and the encoders of the tools (libvpx's VP9, libogg, libvorbis) and checks them by SHA-256 |
 | Xcode | macOS and iOS |

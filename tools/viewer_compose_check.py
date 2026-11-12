@@ -41,12 +41,12 @@ import zlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "tools" / "research"))
 
 import mission_index  # noqa: E402
-from converter.formats import grp, pcx, tileset  # noqa: E402
-from converter.formats.palette import TILESETS  # noqa: E402
-from converter.mpq.profile import Profile, Resolver  # noqa: E402
+from scdata.formats import grp, pcx, tileset  # noqa: E402
+from scdata.formats.palette import TILESETS  # noqa: E402
+from scdata.mpq.profile import Profile, Resolver  # noqa: E402
 
 log = logging.getLogger("viewer_compose_check")
 

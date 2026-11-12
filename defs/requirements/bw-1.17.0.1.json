@@ -1,7 +1,7 @@
 {
  "id": "unit-recipes",
  "profile": "bw-1.17.0.1",
- "provenance": ["Packed unit production recipes 0x50da88..0x50deca of StarCraft.exe (docs/research/native-requirements.md): leading zero word, records of unit id + requirement words + 0xffff, final 0xffff at 0x50dec8; checked against the executable by converter/tests/test_analyze.py", "Tokens: ff02 ID = current producer type; plain words = completed-unit prerequisites; other ffxx words are state tokens of the production gate"],
+ "provenance": ["Packed unit production recipes 0x50da88..0x50deca of StarCraft.exe (docs/research/native-requirements.md): leading zero word, records of unit id + requirement words + 0xffff, final 0xffff at 0x50dec8; checked against the executable by tools/research/scdata/tests/test_analyze.py", "Tokens: ff02 ID = current producer type; plain words = completed-unit prerequisites; other ffxx words are state tokens of the production gate"],
  "table_va": "0x50da88",
  "end_va": "0x50deca",
  "recipes": [

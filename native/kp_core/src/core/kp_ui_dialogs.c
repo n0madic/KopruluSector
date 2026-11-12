@@ -1,6 +1,6 @@
 /*
  * The dialogs read from the original data (ADR 0018, stage D3): each dialog BIN's records in the native traversal order
- * of the loader's fixup 0x4c33e0 (converter/formats/dialog.py parse) as the runtime's widget and SMK records
+ * of the loader's fixup 0x4c33e0 (scdata/formats/dialog.py parse) as the runtime's widget and SMK records
  * (KP_UI_WIDGET_SIZE, KP_UI_SMK_SIZE: what ui.kpd's DLGS holds), their texts in UTF-8 in one pool (POOL), in the
  * converter's order (kpd.dialogs_section): a record's text, then its SMK nodes' file names.
  */

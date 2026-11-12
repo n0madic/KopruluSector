@@ -27,9 +27,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "tools" / "research"))
 import mission_index  # noqa: E402
-from converter.missions import load_packs  # noqa: E402
+from scdata.missions import load_packs  # noqa: E402
 
 PROFILE = "bw-1.17.0.1"
 GOLDEN = ROOT / "tests" / "golden" / "oracle"

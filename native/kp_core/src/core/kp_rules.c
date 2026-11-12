@@ -1,4 +1,4 @@
-/* The effects of the UMS override sections (kp_start.h; the C twin of converter/derive/rules.py). */
+/* The effects of the UMS override sections (kp_start.h; the C twin of scdata/derive/rules.py). */
 #include "kp_ids.h"
 #include "kp_start.h"
 

@@ -13,7 +13,7 @@ static const struct {
 	{ "UNIT", "units" }, { "UPGR", "upgrades" }, { "WEAP", "weapons" },
 };
 
-/* Built-in requirement tables of StarCraft.exe (converter/formats/requirements.py). */
+/* Built-in requirement tables of StarCraft.exe (scdata/formats/requirements.py). */
 static const struct {
 	const char *fourcc, *name;
 } REQUIREMENT_NAMES[KP_DAT_REQUIREMENTS] = {

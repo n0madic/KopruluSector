@@ -1,6 +1,6 @@
 /*
  * The cinematics' player (native/kp_app/kp_cine.c, ADR 0015; ADR 0019, stage C4): the index of the data's movies, the
- * colour, the frames of the fixture's WebM (converter.kpf.fixtures: a 4:4:4 sRGB movie as the SD ones are and a 4:2:0
+ * colour, the frames of the fixtures' WebM (tests/fixtures/kpf: a 4:4:4 sRGB movie as the SD ones are and a 4:2:0
  * studio-range one as the HD2 ones, 64 x 48, 12 frames, each with the frames FFmpeg decodes from it, the second with
  * subtitles) and the refusals of a movie or a packet that is not right; a run of the movies over a host that loads
  * them (at once, or after it has waited for them) and records what it is asked.
@@ -13,7 +13,7 @@
 #include <math.h>
 #include <stddef.h>
 
-#define FIXTURES "tests/fixtures/generated/kpf/"
+#define FIXTURES "tests/fixtures/kpf/"
 #define WEBM_SRGB FIXTURES "cine0.webm"
 #define WEBM_YCC FIXTURES "cine1.webm"
 #define SRT_YCC FIXTURES "cine1.srt" /* the second movie's subtitles */
@@ -187,7 +187,7 @@ static void movie_follows_its_webm(KpT *T)
 	}
 }
 
-/* A movie's subtitles (converter.kpf.fixtures' CINE_SUBTITLES) and the one shown at each time: none before the first,
+/* A movie's subtitles (the fixtures' cine1.srt) and the one shown at each time: none before the first,
  * each from its start to its end (excluded), none after the last; one that outlasts the next is shown again when the
  * next ends. */
 static void subtitles_follow_the_movies_time(KpT *T)

@@ -14,14 +14,14 @@
 >
 > Until the folder is restored, `tools/ci.sh` runs in its public mode (on by itself without `tests/golden/oracle`, or
 > with `KOPRULU_PUBLIC=1`; hosted CI uses it): the golden steps and `kp_replay` are left out, and the C and converter
-> tests that need a golden or the private research evidence skip (`KP_TEST_PUBLIC`, `converter/tests/private.py`).
+> tests that need a golden or the private research evidence skip (`KP_TEST_PUBLIC`, `tools/research/scdata/tests/private.py`).
 
 Every golden of `tests/golden/oracle/` is JSON. The C suites (`tests/c`, `kp_test`), the oracle tools (`kp_oracle`) and the Python
 checkers read them. The writers: `tools/oracle/oracle_common.py` (`golden_json` renders a golden's data,
 `write_golden` writes it, `golden_stale` checks it, `cases_module` builds a header-plus-`cases` golden),
 `tools/state_check.py --write-golden`, the exporters `tools/oracle/export_*.py` (their `--check` fails when a golden
 is stale), the research probes (`probe_damage_table_117.py`, `probe_native_health_bar_117.py`,
-`probe_native_iscript_117.py`) and the fixtures' `converter/kpf/fixtures.py` (`tests/fixtures/generated/kpf/expect.json`).
+`probe_native_iscript_117.py`) and, until stage C7 of ADR 0019, the fixtures' `fixtures.py` (`tests/fixtures/kpf/expect.json`, committed since).
 
 The JSON form (`golden_json`): an object's members in key order, numeric keys (the sparse `steps[n]` of the runs) by
 value as their decimal text, the others by name; the top level one member per line, and a member whose value is a
@@ -125,7 +125,7 @@ difference remains: the emulator's Drone carries no item.
 koprulu-private/venv/bin/python tools/oracle/emu_m0e_extractor.py
 # Rebuild the manifest and data; --check only compares
 python3 tools/oracle/export_m0e_cases.py [--check] [--emu-root DIR]   # default: $KOPRULU_EMU, else koprulu-private/emu
-python3 -m unittest converter.tests.test_golden_m0e
+python3 -m unittest tools.tests.test_golden_m0e
 ```
 
 The exporter needs `docs/research/evidence/`, which is gitignored. It checks that:
@@ -168,7 +168,7 @@ The M1 entry adds the outcome and the input-log hash. `data_sha256` records the 
 python3 tools/oracle/export_emulator_traces.py [--check] [--emu-root DIR]   # the same default
 ```
 
-Without the private outputs, `--check` verifies the committed files against each other: the manifest is complete and every data file matches its hash in `data_sha256`. `tools/ci.sh` always runs it. `converter/tests/test_golden_missions.py` loads both traces and checks frame continuity and the recorded outcome.
+Without the private outputs, `--check` verifies the committed files against each other: the manifest is complete and every data file matches its hash in `data_sha256`. `tools/ci.sh` always runs it. `tools/tests/test_golden_missions.py` loads both traces and checks frame continuity and the recorded outcome.
 
 # Golden oracle: state-model goldens
 
@@ -194,7 +194,7 @@ Phase 6 adds two kinds of interface events to the scenarios' logs (`ui.jsonl`, k
 
 `tools/ci.sh` has two modes. The quick one, the default, passes `KP_TEST_SAMPLE=4` to the sanitizer and wasm runs, with the seed taken from the step's key, so another build checks other items and a rerun of the same build the same ones; the native run always checks them all. `KOPRULU_FULL=1` checks them all everywhere: before a push and at the end of a stage. The quick mode finds a memory error that appears in one play only when its sample reaches that play or at the next full run; a wrong result against the goldens it finds at once, in the native run. The C suites under Apple's sanitizers run only where there is no LLVM clang (that build's `kp_hd_phone`, with the ASTC encoder, always runs).
 
-A step that passed is not run again (`build/ci-passed/<label>`, `build/converter-tests/passed.json`; `KOPRULU_NO_CACHE=1` runs everything), so a run stopped late goes on where it stopped; a full pass also answers for the quick mode, not the other way round. A C step's key (`tools/ci_cache.py`) is the bytes of its binaries, `tests/golden` and `tests/fixtures`, the names, sizes and times of `generated`, its environment and its compiler's, node's and glslang's versions; the converter's (`tools/converter_tests.py`) is the bytes of the tracked files except `native/`, `tests/c/` and the documents outside `docs/research/`, the names, sizes and times of `generated`, the private evidence, the original installs, FFmpeg and StormLib, and the Python packages (by their metadata directories: a half-removed package has no metadata to read). It does not trace a module's imports: a change to any of it reruns all the modules. A pass whose key no longer holds when it ends is not remembered: it may have read files changed since the run began. The fixtures are regenerated on each run and must keep their bytes: the fixture movies are made with FFmpeg's `bitexact` flags and from `testsrc` sources, whose pictures are not random (`gradients`' are, even with a seed), and `kp_convert`'s WebM carry no dates or random identifiers, so a repack's movies are repeatable. A sanitized LLVM binary is not repeatable: a source recompiled unchanged reruns that step, the safe side. The product's checks always run: they depend on the machine's GPU and display.
+A step that passed is not run again (`build/ci-passed/<label>`, `build/python-tests/passed.json`; `KOPRULU_NO_CACHE=1` runs everything), so a run stopped late goes on where it stopped; a full pass also answers for the quick mode, not the other way round. A C step's key (`tools/ci_cache.py`) is the bytes of its binaries, `tests/golden` and `tests/fixtures`, the names, sizes and times of `generated`, its environment and its compiler's, node's and glslang's versions; the Python tests' (`tools/python_tests.py`) is the bytes of the tracked files except `native/`, `tests/c/` and the documents outside `docs/research/`, the names, sizes and times of `generated`, the private evidence, the original installs, FFmpeg and StormLib, and the Python packages (by their metadata directories: a half-removed package has no metadata to read). It does not trace a module's imports: a change to any of it reruns all the modules. A pass whose key no longer holds when it ends is not remembered: it may have read files changed since the run began. The fixtures are committed (`tests/fixtures/kpf/`, since ADR 0019's stage C7; the Python converter's `fixtures.py` wrote them, its fixture movies with FFmpeg's `bitexact` flags from `testsrc` sources), and `kp_convert`'s WebM carry no dates or random identifiers, so a repack's movies are repeatable. A sanitized LLVM binary is not repeatable: a source recompiled unchanged reruns that step, the safe side. The product's checks always run: they depend on the machine's GPU and display.
 
 The converter's modules run in the background from the start, 4 at a time in processes of their own, and join before the product's checks, which keep the machine to themselves. Measured 2026-11-07 on 14 logical CPUs, with other work on the machine at times (load average up to 73): the old order took 2618 s; `KOPRULU_FULL=1 KOPRULU_NO_CACHE=1` 1872 s; the quick mode after an engine change (converter remembered) 790 s, after a converter change too (`test_hd2` alone is 800 to 1200 s of wall time) 1192 s; nothing changed 21 s without the product's checks, which take about 270 s.
 

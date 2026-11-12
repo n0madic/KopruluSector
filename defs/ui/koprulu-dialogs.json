@@ -1,7 +1,8 @@
 {
  "comment": [
-  "Our own dialogs and records (not the original's: no Blizzard text or art), built into ui.kpd's DLGS beside the",
-  "original's by converter/formats/dialog.py build(). koprulu\\video.bin: the video options in place of",
+  "Our own dialogs and records (not the original's: no Blizzard text or art), which the runtime puts beside the",
+  "original's (kp_ui_data.c): tools/defs_c.py compiles them as KBIN, KEXT and KLAB, each BIN by",
+  "tools/research/scdata/formats/dialog.py build(). koprulu\\video.bin: the video options in place of",
   "rez\\video.bin (kp_ui_options.c): the gamma (ID 1), then radio groups by ID, the first of each Auto:",
   "the art 10..13, the fog 20..22, the water 30..32, the text 40..42, the portraits 50..52 (none, still,",
   "animated), the lighting 60..62 (Auto, off, on). koprulu\\language.bin: the languages (ADR 0016; a glue",

@@ -1,5 +1,5 @@
 /*
- * A mission's terrain-derived data (ADR 0018, stage D4; converter/derive): what the terrain gives the game before its
+ * A mission's terrain-derived data (ADR 0018, stage D4; scdata/derive): what the terrain gives the game before its
  * doodads and units, built from the map's MTXM and the tileset's CV5 and VF4 as the original builds it when a map
  * loads (0x490d80): the imported megatiles and tile flags (ImportMapTiles 0x445720, the console's strips of
  * LoadTileMapSection 0x469170), the walk raster (0x48b1c0), the region graph (0x48f060, then the cut ranks 0x48f0e0) and

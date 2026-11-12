@@ -1,6 +1,6 @@
 # Game data files (`.kpd`)
 
-The game's global data as the [Koprulu container](container.md) lays it out, built by `converter/kpf/kpd.py`. Since [ADR 0018](../adr/0018-original-data-at-run-time.md) (stage D8d) no file of this page is written (`console.kpd` the last, until ADR 0019's stage C6: since then the runtime builds it from a Remastered install, and `kp_convert repack` keeps it in the core as `koprulu\console.kpd`): the runtime builds the same structures from the original files in C (`*_from_files`, [phase D](../phaseD.md)), and the converter builds the containers in memory only, to record what the game reads (`converter scr-manifest`). A language's parts ([below](#a-languages-parts-adr-0016-adr-0019-stage-c3)) keep these layouts, built in memory by the runtime since ADR 0019's stage C3; the C suites' interface fixture is `ui.kpd`, `fonts.kpd`, `sounds.kpd` and `portraits.kpd` of `converter/kpf/fixtures.py`. The sections below are what the runtime's structures hold, whatever they are built from.
+The game's global data as the [Koprulu container](container.md) lays it out, built by `tools/research/scdata/kpf/kpd.py`. Since [ADR 0018](../adr/0018-original-data-at-run-time.md) (stage D8d) no file of this page is written (`console.kpd` the last, until ADR 0019's stage C6: since then the runtime builds it from a Remastered install, and `kp_convert repack` keeps it in the core as `koprulu\console.kpd`): the runtime builds the same structures from the original files in C (`*_from_files`, [phase D](../phaseD.md)), and the converter builds the containers in memory only, to record what the game reads (`tools/research/scr_manifest.py`). A language's parts ([below](#a-languages-parts-adr-0016-adr-0019-stage-c3)) keep these layouts, built in memory by the runtime since ADR 0019's stage C3; the C suites' interface fixture is `ui.kpd`, `fonts.kpd`, `sounds.kpd` and `portraits.kpd` of the committed fixtures `tests/fixtures/kpf/` (the Python converter's `fixtures.py` wrote them before ADR 0019's stage C7 removed it). The sections below are what the runtime's structures hold, whatever they are built from.
 
 The sections that hold the executable's tables rather than the install's files (`COLS`, the requirements `RQ**`, `SLOT`, `ui.kpd`'s `BTNS`, `STLY`, `MUSI`, `VOLT`, `ACCL`, `ESTB`, `campaign.kpd`'s `TABL`, `CHEA`) are compiled into the runtime ([ADR 0018](../adr/0018-original-data-at-run-time.md), stage D2: `tools/defs_c.py`, the same bytes; the readers take the profile's table, `kp_defs_table`). Stage D3 builds the containers' structures from the original files in C (`*_from_files`, [phase D](../phaseD.md#d3-as-built)) and compiles the lists that takes as well (`UBIN`, `UTHM`, `UTHF`, `UDGR`, `UGRP`, `UPCX`, `UGLF`, `UCRD`, `KBIN`, `KEXT`, `KLAB`, `FNTP`, `CYC0`..`CYC7`), stage D4 the CHK loader tables (`CHKL`) and each campaign mission's packs (`MPAK`), stage D7 the cinematics an install's movies are played as (`CINM`: u16 movies, u16 preludes; per movie of `defs/campaign/cinematics.json`'s table u8 length, its name, u32 size and the SHA-256 of its copy in the reference 1.17 install; per prelude u8 cinematic, u8 prelude): no container has sections of those names.
 
@@ -18,13 +18,13 @@ The sections that hold the executable's tables rather than the install's files (
 | `sounds.kpd` | `SNDS` | in memory; the C suites' fixture |
 | `portraits.kpd` | `PORT` | in memory (the manifest's reads); the C suites' fixture |
 | `grpmeta.kpd` | `GRPM` | in memory (the manifest's reads) |
-| `campaign.kpd` | `CAMP` | in memory (the manifest's reads; `converter/campaign.py`) |
+| `campaign.kpd` | `CAMP` | in memory (the manifest's reads; `tools/research/scdata/campaign.py`) |
 
 ## `dat.kpd` (schema 1)
 
 - **Reader:** `native/kp_core/src/core/kp_dat.c`.
 - **Tests:**
-  - `converter/tests/test_dat.py`.
+  - `tools/research/scdata/tests/test_dat.py`.
 
 All eleven DAT files of the generic loader `0x4442b0`:
 
@@ -117,7 +117,7 @@ The raw table keeps everything: the count, the offsets (including shared ones), 
 - **Reader:** `native/kp_core/src/core/kp_iscript.c`, `kp_aiscript.c`.
 - **Provenance hash:** `defs/iscript/`, which gives the `SLOT` counts.
 - **Tests:**
-  - `converter/tests/test_scripts.py`.
+  - `tools/research/scdata/tests/test_scripts.py`.
 
 **Sections:**
 
@@ -161,10 +161,10 @@ The directories are not rebuilt; the runtime resolves ids with the native rule `
 One file per tileset, named by the `ERA & 7` order: badlands, platform, install, ashworld, jungle, desert, ice, twilight.
 
 - **Reader and import:** `native/kp_present/kp_tileset.c` (`kp_terrain_import``.
-- **Python twin:** `converter/derive/terrain.py`.
+- **Python twin:** `tools/research/scdata/derive/terrain.py`.
 - **Tests:**
-  - `converter/tests/test_terrain.py`;
-  - `converter/tests/test_resources.py` (`SHET`, `EDGE`).
+  - `tools/research/scdata/tests/test_terrain.py`;
+  - `tests/c/test_data.c` (the import from the install's tilesets).
 
 | Section | Class | Content |
 |---|---|---|
@@ -174,7 +174,7 @@ One file per tileset, named by the `ERA & 7` order: badlands, platform, install,
 | `CYCL` | canonical | u8 range count, u8 speed (8), then (low, high) inclusive index pairs of the stock simple cycles, all enabled by the native masks ([palette bootstrap](../research/native-palette-bootstrap.md)) (`kp_palette.c` runs them) |
 | `MFLG` | derived `MFL1` v1 | u32 megatile flags by the `0x445562` rules; the inputs hash is the SHA-256 of VF4 |
 | `MMNI` | canonical | per megatile 4 bytes: the VR4 pixel (7, 6) of its minitiles 0, 1, 4, 5 (the flip bit ignored), the console minimap's terrain colours before its palette map (`0x46c920`, `0x46ca20`, `0x46e260`; plan phase 9B) |
-| `SHET` | canonical | the SDL runtime's terrain texture (phase S): u16 megatile count, u16 columns (128), then an 8-bit grayscale PNG of every megatile, 32 × 32 palette indices each, megatile t at x = (t % 128) · 32, y = (t // 128) · 32, no extrusion; the rest of the last row is 0. Every megatile texel is opaque, index 0 included. The megatiles come from `converter/emit/terrain.py` `tile_sheet` and `Tileset.render_megatile`; the product's autotest checks their CRCs |
+| `SHET` | canonical | the SDL runtime's terrain texture (phase S): u16 megatile count, u16 columns (128), then an 8-bit grayscale PNG of every megatile, 32 × 32 palette indices each, megatile t at x = (t % 128) · 32, y = (t // 128) · 32, no extrusion; the rest of the last row is 0. Every megatile texel is opaque, index 0 included. The megatiles come from `tools/research/scdata/emit/terrain.py` `tile_sheet` and `Tileset.render_megatile`; the product's autotest checks their CRCs |
 | `EDGE` | canonical | creep's edge frames (`tileset\<name>.grp`, 37 frames in 1.17): u16 frame count, then an 8-bit grayscale PNG of the frames side by side, frame k in the 32 × 32 cell at x = k · 32, each at its GRP offset, 0 where it draws nothing (a frame never draws index 0: checked). The game draws frame b − 1 over a tile whose megatile word has bit 15 and whose border byte b (the creep engine's, `kp_creep.c`) is not 0 (`0x40ad1b`, `0x4c03b0`); the SDL runtime appends the cells to `SHET`'s sheet after the megatiles. A container without it draws no edges |
 
 **Converter checks.** The converter verifies the record sizes, every CV5 → megatile reference and every VX4 → VR4 reference. VX4 and VR4 are used only to prerender the megatiles (`SHET`) and are not shipped.
@@ -197,7 +197,7 @@ The C version (`kp_terrain_import`) is tested against the Python twin.
 
 - **Reader:** `native/kp_present/kp_lookups.c`, `kp_palette.c`.
 - **Tests:**
-  - `converter/tests/test_palettes.py`.
+  - `tools/research/scdata/tests/test_palettes.py`.
 
 The section contents follow the native loaders. Original data was checked for:
 - every PCX shape listed in `native-pixel-blitters-probes.json`;
@@ -229,9 +229,9 @@ The section contents follow the native loaders. Original data was checked for:
 ## `fonts.kpd` (schema 1)
 
 - **Reader:** `native/kp_core/src/core/kp_ui_core.c`.
-- **Glyph atlas:** `converter/emit/fonts.py`.
+- **Glyph atlas:** `kp_ui_core.c` (the Python converter's `emit/fonts.py` until stage C2).
 - **Tests:**
-  - `converter/tests/test_fonts.py`.
+  - `tools/research/scdata/tests/test_fonts.py`.
 
 | Section | Content |
 |---|---|
@@ -287,16 +287,16 @@ The console's shape on a screen other than the original's ([ADR 0011](../adr/001
 ## `ui.kpd` (schema 4)
 
 - **Reader:** `native/kp_core/src/core/kp_ui_core.c` (`kp_ui_new_data` over a `KpUiData`; a language's parts, `kp_ui_set_locale`).
-- **Parser and fixup model:** `converter/formats/dialog.py`.
+- **Parser and fixup model:** `tools/research/scdata/formats/dialog.py`.
 - **Tests:**
-  - `converter/tests/test_ui.py`;
+  - `tools/research/scdata/tests/test_ui.py`;
   - `tests/c/test_ui_data.c`.
 
 **Contents:**
 - **69 dialogs.** Every `rez\*.bin` the executable names, with `%c` expanded to t/z/p. `rez\gluATZoneList.bin` (the Battle.net zone list) is absent from the archives; the list is in `defs/ui/bw-1.17.0.1.json`.
 - **Theme colour banks and effect tables** of the twelve glue themes.
 - **The dialog GRPs** (whole files; a frame is a raw bitmap) and the console art (`game\<z|t|p|n>console.pcx`).
-- **The executable's interface tables** (schema 2, plan phase 9): `defs/ui/tables-bw-1.17.0.1.json`, read from `StarCraft.exe` and `Local.dll` by `converter/ui_tables.py` and checked against them by `converter/tests/test_ui_tables.py`. Functions are kept as the original's addresses: kp_ui dispatches a button's condition and action and a status layout's refresh and draw by address, and the manifest names each one after the atlas.
+- **The executable's interface tables** (schema 2, plan phase 9): `defs/ui/tables-bw-1.17.0.1.json`, read from `StarCraft.exe` and `Local.dll` by `tools/research/scdata/ui_tables.py` and checked against them by `tools/research/scdata/tests/test_ui_tables.py`. Functions are kept as the original's addresses: kp_ui dispatches a button's condition and action and a status layout's refresh and draw by address, and the manifest names each one after the atlas.
 
 | Section | Content |
 |---|---|
@@ -358,7 +358,7 @@ The console's shape on a screen other than the original's ([ADR 0011](../adr/001
 
 - **Reader:** `native/kp_core/src/core/kp_ui_sound.c`.
 - **Tests:**
-  - `converter/tests/test_sounds.py`.
+  - `tools/research/scdata/tests/test_sounds.py`.
 
 `SFX ` holds a u16 count (1,144), then one 22-byte record per `sfxdata.dat` id:
 
@@ -371,7 +371,7 @@ The console's shape on a screen other than the original's ([ADR 0011](../adr/001
 | block align, bits per sample | u16 each |
 | data length | u32 |
 
-`PACK` (schema 2) holds a u16 count (1,144), then per sfx id a u8: 0 no file, else 1 + the index of its resource pack in (`effects`, `terran`, `protoss`, `zerg`) (`converter/packs.py` `pack_of_sound`; the pack's `sounds<id / 128>` object holds its component `sfx<id>`).
+`PACK` (schema 2) holds a u16 count (1,144), then per sfx id a u8: 0 no file, else 1 + the index of its resource pack in (`effects`, `terran`, `protoss`, `zerg`) (`tools/research/scdata/packs.py` `pack_of_sound`; the pack's `sounds<id / 128>` object holds its component `sfx<id>`).
 
 `MUSL` (schema 2, plan phase 9D) holds a u8 count (the 25 tracks of `ui.kpd` `MUSI`), then per track the music WAV's data length and nAvgBytesPerSec (u32 each; zeros without a file): `PollMusicEnd` `0x46ee70` ends a track of kind 2 at its length and starts its next one.
 
@@ -395,9 +395,9 @@ The portrait variant table lives in `portraits.kpd` with the portrait palettes.
 ## `portraits.kpd` (schema 2)
 
 - **Reader:** `native/kp_core/src/core/kp_ui_portrait.c`.
-- **Atlases:** `converter/emit/portraits.py`.
+- **Atlases:** the runtime's (`kp_ui_portrait.c`; the Python converter's `emit/portraits.py` until stage C2).
 - **Tests:**
-  - `converter/tests/test_portraits.py`.
+  - `tools/research/scdata/tests/test_portraits.py`.
 
 | Section | Content |
 |---|---|
@@ -412,18 +412,18 @@ The portrait variant table lives in `portraits.kpd` with the portrait palettes.
 
 **Run-time decoding (schema 2).** The console's portrait (`kp_ui`, plan phase 9B) plays the `FILE` movies with kp_core's Smacker decoder (`kp_smk.c`) the way SVid and Smackw32 do (`SVidPlayContinueSingle` with `SmackWait`'s timing); the decoder's indices equal FFmpeg's for all 6,454 frames of the 621 entries.
 
-**KPW1 (ADR 0018, stage D6; KPV1 before it, ADR 0013).** Read from StarCraft: Remastered (`--scr`, or `kp_res` at run time), a movie Remastered keeps only as WebM is a KPW1 file in the SMK's place (`converter/formats/kpw.py`, `kp_res_scr.c`; `kp_smk.c` plays it through the host's WebM codec, `smk.decode` reads it through FFmpeg's libvpx): "KPW1", u32 width and height (the WebM's: 4 of the 549 movies are narrower than their SMKs), u32 frames, i32 frame rate and u32 flags as the SMK header's (flag 1: a ring movie, whose extra stored frame leads back to frame 1), 768 bytes of palette (R, G, B), then the WebM as it is. Its palette is its screen's (the PCX palette its SMK's used colours match within 4: the theme's for a glue movie, the game's for a portrait); frame n is the WebM's frame n (its last past its end), each pixel its colour's index by the palette rule (`palette.IndexMap`, `kp_index_map.h`: the lowest index of an opaque colour, the nearest for a colour the palette lacks), alpha below 128 index 0. The WebM is lossy, so a KPW1 is an `approximation` of its SMK; libvpx decodes it the same everywhere, but the YUV to RGB rounding of the glue's VP8 movies (`kp_vpx_rgba`) differs from FFmpeg's, so 94.7% of their pixels equal the converter's `decode`. Nothing is cached.
+**KPW1 (ADR 0018, stage D6; KPV1 before it, ADR 0013).** Read from StarCraft: Remastered (`--scr`, or `kp_res` at run time), a movie Remastered keeps only as WebM is a KPW1 file in the SMK's place (`tools/research/scdata/formats/kpw.py`, `kp_res_scr.c`; `kp_smk.c` plays it through the host's WebM codec, `smk.decode` reads it through FFmpeg's libvpx): "KPW1", u32 width and height (the WebM's: 4 of the 549 movies are narrower than their SMKs), u32 frames, i32 frame rate and u32 flags as the SMK header's (flag 1: a ring movie, whose extra stored frame leads back to frame 1), 768 bytes of palette (R, G, B), then the WebM as it is. Its palette is its screen's (the PCX palette its SMK's used colours match within 4: the theme's for a glue movie, the game's for a portrait); frame n is the WebM's frame n (its last past its end), each pixel its colour's index by the palette rule (`palette.IndexMap`, `kp_index_map.h`: the lowest index of an opaque colour, the nearest for a colour the palette lacks), alpha below 128 index 0. The WebM is lossy, so a KPW1 is an `approximation` of its SMK; libvpx decodes it the same everywhere, but the YUV to RGB rounding of the glue's VP8 movies (`kp_vpx_rgba`) differs from FFmpeg's, so 94.7% of their pixels equal the converter's `decode`. Nothing is cached.
 
 **Atlases.** Frames are L8 index images in `generated/atlases/portraits_<t|u|z|p|n>.atlas`, one animation per movie. Every texel is opaque, including index 0. The other SMKs (glue animations, cinematics) are UI and video resources of phase 9.
 
 ## `grpmeta.kpd` (schema 1)
 
 - **Reader:** `native/kp_core/src/core/kp_grpmeta.c`.
-- **Writer:** `kpd.build_grpmeta`; opacity runs and the Python twin of `0x40fd50` in `converter/formats/grp.py`; LO checks in `converter/formats/lo.py`.
-- **Atlases and packs:** `converter/kpf/resources.py` (the SDL runtime's pack files), `converter/emit/packs.py` (the step that writes them), see [resource packs](packs.md).
+- **Writer:** `kpd.build_grpmeta`; opacity runs and the Python twin of `0x40fd50` in `tools/research/scdata/formats/grp.py`; LO checks in `tools/research/scdata/formats/lo.py`.
+- **Atlases and packs:** the runtime's packer (`kp_packs.c`, stage D5; the Python converter's `kpf/resources.py` was its twin until ADR 0019's stage C7), see [resource packs](packs.md).
 - **Tests:**
-  - `converter/tests/test_grpmeta.py`;
-  - `converter/tests/test_resources.py` (`AFRM`).
+  - `tools/research/scdata/tests/test_grpmeta.py`;
+  - `tests/c/test_present.c` (the packs' frames).
 
 Every GRP and LO file that `images.dat` names, keyed by `images.tbl` index. The DAT columns are not repeated: `images.grp_file` and the six overlay columns of `dat.kpd` hold `images.tbl` indices, so `TBLX` maps an image id to its entries at runtime (`grpmeta.image_grp`, `grpmeta.image_lo`).
 
@@ -447,7 +447,7 @@ Every GRP and LO file that `images.dat` names, keyed by `images.tbl` index. The 
 
 The runs are the RLE packets in canonical form, which gives the same result for every x: adjacent packets of one class are merged, empty packets dropped and runs split at 127. A leading empty packet of the other class is kept, because x = 0 reads it. `kp_grpmeta.c` and `grp.runs_pixel_opaque` evaluate the runs; `grp.pixel_opaque` is the twin on raw GRP bytes. The stock blocks take 4.4 MB (700,449 rows, 3.0 M runs from 3.8 M packets).
 
-**Atlases.** `packs.assign_atlases` places each GRP in its pack's atlas (`converter/packs.py`); the runtime finds the atlas's frames in its pack file through `AFRM`, which it computes from `GRPS` (`kp_grpmeta_afrm`, stage D5: the original data's grpmeta has no such section; `test_data` checks the two equal). A pack over 11.5 M frame-rectangle pixels would be split into `<pack>_1`, `<pack>_2`, …; no stock pack is. The mask flag is set when a GRP of the atlas draws an opaque index 0 (ADR 0003); no stock GRP does.
+**Atlases.** `packs.assign_atlases` places each GRP in its pack's atlas (`tools/research/scdata/packs.py`); the runtime finds the atlas's frames in its pack file through `AFRM`, which it computes from `GRPS` (`kp_grpmeta_afrm`, stage D5: the original data's grpmeta has no such section; `test_data` checks the two equal). A pack over 11.5 M frame-rectangle pixels would be split into `<pack>_1`, `<pack>_2`, …; no stock pack is. The mask flag is set when a GRP of the atlas draws an opaque index 0 (ADR 0003); no stock GRP does.
 
 **Verification** (`test_grpmeta.py` with `KOPRULU_ORIGINAL`):
 - `grp-opaque-zero.json`: SHA-256, frame count and opaque pixels of all 833 named files (17,244,859 opaque pixels), and 0 opaque index-0 pixels;
@@ -457,7 +457,7 @@ The runs are the RLE packets in canonical form, which gives the same result for 
 
 ## `campaign.kpd` (schema 1)
 
-Written from the manifest `defs/campaign/<profile>.json` (the executable's tables, checked against `StarCraft.exe` by `converter/tests/test_campaign.py`) and `arr\mapdata.dat`/`mapdata.tbl`. Read by `native/kp_core/src/core/kp_campaign.c`; the progression rules are the same file (atlas P41).
+Written from the manifest `defs/campaign/<profile>.json` (the executable's tables, checked against `StarCraft.exe` by `tools/research/scdata/tests/test_campaign.py`) and `arr\mapdata.dat`/`mapdata.tbl`. Read by `native/kp_core/src/core/kp_campaign.c`; the progression rules are the same file (atlas P41).
 
 | Section | Content |
 |---|---|

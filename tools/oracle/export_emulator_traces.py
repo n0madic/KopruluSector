@@ -36,8 +36,8 @@ from pathlib import Path
 
 from oracle_common import EMU_ROOT, GOLDEN, ROOT, ExportError, golden_json, sha256_bytes, sha256_file
 
-sys.path.insert(0, str(ROOT))
-from converter import raster  # noqa: E402  (the repository root is the import root)
+sys.path.insert(0, str(ROOT / "tools" / "research"))
+from scdata import raster  # noqa: E402  (the repository root is the import root)
 
 log = logging.getLogger("export_emulator_traces")
 

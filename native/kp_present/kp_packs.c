@@ -34,7 +34,7 @@ int kp_grpmeta_afrm(const KpGrpMeta *g, uint32_t **out, KpError *err)
 {
 	uint32_t *used, e;
 	*out = NULL;
-	/* converter/kpf/kpd.py atlas_frame_offsets: the frames of the atlas's earlier entries, in GRPS order */
+	/* scdata/kpf/kpd.py atlas_frame_offsets: the frames of the atlas's earlier entries, in GRPS order */
 	if (!(used = (uint32_t *)calloc((size_t)g->atlas_count + 1, sizeof *used))
 		|| !(*out = (uint32_t *)malloc(sizeof **out * (g->grp_count ? g->grp_count : 1)))) {
 		free(used);

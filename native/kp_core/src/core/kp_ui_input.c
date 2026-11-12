@@ -679,7 +679,7 @@ static void box_select(KpUi *ui, int32_t l, int32_t t, int32_t r, int32_t b)
  * The original asks the rows of ComputeConsoleMaskRows 0x43e9c0 first (above the first opaque row: the view, from the
  * first fully opaque row: the console) and Storm's trans mask (0x6d0c44, the one STransCreateE of this art with colour
  * key 0, 0x4cb2b0) between them: the same answer as this pixel test on the four races' art
- * (converter/tests/test_ui.py), for the points the 640 x 480 screen has. */
+ * (scdata/tests/test_ui.py), for the points the 640 x 480 screen has. */
 static int over_console(KpUi *ui, int32_t x, int32_t y)
 {
 	const KpUiSurface *c = &ui->console;

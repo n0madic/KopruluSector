@@ -27,6 +27,7 @@ from .state import trigger_nodes
 
 log = logging.getLogger(__name__)
 REPO = Path(__file__).resolve().parents[3]
+RESEARCH = REPO / "tools" / "research"
 LOCALES = REPO / "defs" / "l10n" / "locales.json"
 LANGUAGE_MAP = "locales/{locale}/Assets/campaign/{mission}/staredit/scenario.chk"
 PLAYER_LISTS = 8
@@ -72,12 +73,12 @@ def excepted(locale: str, mission: str) -> bool:
 
 def merged_triggers(locale: str, mission: str, scr: Path, original: Path) -> list[bytes]:
     """The 1.17 map's TRIG records of `mission` (`terran/terran01`) with the TIME of the language's map in `scr`."""
-    if str(REPO) not in sys.path:
-        sys.path.insert(0, str(REPO))
-    from converter.casc.source import ScrSource
-    from converter.formats import chk
-    from converter.missions import catalog_scenarios
-    from converter.mpq.profile import Resolver
+    if str(RESEARCH) not in sys.path:  # scdata
+        sys.path.insert(0, str(RESEARCH))
+    from scdata.casc.source import ScrSource
+    from scdata.formats import chk
+    from scdata.missions import catalog_scenarios
+    from scdata.mpq.profile import Resolver
 
     with Resolver(original) as r:
         base = next((s.sections["TRIG"] for e, s in catalog_scenarios(r) if e.name == mission), None)

@@ -3,8 +3,8 @@
  * (kp_dat_from_files), the mission from its scenario (kp_mission_from_files), grpmeta (kp_grpmeta_from_files), the
  * iscript and the AI scripts (kp_iscript_from_files, kp_ai_bins_from_files), the UMS override effects (kp_rules.c), the
  * tileset and the terrain import (kp_tileset_from_files, kp_terrain_import) and the palettes (kp_palettes_from_files).
- * The fixtures and their expectations are written by `python3 -m converter.kpf.fixtures` (tests/fixtures/generated/kpf,
- * expect.json: the Python twins' values); the tests are skipped without them. The mission strings are read through
+ * The fixtures and their expectations are committed (tests/fixtures/kpf, expect.json: the Python twins' values, written
+ * by the Python converter before ADR 0019's stage C7). The mission strings are read through
  * GetMapString (kp_map_string); the text engine (kp_ui_text.h) interprets their control codes. The ImportMapTiles flags
  * of the game's own import (kp_start.c) are the original's in test_initial_state's "tiles" category; here they are
  * checked from the tileset's CV5 and megatile flags. */
@@ -14,6 +14,7 @@
 
 #include "kp_defs.h"
 #include "kp_present.h"
+#include "kp_sha256.h"
 #include "../../native/kp_core/src/core/kp_aiscript.h"
 #include "../../native/kp_core/src/core/kp_start.h"
 
@@ -23,7 +24,7 @@
 
 static const char *const FIXTURES[] = { EXPECT, NULL };
 
-/* Whether the fixtures exist (the generator's output; a SKIP line without them). */
+/* Whether the fixtures exist (a SKIP line without them). */
 static int ready(KpT *T, const char *label) { return kp_t_ready(T, label, FIXTURES); }
 
 static const KpJson *expect(KpT *T) { return kp_t_golden(T, EXPECT); }
@@ -254,15 +255,35 @@ static void kpf_rejects_bad_files(KpT *T)
 	expect_parse_error(T, bad, size, 1, "checksum");
 }
 
+/* The multi-megabyte container of the loading spike, built here as the Python twin built large.kpd (its payload a
+ * SHA-256 counter stream: poorly compressible), its size, CRC and tail those expect.json recorded. */
+#define LARGE_SIZE (8u * 1024u * 1024u)
 static void kpf_large_file(KpT *T)
 {
-	const KpJson *e, *tail;
+	const KpJson *e, *tail, *hash;
 	size_t size;
-	uint8_t *data;
+	uint8_t *payload, *data = NULL, counter[8];
+	uint64_t n;
+	size_t at;
 	const KpKpfSection *blob;
+	KpKpfOut out = { "BLOB", NULL, LARGE_SIZE, 0 };
 	if (!ready(T, "test_data")) return;
 	e = expect(T);
-	data = fixture(T, "large.kpd", &size);
+	payload = (uint8_t *)malloc(LARGE_SIZE);
+	kp_t_ok(T, payload != NULL, "out of memory");
+	kp_t_defer(T, free, payload);
+	for (n = 0, at = 0; at < LARGE_SIZE; n++, at += KP_SHA256_SIZE) {
+		int k;
+		for (k = 0; k < 8; k++)
+			counter[k] = (uint8_t)(n >> (8 * k));
+		kp_sha256(counter, sizeof counter, payload + at); /* LARGE_SIZE is a multiple of the digest's size */
+	}
+	out.payload = payload;
+	hash = member(T, e, "source_hash");
+	kp_t_ok(T, hash->count == 32, "the source hash");
+	kp_t_ok(T, kp_kpf_build("TEST", 3, 7, "bw-1.17.0.1", (const uint8_t *)hash->s, &out, 1, &data, &size) == 0,
+		"the container built");
+	kp_t_defer(T, free, data);
 	kp_t_eq(T, (int64_t)size, kp_json_int(member(T, e, "large_size"), -1), "the file's size");
 	blob = section(T, parse(T, data, size, "large.kpd", 0), "BLOB");
 	kp_t_eq(T, blob->size, kp_json_int(member(T, e, "large_payload_size"), -1), "BLOB size");
@@ -560,7 +581,7 @@ static void free_grp(void *p)
 }
 
 /* images.dat's columns grpmeta reads, for three images: grp_file naming images.tbl entries 1, 3 and 4 and
- * attack_overlay entry 2 (fixtures.py grpmeta_fixture: GRPs {1, 3, 4}, LOs {2}; the other overlays none). */
+ * attack_overlay entry 2 (the fixtures' grpmeta set: GRPs {1, 3, 4}, LOs {2}; the other overlays none). */
 static KpDat *grpmeta_dat(KpT *T)
 {
 	static const char *const COLUMNS[] = { "grp_file", "attack_overlay", "damage_overlay", "special_overlay",
@@ -789,7 +810,7 @@ static void scripts_ai_resolution(KpT *T)
 	kp_ai_bins_free(&b);
 }
 
-/* --- the override effects (the Python twin converter/derive/rules.py) --- */
+/* --- the override effects (the Python twin scdata/derive/rules.py) --- */
 
 #define CHECKSUM 1000003
 
@@ -924,7 +945,7 @@ static void rules_matches_python(KpT *T)
 		kp_json_field_int(want, "tech_states", -1), "tech states");
 }
 
-/* --- the tileset and the terrain import (the Python twin converter/derive/terrain.py) --- */
+/* --- the tileset and the terrain import (the Python twin scdata/derive/terrain.py) --- */
 
 #define CV5_RECORD 52
 #define CV5_FLAG_MASK 0xd8fau
@@ -935,7 +956,7 @@ static void free_tileset(void *p)
 	free(p);
 }
 
-/* The fixture tileset (fixtures.py fixture_tileset, as desert): 70 CV5 groups over 40 megatiles, a WPE of
+/* The fixture tileset (as desert): 70 CV5 groups over 40 megatiles, a WPE of
  * (i * 3) % 256 but the fourth bytes, creep's two edges. */
 static KpTileset *load_tileset(KpT *T)
 {

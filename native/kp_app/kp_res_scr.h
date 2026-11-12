@@ -1,5 +1,5 @@
 /* kp_res's rebuilds of the profile's files from StarCraft: Remastered's own formats (ADR 0018, stage D6): the C of
- * converter/casc/source.py ScrSource._remake over kp_scr.h, by the profile's compiled tables. Internal to kp_res. */
+ * scdata/casc/source.py ScrSource._remake over kp_scr.h, by the profile's compiled tables. Internal to kp_res. */
 #ifndef KP_RES_SCR_H
 #define KP_RES_SCR_H
 

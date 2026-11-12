@@ -20,10 +20,9 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import inspect_ai  # noqa: E402
-from converter.formats import dat  # noqa: E402
+from scdata.formats import dat  # noqa: E402
 
 TYPES = 228
 TYPE_NONE = 228

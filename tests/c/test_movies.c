@@ -23,7 +23,7 @@
 #define H 8
 #define FRAMES 3
 #define FILL 7 /* every pixel's index */
-#define KPW_FIXTURE "tests/fixtures/generated/kpf/movie.kpw"
+#define KPW_FIXTURE "tests/fixtures/kpf/movie.kpw"
 #define KPW_HEADER (24 + 768) /* a KPW1's header and palette before its WebM */
 #define FFMPEG_GOLDEN "tests/golden/oracle/cinematics/smk_ffmpeg.json" /* tools/oracle/export_smk_ffmpeg.py */
 
@@ -248,7 +248,6 @@ static void webm_movie_plays(KpT *T)
 	KpError err;
 	uint32_t n, pictures = 0;
 	const KpCineClip *c;
-	if (!kp_t_has(T, KPW_FIXTURE)) kp_t_skip(T, "no %s (python3 -m converter.kpf.fixtures)", KPW_FIXTURE);
 	data = kp_t_read(T, KPW_FIXTURE, &size);
 	memset(&named, 0, sizeof named);
 	strcpy(named.name, "smk\\fixture");

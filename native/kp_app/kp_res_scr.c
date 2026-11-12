@@ -949,7 +949,7 @@ static uint8_t *remake_smk(KpRes *r, KpResScr *s, KpCasc *casc, const char *key,
 	if (!webm) return NULL;
 	/* TODO: a movie with a palette of its own (none in profile bw-1.17.0.1: every SMK's palette is a screen's) would
 	 * need its colours, which the converter took with FFmpeg's palettegen */
-	/* the size the WebM's, which may differ from the SMK's (converter/formats/kpw.py) */
+	/* the size the WebM's, which may differ from the SMK's (scdata/formats/kpw.py) */
 	if (e->group == NONE16 || palette_for(r, s, key, e->group, palette) != 0
 		|| kp_webm_size(webm, webm_size, &w, &h) != 0 || !(out = (uint8_t *)malloc(KPW_HEADER + webm_size + 1))) {
 		free(webm);

@@ -97,10 +97,10 @@ int kp_grpmeta_check(const KpGrpMeta *g, KpError *err)
 	return 0;
 }
 
-/* --- grpmeta from the original files (ADR 0018, stage D3): converter/kpf/kpd.py grp_set and build_grpmeta --- */
+/* --- grpmeta from the original files (ADR 0018, stage D3): scdata/kpf/kpd.py grp_set and build_grpmeta --- */
 
 #define IMAGES_TBL "arr\\images.tbl"
-#define ATLAS_AREA_BUDGET 11500000u /* converter/packs.py: frame-rectangle pixels per atlas */
+#define ATLAS_AREA_BUDGET 11500000u /* scdata/packs.py: frame-rectangle pixels per atlas */
 #define PACKS 7
 
 static const char *const PACK_NAMES[PACKS] = { "terran", "protoss", "zerg", "neutral", "effects", "doodads", "other" };
@@ -144,7 +144,7 @@ static int starts_lower(const uint8_t *s, uint32_t n, const char *prefix)
 	return 1;
 }
 
-/* converter/packs.py pack_of_grp */
+/* scdata/packs.py pack_of_grp */
 static int pack_of_grp(const uint8_t *path, uint32_t n)
 {
 	int k;

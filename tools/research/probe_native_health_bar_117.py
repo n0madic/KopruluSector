@@ -26,15 +26,14 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import pefile  # noqa: E402
 from unicorn import Uc, UcError, UC_ARCH_X86, UC_MODE_32  # noqa: E402
 from unicorn.x86_const import UC_X86_REG_EAX, UC_X86_REG_ECX, UC_X86_REG_EDX, UC_X86_REG_EIP, UC_X86_REG_ESP  # noqa: E402
 
-from converter.formats import dat, pcx  # noqa: E402
-from converter.mpq.profile import Profile, Resolver  # noqa: E402
+from scdata.formats import dat, pcx  # noqa: E402
+from scdata.mpq.profile import Profile, Resolver  # noqa: E402
 from probe_native_iscript_117 import MASK, TARGET_HASH, fold  # noqa: E402
 
 sys.path.insert(0, str(ROOT / "tools" / "oracle"))

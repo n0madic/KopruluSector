@@ -9,7 +9,7 @@
  * triggers (none without "triggers"); the spec's "locations" replace MRGN records and its trigger texts are appended to
  * STR; an action's "script" (Run AI Script's four-character id) fills its number field; "researched" marks techs
  * available and researched in PTEC and PTEx. The emulator substitutes the same bytes for the campaign map at load
- * (tools/research/sc_emulator/scenario.py, through converter/scenarios.py: the twin of this writer until stage C7), and
+ * (tools/research/sc_emulator/scenario.py, through scdata/scenarios.py: the twin of this writer until stage C7), and
  * kp_convert scenarios writes them as generated/scenarios/<name>.chk, which the game reads as a campaign mission's
  * scenario, so both games start from the same map. Only the spec is committed; the CHK is rebuilt from the install.
  */

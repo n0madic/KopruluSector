@@ -1,5 +1,5 @@
 /*
- * GRP files read as the original reads them (converter/formats/grp.py; docs/research/native-image-geometry.md): the
+ * GRP files read as the original reads them (scdata/formats/grp.py; docs/research/native-image-geometry.md): the
  * header (u16 frames, width, height), the frame records (u8 x, y, width, height, u32 payload offset masked with
  * 0x7fffffff) at 6 + 8 * frame, a frame's rows of packets (0x80: skip p & 0x7f pixels; 0x40: repeat the next index
  * p & 0x3f times; else p literal indices). Transparency is the packet's, so index 0 drawn by a packet is opaque.

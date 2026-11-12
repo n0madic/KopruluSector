@@ -23,10 +23,10 @@ import struct
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from converter.casc.storage import CascStorage  # noqa: E402
-from converter.mpq import stormlib  # noqa: E402
+from scdata.casc.storage import CascStorage  # noqa: E402
+from scdata.mpq import stormlib  # noqa: E402
 
 SECTOR = 4096
 DISC_BLOCK = 2048

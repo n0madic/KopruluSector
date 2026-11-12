@@ -2,7 +2,7 @@
  "id": "campaigns",
  "profile": "bw-1.17.0.1",
  "provenance": [
-  "Campaign tables of StarCraft.exe: the pointer triples 0x50e0b8 (original) and 0x50e0c4 (expansion), each Zerg, Terran, Protoss; rows of 8 bytes {u16 label (gluAll string id, 0 none), u16 mission (arr\\mapdata.dat index, also the directory string index of 0x51abb8; 0 ends the table), u16 cinematic (0 a playable mission), u8 race, u8 hidden} (docs/research/atlas/p41.md, docs/research/native-triggers.md; evidence/native-triggers-static.json); checked against the executable by converter/tests/test_campaign.py",
+  "Campaign tables of StarCraft.exe: the pointer triples 0x50e0b8 (original) and 0x50e0c4 (expansion), each Zerg, Terran, Protoss; rows of 8 bytes {u16 label (gluAll string id, 0 none), u16 mission (arr\\mapdata.dat index, also the directory string index of 0x51abb8; 0 ends the table), u16 cinematic (0 a playable mission), u8 race, u8 hidden} (docs/research/atlas/p41.md, docs/research/native-triggers.md; evidence/native-triggers-static.json); checked against the executable by tools/research/scdata/tests/test_campaign.py",
   "Cheat hashes 0x4eb97c..0x4eba08 of MatchCheatHash 0x40dc80 and MatchExtraCheatHash 0x40dfa0 (docs/research/atlas/p03.md): the 8-byte MAC of the lowercased text and the bit it toggles in the cheat word 0x5432fc; the texts are those the emulator typed (tools/research/sc_emulator scenarios.type_cheats, tests/scenarios/cheat_typed.json)",
   "A new game keeps the cheat bits 0x28000200 (InitGame 0x443f40 step 10, atlas p14.md); the template's cheats byte 0x67294e is 1 in every campaign game (the emulator's state dumps)"
  ],

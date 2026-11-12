@@ -11,7 +11,7 @@ The probe's context (its `setup`): pen (5, 4), clip left 2, right 120 and bottom
 2 x max width, flags 0x11, the wrap mode on, the bottom extent at the pen's y, row 0 current and row 1 previous.
 
 The packet cases hold no pixels of the fonts: the exporter rebuilds each expected 128 x 64 probe bitmap from the fonts
-the runtime builds from the 1.17 install (converter/gamedata.py fonts), checks its SHA-256 against the evidence, and
+the runtime builds from the 1.17 install (scdata/gamedata.py fonts), checks its SHA-256 against the evidence, and
 keeps the CRC-32 of the glyph's rows (stride width + pad) and the packet bytes consumed. The wrapped TBL cases hold the
 string's resource and index; the test reads the text from the install's TBLs.
 
@@ -38,9 +38,9 @@ import zlib
 
 from oracle_common import GOLDEN, ROOT, ExportError, cases_module, load_evidence, update_goldens
 
-sys.path.insert(0, str(ROOT))
-from converter import gamedata  # noqa: E402
-from converter.mpq.profile import Profile, Resolver  # noqa: E402
+sys.path.insert(0, str(ROOT / "tools" / "research"))
+from scdata import gamedata  # noqa: E402
+from scdata.mpq.profile import Profile, Resolver  # noqa: E402
 
 log = logging.getLogger("export_text_cases")
 GENERATOR = "tools/oracle/export_text_cases.py"

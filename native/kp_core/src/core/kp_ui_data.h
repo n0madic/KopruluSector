@@ -1,6 +1,6 @@
 /*
  * The interface's data (ADR 0018, stages D3 and D8d): what kp_ui reads, built from the original files
- * (kp_ui_data_from_files: the converter's rules in C, converter/kpf/kpd.py build_ui, build_fonts, build_strings,
+ * (kp_ui_data_from_files: the converter's rules in C, scdata/kpf/kpd.py build_ui, build_fonts, build_strings,
  * build_sounds, build_portraits). Each part is the runtime's own layout: the dialogs' widget and SMK records (DLGS) and
  * their UTF-8 texts (POOL), the files by path, the colour rows, the TBLs in UTF-8, the sound records, the portrait rows;
  * the section names below are those of the containers the converter writes the languages' and the speech's overlays in
@@ -55,7 +55,7 @@ typedef struct KpUiData {
 	int owned_count, owned_cap;
 } KpUiData;
 
-/* --- the dialogs from their BINs (kp_ui_dialogs.c; converter/kpf/kpd.py dialogs_section) --- */
+/* --- the dialogs from their BINs (kp_ui_dialogs.c; scdata/kpf/kpd.py dialogs_section) --- */
 
 /* A text given to a record of a dialog's own that has none (kpd.koprulu_labels: the main menu's version label). */
 typedef struct {

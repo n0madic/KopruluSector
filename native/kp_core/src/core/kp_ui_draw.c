@@ -335,7 +335,7 @@ static void draw_tiled_button(KpUi *ui, KpUiControl *c, const int16_t clip[4])
 static void draw_button(KpUi *ui, KpUiControl *c, int32_t x, int32_t y, const int16_t clip[4])
 {
 	/* A button with its own bitmap (DrawBitmapButton 0x4c3fb0) is not ported: no BIN record of type 1 or 2 has an image
-	 * (converter/tests/test_ui.py), and the code gives none an image */
+	 * (scdata/tests/test_ui.py), and the code gives none an image */
 	if (c->flags & FLAG_TILED) draw_tiled_button(ui, c, clip);
 	else draw_frame_button(ui, c, x, y, clip);
 }
@@ -470,7 +470,7 @@ KpUiDraw kp_ui_type_draw(int type)
 	case 10: return draw_right_text;
 	case 11: return draw_centred_text;
 	case 12: return kp_ui_list_draw;
-	default: return NULL; /* type 13, a combo box: not ported, only the multiplayer and custom games' dialogs and the message filter have one (converter/tests/test_ui.py) */
+	default: return NULL; /* type 13, a combo box: not ported, only the multiplayer and custom games' dialogs and the message filter have one (scdata/tests/test_ui.py) */
 	}
 }
 

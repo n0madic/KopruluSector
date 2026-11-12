@@ -11,9 +11,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
-from converter import missions  # noqa: E402
-from converter.mpq.profile import Profile, Resolver  # noqa: E402
+sys.path.insert(0, str(ROOT / "tools" / "research"))
+from scdata import missions  # noqa: E402
+from scdata.mpq.profile import Profile, Resolver  # noqa: E402
 
 DEFAULT_INSTALL = ROOT / "koprulu-private" / "retail" / "extracted" / "app"
 

@@ -154,7 +154,7 @@ uint8_t *kp_app_read_head(KpApp *a, const char *path, size_t want, size_t *size,
 }
 
 /* The vector fonts of the interface's text at large scales (ADR 0011): SIL OFL fonts, not original data, under the
- * names the interface looks them up by (converter/kpf/kpd.py VECTOR_FONTS); read from the data root's fonts/ (a
+ * names the interface looks them up by (scdata/kpf/kpd.py VECTOR_FONTS); read from the data root's fonts/ (a
  * bundle's, tools/product.sh), else the source tree's third_party/fonts/ (the working directory's). */
 
 /* A file outside the data root (the source tree's) in malloc'd bytes, or NULL. */

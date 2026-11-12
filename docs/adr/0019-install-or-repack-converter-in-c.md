@@ -182,3 +182,21 @@ The stages that use them (C3, C5, C7) measure them.
   - `tools/web_hd_heads.py` and `kp_load_check`.
 
   FFmpeg is left only for the test fixtures (C7).
+
+## Stage C7: the Python converter deleted (2026-11-12)
+
+- **`converter/` is gone.** What research reads moved, with its history, to `tools/research/scdata/` (imported as
+  `scdata` with `tools/research` on the path): the formats' readers, MPQ and CASC, the container and its `kpd`/`kpm`
+  writers, the analyzer, the missions' survey, the packs' membership, the UI tables and their tests. The command line,
+  the derived terrain's and the packer's Python twins, `dump` and `fixtures.py` were deleted.
+- **The research's commands** are scripts: `tools/research/scr_manifest.py`, `scr_compare.py`, `scr_digests.py`.
+  `scr_manifest.py` stays Python (it records the analyzer's survey); `kp_convert manifest` is a `TODO:`.
+- **The fixtures are committed** (`tests/fixtures/kpf/`, 2.2 MB, synthetic), with the expectations the Python twins
+  computed; the 8 MiB container is built by `test_data.c`.
+- **The derived terrain** (walk, regions, contours) of the 68 campaign CHKs is compared with the native evidence by
+  `test_chk` in C, as the Python twins' tests did.
+- **The Python tests** (`scdata`'s and `tools/tests/`) run by `tools/python_tests.py`, the renamed runner.
+- **FFmpeg is research only** (the 1.17 movies' decode golden, the research readers' Remastered movies). The game and
+  `kp_convert` need neither Python nor FFmpeg.
+- **The Fold7** over a phone's repack of Remastered (HD2 ASTC, ruRU, the HD2 movies): `hd_game.kps` on terran02 and on
+  terran01 in ruRU with its speech, `hd_glue.kps` and the 28 movies' check, all with 0 failures.

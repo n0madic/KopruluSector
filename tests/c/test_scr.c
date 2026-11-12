@@ -1,7 +1,7 @@
 /* kp_scr (native/kp_app/kp_scr.h, ADR 0018 stage D6): StarCraft: Remastered's own formats brought back to 1.17's files,
- * on the synthetic inputs `python3 -m converter.kpf.fixtures` writes with converter/casc/rebuild.py's results beside
- * them (converter.kpf.fixtures.scr_fixture, tests/fixtures/generated/kpf/scr/): each function gives rebuild.py's bytes.
- * Over a real install `kp_convert digests` checks every rebuild kp_res makes against `converter scr-digests`. */
+ * on synthetic inputs with the results of the Python twin (tools/research/scdata/casc/rebuild.py) beside them
+ * (tests/fixtures/kpf/scr/, committed): each function gives rebuild.py's bytes. Over a real install `kp_convert
+ * digests` checks every rebuild kp_res makes against tools/research/scr_digests.py's. */
 #include "kp_test.h"
 
 #include <stdio.h>
@@ -11,7 +11,7 @@
 #include "kp_scr.h"
 #include "../../native/kp_core/src/core/kp_kpf.h"
 
-#define DIR "tests/fixtures/generated/kpf/scr/"
+#define DIR "tests/fixtures/kpf/scr/"
 
 static uint8_t *fixture(KpT *T, const char *name, size_t *size)
 {

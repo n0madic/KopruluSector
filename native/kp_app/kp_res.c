@@ -19,11 +19,11 @@
 #define KP_RES_MESSAGE 1400
 
 /* Where StarCraft: Remastered keeps the profile's files: its SD copies first, since the copies at the root are its own
- * where both exist; the enUS locale last (converter/casc/source.py PREFIXES). */
+ * where both exist; the enUS locale last (scdata/casc/source.py PREFIXES). */
 static const char *const CASC_PREFIXES[] = { "SD/", "", "locales/enUS/Assets/SD/", "locales/enUS/Assets/" };
 #define CASC_PREFIX_COUNT ((int)(sizeof CASC_PREFIXES / sizeof CASC_PREFIXES[0]))
 
-/* Original files Remastered keeps under another name (converter/casc/source.py MOVED) */
+/* Original files Remastered keeps under another name (scdata/casc/source.py MOVED) */
 static const struct {
 	const char *name, *casc;
 } CASC_MOVED[] = {
@@ -45,7 +45,7 @@ static const struct {
 #define CASC_MOVED_COUNT ((int)(sizeof CASC_MOVED / sizeof CASC_MOVED[0]))
 
 /* Tileset files Remastered grows by appending records: the original is the prefix of the manifest's size; CV5 groups
- * empty in 1.17 that Remastered fills, [first, end) (converter/casc/source.py GROWN, CV5_FILLED). */
+ * empty in 1.17 that Remastered fills, [first, end) (scdata/casc/source.py GROWN, CV5_FILLED). */
 static const char *const CASC_GROWN[] = { ".cv5", ".vf4", ".vr4" };
 #define CV5_GROUP 52
 static const struct {
@@ -135,7 +135,7 @@ static void set_err(char *err, size_t err_size, const char *text)
 	if (err_size) snprintf(err, err_size, "%s", text);
 }
 
-/* name in lower case with '/' for '\\' (converter/casc/storage.py normalize) */
+/* name in lower case with '/' for '\\' (scdata/casc/storage.py normalize) */
 static void normalize(const char *name, char *out, size_t size)
 {
 	size_t i;
@@ -214,7 +214,7 @@ static int span_is(const char *p, const char *end, const char *word)
 	return (size_t)(end - p) == n && memcmp(p, word, n) == 0;
 }
 
-static int is_locale(const char *w, const char *end) /* converter/emit/cinematics.py LOCALE: ^[a-z]{2}[A-Z]{2}$ */
+static int is_locale(const char *w, const char *end) /* the Python converter's emit/cinematics.py LOCALE: ^[a-z]{2}[A-Z]{2}$ */
 {
 	return end - w == 4 && islower((unsigned char)w[0]) && islower((unsigned char)w[1]) && isupper((unsigned char)w[2])
 		&& isupper((unsigned char)w[3]);

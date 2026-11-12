@@ -439,7 +439,7 @@ static int condition(KpGame *g, const uint8_t *c)
 	default:
 		if (type >= KP_COND_TYPES) kp_game_fail(g, "triggers: condition type %d (table 0x50e058)", type);
 		/* TODO: Opponents (CountOpponents 0x4ba060) when a map that needs it comes into scope; outside the V1 profile
-		 * the converter rejects it (converter/analyze/triggers.py UNSUPPORTED_CONDITIONS) */
+		 * the converter rejects it (scdata/analyze/triggers.py UNSUPPORTED_CONDITIONS) */
 		kp_game_fail(g, "triggers: condition %d (0x%x)", type, (unsigned)CONDITION_HANDLERS[type]);
 		return 0;
 	}
@@ -1036,7 +1036,7 @@ static int action(KpGame *g, uint8_t *a)
 	default:
 		if (type >= KP_ACT_TYPES) kp_game_fail(g, "triggers: action type %d (table 0x50df68)", type);
 		/* TODO: Modify Unit Resource Amount 0x4b5d10 and Modify Unit Hangar Count 0x4b5dc0 when a map that needs
-		 * them comes into scope; outside the V1 profile the converter rejects them (converter/analyze/triggers.py
+		 * them comes into scope; outside the V1 profile the converter rejects them (scdata/analyze/triggers.py
 		 * UNSUPPORTED_ACTIONS) */
 		kp_game_fail(g, "triggers: action %d (0x%x)", type, (unsigned)ACTION_HANDLERS[type]);
 		return 0;

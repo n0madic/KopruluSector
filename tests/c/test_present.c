@@ -2332,8 +2332,8 @@ static void hd_cache_wants_the_shown_frames(KpT *T)
 	kp_hd_cache_free(&c);
 }
 
-/* The skyline packer places as converter/emit/pages.py pack does (the expected places are its output for these sizes
- * on 64 x 64 pages): by height, then width, then position; a zero-area rectangle at page 0's origin. */
+/* The skyline packer places as the Python converter's emit/pages.py pack does (the expected places are its output for
+ * these sizes on 64 x 64 pages): by height, then width, then position; a zero-area rectangle at page 0's origin. */
 static void pages_pack_as_the_converter(KpT *T)
 {
 	static const uint16_t SIZES[] = { 30, 20, 10, 40, 64, 8, 0, 5, 33, 33, 20, 20, 20, 20, 5, 60, 40, 10, 12, 12, 64, 64, 7, 0,

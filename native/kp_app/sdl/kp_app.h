@@ -30,7 +30,7 @@
 #define KP_APP_SFX 1200
 #define KP_APP_WAVS 256 /* a mission's trigger WAVs by WAVS index */
 #define KP_APP_FILE_NAME 260   /* an original file's name (MAX_PATH): the music's, a trigger's WAV */
-#define KP_APP_MUSIC_LOOPS 1   /* the MUSI kind of a track that loops (converter/kpf/resources.py TRACK_LOOPS) */
+#define KP_APP_MUSIC_LOOPS 1   /* the MUSI kind of a track that loops (the Python converter's TRACK_LOOPS) */
 #define KP_APP_PAN_FULL 10000
 #define KP_APP_PROFILE "profile.kpprof"
 #define KP_APP_WINDOW_W 1280 /* the desktop window's first size (--window W H) */

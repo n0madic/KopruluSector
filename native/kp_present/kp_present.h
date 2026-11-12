@@ -146,7 +146,7 @@ typedef struct {
 	uint8_t *owned; /* what the tables point into */
 } KpPalettes;
 
-/* The tables from the original files (ADR 0018, stage D3; converter/kpf/kpd.py build_palettes): each tileset's
+/* The tables from the original files (ADR 0018, stage D3; scdata/kpf/kpd.py build_palettes): each tileset's
  * remap PCXs (256 wide: a zero row, then theirs), dark.pcx's and shift.pcx's first bytes, the game's colour tables. */
 int kp_palettes_from_files(KpPalettes *p, const KpFiles *files, KpError *err);
 void kp_palettes_free(KpPalettes *p);
@@ -371,10 +371,11 @@ typedef struct {
 	uint16_t page, x, y;
 } KpPagePlace;
 
-/* The skyline packer of converter/emit/pages.py (ADR 0018, stage D5): n rectangles (sizes[2 k] wide, sizes[2 k + 1]
- * high) placed in order of height, then width (both descending), then k, each on the first page of page_size squared
- * where it fits at the skyline's lowest top edge (ties: the lowest x), a new page when none has room; out[k] its place
- * (a zero-area rectangle: page 0 at 0, 0), *page_count the pages. -1 with the error when one is larger than a page. */
+/* The skyline packer of the Python converter's emit/pages.py (ADR 0018, stage D5): n rectangles (sizes[2 k] wide,
+ * sizes[2 k + 1] high) placed in order of height, then width (both descending), then k, each on the first page of
+ * page_size squared where it fits at the skyline's lowest top edge (ties: the lowest x), a new page when none has room;
+ * out[k] its place (a zero-area rectangle: page 0 at 0, 0), *page_count the pages. -1 with the error when one is larger
+ * than a page. */
 int kp_pages_pack(const uint16_t *sizes, uint32_t n, int32_t page_size, KpPagePlace *out, int *page_count, KpError *err);
 /* The HD packs' packer (ADR 0019, stage C5): groups of rectangles (an image's frames;
  * group g is rectangles first[g] to first[g + 1] - 1 of sizes, in the same units as page_size), each group's in
@@ -383,11 +384,11 @@ int kp_pages_pack(const uint16_t *sizes, uint32_t n, int32_t page_size, KpPagePl
  * *page_count the pages. -1 with the error when one is larger than a page. */
 int kp_pages_pack_groups(const uint16_t *sizes, const uint32_t *first, uint32_t groups, int32_t page_size,
 	int32_t open_pages, KpPagePlace *out, int *page_count, KpError *err);
-/* Pack `name` built from the original GRPs as the converter's container holds it (converter/kpf/resources.py
- * build_pack, without its sounds): grpmeta's atlases of the pack in order, each GRP entry's frames read through files
- * and decoded, equal frames sharing one rectangle, FRMS in p (p->owned), the pages' indices in *pages (page_count
- * buffers of KP_PACK_PAGE_SIZE squared, malloc'd with their array: the caller frees them). -1 with the error (a GRP
- * missing or malformed, one drawing an opaque index 0, which the pages cannot tell from transparency). */
+/* Pack `name` built from the original GRPs as the converter's container holds it (the Python converter's
+ * kpf/resources.py build_pack, without its sounds): grpmeta's atlases of the pack in order, each GRP entry's frames
+ * read through files and decoded, equal frames sharing one rectangle, FRMS in p (p->owned), the pages' indices in
+ * *pages (page_count buffers of KP_PACK_PAGE_SIZE squared, malloc'd with their array: the caller frees them). -1 with
+ * the error (a GRP missing or malformed, one drawing an opaque index 0, which the pages cannot tell from transparency). */
 int kp_pack_build(KpPack *p, uint8_t ***pages, const KpGrpMeta *g, const KpFiles *files, const char *name, KpError *err);
 
 /* The frames of every loaded atlas: global frame g of GRP entry e frame f is
@@ -408,7 +409,7 @@ typedef struct {
 } KpFrameTable;
 
 /* Per GRP entry its first frame within its atlas (the frames of the atlas's earlier entries, in GRPS order), as
- * as converter/kpf/kpd.py atlas_frame_offsets computes it; malloc'd, -1 out of memory. */
+ * as scdata/kpf/kpd.py atlas_frame_offsets computes it; malloc'd, -1 out of memory. */
 int kp_grpmeta_afrm(const KpGrpMeta *g, uint32_t **out, KpError *err);
 /* Grpmeta's atlas a (from 1) among the loaded packs (packs[k] the pack of name pack_names[k]): 1 with its pack k and
  * the pack's atlas j, 0 when no loaded pack has it. */
@@ -944,7 +945,7 @@ typedef struct {
 } KpTileset;
 
 /* Tileset `index` (KP_TILESET_NAMES) from tileset\<name>.cv5, .vx4, .vr4, .vf4, .wpe and .grp (ADR 0018, stage D3) by
- * the converter's rules (converter/kpf/kpd.py build_tileset): the palette, cycles (the profile's compiled CYCn), CV5,
+ * the converter's rules (scdata/kpf/kpd.py build_tileset): the palette, cycles (the profile's compiled CYCn), CV5,
  * megatile flags and MMNI; the sheet and the edges as indices. */
 int kp_tileset_from_files(KpTileset *t, const KpFiles *files, int index, KpError *err);
 void kp_tileset_free(KpTileset *t);

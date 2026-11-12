@@ -1,5 +1,5 @@
 /*
- * A WAV's header as the original reads it (ParseWaveFile 0x49d830, FindRiffChunk 0x49d7c0; converter/formats/wav.py):
+ * A WAV's header as the original reads it (ParseWaveFile 0x49d830, FindRiffChunk 0x49d7c0; scdata/formats/wav.py):
  * "fmt " from byte 12 (at least 16 bytes, inside the file), then "data" after it, whose size must fit; chunks are not
  * padded to even sizes and any format tag is accepted. The sounds' records and the music's lengths (ADR 0018, stage
  * D3) read it from a file's first bytes.

@@ -1,7 +1,7 @@
 /*
  * A language's texts (ADR 0016; ADR 0019, stage C3), built from its own files where --data's source holds them (an
  * install's locales/<locale>/Assets/, a repack's koprulu-locale-<locale>.mpq: Remastered's names, kp_res_raw_files) over
- * the interface's base (KpUiData), by the rules converter/emit/locale.py had until this replaced it:
+ * the interface's base (KpUiData), by the rules the Python converter's emit/locale.py had until this replaced it:
  * - the six tables (KpUiData.tbl) in UTF-8 with u32 offsets, each row the language's XML's (stat_txt's
  *   by position over Remastered's own TBL's rows, the others by the manifest's ids: the profile's STBL);
  * - the dialogs' texts (DLGS, POOL): each original dialog rebuilt from the profile's SBIN with the language's strings,

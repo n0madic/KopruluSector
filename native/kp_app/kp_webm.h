@@ -24,7 +24,7 @@ typedef struct KpWebm KpWebm;
 KpWebm *kp_webm_open(const uint8_t *data, size_t size, char *err, size_t err_size);
 void kp_webm_close(KpWebm *w);
 /* The width and height of a WebM's first video track, its headers read only (no decoder): 0, -1 when it has none
- * (converter/formats/kpw.py webm_size). */
+ * (scdata/formats/kpw.py webm_size). */
 int kp_webm_size(const uint8_t *data, size_t size, uint32_t *width, uint32_t *height);
 uint32_t kp_webm_width(const KpWebm *w);
 uint32_t kp_webm_height(const KpWebm *w);

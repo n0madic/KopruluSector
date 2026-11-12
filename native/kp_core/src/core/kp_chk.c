@@ -1,4 +1,4 @@
-/* A scenario read by the original's loader tables (kp_chk.h; converter/formats/chk.py load, the same checks in the same
+/* A scenario read by the original's loader tables (kp_chk.h; scdata/formats/chk.py load, the same checks in the same
  * order and with the same messages). */
 #include "kp_chk.h"
 

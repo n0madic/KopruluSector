@@ -1,5 +1,5 @@
 /*
- * A scenario (CHK) read by the original's loader tables (ADR 0018, stage D4; converter/formats/chk.py): the chunks as
+ * A scenario (CHK) read by the original's loader tables (ADR 0018, stage D4; scdata/formats/chk.py): the chunks as
  * 0x4c1170 enumerates them, the version's descriptor (VER), the sections of the campaign's groups (header, briefing,
  * use-map-settings) checked by their handlers' payload rules, in the dispatch order of 0x4c12e0 (table order outer,
  * chunk order inner). The tables are the profile's compiled CHKL (tools/defs_c.py from defs/chk). A chunk neither read

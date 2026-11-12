@@ -9,7 +9,7 @@
 #include "../../native/kp_core/src/core/kp_utf8.h"
 
 #define DATA KP_T_DATA
-#define BASIC "tests/fixtures/generated/kpf/basic.kpd"
+#define BASIC "tests/fixtures/kpf/basic.kpd"
 
 /* A case's value as an unsigned 32-bit register (mod 2^32). */
 static uint32_t u(int64_t v) { return (uint32_t)(v & 0xffffffffLL); }

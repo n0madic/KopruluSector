@@ -1,5 +1,5 @@
 {
- "comment": "How profile bw-1.17.0.1's string tables and dialogs are rebuilt from StarCraft: Remastered (converter/casc/rebuild.py): Remastered string ids, NUL positions, the dialogs' skeletons (their bytes with every string zeroed, zlib, base64) and their strings' sources. Ids and names only; written by python3 -m converter scr-manifest --data DIR --scr DIR.",
+ "comment": "How profile bw-1.17.0.1's string tables and dialogs are rebuilt from StarCraft: Remastered (kp_scr.c; tools/research/scdata/casc/rebuild.py): Remastered string ids, NUL positions, the dialogs' skeletons (their bytes with every string zeroed, zlib, base64) and their strings' sources. Ids and names only; written by python3 tools/research/scr_manifest.py --data DIR --scr DIR.",
  "profile": "bw-1.17.0.1",
  "tbl": {
   "rez\\gluAll.tbl": {
@@ -7959,110 +7959,6 @@
      ],
      false,
      "id:SD/rez/RC3.xml#ttextbox-5"
-    ]
-   ]
-  },
-  "rez\\video.bin": {
-   "skeleton": "eNrd071KxEAUhuF3knGN67LVgluIBmtrQbAXrERwEfECRAQvwMLG0tbCwk6sRMRGK69BO8FLsFHEyp/4TZINI4jgKf1gCDmTPAzJOQDX5Iy6aZe53OmWzGvxW4ZPhgx+2D/T6vHOLhNuk8my1pXab1f7n4Xj70n00oHUl0jtRepHkRjUNakzLPDMIrd0mnq/vjpaBvVcaodt3tjjSd8iZCqctT5igjeoPgnqidSrRp2L1BFSg7peqjdS7xp1JVK9Sb0o1Xupj426FampSW2lQZ3lgXn9rW5Z24/6tSjGDOqG1Jwldlhlue6BQ19Ngl29lHoq9TVSj76p41iThYnVHFZdehzUbKi2+Zf5AlMPMo8=",
-   "texts": [
-    [
-     1032,
-     5,
-     [
-      20
-     ],
-     false,
-     "name:Video"
-    ],
-    [
-     1038,
-     5,
-     [
-      106
-     ],
-     false,
-     "id:SD/rez/RC3.xml#video-1"
-    ],
-    [
-     1044,
-     9,
-     [
-      192
-     ],
-     false,
-     "id:SD/rez/RC3.xml#video-2"
-    ],
-    [
-     1054,
-     23,
-     [
-      364
-     ],
-     false,
-     "id:SD/rez/RC3.xml#gameopt_dlg-4"
-    ],
-    [
-     1078,
-     27,
-     [
-      450
-     ],
-     false,
-     "id:SD/rez/RC3.xml#gameopt_dlg-5"
-    ],
-    [
-     1106,
-     23,
-     [
-      536
-     ],
-     false,
-     "id:SD/rez/RC3.xml#gameopt_dlg-6"
-    ],
-    [
-     1130,
-     25,
-     [
-      622
-     ],
-     false,
-     "id:SD/rez/RC3.xml#gameopt_dlg-7"
-    ],
-    [
-     1156,
-     16,
-     [
-      708
-     ],
-     false,
-     "id:SD/rez/RC3.xml#video-9"
-    ],
-    [
-     1173,
-     3,
-     [
-      794
-     ],
-     false,
-     "id:SD/rez/RC3.xml#video-10"
-    ],
-    [
-     1177,
-     3,
-     [
-      880
-     ],
-     false,
-     "id:SD/rez/RC3.xml#video-13"
-    ],
-    [
-     1181,
-     13,
-     [
-      966
-     ],
-     false,
-     "id:SD/rez/RC3.xml#video-14"
     ]
    ]
   },

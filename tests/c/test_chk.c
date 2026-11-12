@@ -1,11 +1,13 @@
 /* A mission read from its scenario (ADR 0018, stage D4: kp_chk, kp_derive, kp_mission_from_files). The converter's
  * fixture scenario (kp_t_fixture_files: campaign\fixture\staredit\scenario.chk) read through the profile's loader
- * tables gives the fixture's mission (its fields: test_data); variants of it are refused as converter/tests/test_chk.py
+ * tables gives the fixture's mission (its fields: test_data); variants of it are refused as scdata/tests/test_chk.py
  * and the trigger validation refuse them; every campaign mission of the installs of KP_TEST_ORIGINAL (1.17) and
  * KP_TEST_SCR (StarCraft: Remastered) is built from its files, and the two installs' missions are equal but their
  * speech's lengths and rates (Remastered's own recordings). */
 #include "kp_test_app.h"
 
+#include <ctype.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -14,7 +16,9 @@
 #include "kp_sha256.h"
 #include "../../native/kp_core/src/core/kp_campaign.h"
 #include "../../native/kp_core/src/core/kp_chk.h"
+#include "../../native/kp_core/src/core/kp_derive.h"
 #include "../../native/kp_core/src/core/kp_mission.h"
+#include "../../native/kp_core/src/core/kp_terrain.h"
 
 #define FIXTURE_CHK KP_T_FIXTURE_FILES "campaign/fixture/staredit/scenario.chk"
 #define FIXTURE_WAV_DATA 4410
@@ -200,7 +204,7 @@ static void refused(KpT *T, const uint8_t *chk, size_t size, int expansion, cons
 	kp_t_ok(T, strstr(err, want) != NULL, "the reason: %s (expected %s)", err, want);
 }
 
-/* converter/tests/test_chk.py over the version 205 fixture */
+/* scdata/tests/test_chk.py over the version 205 fixture */
 static void chk_variants_are_refused(KpT *T)
 {
 	static const struct {
@@ -282,7 +286,7 @@ static int with_trigger(KpT *T, size_t at, uint8_t value, long at32, uint32_t v3
 	return rc;
 }
 
-/* converter/analyze/triggers.py validate: the reachable conditions and actions past the tables or outside the V1
+/* scdata/analyze/triggers.py validate: the reachable conditions and actions past the tables or outside the V1
  * profile are refused; ignored ones are left */
 static void trigger_validation(KpT *T)
 {
@@ -372,6 +376,249 @@ static void installs_missions_equal(KpT *T)
 	kp_t_eq(T, compared, CAMPAIGN_MISSIONS, "the campaign's missions compared");
 }
 
+/* --- the terrain's derived parts against the original's (docs/research/evidence) --- */
+
+#define EVIDENCE "docs/research/evidence/"
+#define GRAPHS EVIDENCE "native-campaign-regions-probes.json"
+#define CONTOURS EVIDENCE "native-contours-probes.json"
+#define INGAME EVIDENCE "native-ingame-regions.json"
+#define GRAPH_CASE "campaign_graph_"
+#define CONTOUR_CASE "authentic_contours_"
+#define CAMPAIGN_MAPS 68 /* the catalog's 64 and four VER=57 maps no row names */
+#define RGNS_HEADER 12
+#define RGNS_REGION 32
+#define CONT_HEADER 16
+#define CONT_CAPACITY 5000
+#define CONT_CAPACITY_STEP 2500
+#define NAME_SIZE 256
+
+static const char *const EVIDENCE_FILES[] = { GRAPHS, CONTOURS, INGAME, NULL };
+
+static uint32_t u16_at(const uint8_t *p) { return (uint32_t)p[0] | (uint32_t)p[1] << 8; }
+static uint32_t u32_at(const uint8_t *p) { return u16_at(p) | u16_at(p + 2) << 16; }
+
+static void sha_text(KpSha256 *s, const char *fmt, ...)
+{
+	char b[160];
+	va_list ap;
+	int n;
+	va_start(ap, fmt);
+	n = vsnprintf(b, sizeof b, fmt, ap);
+	va_end(ap);
+	kp_sha256_update(s, b, (size_t)n);
+}
+
+/* The SHA-256 of an RGNS's graph in the probes' snapshot (their JSON, compact separators: the research probes and
+ * tools/research/ingame_regions.py hashed the original's graphs so), or 0 when the section is cut short. */
+static int graph_snapshot(const uint8_t *r, size_t size, char hex[2 * KP_SHA256_SIZE + 1])
+{
+	uint32_t w, h, n, splits, pool, i, j;
+	const uint8_t *pool_at, *raster, *split_at;
+	KpSha256 s;
+	uint8_t d[KP_SHA256_SIZE];
+	if (size < RGNS_HEADER) return 0;
+	w = u16_at(r), h = u16_at(r + 2), n = u16_at(r + 4), splits = u16_at(r + 6), pool = u32_at(r + 8);
+	if (size < RGNS_HEADER + (size_t)RGNS_REGION * n + 2 * (size_t)pool + 2 * (size_t)w * h + 6 * (size_t)splits)
+		return 0;
+	pool_at = r + RGNS_HEADER + (size_t)RGNS_REGION * n;
+	raster = pool_at + 2 * (size_t)pool;
+	split_at = raster + 2 * (size_t)w * h;
+	kp_sha256_init(&s);
+	sha_text(&s, "{\"width\":%u,\"height\":%u,\"regions\":[", w, h);
+	for (i = 0; i < n; i++) {
+		const uint8_t *q = r + RGNS_HEADER + (size_t)RGNS_REGION * i; /* class, group, tiles, ground, neighbours,
+		                                                                * zero, cut rank, pad, pool at, centre, bounds */
+		uint32_t at = u32_at(q + 12);
+		if (at + q[7] > pool) return 0;
+		sha_text(&s, "%s{\"id\":%u,\"flags\":%u,\"group\":%u,\"tiles\":%u,\"ground_neighbors\":%u,\"neighbors\":[",
+			i ? "," : "", i, u16_at(q), u16_at(q + 2), u16_at(q + 4), q[6]);
+		for (j = 0; j < q[7]; j++)
+			sha_text(&s, "%s%u", j ? "," : "", u16_at(pool_at + 2 * (size_t)(at + j)));
+		sha_text(&s, "],\"center_fixed8\":[%d,%d],\"bounds_pixels\":[%d,%d,%d,%d],\"cut_rank\":%u}",
+			(int)(int32_t)u32_at(q + 16), (int)(int32_t)u32_at(q + 20), (int)(int16_t)u16_at(q + 24),
+			(int)(int16_t)u16_at(q + 26), (int)(int16_t)u16_at(q + 28), (int)(int16_t)u16_at(q + 30), q[9]);
+	}
+	sha_text(&s, "],\"raster\":[");
+	for (i = 0; i < h; i++) {
+		sha_text(&s, "%s[", i ? "," : "");
+		for (j = 0; j < w; j++)
+			sha_text(&s, "%s%u", j ? "," : "", u16_at(raster + 2 * ((size_t)i * w + j)));
+		sha_text(&s, "]");
+	}
+	sha_text(&s, "],\"splits\":[");
+	for (i = 0; i < splits; i++) {
+		const uint8_t *q = split_at + 6 * (size_t)i;
+		sha_text(&s, "%s[%u,%u,%u]", i ? "," : "", u16_at(q), u16_at(q + 2), u16_at(q + 4));
+	}
+	sha_text(&s, "]}");
+	kp_sha256_final(&s, d);
+	kp_sha256_hex(d, hex);
+	return 1;
+}
+
+static void bytes_sha(const uint8_t *data, size_t size, char hex[2 * KP_SHA256_SIZE + 1])
+{
+	uint8_t d[KP_SHA256_SIZE];
+	kp_sha256(data, size, d);
+	kp_sha256_hex(d, hex);
+}
+
+/* A case of an evidence file's "cases" by its name. */
+static const KpJson *evidence_case(const KpJson *doc, const char *name)
+{
+	const KpJson *cases = kp_json_get(doc, "cases");
+	int k;
+	for (k = 0; k < kp_json_len(cases); k++)
+		if (strcmp(kp_json_field_str(kp_json_at(cases, k), "name", ""), name) == 0) return kp_json_at(cases, k);
+	return NULL;
+}
+
+/* A scenario's first MTXM chunk (the four VER=57 maps, which no loader descriptor reads: as the probes took it). */
+static const uint8_t *first_mtxm(const uint8_t *chk, size_t size, size_t *n)
+{
+	size_t at = 0;
+	while (at + CHUNK_HEADER <= size) {
+		uint32_t len = u32_at(chk + at + 4);
+		if (memcmp(chk + at, "MTXM", 4) == 0) {
+			*n = len < size - at - CHUNK_HEADER ? len : size - at - CHUNK_HEADER;
+			return chk + at + CHUNK_HEADER;
+		}
+		if ((int32_t)len < 0 || len > size - at - CHUNK_HEADER) break;
+		at += CHUNK_HEADER + len;
+	}
+	return NULL;
+}
+
+/* Every campaign map's terrain derived as the game derives it, against the original's, which the research probes
+ * hashed (the Python twin's check before ADR 0019's stage C7): the walk raster; the region graph built from the
+ * imported flags alone (the probes ran the builder on them); the mission's RGNS (the strips behind the console) against
+ * the graph the full game holds (native-ingame-regions.json, the catalog's 64); the contours sorted as the original
+ * sorts them, and the capacities their arrays grew to. A catalog map is the mission kp_mission_from_files builds. */
+static void derived_terrain_is_the_originals(KpT *T)
+{
+	KpFiles f;
+	const KpCampaign *c;
+	const KpJson *graphs, *contour_doc, *ingame, *cases;
+	uint8_t *cv5[KP_TILESETS] = { 0 }, *vf4[KP_TILESETS] = { 0 };
+	uint32_t *mflags[KP_TILESETS] = { 0 };
+	size_t cv5_size[KP_TILESETS] = { 0 }, vf4_size[KP_TILESETS] = { 0 };
+	int k, walks = 0, graphs_ = 0, contours = 0, catalog = 0, games = 0;
+	if (!kp_t_ready(T, "derived_terrain_is_the_originals", EVIDENCE_FILES)) return;
+	c = install_campaign(T, "KP_TEST_ORIGINAL", &f);
+	graphs = kp_t_golden(T, GRAPHS);
+	contour_doc = kp_t_golden(T, CONTOURS);
+	ingame = kp_json_get(kp_t_golden(T, INGAME), "maps");
+	cases = kp_json_get(graphs, "cases");
+	for (k = 0; k < kp_json_len(cases); k++) {
+		const KpJson *g = kp_json_at(cases, k), *in = kp_json_get(g, "inputs"), *seen = kp_json_get(g, "observed");
+		const char *name = kp_json_field_str(g, "name", ""), *path = name + strlen(GRAPH_CASE);
+		const KpJson *native, *counts;
+		char want[NAME_SIZE], hex[2 * KP_SHA256_SIZE + 1], cname[NAME_SIZE], err[KP_ERROR_SIZE];
+		uint32_t w = (uint32_t)kp_json_field_int(in, "width", 0), h = (uint32_t)kp_json_field_int(in, "height", 0);
+		int t, d, mark, row = 0, grown = 0;
+		const uint8_t *mtxm, *cont, *rgns;
+		size_t chk_size, mtxm_size = 0, cont_size, rgns_size, cells = (size_t)w * h;
+		uint8_t *chk, *walk, *graph;
+		uint16_t *ids;
+		uint32_t *flags;
+		int64_t bad;
+		KpError e;
+		const KpMission *m = NULL;
+		if (strncmp(name, GRAPH_CASE, strlen(GRAPH_CASE)) != 0) continue;
+		for (t = 0; t < KP_TILESETS && strcmp(KP_TILESET_NAMES[t], kp_json_field_str(in, "tileset", "")) != 0; t++) {}
+		kp_t_ok(T, t < KP_TILESETS, "%s: tileset %s", path, kp_json_field_str(in, "tileset", ""));
+		if (!cv5[t]) {
+			snprintf(cname, sizeof cname, "tileset\\%s.cv5", KP_TILESET_NAMES[t]);
+			cv5[t] = kp_files_need(&f, cname, &cv5_size[t], &e);
+			kp_t_ok(T, cv5[t] != NULL, "%s", e.msg);
+			kp_t_defer(T, release, cv5[t]);
+			snprintf(cname, sizeof cname, "tileset\\%s.vf4", KP_TILESET_NAMES[t]);
+			vf4[t] = kp_files_need(&f, cname, &vf4_size[t], &e);
+			kp_t_ok(T, vf4[t] != NULL, "%s", e.msg);
+			kp_t_defer(T, release, vf4[t]);
+			mflags[t] = (uint32_t *)owned(T, vf4_size[t] / KP_DERIVE_VF4_RECORD * sizeof **mflags);
+			kp_terrain_megatile_flags(vf4[t], vf4_size[t], mflags[t]);
+		}
+		mark = kp_t_mark(T); /* the map's own parts, released after it (the tilesets' stay) */
+		for (row = 1; row < c->directory_count; row++) {
+			snprintf(want, sizeof want, "%s\\staredit\\scenario.chk", c->directories[row]);
+			if (c->directories[row][0] && same_name(want, path)) break;
+		}
+		chk = kp_files_need(&f, path, &chk_size, &e);
+		kp_t_ok(T, chk != NULL, "%s", e.msg);
+		kp_t_defer(T, release, chk);
+		if (row < c->directory_count) { /* the MTXM the native loader selects, as the mission has it */
+			m = campaign_mission(T, &f, c, row);
+			kp_t_ok(T, m->width == w && m->height == h && m->tileset == (uint32_t)t, "%s: its size and tileset", path);
+			mtxm = m->tiles.data, mtxm_size = m->tiles.size;
+			catalog++;
+		} else {
+			mtxm = first_mtxm(chk, chk_size, &mtxm_size);
+		}
+		kp_t_ok(T, mtxm != NULL, "%s: an MTXM", path);
+		ids = (uint16_t *)owned(T, cells * sizeof *ids);
+		flags = (uint32_t *)owned(T, cells * sizeof *flags);
+		walk = (uint8_t *)owned(T, cells * 16);
+		kp_t_eq(T, kp_derive_import(mtxm, w, h, cv5[t], cv5_size[t], mflags[t],
+			(uint32_t)(vf4_size[t] / KP_DERIVE_VF4_RECORD), ids, flags, &bad), 0, "%s: the tiles imported", path);
+		kp_t_eq(T, kp_derive_walk(w, h, ids, vf4[t], vf4_size[t], walk), 0, "%s: the walk raster", path);
+		bytes_sha(walk, cells * 16, hex);
+		kp_t_eq_str(T, hex, kp_json_field_str(seen, "walk_sha256", ""), "%s: the walk raster", path);
+		if (m) kp_t_ok(T, bytes_eq(m->walk.data, m->walk.size, walk, cells * 16), "%s: the mission's walk raster", path);
+		walks++;
+		graph = kp_derive_regions(w, h, flags, ids, vf4[t], vf4_size[t], walk, &rgns_size, err, sizeof err);
+		kp_t_ok(T, graph != NULL, "%s: %s", path, err);
+		kp_t_defer(T, release, graph);
+		kp_t_ok(T, graph_snapshot(graph, rgns_size, hex), "%s: the graph", path);
+		kp_t_eq_str(T, hex, kp_json_field_str(seen, "snapshot_sha256", ""), "%s: the graph", path);
+		kp_t_eq(T, u16_at(graph + 4), kp_json_field_int(seen, "region_count", -1), "%s: the regions", path);
+		kp_t_eq(T, u16_at(graph + 6), kp_json_field_int(seen, "split_count", -1), "%s: the splits", path);
+		graphs_++;
+		if (m) { /* the game's graph: the mission's RGNS, built from the flags with the console's strips */
+			const KpJson *game;
+			snprintf(cname, sizeof cname, "%s", c->directories[row] + strlen("campaign\\"));
+			for (d = 0; cname[d]; d++) cname[d] = cname[d] == '\\' ? '/' : (char)tolower((unsigned char)cname[d]);
+			game = kp_json_get(ingame, cname);
+			kp_t_ok(T, game != NULL, "%s: no in-game graph %s", path, cname);
+			rgns = m->regions.data.data, rgns_size = m->regions.data.size;
+			kp_t_ok(T, graph_snapshot(rgns, rgns_size, hex), "%s: the mission's RGNS", path);
+			kp_t_eq_str(T, hex, kp_json_field_str(game, "snapshot_sha256", ""), "%s: the game's graph", cname);
+			games++;
+		}
+		snprintf(want, sizeof want, CONTOUR_CASE "%s", path);
+		native = kp_json_get(evidence_case(contour_doc, want), "observed");
+		kp_t_ok(T, native != NULL, "%s: no contour case", path);
+		if (m) {
+			cont = m->contours.data.data, cont_size = m->contours.data.size;
+		} else {
+			uint8_t *own = kp_derive_contours(w, h, walk, &cont_size, err, sizeof err);
+			kp_t_ok(T, own != NULL, "%s: %s", path, err);
+			kp_t_defer(T, release, own);
+			cont = own;
+		}
+		kp_t_ok(T, cont_size >= CONT_HEADER, "%s: CONT", path);
+		counts = kp_json_get(native, "counts");
+		for (d = 0; d < 4; d++) {
+			kp_t_eq(T, u16_at(cont + 2 * d), kp_json_int(kp_json_at(counts, d), -1), "%s: direction %d's contours", path,
+				d);
+			grown |= u16_at(cont + 2 * d) > CONT_CAPACITY;
+		}
+		for (d = 0; d < 4; d++)
+			kp_t_eq(T, u16_at(cont + 8 + 2 * d), CONT_CAPACITY + grown * CONT_CAPACITY_STEP, "%s: direction %d's capacity",
+				path, d);
+		bytes_sha(cont + CONT_HEADER, cont_size - CONT_HEADER, hex);
+		kp_t_eq_str(T, hex, kp_json_field_str(native, "native_sorted_contours_sha256", ""), "%s: the sorted contours",
+			path);
+		contours++;
+		kp_t_release(T, mark);
+	}
+	kp_t_eq(T, walks, CAMPAIGN_MAPS, "the walk rasters");
+	kp_t_eq(T, graphs_, CAMPAIGN_MAPS, "the graphs");
+	kp_t_eq(T, contours, CAMPAIGN_MAPS, "the contours");
+	kp_t_eq(T, catalog, CAMPAIGN_MISSIONS, "the catalog's maps");
+	kp_t_eq(T, games, CAMPAIGN_MISSIONS, "the in-game graphs");
+}
+
 static const KpTest TESTS[] = {
 	{ "the_fixture_mission_is_built_from_its_chk", fixture_mission_from_its_chk, 0 },
 	{ "chk_variants_are_refused_as_the_native_loader_does", chk_variants_are_refused, 0 },
@@ -379,5 +626,6 @@ static const KpTest TESTS[] = {
 	{ "the_1_17_missions_are_built_from_its_files", original_missions, 0 },
 	{ "the_remastered_missions_are_built_from_its_files", remastered_missions, 0 },
 	{ "the_1_17_and_remastered_missions_are_equal", installs_missions_equal, 0 },
+	{ "the_campaign_maps_derived_terrain_is_the_originals", derived_terrain_is_the_originals, 0 },
 };
 KP_SUITE(kp_suite_chk, "test_chk", TESTS);

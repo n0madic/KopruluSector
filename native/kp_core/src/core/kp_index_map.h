@@ -1,5 +1,5 @@
 /* A colour's index in a palette by the rule StarCraft: Remastered's images are brought back to 1.17's palette-indexed
- * files with (ADR 0018, stage D6; converter/casc/rebuild.py IndexMap): alpha 0 is index 0 (transparent); an opaque
+ * files with (ADR 0018, stage D6; scdata/casc/rebuild.py IndexMap): alpha 0 is index 0 (transparent); an opaque
  * pixel takes the lowest index of its colour, a translucent one the highest (1.17's files use their duplicate colours
  * so); a colour the palette lacks the nearest one (the least squared distance, the lowest index of equals). Kept per
  * colour as it is first asked for. */

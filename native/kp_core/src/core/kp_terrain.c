@@ -102,7 +102,7 @@ int kp_game_tile_flags(KpImages *w, void *ctx, int32_t index, uint32_t *flags)
 #define MFLAG_HIGH 0x04000000u
 #define MFLAG_PARTIAL_WALK 0x20000000u
 
-/* The megatile flags of a tileset's VF4 (the counting rules at 0x445562; converter/derive/terrain.py megatile_flags):
+/* The megatile flags of a tileset's VF4 (the counting rules at 0x445562; scdata/derive/terrain.py megatile_flags):
  * one per 32-byte record of 16 mini-tile words, size / 32 of them into out. */
 void kp_terrain_megatile_flags(const uint8_t *vf4, size_t size, uint32_t *out)
 {

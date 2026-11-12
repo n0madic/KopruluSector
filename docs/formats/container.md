@@ -1,9 +1,11 @@
 # Koprulu container (`.kpd`, `.kpm`)
 
-All Koprulu binary data files share one container. Writer: `converter/kpf/container.py`;
+All Koprulu binary data files share one container. Writer: `tools/research/scdata/kpf/container.py`;
 runtime reader: `native/kp_core/src/core/kp_kpf.c`.
-Round-trip tests: `converter/tests/test_kpf.py` and `tests/c/test_data.c` (the C suite reads the files and
-`expect.json` written by `converter/kpf/fixtures.py`).
+Round-trip tests: `tools/research/scdata/tests/test_kpf.py` and `tests/c/test_data.c`, which read the committed
+fixtures `tests/fixtures/kpf/` and their `expect.json` (synthetic files the Python converter's `fixtures.py` wrote before
+[ADR 0019](../adr/0019-install-or-repack-converter-in-c.md)'s stage C7 removed it; `large.kpd`, 8 MiB, is built by
+`test_data.c` itself).
 
 All integers are little-endian. Offsets are from the start of the file.
 

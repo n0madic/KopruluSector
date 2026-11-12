@@ -14,7 +14,7 @@
  *       does without one the CDs' archives miss. --res-log: the files read, their status and source.
  *   digests DIR --out PATH
  *       each manifest file's normalized name, status and the SHA-256 of the bytes read (empty when none), a tab
- *       between, in the manifest's order: the twin of `python3 -m converter scr-digests` (tools/ci.sh compares them
+ *       between, in the manifest's order: the twin of tools/research/scr_digests.py's (tools/ci.sh compares them
  *       over a StarCraft: Remastered install)
  *   extract DIR NAME OUT
  *       a file as kp_res reads it (an MPQ path, any case, '\' or '/'), or a StarCraft: Remastered install's own file
@@ -42,7 +42,7 @@
  *   scenarios DIR [--specs tests/scenarios] [--out generated]
  *       the test scenarios (kp_scenario.h): <out>/scenarios/<name>.chk of each spec and their list
  *       <out>/scenarios/index.txt, a line each: name, base mission, tileset, width, height, resource packs ("a,b,c",
- *       "-" none; the profile's compiled SPAK, which python3 -m converter scr-manifest records)
+ *       "-" none; the profile's compiled SPAK, which tools/research/scr_manifest.py records)
  *   hd-ui-table DIR [--out PATH]
  *       the HD interface's placement table of a StarCraft: Remastered install (kp_hd_ui_table.h; ADR 0019, stage C6)
  *       into PATH, by default defs/scr/hd-ui-<profile>.json (tools/defs_c.py compiles it): run again when Remastered's
@@ -615,7 +615,7 @@ static int scenario(KpRes *res, const KpCampaign *campaign, const char *path, co
 		goto done;
 	}
 	if (!(payload = kp_mission_packs_entry(p, "SPAK", name, &payload_size))) {
-		fprintf(stderr, "kp_convert: %s: the profile has no resource packs for it (SPAK; python3 -m converter scr-manifest "
+		fprintf(stderr, "kp_convert: %s: the profile has no resource packs for it (SPAK; tools/research/scr_manifest.py "
 			"records them)\n", name);
 		goto done;
 	}

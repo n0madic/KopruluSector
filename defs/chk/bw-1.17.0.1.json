@@ -1,7 +1,7 @@
 {
  "id": "chk-loader",
  "profile": "bw-1.17.0.1",
- "provenance": ["Version descriptors and section tables: docs/research/native-briefing-loader.md, evidence/native-briefing-loader-probes.json (version_descriptors); verified against StarCraft.exe by converter/tests/test_chk.py", "Handler payload rules: docs/research/atlas/p23.md (section callbacks 0x467e50-0x469320)", "Chunk enumeration and dispatch: docs/research/atlas/p42.md (0x4c1170, 0x4c1200, 0x4c12b0, 0x4c12e0)", "Ignored tags: tags present in the 68 physical campaign CHKs that no table row reads (docs/research/evidence/retail-manifest.json)"],
+ "provenance": ["Version descriptors and section tables: docs/research/native-briefing-loader.md, evidence/native-briefing-loader-probes.json (version_descriptors); verified against StarCraft.exe by tools/research/scdata/tests/test_chk.py", "Handler payload rules: docs/research/atlas/p23.md (section callbacks 0x467e50-0x469320)", "Chunk enumeration and dispatch: docs/research/atlas/p42.md (0x4c1170, 0x4c1200, 0x4c12b0, 0x4c12e0)", "Ignored tags: tags present in the 68 physical campaign CHKs that no table row reads (docs/research/evidence/retail-manifest.json)"],
  "descriptor_table_va": "0x4eeb80",
  "version_probe": {
   "table_va": "0x4ee7f0",

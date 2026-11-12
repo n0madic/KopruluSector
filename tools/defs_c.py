@@ -29,11 +29,11 @@ def tables() -> list[tuple[str, bytes]]:
     functions): the DAT layouts, the requirement bytecode, the interface's tables, the campaign's, the iscript header
     types' animation slots. A container's section of the same name, where there is one, is read instead (the tests'
     fixtures)."""
-    sys.path.insert(0, str(ROOT))
-    from converter import campaign, ui_tables
-    from converter.analyze import iscript
-    from converter.formats import dat, requirements
-    from converter.kpf import kpd
+    sys.path.insert(0, str(ROOT / "tools" / "research"))
+    from scdata import campaign, ui_tables
+    from scdata.analyze import iscript
+    from scdata.formats import dat, requirements
+    from scdata.kpf import kpd
 
     out = [("COLS", kpd.columns_section(dat.load_layouts(PROFILE)))]
     out += [(t.fourcc, requirements.section(list(t.words))) for t in requirements.load_tables(PROFILE)]
@@ -77,9 +77,9 @@ def built_tables() -> list[tuple[str, bytes]]:
     TIME (SPEX, its `speech`: a names table of "<locale> <campaign>/<mission>"). Stage C3: the languages' rules
     (l10n_tables).
     """
-    from converter import missions
-    from converter.formats import chk, dialog, palette
-    from converter.kpf import kpd, kpm
+    from scdata import missions
+    from scdata.formats import chk, dialog, palette
+    from scdata.kpf import kpd, kpm
 
     ui = kpd.ui_defs()
     out = [("UBIN", names_table(ui["bins"])), ("UTHM", names_table(ui["themes"])),
@@ -213,7 +213,7 @@ def l10n_tables(l10n: dict) -> list[tuple[str, bytes]]:
 
 
 def scr_tables(profile_id: str) -> list[tuple[str, bytes]]:
-    """How a StarCraft: Remastered install's own formats are brought back to the profile's files (stage D6; converter/casc
+    """How a StarCraft: Remastered install's own formats are brought back to the profile's files (stage D6; scdata/casc
     source.py _remake and rebuild.py; native/kp_app/kp_res_scr.c reads them), from the manifest's extras and
     defs/scr/texts-<profile>.json. Names are normalized,
     each list in the order the converter walks it: by the manifest name in lower case (its '\\' separators).
@@ -260,7 +260,7 @@ def scr_tables(profile_id: str) -> list[tuple[str, bytes]]:
                 sgrp += struct.pack("<HH", *extras["box"])
                 sgrp += b"".join(struct.pack("<4BI", *f) for f in frames)
         elif ext == "smk" and "smk" in extras:
-            _, _, frames, ring, rate = extras["smk"]  # its size is its WebM's (converter/formats/kpw.py)
+            _, _, frames, ring, rate = extras["smk"]  # its size is its WebM's (scdata/formats/kpw.py)
             ssmk += name_bytes(normalize(name)) + struct.pack("<HBiH", frames, ring, rate, group(extras))
         else:
             continue
@@ -315,7 +315,7 @@ def c_bytes(data: bytes) -> list[str]:
 
 
 def normalize(name: str) -> str:
-    """converter/casc/storage.py normalize: `/` separators, lower case."""
+    """scdata/casc/storage.py normalize: `/` separators, lower case."""
     return name.replace("\\", "/").lower()
 
 

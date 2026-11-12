@@ -2,7 +2,7 @@
  "id": "cinematics",
  "provenance": [
   "PlayCinematic 0x47ec60: the movie names 0x508da8[28], each smk\\<name>.smk (docs/research/atlas/p28.md); PlayCinematicWithPrelude 0x458fc0: the table 0x4edad8 of {cinematic, prelude} pairs, scanned from entry 9 down to 0 (docs/research/atlas/p19.md). Remastered keeps each movie as <name lower case>.webm under SD/smk/ and HD2/Smk/ (docs/research/remastered.md).",
-  "smk: [size, SHA-256] of each movie's effective copy in the reference 1.17.0.1 install (the profile's archive order, defs/profile/bw-1.17.0.1.json: blizzard from StarDat.mpq, starXintr and the x* movies from BroodWar.mpq, the others from StarCraft.mpq), against which converter/emit/cinematics_smk.py checks an install's copies."
+  "smk: [size, SHA-256] of each movie's effective copy in the reference 1.17.0.1 install (the profile's archive order, defs/profile/bw-1.17.0.1.json: blizzard from StarDat.mpq, starXintr and the x* movies from BroodWar.mpq, the others from StarCraft.mpq), against which kp_cine_catalog_check (native/kp_app/kp_cine.c, the CINM tools/defs_c.py compiles) checks an install's copies."
  ],
  "names": [
   "blizzard", "starintr",

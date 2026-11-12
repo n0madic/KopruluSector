@@ -1,5 +1,5 @@
 {
- "comment": "The files profile bw-1.17.0.1's conversion reads from the 1.17 install: name, size, SHA-256 (hashes only). converter/casc/source.py checks a StarCraft: Remastered install against them; written by python3 -m converter scr-manifest --data DIR.",
+ "comment": "The files profile bw-1.17.0.1's game reads from the 1.17 install: name, size, SHA-256 (hashes only). kp_res checks a StarCraft: Remastered install against them (tools/defs_c.py compiles them); written by python3 tools/research/scr_manifest.py --data DIR.",
  "profile": "bw-1.17.0.1",
  "files": [
   ["arr\\flingy.dat", 3135, "89013fa6d81edad96b68efcfc0bb5342f1c7fa2ef7a0880a71b0169eab13d1ad"],

@@ -13,7 +13,7 @@
  *   - an install: 1.17 (StarCraft.exe and the profile's archives, the first copy of a name in the profile's order;
  *     a copy that differs from the manifest is refused: a file the simulation is built from to the byte, one that
  *     only shows or plays by its size) or StarCraft: Remastered (.build.info, CASC: the converter's
- *     ScrSource rules, converter/casc/source.py: its prefixes, the moved files, the tilesets' 1.17 prefix, .vx4 from
+ *     ScrSource rules, scdata/casc/source.py: its prefixes, the moved files, the tilesets' 1.17 prefix, .vx4 from
  *     .vx4ex; the files only Remastered's own formats hold rebuilt from them, stage D6, kp_res_scr.c: PCX and GRP from
  *     DDS, TBL and dialog BINs from its XML strings, an SMK as the KPW1 over its WebM, kp_smk.h; a copy no rule brings
  *     to the manifest's digest is read as it is, "differs").
@@ -40,7 +40,7 @@ typedef enum {
 	KP_RES_SOURCE_CASC,   /* a StarCraft: Remastered install */
 } KpResSourceKind;
 
-/* What a read found (the converter's statuses, converter/casc/source.py) */
+/* What a read found (the converter's statuses, scdata/casc/source.py) */
 typedef enum {
 	KP_RES_MISSING,    /* no source has it */
 	KP_RES_ABSENT,     /* the manifest lists it as absent from the reference install */
@@ -169,12 +169,12 @@ void kp_res_reader_free(KpResReader *h);
 const char *kp_res_text_locale(const KpRes *r);
 /* The text locale of a .build.info's text (NUL terminated) into out (5 bytes at least), "" none: of the non-empty lines
  * the first names the columns ("Name!TYPE:size", '|' apart), the row whose Active is 1 is read (else the first; as
- * converter/casc/storage.py parse_build_info), and of its Tags, ':' apart groups of words, the first group with "text?"
- * and a locale gives that locale (converter/emit/cinematics.py text_locale). */
+ * scdata/casc/storage.py parse_build_info), and of its Tags, ':' apart groups of words, the first group with "text?"
+ * and a locale gives that locale (the Python converter's emit/cinematics.py text_locale). */
 void kp_res_build_info_text_locale(const char *text, char *out, size_t size);
 
 /* The 1.17 bytes of a tileset file Remastered grew by appending (its prefix, the CV5 groups Remastered filled zeroed),
- * or .vx4 from .vx4ex (converter/casc/source.py _rebuild): a malloc'd copy of want bytes, or NULL when no rule
+ * or .vx4 from .vx4ex (scdata/casc/source.py _rebuild): a malloc'd copy of want bytes, or NULL when no rule
  * applies. key is the normalized 1.17 name, casc_name the copy's. */
 uint8_t *kp_res_casc_rebuild(const char *key, const char *casc_name, const uint8_t *data, size_t size, uint32_t want);
 

@@ -36,20 +36,20 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import pefile  # noqa: E402
 from unicorn import Uc, UcError, UC_ARCH_X86, UC_MODE_32, UC_HOOK_CODE  # noqa: E402
 from unicorn.x86_const import (UC_X86_REG_EAX, UC_X86_REG_ECX, UC_X86_REG_EDX, UC_X86_REG_EIP,  # noqa: E402
                                UC_X86_REG_ESP)
 
-from converter.analyze import iscript as iscript_table  # noqa: E402
-from converter.formats import dat, tbl  # noqa: E402
-from converter.kpf.kpd import LO_COLUMNS  # noqa: E402
+from scdata.analyze import iscript as iscript_table  # noqa: E402
+from scdata.formats import dat, tbl  # noqa: E402
+from scdata.kpf.kpd import LO_COLUMNS  # noqa: E402
 
 sys.path.insert(0, str(ROOT / "tools" / "oracle"))
 from oracle_common import golden_json  # noqa: E402
-from converter.mpq.profile import Profile, Resolver  # noqa: E402
+from scdata.mpq.profile import Profile, Resolver  # noqa: E402
 
 log = logging.getLogger("probe_native_iscript")
 

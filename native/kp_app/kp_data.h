@@ -6,7 +6,7 @@
  * (sdl/kp_app_files.c), the oracle's tools (native/kp_core/tools/kp_runner.c) and the C suites (tests/c) share it.
  *
  * A mission is built from its files: a campaign mission from its scenario (kp_mission_from_files), a test scenario
- * from its CHK (generated/scenarios/<name>.chk, converter/scenarios.py) with the packs its index line names.
+ * from its CHK (generated/scenarios/<name>.chk, scdata/scenarios.py) with the packs its index line names.
  */
 #ifndef KP_DATA_H
 #define KP_DATA_H

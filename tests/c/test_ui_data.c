@@ -1,13 +1,13 @@
-/* The interface over its data's parts (kp_ui_data.h; plan phase S, stage S7) from the converter's fixtures (`python3 -m
- * converter.kpf.fixtures`; skipped without them): an interface over the fixture's ui.kpd and fonts.kpd sections
- * (kp_t_fixture_ui), its fonts through the text engine, a dialog loaded from its BIN, the themes and files kp_ui reads,
- * the sounds' durations over sounds.kpd's SFX and MUSL (kp_ui_set_sound_records) and the portraits' movies over
- * portraits.kpd's ROWS (kp_ui_set_portrait_parts). The executable's tables are the profile's compiled ones (the
- * interfaces over the original data read them: test_hud, test_kp_ui).
+/* The interface over its data's parts (kp_ui_data.h; plan phase S, stage S7) from the fixtures (tests/fixtures/kpf): an
+ * interface over the fixture's ui.kpd and fonts.kpd sections (kp_t_fixture_ui), its fonts through the text engine, a
+ * dialog loaded from its BIN, the themes and files kp_ui reads, the sounds' durations over sounds.kpd's SFX and MUSL
+ * (kp_ui_set_sound_records) and the portraits' movies over portraits.kpd's ROWS (kp_ui_set_portrait_parts). The
+ * executable's tables are the profile's compiled ones (the interfaces over the original data read them: test_hud,
+ * test_kp_ui).
  *
  * What the containers hold and no C code reads is not checked here: fonts.kpd's TFNT (the glue themes' tFont banks
  * are ui.kpd's TFNT), ui.kpd's FLUF, CURS and RECT, sounds.kpd's PACK, and portraits.kpd's SMKS and PALS (kp_ui decodes
- * the movies of FILE itself, kp_smk.h); their contents are the converter's, checked by converter/tests
+ * the movies of FILE itself, kp_smk.h); their contents are the converter's, checked by scdata/tests
  * (test_ui_tables.py, test_sounds.py, test_portraits.py). */
 #include "kp_test_ui.h"
 
@@ -53,7 +53,7 @@ static void fonts_metrics(KpT *T)
 	kp_t_eq(T, (int64_t)ui->game_rows_size, 192, "tFontGam.pcx's rows");
 }
 
-/* --- ui.kpd (the synthetic dialog of converter/tests/test_ui.py) --- */
+/* --- ui.kpd (the synthetic dialog of scdata/tests/test_ui.py) --- */
 
 static void ui_dialog(KpT *T)
 {
@@ -232,7 +232,7 @@ static void portraits_reject_truncated(KpT *T)
 	kp_t_eq(T, set_portraits(T, ui, 0, 0), 0, "the whole parts load again: %s", ui->error);
 }
 
-/* A KPW1 fixture (kp_smk.h, converter/formats/kpw.py) plays as an SMK ring movie (frames 0, 1, 2, the ring frame, then 1
+/* A KPW1 fixture (kp_smk.h, scdata/formats/kpw.py) plays as an SMK ring movie (frames 0, 1, 2, the ring frame, then 1
  * again; a rewind back to 0), each stored frame the fixture's indices: `frames` frames and the ring frame. */
 static void kpw_plays(KpT *T, const char *name, uint32_t width, uint32_t height, uint32_t frames)
 {
@@ -276,8 +276,6 @@ static void kpw_movie_plays_as_an_smk(KpT *T)
 	size_t size;
 	uint8_t *data;
 	KpSmk s;
-	if (!kp_t_has(T, DIR "movie.kpw"))
-		kp_t_skip(T, "no " DIR "movie.kpw (python3 -m converter.kpf.fixtures with FFmpeg's libvpx)");
 	kpw_plays(T, "movie.kpw", 8, 4, 3);
 	kpw_plays(T, "movie-alpha.kpw", 16, 16, 2);
 	data = kp_t_read(T, DIR "movie.kpw", &size);

@@ -59,7 +59,7 @@ typedef struct {
 
 /* grpmeta built from the original files (ADR 0018, stage D3) by the converter's rules (kpd.grp_set, build_grpmeta):
  * the GRP and LO files images.dat names through images.tbl ("unit\\" + the entry, deduplicated in any
- * case), their frame records and opacity runs, the atlases the packs are cut into (converter/packs.py). Every GRP's
+ * case), their frame records and opacity runs, the atlases the packs are cut into (scdata/packs.py). Every GRP's
  * frame records lie inside FRMS (kp_grpmeta_check), so kp_grpmeta_frame needs no bounds checks for valid entries and
  * frames; the opacity runs are not checked (the hit test, kp_grpmeta_pixel_opaque, reads them). -1 with err set. */
 int kp_grpmeta_from_files(KpGrpMeta *g, const KpFiles *files, const KpDat *dat, KpError *err);

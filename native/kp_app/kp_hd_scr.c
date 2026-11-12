@@ -1,8 +1,8 @@
 /*
- * The HD world from a StarCraft: Remastered install (ADR 0019, stage C5; converter/emit/hd.py until then): which
- * image's anim draws each GRP (images.dat, SD/images.rel), a pack's anims read from their headers and frame records
- * (kp_anim.c lays the pack out), the HD tilesets (TileSet/<name>.dds.vr4, .tmsk, _mask.dds.grp, creep's edges in
- * .dds.grp) and the water's normal maps (effect/water_normal_1.dds.grp, _2) as their containers, HDTS and HDWA. The
+ * The HD world from a StarCraft: Remastered install (ADR 0019, stage C5; the Python converter's emit/hd.py until then):
+ * which image's anim draws each GRP (images.dat, SD/images.rel), a pack's anims read from their headers and frame
+ * records (kp_anim.c lays the pack out), the HD tilesets (TileSet/<name>.dds.vr4, .tmsk, _mask.dds.grp, creep's edges
+ * in .dds.grp) and the water's normal maps (effect/water_normal_1.dds.grp, _2) as their containers, HDTS and HDWA. The
  * runtime builds them when a mission starts from an install; kp_convert repack writes them, with each pack's HDPK
  * whole, into the repack's HD groups.
  */

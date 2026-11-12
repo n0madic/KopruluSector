@@ -146,11 +146,12 @@ int kp_t_mkdir(const char *path);
 int kp_t_mark(const KpT *T);
 void kp_t_release(KpT *T, int mark);
 
-/* --- the converter's fixtures (python3 -m converter.kpf.fixtures; kp_t_ready skips a test without them) --- */
+/* --- the fixtures (tests/fixtures/kpf, committed: the Python converter's fixtures.py wrote them and their
+ * expectations, the Python twins' values, before it was removed in ADR 0019's stage C7) --- */
 
-#define KP_T_FIXTURES "tests/fixtures/generated/kpf/"
+#define KP_T_FIXTURES "tests/fixtures/kpf/"
 #define KP_T_FIXTURE_FILES KP_T_FIXTURES "files/" /* the fixtures' original files, written as kp_t_fixture_files reads them */
-#define KP_T_FIXTURE_MISSION "campaign\\fixture" /* the fixture scenario's directory (fixtures.py mission_chk) */
+#define KP_T_FIXTURE_MISSION "campaign\\fixture" /* the fixture scenario's directory */
 
 /* The profile the fixtures' original files are of: the compiled profile's tables with the fixtures' CHKL (the loader
  * tables with the VCOD digest of b"vcod"), MPAK (campaign\fixture's packs: "effects", "terran") and SLOT (iscript

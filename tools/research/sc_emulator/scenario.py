@@ -3,8 +3,8 @@
 A scenario spec (tests/scenarios/<name>.json) names a base campaign mission. The game is
 started through that mission's normal start path; at every call of ChkLoadSections 0x4c1200
 (the header, version and section loads) the map buffer is replaced by the scenario CHK that
-converter/scenarios.py builds from the same base map, so the original plays exactly the map
-Koprulu converts. Then:
+scdata/scenarios.py builds from the same base map (kp_convert scenarios' twin), so the original
+plays exactly the map Koprulu plays. Then:
 - every executed game command is logged at RecordCommand 0x478830 with the frame counter, the
   turn counter and the issuing player (commands.jsonl), so Koprulu can replay the same
   command stream;
@@ -52,7 +52,7 @@ from .mission import run_mission
 
 log = logging.getLogger(__name__)
 
-REPO = Path(__file__).resolve().parents[3]
+RESEARCH = Path(__file__).resolve().parents[1]  # scdata's
 OUT_ROOT = (Path(__file__).resolve().parents[3] / "koprulu-private/emu/scenarios")
 CHK_LOAD_SECTIONS = 0x4C1200  # ECX = CHK bytes, EDX = length
 HOVER_DIALOGS = {"card": 0x6AAAE8, "status": 0x6AAB34, "minimap": 0x671A8C}  # a "hover" input's dialogs (P35, P24)
@@ -136,10 +136,10 @@ AI_SCRIPT_POOL, AI_SCRIPT_SIZE = 0x6A1A18, 0x34
 
 
 def build_chk(spec: dict) -> bytes:
-    if str(REPO) not in sys.path:
-        sys.path.insert(0, str(REPO))
-    from converter import scenarios
-    from converter.mpq.profile import Resolver
+    if str(RESEARCH) not in sys.path:  # scdata
+        sys.path.insert(0, str(RESEARCH))
+    from scdata import scenarios
+    from scdata.mpq.profile import Resolver
 
     with Resolver(process.DEFAULT_EXE.parent) as resolver:
         return scenarios.scenario_chk(scenarios.base_chk(resolver, spec), spec)
@@ -147,10 +147,10 @@ def build_chk(spec: dict) -> bytes:
 
 def mission_spec(spec: dict):
     """The campaign row whose map is the scenario's base (the catalog's mapdata index)."""
-    if str(REPO) not in sys.path:
-        sys.path.insert(0, str(REPO))
-    from converter import scenarios
-    from converter.mpq.profile import Resolver
+    if str(RESEARCH) not in sys.path:  # scdata
+        sys.path.insert(0, str(RESEARCH))
+    from scdata import scenarios
+    from scdata.mpq.profile import Resolver
 
     with Resolver(process.DEFAULT_EXE.parent) as resolver:
         index = scenarios.base_entry(resolver, spec).index

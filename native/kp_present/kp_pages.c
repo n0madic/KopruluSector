@@ -1,6 +1,6 @@
 /*
- * A pack's pages built from its GRPs (ADR 0018, stage D5): converter/emit/pages.py's skyline packer and
- * converter/kpf/resources.py build_pack in C, so a mission's packs need no converter. The atlases of the pack in
+ * A pack's pages built from its GRPs (ADR 0018, stage D5): the Python converter's emit/pages.py skyline packer
+ * and kpf/resources.py build_pack in C, so a mission's packs need no converter. The atlases of the pack in
  * grpmeta's order, each GRP entry's frames decoded (kp_grp_decode), equal frames sharing one rectangle, the rectangles
  * packed by height, then width (both descending), then their first appearance, each on the first page where it fits at
  * the skyline's lowest top edge (ties: the lowest x). The same inputs give the converter's placements and page bytes.

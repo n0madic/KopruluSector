@@ -158,7 +158,7 @@ static int assemble(KpMission *m, const KpBytes part[], const char *name, KpErro
 	return 0;
 }
 
-/* --- the mission from its scenario (ADR 0018, stage D4; converter/missions.py, kpf/kpm.py build) --- */
+/* --- the mission from its scenario (ADR 0018, stage D4; scdata/missions.py, kpf/kpm.py build) --- */
 
 #define META_SIZE 68 /* kpm.META <4H12s12s20s2H8sB3x */
 #define TRIGGER_SIZE 2400
@@ -189,7 +189,7 @@ static int assemble(KpMission *m, const KpBytes part[], const char *name, KpErro
 #define WAVS_ENTRY 12
 #define STRING_IDS 65536
 
-/* converter/analyze/triggers.py validate: what the original's tables would index past (a reachable condition above type
+/* scdata/analyze/triggers.py validate: what the original's tables would index past (a reachable condition above type
  * 23, an action above 59, an Order past the 255 locations, a Move Unit to location 256) and what the V1 profile has no
  * handler for (Opponents; Modify Unit Resource Amount and Hangar Count). Entries the runners never reach are left. */
 static int validate_triggers(const uint8_t *trig, uint32_t size, char *err, size_t err_size)
@@ -485,7 +485,7 @@ int kp_mission_from_chk(KpMission *m, const KpFiles *f, uint8_t *chk_bytes, size
 			memcpy(rules + at + 8, chk.sections[k].data, chk.sections[k].size);
 			at += 8 + chk.sections[k].size;
 		}
-	if (!directory) { /* a test scenario: no WAVs (converter/scenarios.py builds it with none) */
+	if (!directory) { /* a test scenario: no WAVs (scdata/scenarios.py builds it with none) */
 		if (!(wavs = (uint8_t *)calloc(1, wavs_size = 2))) goto oom;
 	} else if (!(wavs = mission_wavs(f, directory, s[STR], s[TRIG], s[MBRF], &wavs_size, err))) {
 		goto done;

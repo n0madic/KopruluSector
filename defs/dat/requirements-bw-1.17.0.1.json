@@ -1,5 +1,5 @@
 {
-  "comment": "Built-in requirement bytecode tables of StarCraft.exe 1.17.0.1 (docs/research/native-dat-requirements.md, native-requirements.md for units): base VA, the u16 offset array the lazy initializer fills (a DAT column) and the ID capacity. The words (lowercase hex u16, from the leading zero through the final ffff) are the tables' contents, so the conversion needs no executable; converter/tests/test_dat.py checks them against the executable.",
+  "comment": "Built-in requirement bytecode tables of StarCraft.exe 1.17.0.1 (docs/research/native-dat-requirements.md, native-requirements.md for units): base VA, the u16 offset array the lazy initializer fills (a DAT column) and the ID capacity. The words (lowercase hex u16, from the leading zero through the final ffff) are the tables' contents, so the conversion needs no executable; tools/research/scdata/tests/test_dat.py checks them against the executable.",
   "tables": [
     {
       "fourcc": "RQOR",

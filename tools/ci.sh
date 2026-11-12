@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Local/CI check (plan phase S, ADR 0012): the converter's tests, the goldens' currency, the native build
+# Local/CI check (plan phase S, ADR 0012): the Python tests, the goldens' currency, the native build
 # (CMakeLists.txt: kp_core, kp_present, kp_app_core, the tools and the C suites, checked as C and C++), the C suites
 # on the host, under ASan and UBSan (with an LLVM clang 17 or later: -fsanitize=function and leaks; else with the default
 # compiler, whose build otherwise only checks the tools), and in wasm under node when emcmake is on the PATH (the HTML5
 # proxy), the loaders over the converted data and the replays of every scenario.
 #
 # What keeps it short:
-#   - The converter's tests run in the background, a process a module (tools/converter_tests.py), and join before the
-#     product's checks, which keep the machine to themselves.
+#   - The Python tests (the research's readers' and the tools') run in the background, a process a module
+#     (tools/python_tests.py), and join before the product's checks, which keep the machine to themselves.
 #   - The quick mode, the default: under the sanitizers and in wasm the loops that replay whole games take one item in
 #     CI_SAMPLE (kp_t_mine_sampled, seeded from the binary, so another build checks others). The native build always
 #     runs them all. KOPRULU_FULL=1 runs all of them everywhere: before a push, and at the end of a stage.
@@ -22,13 +22,13 @@
 #     skipped without one);
 #   KOPRULU_ORIGINAL=<dir with StarCraft.exe and the profile MPQs> enables the tests that read original data,
 #     kp_convert verify's read of every manifest file through StormLib (ADR 0018; KOPRULU_SCR: kp_convert digests'
-#     through CascLib, each file's status and SHA-256 equal to converter scr-digests', the Remastered rebuilds
+#     through CascLib, each file's status and SHA-256 equal to tools/research/scr_digests.py's, the Remastered rebuilds
 #     included) and kp_convert's test scenarios and terrain checks written from the install into generated/ (from
 #     KOPRULU_SCR without it; ADR 0019), and with FFmpeg checks the golden of its cinematics' decodes
 #     (tools/oracle/export_smk_ffmpeg.py --check);
 #   KOPRULU_SCR=<StarCraft: Remastered install dir> classifies the manifest's files on that install
-#     (converter/tests/test_scr_source.py) and, with KOPRULU_ORIGINAL, compares Remastered's DAT tables and
-#     scripts with the profile's (converter/tests/test_casc.py); it also checks every string of each language the
+#     (scdata/tests/test_scr_source.py) and, with KOPRULU_ORIGINAL, compares Remastered's DAT tables and
+#     scripts with the profile's (scdata/tests/test_casc.py); it also checks every string of each language the
 #     install holds (kp_convert locale-check, its reports in generated/reports; ADR 0019, stage C3), test_locale and
 #     test_speech build the languages from the install's files (stages C2 and C3), and KOPRULU_APP's product runs each
 #     language with its speech, from the install and from its repack's language groups;
@@ -96,27 +96,27 @@ CI_SAMPLE=4 # the quick mode's one item in this many
 CI_PASSES_KEPT=32 # the keys build/ci-passed remembers for a step
 CI_MODE=quick
 if [ -n "${KOPRULU_FULL:-}" ]; then CI_MODE=full; fi
-CONVERTER_TESTS="" # the background run's process, until it joins
-# Waits for the converter's tests and prints their summary, or their failures.
-join_converter_tests() {
-  local pid="$CONVERTER_TESTS" status=0
+PYTHON_TESTS="" # the background run's process, until it joins
+# Waits for the Python tests and prints their summary, or their failures.
+join_python_tests() {
+  local pid="$PYTHON_TESTS" status=0
   [ -n "$pid" ] || return 0
-  CONVERTER_TESTS=""
+  PYTHON_TESTS=""
   wait "$pid" || status=$?
   if [ "$status" -eq 0 ]; then
-    tail -n 1 build/converter-tests.log
+    tail -n 1 build/python-tests.log
   else
-    cat build/converter-tests.log >&2
+    cat build/python-tests.log >&2
   fi
   return "$status"
 }
-# A step's title; the converter's tests, if they have ended, report here, so that their failure stops the run early.
+# A step's title; the Python tests, if they have ended, report here, so that their failure stops the run early.
 step() {
-  if [ -n "$CONVERTER_TESTS" ] && ! kill -0 "$CONVERTER_TESTS" 2>/dev/null; then join_converter_tests; fi
+  if [ -n "$PYTHON_TESTS" ] && ! kill -0 "$PYTHON_TESTS" 2>/dev/null; then join_python_tests; fi
   printf '\n== %s (%ss so far)\n' "$*" "$SECONDS"
 }
 # Their cleanup is awaited: a run started right after a stopped one must not find it still removing their temporary files.
-trap 'if [ -n "$CONVERTER_TESTS" ]; then kill "$CONVERTER_TESTS" 2>/dev/null || true; wait "$CONVERTER_TESTS" 2>/dev/null || true; fi' EXIT
+trap 'if [ -n "$PYTHON_TESTS" ]; then kill "$PYTHON_TESTS" 2>/dev/null || true; wait "$PYTHON_TESTS" 2>/dev/null || true; fi' EXIT
 # The product's development checks under a time limit: a run that hangs (a driver, a stopped display link) fails the
 # check instead of blocking CI (perl's alarm: macOS has no timeout(1)).
 APP_TIMEOUT="${APP_TIMEOUT:-600}"
@@ -201,12 +201,9 @@ step "toolchain"
 "$TOOLCHAIN/fetch.sh"
 "$TOOLCHAIN/fetch.sh" astc >/dev/null
 
-step "fixtures"
-logged build/fixtures.log 0 "$PYTHON" -m converter.kpf.fixtures
-
-step "converter tests start in the background (tools/converter_tests.py, build/converter-tests/)"
-"$PYTHON" tools/converter_tests.py ${KOPRULU_NO_CACHE:+--no-cache} >build/converter-tests.log 2>&1 &
-CONVERTER_TESTS=$!
+step "Python tests start in the background (tools/python_tests.py, build/python-tests/)"
+"$PYTHON" tools/python_tests.py ${KOPRULU_NO_CACHE:+--no-cache} >build/python-tests.log 2>&1 &
+PYTHON_TESTS=$!
 
 if [ -z "$PUBLIC" ] && [ -d docs/research/evidence ]; then
   step "golden vectors are current"
@@ -262,11 +259,11 @@ if [ -n "${KOPRULU_ORIGINAL:-}" ]; then
   fi
 fi
 if [ -n "${KOPRULU_SCR:-}" ]; then
-  step "data readers (ADR 0018): the input manifest's files read from Remastered's CASC through kp_res, by the converter's rules"
+  step "data readers (ADR 0018): the input manifest's files read from Remastered's CASC through kp_res"
   build/cmake/kp_convert digests "$KOPRULU_SCR" --out build/scr-digests-c.tsv 2>/dev/null | tail -4
-  # the twin (stage D6): each file's status and bytes as converter/casc/source.py makes them, the rebuilds included
-  step "the same files read by the converter (converter scr-digests): each status and SHA-256 equal to kp_res's"
-  "$PYTHON" -m converter scr-digests --scr "$KOPRULU_SCR" --out build/scr-digests-py.tsv 2>&1 | tail -1
+  # the twin (stage D6): each file's status and bytes as scdata/casc/source.py makes them, the rebuilds included
+  step "the same files read by the research's twin (tools/research/scr_digests.py): each status and SHA-256 equal to kp_res's"
+  "$PYTHON" tools/research/scr_digests.py --scr "$KOPRULU_SCR" --out build/scr-digests-py.tsv 2>&1 | tail -1
   diff build/scr-digests-py.tsv build/scr-digests-c.tsv | head -20 # pipefail: a difference stops the run
 fi
 if [ -n "${KOPRULU_ORIGINAL:-}${KOPRULU_SCR:-}" ]; then
@@ -397,8 +394,8 @@ if command -v emcmake >/dev/null && command -v node >/dev/null; then
 else
   step "C suites in wasm: skipped (no emcmake or node on the PATH)"
 fi
-step "converter tests join (the product's checks keep the machine to themselves)"
-join_converter_tests
+step "Python tests join (the product's checks keep the machine to themselves)"
+join_python_tests
 # The development checks' passing lines (the app's output; on the phone after logcat's prefix).
 AUTOTEST_OK='SPIKE autotest: [0-9]+ missions, [1-9][0-9]* megatiles checked, 0 mismatches; composed views: [1-9][0-9]*; load failures: 0$'
 FOG_OK='SPIKE fog check: [1-9][0-9]* pixels, [0-9]+ darkened, 0 mismatches$'

@@ -15,12 +15,12 @@ jobs:
       - name: Install the tools (macOS)
         if: runner.os == 'macOS'
         run: |
-          brew install cmake ninja stormlib glslang ffmpeg vorbis-tools
+          brew install cmake ninja stormlib glslang ffmpeg
       - name: Install the tools (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake ninja-build libstorm-dev glslang-tools ffmpeg vorbis-tools
+          sudo apt-get install -y cmake ninja-build libstorm-dev glslang-tools ffmpeg
       - name: Check
         env:
           KOPRULU_FULL: "1" # a push's check, and a hosted run remembers no passes that the quick mode could save time on

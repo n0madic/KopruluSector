@@ -21,7 +21,6 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from sc_emulator import process  # noqa: E402
 from sc_emulator.machine import EmulationStop  # noqa: E402
@@ -67,13 +66,13 @@ def main() -> int:
         chunk = m.read(buf, n) if n else b""
         sectors.append({"index": index, "ok": bool(ok), "read": n, "sha256": hashlib.sha256(chunk).hexdigest()})
         data += chunk if ok and n == want else bytes(want)
-    from converter.mpq.stormlib import Archive, library  # noqa: F401  (StormLib comparison)
+    from scdata.mpq.stormlib import Archive, library  # noqa: F401  (StormLib comparison)
     import ctypes
     lib = library()
     stormlib = []
     with Archive(Path(process.DEFAULT_GAME_DIR) / args.archive) as a:
         h = ctypes.c_void_p()
-        from converter.mpq.stormlib import _encode
+        from scdata.mpq.stormlib import _encode
         lib.SFileOpenFileEx(a._handle, _encode(args.file), 0, ctypes.byref(h))
         lib.SFileSetFilePointer.argtypes = [ctypes.c_void_p, ctypes.c_long, ctypes.c_void_p, ctypes.c_uint]
         for index in range(len(sectors)):

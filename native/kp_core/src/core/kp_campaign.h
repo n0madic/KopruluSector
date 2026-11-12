@@ -47,11 +47,11 @@ typedef struct {
 } KpCampaign;
 
 /* The campaign from its payloads: TABL and CHEA (the executable's tables, kp_defs.h), MAPD (the missions' directories of
- * mapdata.dat and mapdata.tbl, converter/campaign.py). Nothing points into them afterwards. */
+ * mapdata.dat and mapdata.tbl, scdata/campaign.py). Nothing points into them afterwards. */
 int kp_campaign_from(KpCampaign *c, const uint8_t *tabl, size_t tabl_size, const uint8_t *mapd, size_t mapd_size,
 	const uint8_t *chea, size_t chea_size, const char *name, KpError *err);
 /* The campaign from the original files (ADR 0018, stage D3): MAPD built from arr\\mapdata.dat and arr\\mapdata.tbl as
- * converter/campaign.py directories does, TABL and CHEA the profile's compiled tables. */
+ * scdata/campaign.py directories does, TABL and CHEA the profile's compiled tables. */
 int kp_campaign_from_files(KpCampaign *c, const KpFiles *files, KpError *err);
 void kp_campaign_free(KpCampaign *c);
 

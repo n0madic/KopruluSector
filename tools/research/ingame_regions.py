@@ -4,7 +4,7 @@ the emulator's step-1 state dumps (sc_emulator/state.py), as the snapshots of
 probe_native_campaign_regions_117.py: ordered region records, raster and split records.
 
 Writes docs/research/evidence/native-ingame-regions.json: per catalog map, the SHA-256 of the
-snapshot (JSON, compact separators) and its counts; converter/tests/test_derive.py compares the
+snapshot (JSON, compact separators) and its counts; tests/c/test_chk.c compares the
 converter's RGNS section with it.
 
 Usage (repository root, private venv): python tools/research/ingame_regions.py [--root STATES]

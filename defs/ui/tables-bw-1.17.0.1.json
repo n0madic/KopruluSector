@@ -1,6 +1,6 @@
 {
  "id": "ui-tables",
- "provenance": ["StarCraft.exe 1.17.0.1 and Local.dll (L01) tables, read by converter/ui_tables.py and checked against the executable by converter/tests/test_ui_tables.py; function names from docs/research/atlas"],
+ "provenance": ["StarCraft.exe 1.17.0.1 and Local.dll (L01) tables, read by tools/research/scdata/ui_tables.py and checked against the executable by tools/research/scdata/tests/test_ui_tables.py; function names from docs/research/atlas"],
  "button_sets_va": "0x50ae98",
  "button": ["position", "icon", "condition", "action", "condition value", "action value", "enabled string", "disabled string"],
  "button_sets": [

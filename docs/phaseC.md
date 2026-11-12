@@ -17,7 +17,7 @@ The converter becomes `kp_convert`, in C, sharing its builders with the runtime.
 | C4 | Cinematics: the 1.17 SMK transcoded to VP9 and Vorbis in our own WebM by `kp_convert repack`; Remastered's WebM as they are; `CINE` and FFmpeg go | done 2026-11-12 |
 | C5 | The HD world: `kp_anim.c`, `images.rel`, the grouped packer, the HD page thread over anim; `HDTS`/`HDWA` from the originals; `HDPK`/`HDTS`/`HDWA` in the `hd2`/`hd` groups, the phones' sets transcoded by `kp_convert` | done 2026-11-12 |
 | C6 | The HD interface, portraits, console: `kp_convert hd-ui-table` writes `defs/scr/hd-ui-bw-1.17.0.1.json`; `HDUI`/`CONW` built from the originals; `HDUI` in a group per variant, the portraits' WebM in their own group, `CONW` in the core (`HDPV` gone) | done 2026-11-12 |
-| C7 | `converter/` deleted; the readers for research moved to `tools/research/`; the bundles carry `koprulu*.mpq` only; the Fold7 run | |
+| C7 | `converter/` deleted; the readers for research moved to `tools/research/scdata/`; the fixtures committed; the derived terrain's evidence checked in C; the bundles carry `koprulu*.mpq` only; the Fold7 run | done 2026-11-12 |
 
 ## C0 as built (2026-11-11)
 
@@ -430,3 +430,85 @@ The phones' run transcoded 21 containers: the tilesets and the water once for bo
 - While the pick looks for a set, `kp_res_raw_place` notes the packs it asks about among the files read, so a `--res-log` lists them before any page is read.
 - The ASTC set is not drawn anywhere yet: the computers' build has no ASTC decoder. The Fold7 run is C7's.
 - `generated/hd/<variant>/packs/`, `tilesets/` and `water.kpd` stay on disk where the converter wrote them. Nothing reads them but `tools/ci.sh`'s ASan parse of `generated/*.kpd`; remove them by hand.
+
+## C7 as built (2026-11-12)
+
+**The Python converter is gone.** `converter/` no longer exists. What research still reads moved, with its history, to
+`tools/research/scdata/` (87 modules: `formats`, `mpq`, `casc`, `kpf`'s container, `kpd` and `kpm` writers, `analyze`,
+`derive`'s rules, terrain and unit records, `emit`'s atlas, files and terrain, the catalog, the missions' survey, the
+packs' membership, the UI tables, the scenarios, and their 28 test modules). It is imported as `scdata` with
+`tools/research` on the path: the emulator, the oracles' exporters, the probes and `tools/defs_c.py` import it so.
+- **Deleted:** the command line (`__main__.py`); the derived terrain's Python twins (`derive/walk.py`, `regions.py`,
+  `contours.py`, `mission.py`); `emit/pages.py` and `kpf/resources.py` (the packer's twins); `kpf/dump.py`;
+  `kpf/fixtures.py`; `tests/test_derive.py` and `tests/test_resources.py`.
+- **The research's commands** are scripts of their own, each the old command's port:
+  - `tools/research/scr_manifest.py --data DIR [--scr DIR]`: the committed tables of what the game reads
+    (`defs/scr/inputs-*.json`, `texts-*.json`, `defs/campaign/packs-*.json`);
+  - `tools/research/scr_compare.py --data DIR --scr DIR`: Remastered's DAT tables and scripts against the profile's;
+  - `tools/research/scr_digests.py --scr DIR --out PATH`: the twin `tools/ci.sh` compares with `kp_convert digests`.
+
+**The fixtures are committed** (`tests/fixtures/kpf/`, 149 files, 2.2 MB). They are the files the Python converter's
+`fixtures.py` wrote, all synthetic (no original byte), with their `expect.json`. `kpf_large_file` (`test_data.c`) builds
+its 8 MiB container itself (SHA-256 digests of a counter, `kp_kpf_build`) and checks it against `expect.json`, so the
+largest fixture is not committed. CI's `fixtures` step is gone. The Python tests that built inputs with `fixtures.py`
+take them from `scdata/tests/synthetic.py` or read the committed files.
+
+**The derived terrain against the evidence, in C.** `test_chk.the_campaign_maps_derived_terrain_is_the_originals`
+(`KP_TEST_ORIGINAL`) builds the walk raster, the region graph and the contours of all 68 campaign CHKs as a map's load
+does (the 64 catalog maps through `kp_campaign_mission`, the four `VER=57` maps from their first `MTXM`) and compares
+their SHA-256 with the native hashes in `docs/research/evidence/` (the walk rasters and graphs of
+`native-campaign-regions-probes.json`, the contours of `native-contours-probes.json`), and the 64 catalog maps' `RGNS`
+with the graphs the game builds (`native-ingame-regions.json`). It takes 0.9 s.
+
+**The Python tests** run by `tools/python_tests.py` (`tools/converter_tests.py` renamed): `scdata`'s tests and
+`tools/tests/` (the runner's cache, the oracle's golden manifests). 230 pass, 2 skip, in 47 s; `tools/ci.sh` runs them
+in the background as before (`build/python-tests.log`).
+
+**The bundles** carry `koprulu*.mpq` only since C5 and C6: `tools/product.sh` stages the repack's groups and nothing of
+`generated/` but the icon and a debug build's scenarios and scripts.
+
+**Verified.**
+- The C suites over the committed fixtures, with the old generated ones moved away: `test_data`, `test_kp_core`,
+  `test_cine`, `test_movies`, `test_scr`, `test_ui_data`, `test_chk`.
+- `tools/defs_c.py --check` after the defs' comments were pointed at `scdata`.
+- `tools/research/scr_manifest.py --data … --scr …` writes `defs/scr/inputs-bw-1.17.0.1.json` and
+  `defs/campaign/packs-bw-1.17.0.1.json` byte for byte as committed. `defs/scr/texts-bw-1.17.0.1.json` lost
+  `rez\video.bin`'s dialog: C1's run dropped the file from the input manifest (nothing has read it since our own Video
+  Options dialog replaced it, 2026-10-27), but the text table was not made again then. The table and the compiled
+  `kp_defs_bw_1_17_0_1.c` are now the generator's; `test_locale`'s golden (the Python overlays, which never had that
+  dialog) still equals.
+- The full `tools/ci.sh` (`KOPRULU_FULL=1`).
+
+**Decisions taken in C7:**
+- **The Python test runner stays, renamed.** The plan removed `tools/converter_tests.py`; the research's readers keep
+  their tests, and CI still runs them.
+- **`scr-manifest` stays in Python** (`tools/research/scr_manifest.py`): it records what the game reads from the
+  analyzer's survey, which is research code. `kp_convert manifest` (the reads `kp_res` records itself) is a `TODO:` in
+  the script.
+- **The fixtures are committed** rather than written by `kp_convert`: they are small and synthetic, and their
+  expectations are the Python twins' values, which nothing could recompute once the twins were gone.
+- **`test_derive`'s synthetic cases are dropped** (the builders' steps on hand-made maps). The C test covers the 68
+  real maps against the native evidence, which is what the twins were checked by.
+- **FFmpeg is research only:** `tools/oracle/export_smk_ffmpeg.py` (a CI step when FFmpeg is there) and the research
+  readers' Remastered movies.
+
+**The Fold7** (Galaxy Z Fold7, wireless adb), the debug APK (1.1 GB) of a phone's repack of Remastered 1.23.10
+(`kp_convert repack /Applications/StarCraft --hd hd2-astc --locales ruRU`, 23.5 s: `koprulu-hd2-astc.mpq` 545 MB,
+`koprulu-ui-hd2.mpq` 36 MB, `koprulu-portraits.mpq` 73 MB, `koprulu-locale-ruru.mpq` 71 MB, the HD2 movies 329 MB;
+`KOPRULU_LOCALES=ruRU KOPRULU_CINEMATICS=hd2 tools/product.sh android debug`):
+- `hd_game.kps` on terran02: 159 steps, 0 failures; the world from the repack's `hd2-astc` (42 page slots in ASTC
+  blocks, 16 lit of 16), the interface from its `ui.kpd`, no SD pixel over HD art; the consoles' art in 3.4 ms.
+- `hd_glue.kps`: 89 steps, 0 failures (the menus, a briefing, a victory, the score; the portraits' group).
+- `hd_game.kps` on terran01 with `--locale ruRU --speech ruRU`: 159 steps, 0 failures; the language's group read, 592
+  voices, terran01's 6 actions' TIME; no character without a glyph, no text or speech refused.
+- `--cinematics hd2 --cine-check`: 28 movies, 31,156 frames, 0 failures, each read by its range from
+  `koprulu-cinematics-hd2.mpq`.
+
+The phone locks itself a second after the app starts unless it is kept unlocked: a run then stalls (`onPause`), and is
+run again once the screen is on.
+
+**Open after C7:**
+- `generated/hd/`, `generated/locale/`, `generated/video/`, `generated/data/console.kpd` and
+  `generated/cache/repack-ogg` stay on disk where the Python converter and C1 wrote them; nothing reads them. Remove them
+  by hand.
+- `kp_convert manifest` (see above).

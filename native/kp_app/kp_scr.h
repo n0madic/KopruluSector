@@ -1,5 +1,5 @@
 /* StarCraft: Remastered's own formats brought back to 1.17's files (ADR 0018, stage D6): the C of
- * converter/casc/rebuild.py, which kp_res's reads of a Remastered install use where Remastered has no copy of a file.
+ * scdata/casc/rebuild.py, which kp_res's reads of a Remastered install use where Remastered has no copy of a file.
  * Remastered keeps the glue and console art as RGBA images (DDS: uncompressed, DXT1 or DXT5) where 1.17 has
  * palette-indexed PCX and GRP files, its string tables as XML and no dialog BINs; the profile's compiled tables (SPAL,
  * SPCX, SGRP, SSMK, STBL, SBIN; tools/defs_c.py) say how each file is made again. */

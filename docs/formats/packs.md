@@ -2,9 +2,9 @@
 
 The graphics a mission loads ([ADR 0004](../adr/0004-resource-packs.md)). Since [ADR 0018](../adr/0018-original-data-at-run-time.md) the runtime packs a mission's GRPs into pages when it starts (`kp_pack_build`, `native/kp_present/kp_packs.c`, stage D5) by the rules below, and reads the sounds and the music from their WAVs and Oggs through `kp_res` (the music streamed). Since stage D8d the converter writes no `PACK` or `MUSC` container, and since [ADR 0019](../adr/0019-install-or-repack-converter-in-c.md)'s stage C2 no `MSND` (a language's speech, now read from its own files: [the repack](repack.md)). Every container below is a [Koprulu container](container.md).
 
-- **Pack membership:** `converter/packs.py`, compiled into the runtime (`tools/defs_c.py`). GRP geometry, atlas names per GRP and each GRP's first frame within its atlas: [`grpmeta.kpd`](kpd.md#grpmetakpd-schema-1)'s layout, which `kp_grpmeta_from_files` builds.
-- **Packer:** `kp_packs.c`; its reference is `converter/emit/pages.py` (`tests/c/test_present.c` places frames as it does).
-- **Dump:** `python3 -m converter dump FILE`.
+- **Pack membership:** `tools/research/scdata/packs.py`, compiled into the runtime (`tools/defs_c.py`). GRP geometry, atlas names per GRP and each GRP's first frame within its atlas: [`grpmeta.kpd`](kpd.md#grpmetakpd-schema-1)'s layout, which `kp_grpmeta_from_files` builds.
+- **Packer:** `kp_packs.c`; its reference was the Python converter's `emit/pages.py` until stage C7 (`tests/c/test_present.c` places frames as it did).
+- **Reading a container by hand:** `tools/research/scdata/kpf/container.py` `parse` (the Python converter's `dump` command went with it at stage C7).
 
 All integers are little-endian.
 

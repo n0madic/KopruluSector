@@ -53,7 +53,7 @@ static const struct {
 } TECH_SECTIONS[] = { { "PTEC", 24 }, { "PTEx", 44 } };
 
 /* The TRIG condition and action ids by name (tables 0x50e058 and 0x50df68, atlas P40; BWAPI's names in snake case;
- * converter/analyze/triggers.py CONDITION_IDS, ACTION_IDS). */
+ * scdata/analyze/triggers.py CONDITION_IDS, ACTION_IDS). */
 static const char *const CONDITION_NAMES[] = {
 	"none", "countdown_timer", "command", "bring", "accumulate", "kill", "command_the_most", "commands_the_most_at",
 	"most_kills", "highest_score", "most_resources", "switch", "elapsed_time", "mission_briefing", "opponents",

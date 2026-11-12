@@ -1,5 +1,5 @@
 {
- "comment": "The resource packs of each campaign mission and each test scenario (converter/analyze/profile.py over its scenario and the data): the PACK of a mission the runtime reads from its CHK (ADR 0018, stage D4; tools/defs_c.py MPAK), and of a test scenario, which kp_convert scenarios writes into its index (ADR 0019, stage C1; SPAK). Written by python3 -m converter scr-manifest --data DIR.",
+ "comment": "The resource packs of each campaign mission and each test scenario (tools/research/scdata/analyze/profile.py over its scenario and the data): the PACK of a mission the runtime reads from its CHK (ADR 0018, stage D4; tools/defs_c.py MPAK), and of a test scenario, which kp_convert scenarios writes into its index (ADR 0019, stage C1; SPAK). Written by python3 tools/research/scr_manifest.py --data DIR.",
  "profile": "bw-1.17.0.1",
  "missions": {
   "campaign\\expprotoss\\protoss01": ["doodads", "effects", "neutral", "protoss", "terran", "zerg"],

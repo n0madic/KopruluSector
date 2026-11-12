@@ -1,5 +1,6 @@
-/* A mission's terrain-derived data (kp_derive.h): converter/derive/terrain.py, walk.py, regions.py and contours.py in
- * C, the same control flow (docs/research/native-region-generation.md, native-contours.md). */
+/* A mission's terrain-derived data (kp_derive.h): the Python converter's derive/terrain.py (scdata's now), walk.py,
+ * regions.py and contours.py in C, the same control flow (docs/research/native-region-generation.md,
+ * native-contours.md); tests/c/test_chk.c checks every campaign map's against the original's. */
 #include "kp_derive.h"
 
 #include <stdio.h>

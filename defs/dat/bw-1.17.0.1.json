@@ -1,7 +1,7 @@
 {
  "id": "dat-layout",
  "profile": "bw-1.17.0.1",
- "provenance": ["Descriptors of the generic DAT loader 0x4442b0: docs/research/dat-schemas.md, evidence/dat-schemas.json; verified against StarCraft.exe by converter/tests/test_dat.py", "Column labels: pinned PyMS DAT definitions (labels only)", "Subrange starts and elements per id: dat-schemas.md (units infestation/addon_position from 106, sound columns 0-105, sprites health bar and selection columns from 130)"],
+ "provenance": ["Descriptors of the generic DAT loader 0x4442b0: docs/research/dat-schemas.md, evidence/dat-schemas.json; verified against StarCraft.exe by tools/research/scdata/tests/test_dat.py", "Column labels: pinned PyMS DAT definitions (labels only)", "Subrange starts and elements per id: dat-schemas.md (units infestation/addon_position from 106, sound columns 0-105, sprites health bar and selection columns from 130)"],
  "column_fields": ["name", "element_size", "count", "first_id", "per_id", "destination_va"],
  "files": [
   {

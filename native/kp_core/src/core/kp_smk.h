@@ -7,7 +7,7 @@
  * track, the video); libavcodec's smacker decoder and demuxer and its smackaud decoder document the same bit streams.
  *
  * It also plays KPW1, the stand-in for an SMK that only StarCraft: Remastered's WebM copy has (ADR 0018, stage D6;
- * kp_res and converter/formats/kpw.py make it): "KPW1", u32 width, height, frames, i32 frame rate, u32 flags (the SMK
+ * kp_res and scdata/formats/kpw.py make it): "KPW1", u32 width, height, frames, i32 frame rate, u32 flags (the SMK
  * header's: 1 a ring movie, whose extra last frame leads back to frame 1), the 768 bytes of its screen's palette, then
  * the WebM. Frame n is the WebM's frame n (its last past its end), each pixel its colour's index in that palette
  * (kp_index_map.h), transparent (0) below alpha 128. The WebM is decoded by the codec the host gives

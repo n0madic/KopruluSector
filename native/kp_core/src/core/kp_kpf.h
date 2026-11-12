@@ -95,7 +95,7 @@ typedef struct {
 	uint32_t schema_version; /* 0: 1 */
 } KpKpfOut;
 
-/* The container laid out as converter/kpf/container.py writes it: kind, schema version,
+/* The container laid out as scdata/kpf/container.py writes it: kind, schema version,
  * converter version, profile id, source hash (32 bytes; NULL: zeros) and canonical sections. *out is malloc'd; -1
  * out of memory or a field too long. */
 int kp_kpf_build(const char *kind, uint32_t schema_version, uint32_t converter_version, const char *profile_id,

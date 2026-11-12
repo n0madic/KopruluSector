@@ -26,8 +26,8 @@ from pathlib import Path
 
 from oracle_common import GOLDEN, ROOT, ExportError, update_goldens
 
-sys.path.insert(0, str(ROOT))
-from converter.mpq.profile import DEFAULT_PROFILE, Profile, Resolver  # noqa: E402
+sys.path.insert(0, str(ROOT / "tools" / "research"))
+from scdata.mpq.profile import DEFAULT_PROFILE, Profile, Resolver  # noqa: E402
 
 log = logging.getLogger("export_smk_ffmpeg")
 GENERATOR = "tools/oracle/export_smk_ffmpeg.py --data DIR"
