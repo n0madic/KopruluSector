@@ -29,7 +29,7 @@ extern "C" {
 
 /* The codecs' settings in kp_convert's cache of the transcodings (<BC SHA-256>-<etc2|astc>-<settings>.kpd): a change
  * of what a transcoding writes takes another. */
-#define KP_HD_TRANSCODE_SETTINGS "t2" /* t2: the ASTC encoder built invariant (third_party/astcenc/kp_astcenc.cmake) */
+#define KP_HD_TRANSCODE_SETTINGS "t2" /* t2: the ASTC encoder invariant (kp_astcenc.cmake and its patch) */
 
 /* A container's bytes (an HD pack, tileset or the water's normal maps, of BC blocks) in format (KP_HD_FORMAT_ETC2 or
  * _ASTC), its pages encoded on up to threads threads: malloc'd, or NULL with err (ASTC where built without KP_ASTC). */

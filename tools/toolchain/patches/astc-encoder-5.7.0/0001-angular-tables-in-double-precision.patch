@@ -1,0 +1,28 @@
+astcenc: the angular sin/cos tables computed in double precision and rounded to float
+
+prepare_angular_tables fills sin_table and cos_table with sinf and cosf. Those are not correctly rounded, and the math
+libraries differ: against sin and cos in double rounded to float, macOS's libm is off in 70 of the 4,096 entries,
+glibc's in 48, mingw-w64's in 1, and on macOS clang at -O1 and above joins the two calls into __sincosf_stret. So an
+invariant build (ASTCENC_INVARIANCE's flags) still chose other blocks for a few inputs on each platform: 3 of about
+28 million in KopruluSector's HD2 set for phones between Linux's GCC and macOS's clang. In double precision and
+rounded, the tables are the same on all three.
+
+Not in astc-encoder 5.7.0.
+
+--- a/Source/astcenc_weight_align.cpp
++++ b/Source/astcenc_weight_align.cpp
+@@ -77,8 +77,12 @@
+ 
+ 		for (unsigned int j = 0; j < SINCOS_STEPS; j++)
+ 		{
+-			sin_table[j][i] = static_cast<float>(sinf((2.0f * astc::PI / (SINCOS_STEPS - 1.0f)) * angle_step * static_cast<float>(j)));
+-			cos_table[j][i] = static_cast<float>(cosf((2.0f * astc::PI / (SINCOS_STEPS - 1.0f)) * angle_step * static_cast<float>(j)));
++			// In double precision, then rounded: sinf and cosf are not correctly rounded and differ from one math
++			// library to another (and on macOS with the optimizer, which joins them into __sincosf_stret), so the
++			// tables, and the blocks chosen by them, would differ by platform
++			double angle = static_cast<double>((2.0f * astc::PI / (SINCOS_STEPS - 1.0f)) * angle_step * static_cast<float>(j));
++			sin_table[j][i] = static_cast<float>(sin(angle));
++			cos_table[j][i] = static_cast<float>(cos(angle));
+ 		}
+ 	}
+ }

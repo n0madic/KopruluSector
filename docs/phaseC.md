@@ -570,8 +570,9 @@ run again once the screen is on.
   - Linux arm64 (GCC 15.2 in the image of `tools/native/linux.Dockerfile`; Remastered as an APFS clone in the
     repository, since Docker shares no `/Applications`): 1.17 in 241 s, Remastered in 299 s;
   - Windows x86-64 (mingw-w64, `kp_convert.exe` under Wine): 1.17 in 352 s, Remastered in 330 s;
-  - equal: every SD file, the `hd2`, `hd` and `hd2-etc2` sets, both interfaces' `ui.kpd`, the 621 portraits and
-    `CONW`; the 28 transcoded movies' VP9 packets (`ffmpeg -f framemd5` per stream);
+  - equal: every SD file, the `hd2`, `hd` and `hd2-etc2` sets (`hd2-astc` too since the next item), both
+    interfaces' `ui.kpd`, the 621 portraits and `CONW`; the 28 transcoded movies' VP9 packets (`ffmpeg -f framemd5`
+    per stream);
   - not equal: the Vorbis bytes, the speech's and the movies' sound alike (1,668 of the 1.17 install's 2,236 Oggs
     apart from macOS's, 50 between Linux and Windows): they follow the build, the compiler and its math library, not
     the processor (Linux and Windows agree on most though one is arm64 and the other x86-64; macOS built with
@@ -581,9 +582,18 @@ run again once the screen is on.
   was built without the flags of its own invariant build (`ASTCENC_INVARIANCE`, on by default in its CMake), which
   its documentation says make every compiler and processor write the same blocks. `kp_astcenc.cmake` sets them now
   (`-ffp-contract=off -fno-math-errno`, and `-fno-unsafe-math-optimizations` for clang), and the transcodings' cache
-  takes `t2` (`KP_HD_TRANSCODE_SETTINGS`). macOS and Windows then write the same set, byte for byte; Linux's GCC
-  differs in 3 of its 16-byte blocks (1 in `effects`, 2 in `protoss`; of about 28 million). The quality is the
-  same: `kp_hd_phone --report` on zerg's page 2 gives ADR 0013's 34.46 / 43.72 / 29.87 dB for 4 x 4.
+  takes `t2` (`KP_HD_TRANSCODE_SETTINGS`). macOS and Windows then wrote the same set, byte for byte; Linux's GCC
+  still differed in 3 of its 16-byte blocks (1 in `effects`, 2 in `protoss`; of about 28 million), from run to run
+  alike. Cut out alone, one block kept the difference; GCC wrote the same at -O0 to -O3, and so did clang at -O0, but
+  clang at -O1 and above wrote macOS's; with the encoder's sources built at -O0 and one at a time at -O1, the one
+  that turned it was `astcenc_weight_align.cpp`. Its `prepare_angular_tables` fills the angles' sine and cosine
+  tables with `sinf` and `cosf`, which clang at -O1 joins into Apple's `__sincosf_stret`; those functions are not
+  correctly rounded and differ from one library to another: against `sin` and `cos` in double rounded to float,
+  macOS's are off in 70 of the 4,096 entries, glibc's in 48, mingw-w64's in 1. A patch of the encoder
+  (`tools/toolchain/patches/astc-encoder-5.7.0/0001-angular-tables-in-double-precision.patch`, applied by
+  `fetch.sh astc`) fills them in double precision and rounds: then macOS, Linux and Windows write the same
+  `hd2-astc` set, byte for byte, and it is the one macOS wrote before, so its quality is unchanged
+  (`kp_hd_phone --report` on zerg's page 2 gives ADR 0013's 34.46 / 43.72 / 29.87 dB for 4 x 4).
 - **The tools build whole on Linux and Windows again.** Building every target there (not only `kp_test` and
   `kp_convert`) found four breaks: on Windows `kp_fs_size`'s `_stat64` without `<sys/stat.h>`, a maybe-uninitialized
   buffer in `kp_hd_ui_table.c` (`logical`, now zeroed) and `zlib.h` missing from the C++ check (the bundled zlib's
@@ -619,8 +629,4 @@ run again once the screen is on.
 - **A start from the install** to the main menu: about 0.95 s from the window, of it the consoles' art 81 ms.
 
 **Still open:**
-- `hd2-astc` from Linux's GCC differs from macOS's and Windows's in 3 blocks. Not found why: the encoder's NEON
-  operations are exact IEEE ones (division, square root, rounding, conversions), its logarithms and powers its own
-  polynomials, and the thread count is the same (14); a second run on Linux wrote the same
-  set, so it is the build's, not a race.
 - `kp_convert manifest` (the TODO in `tools/research/scr_manifest.py`): its design waits for approval.
