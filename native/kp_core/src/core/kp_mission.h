@@ -1,8 +1,7 @@
 /*
  * A mission built from its scenario (ADR 0018, stage D4): kp_mission_from_files reads the CHK, derives the terrain
  * data and lays them out in one blob as the parts the game reads (META, RULE, WAVS, WALK, RGNS, CONT, PACK and the raw
- * CHK payloads, docs/formats/kpm.md); the parts point into the blob. KP_MISSION_KIND is a language's overlay's kind
- * (kp_host_game_text, kp_host_game_speech).
+ * CHK payloads, docs/formats/kpm.md); the parts point into the blob.
  */
 #ifndef KP_MISSION_H
 #define KP_MISSION_H
@@ -17,8 +16,6 @@
 extern "C" {
 #endif
 
-#define KP_MISSION_KIND "MISN"
-#define KP_MISSION_SCHEMA 1
 #define KP_MISSION_NO_SOUND 0xffffu
 #define KP_MISSION_META_COLR 0x01u
 #define KP_REGION_SIZE 32
@@ -107,6 +104,9 @@ int kp_mission_packs_payload(const char *list, uint8_t *out, size_t cap);
  * mission's string string_id> (ADR 0018, stage D5: the app reads it as it reads the other original files). 1 with the
  * path in out, 0 for no string or an empty one, -1 for a malformed STR or a path longer than size. */
 int kp_mission_sound_path(const KpMission *m, const char *directory, uint32_t string_id, char *out, size_t size);
+/* Whether the game looks a STR row up by its text (the language's kept rows, kp_locale_mission), so a language keeps the base's: a sound's
+ * (m's WAV strings) or Set Next Scenario's map name (TRIG's action 41). */
+int kp_mission_string_looked_up(const KpMission *m, uint32_t string_id);
 void kp_mission_free(KpMission *m);
 
 #ifdef __cplusplus

@@ -25,13 +25,7 @@ Commands:
                                install's Smacker movies transcoded into the SD set (FFmpeg with libvpx-vp9
                                and oggenc; reused from generated/cache/cinematics/); --optional: without
                                those tools a warning instead of an error
-  locale --scr DIR --locale LOC|all [--out generated]
-                               write a language's overlay packs generated/locale/<LOC>/ (all: each the
-                               install holds, others are told in the log) and the glyph
-                               supplement generated/locale/glyphs.kpd (the base they are measured against
-                               is computed from the install; build the kp_fnt_make target;
-                               reports/locale-<LOC>.json has the checks)
-  dump FILE [--section XXXX]   print a .kpd/.kpm container in readable form
+  dump FILE [--section XXXX]   print a .kpd container in readable form
   scr-compare --data DIR --scr DIR
                                compare Remastered's DAT tables and scripts with the profile's
                                effective copies (exit status 1 if any differ)
@@ -164,22 +158,6 @@ def _cinematics(args: argparse.Namespace) -> int:
     return 0
 
 
-def _locale(args: argparse.Namespace) -> int:
-    """A language's overlay packs and the glyph supplement (generated/locale/; ADR 0016), over the base computed from the
-    install."""
-    from . import base
-    from .casc.source import ScrSource
-    from .emit import locale
-
-    with ScrSource(args.scr, Profile.load(args.profile)) as source:
-        loaded = base.load(source)
-        if args.locale == locale.ALL:
-            locale.generate_all(source.storage, loaded, Path(args.out))
-        else:
-            locale.generate(source.storage, loaded, args.locale, Path(args.out))
-    return 0
-
-
 def _dump(args: argparse.Namespace) -> int:
     from .kpf.dump import dump
 
@@ -265,12 +243,6 @@ def main(argv: list[str] | None = None) -> int:
                         "warn and write nothing instead of failing")
     p.add_argument("--out", default="generated")
     p.set_defaults(func=_cinematics)
-    p = sub.add_parser("locale", help="write a language's overlay packs and the glyph supplement")
-    p.add_argument("--scr", required=True, help="a StarCraft: Remastered install holding the language")
-    p.add_argument("--locale", required=True,
-                   help="the language, such as ruRU (defs/l10n/locales.json), or all: each the install holds")
-    p.add_argument("--out", default="generated")
-    p.set_defaults(func=_locale)
     p = sub.add_parser("dump", help="print a Koprulu container")
     p.add_argument("file")
     p.add_argument("--section")

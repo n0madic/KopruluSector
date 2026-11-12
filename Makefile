@@ -13,7 +13,6 @@ PYTHON   ?= python3
 VARIANT  ?= release
 HD       ?= hd2
 CINE     ?= hd2
-LOCALE   ?= all
 PORT     ?= 8793
 ARGS     ?=
 BUILD_DIR ?= build/app
@@ -33,7 +32,7 @@ PLATFORMS := macos web android ios ios-sim linux windows
 
 .DEFAULT_GOAL := help
 .PHONY: help convert convert-remastered remastered-extras check-source check-sc check-scr verify repack console \
-	scenarios terrain icon hd cinematics locale convert-tool fnt-tool toolchain app run test serve \
+	scenarios terrain icon hd cinematics locale-check convert-tool toolchain app run test serve \
 	install-android clean $(PLATFORMS)
 
 help:
@@ -48,17 +47,17 @@ help:
 	@echo "                               pieces from Remastered"
 	@echo "  make repack SC=DIR|SCR=DIR   the original files the game reads: OUT/repack (groups: the phones, the"
 	@echo "                               web) and OUT/repack-single (one koprulu.mpq: the computers); from"
-	@echo "                               Remastered a group per language it holds (its speech)"
+	@echo "                               Remastered a group per language it holds (its texts and speech)"
 	@echo "  make console SCR=DIR         the console's pieces OUT/data/console.kpd from Remastered's art"
 	@echo "  make scenarios SC=DIR|SCR=DIR  the test scenarios' CHKs OUT/scenarios/ (tests, the oracle's tools)"
 	@echo "  make terrain SC=DIR|SCR=DIR    the terrain checks' CRCs OUT/viewer/ (koprulu --autotest)"
 	@echo "  make convert-remastered SCR=DIR"
-	@echo "                               all of the above from Remastered plus its HD art, cinematics and"
-	@echo "                               languages"
+	@echo "                               all of the above from Remastered plus its HD art and cinematics"
 	@echo "  make hd SCR=DIR [HD=hd2|hd|all]"
 	@echo "  make cinematics SCR=DIR [CINE=sd|hd2|all]"
 	@echo "  make cinematics SC=DIR       the 1.17 movies transcoded into the SD set (FFmpeg with libvpx-vp9)"
-	@echo "  make locale SCR=DIR [LOCALE=all|ruRU|deDE|frFR|plPL]"
+	@echo "  make locale-check SCR=DIR    every string of each language Remastered holds checked, the reports"
+	@echo "                               OUT/reports/locale-<LOC>.json"
 	@echo ""
 	@echo "Build a bundle into dist/product/<platform>/ [VARIANT=release|debug]:"
 	@echo "  make macos | windows | linux | web | android | ios | ios-sim"
@@ -116,7 +115,9 @@ remastered-extras: check-scr
 ifneq ($(CINE),none)
 	$(MAKE) cinematics
 endif
-	$(MAKE) locale
+
+locale-check: check-scr convert-tool
+	$(KP_CONVERT) locale-check "$(SCR)" --out "$(OUT)"
 
 verify: check-sc convert-tool
 	$(KP_CONVERT) verify "$(SC)"
@@ -149,17 +150,9 @@ else
 	$(CONVERTER) cinematics --data "$(SC)" $(CINE_DATA) --out "$(OUT)"
 endif
 
-locale: check-scr fnt-tool
-	$(CONVERTER) locale --scr "$(SCR)" --locale $(LOCALE) --out "$(OUT)"
-
 convert-tool: toolchain
 	cmake -S . -B $(TOOLS_DIR) -G Ninja -DCMAKE_BUILD_TYPE=Release
 	cmake --build $(TOOLS_DIR) --target kp_convert
-
-# The converter's locale step runs this font tool (converter/emit/locale.py looks for it in build/cmake)
-fnt-tool: toolchain
-	cmake -S . -B $(TOOLS_DIR) -G Ninja -DCMAKE_BUILD_TYPE=Release
-	cmake --build $(TOOLS_DIR) --target kp_fnt_make
 
 # --- Builds -------------------------------------------------------------------------------------------------------
 

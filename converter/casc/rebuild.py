@@ -371,9 +371,12 @@ def remastered_xml(read, path: str) -> list[tuple[str, bytes]]:
     return strings
 
 
-def string_table(spans: list[bytes], xml_path: str, strings: list[tuple[str, bytes]], base: str | None) -> dict:
+def string_table(spans: list[bytes], xml_path: str, strings: list[tuple[str, bytes]], base: str | None,
+                 base_rows: int = 0) -> dict:
+    """A TBL's manifest: its XML, Remastered's own TBL of it and that TBL's row count (a language's XML holds those
+    rows by position: native/kp_app/kp_locale.c), each row's XML id and its NULs' positions."""
     nuls = {str(i): [k for k, ch in enumerate(s) if ch == 0] for i, s in enumerate(spans) if b"\0" in s}
-    return {"xml": xml_path, "base": base, "ids": align_ids(spans, strings), "nuls": nuls}
+    return {"xml": xml_path, "base": base, "base_rows": base_rows, "ids": align_ids(spans, strings), "nuls": nuls}
 
 
 DIALOG_TEXT_RATIO = 0.6  # an edited label at least this similar is taken; a replaced one is not ("Collections")

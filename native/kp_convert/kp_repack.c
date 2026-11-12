@@ -9,6 +9,7 @@
 #include "kp_data.h"
 #include "kp_fs.h"
 #include "kp_json.h"
+#include "kp_locale.h"
 #include "kp_mpq.h"
 #include "kp_ogg.h"
 #include "kp_sha256.h"
@@ -170,6 +171,18 @@ static int add_raw(Read **reads, int *count, int *cap, int from, const char *nam
 	return add_read(reads, count, cap, key, -1, 1);
 }
 
+/* add_raw's list for kp_locale_names */
+typedef struct {
+	Read **reads;
+	int *count, *cap, from;
+} RawList;
+
+static int add_listed(void *ctx, const char *name)
+{
+	RawList *l = (RawList *)ctx;
+	return add_raw(l->reads, l->count, l->cap, l->from, name);
+}
+
 /* A language's speech (stage C2): each campaign mission's map and lines, then the voices of sfxdata's sounds, as the
  * runtime reads them (kp_host_game_speech, kp_app_audio.c's speech_file). */
 static int speech_names(const KpData *d, const char *locale, Read **reads, int *count, int *cap, char *err, size_t err_size)
@@ -212,7 +225,8 @@ memory:
 }
 
 /* The files to read, in order: the manifest's, the movies' (a 1.17 install's), the extra names the rest leave out, the
- * languages' speech. */
+ * languages' speech and texts (kp_locale_names: the files the runtime builds a language from, Remastered's TrueType
+ * fonts with them, which the base's text takes too). */
 static Read *plan(KpRes *res, const KpRepackConfig *c, const KpCineCatalog *movies, int *count, char *err, size_t err_size)
 {
 	const KpDefsProfile *p = kp_res_profile(res);
@@ -235,18 +249,28 @@ static Read *plan(KpRes *res, const KpRepackConfig *c, const KpCineCatalog *movi
 		if (a < p->absent_count || listed(reads, manifest, key) || listed(reads + manifest, *count - manifest, key)) continue;
 		if (add_read(&reads, count, &cap, c->extra[k], -1, 0) != 0) goto memory;
 	}
-	if (c->locale_count > 0) {
+	if (kp_res_install(res) == KP_RES_SOURCE_CASC) {
 		KpData d;
 		KpError e;
+		RawList fonts = { &reads, count, &cap, *count };
+		int failed;
 		if (kp_data_build(&d, res, NULL, 0, NULL, 0, &e) != 0) {
-			snprintf(err, err_size, "the languages' speech: %s", e.msg);
+			snprintf(err, err_size, "the languages: %s", e.msg);
 			free(reads);
 			return NULL;
 		}
-		for (k = 0; k < c->locale_count; k++)
-			if (speech_names(&d, c->locales[k], &reads, count, &cap, err, err_size) != 0) break;
+		failed = kp_locale_names(&d, KP_LOCALE_BASE, add_listed, &fonts, &e) != 0;
+		if (failed) snprintf(err, err_size, "the TrueType fonts: %s", e.msg);
+		for (k = 0; k < c->locale_count && !failed; k++) {
+			RawList text = { &reads, count, &cap, *count }; /* the language's own: its speech's names too */
+			failed = speech_names(&d, c->locales[k], &reads, count, &cap, err, err_size) != 0;
+			if (!failed && kp_locale_names(&d, c->locales[k], add_listed, &text, &e) != 0) {
+				snprintf(err, err_size, "%s", e.msg);
+				failed = 1;
+			}
+		}
 		kp_data_free(&d);
-		if (k < c->locale_count) {
+		if (failed) {
 			free(reads);
 			return NULL;
 		}

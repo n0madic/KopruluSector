@@ -17,12 +17,12 @@
 # HD2's pack where it was converted, else SD's, else none; none builds none of it; the web fetches the pack beside the
 # page as byte ranges (a server with Range requests: tools/web_serve.py), its head preloaded; a debug build adds the
 # test scenarios, the terrain checks' CRCs and the scripts (tests/scripts/*.kps as generated/scripts/: the
-# development checks, --autotest and --script; a phone reads them from its assets). The languages
-# (python3 -m converter locale; ADR 0016) with KOPRULU_LOCALES=auto|none|<ids>: auto, the default, stages every
-# language converted (generated/locale/<id>) and the glyphs' pack; none stages none, the game in its base language
-# with the base's vector fonts; a list ("ruRU deDE") stages those, each of which must have been converted. A staged
-# language's speech is its repack group (koprulu-locale-<id>.mpq, kp_convert repack from StarCraft: Remastered; ADR
-# 0019, stage C2), which the computers and phones carry; the web carries none yet. Bundles go to
+# development checks, --autotest and --script; a phone reads them from its assets). The languages (ADR 0016; ADR
+# 0019, stages C2 and C3: their texts and speech, which the game builds from Remastered's own files) are the repack's
+# groups (koprulu-locale-<id>.mpq, kp_convert repack from StarCraft: Remastered) with KOPRULU_LOCALES=auto|none|<ids>:
+# auto, the default, stages every language group of the repack; none stages none, the game in its base language; a
+# list ("ruRU deDE") stages those, each of which the repack must hold. The computers and phones carry them; the web
+# carries none yet. Bundles go to
 # dist/product/<platform> (KOPRULU_DIST: another folder for <platform>, such as a second bundle of another
 # conversion); the converter's output (generated/, or KOPRULU_GENERATED: another --out directory, such as a
 # conversion from StarCraft: Remastered alone, whose repack is generated/repack-single or generated/repack of it)
@@ -76,25 +76,6 @@ case "$CINEMATICS" in
   *) echo "product: KOPRULU_CINEMATICS is auto, none, sd, hd2 or both" >&2; exit 2 ;;
 esac
 
-LOCALES="${KOPRULU_LOCALES:-auto}"
-case "$LOCALES" in
-  auto) LOCALES=""
-    if [ -f "$GENERATED/locale/glyphs.kpd" ]; then
-      for d in "$GENERATED"/locale/*/; do
-        if [ -f "$d/strings.kpd" ]; then LOCALES="$LOCALES $(basename "$d")"; fi
-      done
-    fi
-    LOCALES="${LOCALES# }" ;;
-  none) LOCALES="" ;;
-  *) for id in $LOCALES; do
-      if [ ! -f "$GENERATED/locale/$id/strings.kpd" ] || [ ! -f "$GENERATED/locale/glyphs.kpd" ]; then
-        echo "product: no $GENERATED/locale/$id (python3 -m converter locale --scr DIR --locale $id)" >&2
-        exit 2
-      fi
-    done ;;
-esac
-echo "product: languages ${LOCALES:-none} (KOPRULU_LOCALES)" >&2
-
 # The repack (ADR 0018): a computer's one file, a phone's and the web's groups (each read or fetched when needed)
 case "$PLATFORM" in
   web|android|ios|ios-sim) REPACK=repack; REPACK_HINT="kp_convert repack DIR, make repack SC=DIR|SCR=DIR" ;;
@@ -105,13 +86,26 @@ if [ ! -f "$GENERATED/$REPACK/koprulu-core.mpq" ] && [ ! -f "$GENERATED/$REPACK/
   exit 1
 fi
 # the files of the repack a bundle carries (relative to $GENERATED): the cinematics' group goes, the packs show them;
-# a language's group (its speech) goes with the language (KOPRULU_LOCALES), not to the web
-# TODO: the web fetches a language's group when the language is chosen (stage C3, whose texts go into the group)
+# the languages' groups (their texts and speech) KOPRULU_LOCALES stages, not to the web
+# TODO: the web fetches a language's group when the language is chosen
 GENERATED_DIR="$(cd "$GENERATED" && pwd)"
-LANGUAGE_GROUPS=""
-if [ "$PLATFORM" != web ]; then
-  for id in $LOCALES; do LANGUAGE_GROUPS="$LANGUAGE_GROUPS koprulu-locale-$(printf %s "$id" | tr '[:upper:]' '[:lower:]').mpq"; done
-fi
+LANGUAGE_GROUPS="" # each name with a space before it (repack_files looks for " NAME ")
+LOCALES="${KOPRULU_LOCALES:-auto}"
+if [ "$PLATFORM" = web ]; then LOCALES=none; fi
+case "$LOCALES" in
+  auto) for group in "$GENERATED_DIR/$REPACK"/koprulu-locale-*.mpq; do
+      if [ -f "$group" ]; then LANGUAGE_GROUPS="$LANGUAGE_GROUPS $(basename "$group")"; fi
+    done ;;
+  none) ;;
+  *) for id in $LOCALES; do
+      group="koprulu-locale-$(printf %s "$id" | tr '[:upper:]' '[:lower:]').mpq"
+      if [ ! -f "$GENERATED_DIR/$REPACK/$group" ]; then
+        echo "product: no $GENERATED/$REPACK/$group (kp_convert repack DIR from StarCraft: Remastered, --locales $id)" >&2
+        exit 2
+      fi
+      LANGUAGE_GROUPS="$LANGUAGE_GROUPS $group"
+    done ;;
+esac
 repack_files() {
   local f
   (cd "$GENERATED_DIR" && find "$REPACK" -name 'koprulu*.mpq' ! -name koprulu-cinematics.mpq | sort) | while read -r f; do
@@ -121,8 +115,8 @@ repack_files() {
     esac
   done
 }
-speech="$(repack_files | sed -n 's/.*koprulu-locale-\(.*\)\.mpq$/\1/p' | tr '\n' ' ')"
-echo "product: speech ${speech:-none} (the staged languages' repack groups)" >&2
+languages="$(repack_files | sed -n 's/.*koprulu-locale-\(.*\)\.mpq$/\1/p' | tr '\n' ' ')"
+echo "product: languages ${languages:-none} (KOPRULU_LOCALES: the repack's language groups)" >&2
 
 # The data of a bundle under $STAGE/generated (hard links where the file system allows).
 stage_data() {
@@ -133,8 +127,6 @@ stage_data() {
       echo data/console.kpd # the console's pieces (Remastered's, whole: python3 -m converter console)
       # the web preloads the core, the other groups lie beside the page (stage_web_fetched)
       if [ "$PLATFORM" = web ]; then repack_files | grep '/koprulu-core\.mpq$'; else repack_files; fi
-      if [ -n "$LOCALES" ]; then echo locale/glyphs.kpd; fi # LOCS lists the languages
-      for id in $LOCALES; do find "locale/$id" -name '*.kpd' -o -name '*.kpm'; done # each language's overlays
       if [ "$PLATFORM" != web ]; then # the web's head alone (web_hd_heads.py), the rest beside the page
         for v in $CINE_VARIANTS; do echo "video/cinematics-$v.kpd"; done
       fi

@@ -120,7 +120,7 @@ typedef void (*KpUiTextPlotted)(void *ctx, const KpUiSurface *s, const int32_t *
 #define KP_FNT_SUPPLEMENT_ENTRY 8
 #define KP_UI_TEXT_MISSING 16 /* the code points with no glyph kept for one log line each */
 
-/* A font's glyph supplement (ADR 0016; docs/formats/kpd.md's glyphs.kpd): u32 count, count pairs of u32 code point
+/* A font's glyph supplement (ADR 0016; kp_fnt_supplement, built by kp_locale.c): u32 count, count pairs of u32 code point
  * (ascending) and u32 offset from its start, the glyphs in FNT's form (width, height, x, y, packets). */
 typedef struct {
 	const uint8_t *font; /* the FNT image it goes with */

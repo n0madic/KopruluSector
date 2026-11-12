@@ -1,7 +1,7 @@
 /*
  * A glyph supplement in FNT's form from a TrueType font (kp_present.h; ADR 0016): the characters an FNT font's 224 byte
  * slots lack, rasterized (stb_truetype) to the font's cap height and fitted to its widths, in the masks its own glyphs
- * use. Written by the converter's `locale` through tools/kp_fnt_make.c.
+ * use. Built at run time by the languages' glyphs (kp_app/kp_locale.c; ADR 0019, stage C3).
  */
 #include "kp_present.h"
 #include "kp_present_internal.h"

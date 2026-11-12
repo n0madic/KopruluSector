@@ -1,9 +1,8 @@
-"""The mission helpers of the languages' overlays and the survey: the `.kpm` kind (`MISN`) a language's mission overlay
-carries (emit/locale.py: STRS), the map strings, the WAV strings of
-the triggers and the mission's sounds as the game finds them, and MPAK's payload (tools/defs_c.py).
+"""The mission helpers of the survey: the map strings, the WAV strings of the triggers and the mission's sounds as the
+game finds them, and MPAK's payload (tools/defs_c.py).
 
 The runtime builds a mission from its CHK (ADR 0018, kp_mission_from_files); the terrain state it derives has its
-reference in converter/derive/mission.py. Layout of the overlays: docs/formats/kpm.md.
+reference in converter/derive/mission.py.
 """
 from __future__ import annotations
 
@@ -17,9 +16,6 @@ from ..formats.chk import Scenario
 from ..errors import ConverterError
 
 log = logging.getLogger(__name__)
-
-KIND = b"MISN"
-SCHEMA = 1
 
 TRIGGER_SIZE = 2400
 ACTIONS_OFFSET = 320

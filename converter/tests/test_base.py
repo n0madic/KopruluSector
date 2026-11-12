@@ -1,6 +1,5 @@
-"""The in-memory conversion (ADR 0018, stage D8d): the packs record `scr-manifest` writes, the game data's containers
-and the base of the languages (converter/gamedata.py, converter/base.py, converter/missions.py); with KOPRULU_ORIGINAL
-the 1.17 install's."""
+"""The in-memory conversion (ADR 0018, stage D8d): the packs record `scr-manifest` writes and the game data's containers
+(converter/gamedata.py, converter/missions.py); with KOPRULU_ORIGINAL the 1.17 install's."""
 from __future__ import annotations
 
 import json
@@ -9,7 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from converter import base, gamedata, missions
+from converter import gamedata, missions
 from converter.formats.palette import TILESETS
 
 ORIGINAL = os.environ.get("KOPRULU_ORIGINAL")
@@ -47,13 +46,3 @@ class OriginalTest(unittest.TestCase):
                                             "portraits", "grpmeta", "campaign", *(f"tilesets/{n}" for n in TILESETS)])
             assert all(c.source_hash == r.data_set_hash() and c.profile_id == PROFILE for c in built.values())
             assert gamedata.strings(r).to_bytes() == built["strings"].to_bytes()
-
-    def test_the_base_holds_each_catalog_mission(self):
-        from converter.mpq.profile import Resolver
-
-        with Resolver(ORIGINAL) as r:
-            loaded = base.load(r)
-        assert (loaded.profile_id, loaded.source_hash) == (PROFILE, loaded.strings.source_hash)
-        assert len(loaded.missions) == 64 and next(iter(loaded.missions)) == "terran/tutorial"
-        first = loaded.missions["terran/terran01"]
-        assert first.strs and len(first.trig) % 2400 == 0 and len(first.mbrf) % 2400 == 0

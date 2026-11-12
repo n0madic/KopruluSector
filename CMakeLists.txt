@@ -53,9 +53,18 @@ if(KP_SANITIZE)
 	add_link_options(${KP_SANITIZE_FLAGS})
 endif()
 
-# One wasm stack for the suites under node and the product's page: the suites prove the core on the stack the page
-# gives it (a wasm stack overflow corrupts memory silently).
-set(KP_WASM_STACK -sSTACK_SIZE=8MB)
+# One main-thread stack everywhere, macOS's and Linux's 8 MB. The wasm builds set theirs: the suites under node prove the
+# core on the stack the product's page gives it (a wasm stack overflow corrupts memory silently). Windows gives 2 MB
+# (mingw; MSVC 1 MB), less than the suites need (test_session's two KpProfiles, 1.26 MB each, ___chkstk_ms under Wine).
+set(KP_STACK_BYTES 8388608)
+set(KP_WASM_STACK -sSTACK_SIZE=${KP_STACK_BYTES})
+if(WIN32)
+	if(MSVC)
+		add_link_options(/STACK:${KP_STACK_BYTES})
+	else()
+		add_link_options(-Wl,--stack,${KP_STACK_BYTES})
+	endif()
+endif()
 
 if(EMSCRIPTEN AND KP_APP)
 	set(KP_TOOLS OFF) # the product's page; the node build of the tools is its own configuration
@@ -194,9 +203,6 @@ if(KP_ASTC)
 	set(KP_CXX_ASTC_INCLUDE -DKP_ASTC=1 -isystem ${KP_ASTC_DIR}) # the C++ check sees the tool's ASTC half too
 	set_target_properties(kp_hd_phone PROPERTIES LINKER_LANGUAGE CXX)
 endif()
-add_executable(kp_fnt_make ${KP_TOOLS_DIR}/kp_fnt_make.c)
-kp_target(kp_fnt_make CXX)
-target_link_libraries(kp_fnt_make PRIVATE kp_present)
 add_executable(kp_load_check ${KP_TOOLS_DIR}/kp_load_check.c)
 kp_target(kp_load_check CXX)
 target_link_libraries(kp_load_check PRIVATE kp_core)

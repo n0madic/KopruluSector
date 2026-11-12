@@ -170,6 +170,7 @@ static int assemble(KpMission *m, const KpBytes part[], const char *name, KpErro
 #define ACTIONS_OFFSET 320
 #define ACTION_SIZE 32
 #define ACTION_LOCATION 0x00
+#define ACTION_STRING 0x04
 #define ACTION_WAV 0x08
 #define ACTION_NUMBER 0x14
 #define ACTION_TYPE 0x1a
@@ -183,6 +184,7 @@ static int assemble(KpMission *m, const KpBytes part[], const char *name, KpErro
 #define ACTION_ORDER 46
 #define ACTION_MODIFY_RESOURCE_AMOUNT 52
 #define ACTION_MODIFY_HANGAR_COUNT 53
+#define ACTION_SET_NEXT_SCENARIO 41
 #define LOCATIONS 255
 #define WAVS_ENTRY 12
 #define STRING_IDS 65536
@@ -587,6 +589,20 @@ int kp_mission_packs_payload(const char *list, uint8_t *out, size_t cap)
 		at += 1 + lens[k];
 	}
 	return (int)at;
+}
+
+int kp_mission_string_looked_up(const KpMission *m, uint32_t string_id)
+{
+	size_t r;
+	int k, a;
+	for (k = 0; k < m->sound_count; k++)
+		if (m->sounds[k].string_id == string_id) return 1;
+	for (r = 0; r + TRIGGER_SIZE <= m->triggers.size; r += TRIGGER_SIZE)
+		for (a = 0; a < ACTION_COUNT; a++) {
+			const uint8_t *act = m->triggers.data + r + ACTIONS_OFFSET + (size_t)a * ACTION_SIZE;
+			if (act[ACTION_TYPE] == ACTION_SET_NEXT_SCENARIO && (kp_le_u32(act + ACTION_STRING) & 0xffff) == string_id) return 1;
+		}
+	return 0;
 }
 
 void kp_mission_free(KpMission *m)

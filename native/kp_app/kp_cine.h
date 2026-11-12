@@ -101,9 +101,9 @@ typedef struct {
  * before it starts or starts before the one before it, or their text runs past SUBS's or spans more than
  * KP_CINE_CUE_TEXT bytes. */
 int kp_cine_subs_load(const KpCineIndex *ix, int k, KpCineRead read, void *ctx, KpCineSubs *s, KpError *err);
-/* A language's subtitles over the index (generated/locale/<loc>/cinematics.kpd, kept, not copied: SUBS with a row for
- * every movie of the table, by clip number; ADR 0016): 0, or -1 with err and the pack's own left. */
-int kp_cine_subs_overlay(KpCineIndex *ix, const uint8_t *data, size_t size, KpError *err);
+/* A language's subtitles over the index (KpLocale.subs, kept, not copied: SUBS with a row for every movie of the table,
+ * by clip number; ADR 0016): 0, or -1 with err and the index left as it was. */
+int kp_cine_subs_overlay(KpCineIndex *ix, const uint8_t *subs, size_t size, KpError *err);
 /* The subtitle shown at ms: the last begun at or before it that has not ended (end_ms excluded), or -1. */
 int kp_cine_subs_at(const KpCineSubs *s, uint64_t ms);
 

@@ -186,63 +186,39 @@ int kp_cine_prelude(const KpCineIndex *ix, int id)
 	return -1;
 }
 
-int kp_cine_subs_overlay(KpCineIndex *ix, const uint8_t *data, size_t size, KpError *err)
+int kp_cine_subs_overlay(KpCineIndex *ix, const uint8_t *subs, size_t size, KpError *err)
 {
-	KpKpf c;
-	const KpKpfSection *s;
 	uint32_t total, text, clips, sum = 0, k;
 	uint64_t fixed;
-	int j, rc = -1;
-	if (kp_kpf_parse(&c, data, size, "language's cinematics", 1, err) != 0) return -1;
-	s = kp_kpf_find(&c, "SUBS");
-	if (memcmp(c.kind, KP_CINE_KIND, 4) != 0 || c.schema_version != KP_CINE_SCHEMA) {
-		rc = fail(err, "a language's pack is of another kind or schema");
-		goto done;
-	}
-	if (s == NULL || s->size < SUBS_HEAD) {
-		rc = fail(err, "a language's pack has no SUBS");
-		goto done;
-	}
-	total = kp_le_u32(s->data + 4);
-	text = kp_le_u32(s->data + 8);
+	int j;
+	if (subs == NULL || size < SUBS_HEAD) return fail(err, "a language's SUBS is cut short");
+	total = kp_le_u32(subs + 4);
+	text = kp_le_u32(subs + 8);
 	fixed = (uint64_t)SUBS_HEAD + (uint64_t)total * CUE_RECORD + text;
-	if (fixed > s->size || (s->size - fixed) % SUBS_CLIP != 0) {
-		rc = fail(err, "a language's SUBS does not add up");
-		goto done;
-	}
-	clips = (uint32_t)((s->size - fixed) / SUBS_CLIP);
+	if (fixed > size || (size - fixed) % SUBS_CLIP != 0) return fail(err, "a language's SUBS does not add up");
+	clips = (uint32_t)((size - fixed) / SUBS_CLIP);
 	for (k = 0; k < clips; k++) { /* the rows lie in order; a row names its cues by number */
-		if (kp_le_u32(s->data + SUBS_HEAD + SUBS_CLIP * k) != sum || kp_le_u32(s->data + SUBS_HEAD + SUBS_CLIP * k + 4) > KP_CINE_CUES) {
-			rc = fail(err, "a language's subtitles are out of place");
-			goto done;
+		if (kp_le_u32(subs + SUBS_HEAD + SUBS_CLIP * k) != sum || kp_le_u32(subs + SUBS_HEAD + SUBS_CLIP * k + 4) > KP_CINE_CUES) {
+			return fail(err, "a language's subtitles are out of place");
 		}
-		sum += kp_le_u32(s->data + SUBS_HEAD + SUBS_CLIP * k + 4);
+		sum += kp_le_u32(subs + SUBS_HEAD + SUBS_CLIP * k + 4);
 	}
-	if (sum != total) {
-		rc = fail(err, "a language's cues do not add up");
-		goto done;
-	}
+	if (sum != total) return fail(err, "a language's cues do not add up");
 	for (j = 0; j < ix->count; j++) {
-		if ((uint32_t)ix->clips[j].id >= clips) {
-			rc = fail(err, "a language's SUBS has no row for a clip");
-			goto done;
-		}
+		if ((uint32_t)ix->clips[j].id >= clips) return fail(err, "a language's SUBS has no row for a clip");
 	}
 	for (j = 0; j < ix->count; j++) {
 		KpCineClip *clip = &ix->clips[j];
-		clip->cue_first = kp_le_u32(s->data + SUBS_HEAD + SUBS_CLIP * clip->id);
-		clip->cue_count = kp_le_u32(s->data + SUBS_HEAD + SUBS_CLIP * clip->id + 4);
+		clip->cue_first = kp_le_u32(subs + SUBS_HEAD + SUBS_CLIP * clip->id);
+		clip->cue_count = kp_le_u32(subs + SUBS_HEAD + SUBS_CLIP * clip->id + 4);
 	}
-	memcpy(ix->subtitles, s->data, 4);
+	memcpy(ix->subtitles, subs, 4);
 	ix->subtitles[4] = 0;
-	ix->subs_overlay = s->data;
+	ix->subs_overlay = subs;
 	ix->cues_at = (uint64_t)SUBS_HEAD + (uint64_t)clips * SUBS_CLIP;
 	ix->text_at = ix->cues_at + (uint64_t)total * CUE_RECORD;
 	ix->text_size = text;
-	rc = 0;
-done:
-	kp_kpf_free(&c);
-	return rc;
+	return 0;
 }
 
 /* size bytes of the subtitles' at offset: the language's in memory, else the pack's. */

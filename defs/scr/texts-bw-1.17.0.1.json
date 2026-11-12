@@ -5,6 +5,7 @@
   "rez\\gluAll.tbl": {
    "xml": "SD/rez/gluall.xml",
    "base": null,
+   "base_rows": 0,
    "ids": [
     "mainEDITORGONE",
     "mainSPAWNEDLABEL_ss",
@@ -214,6 +215,7 @@
   "rez\\gluHist.tbl": {
    "xml": "SD/rez/gluhist.xml",
    "base": null,
+   "base_rows": 0,
    "ids": [
     "histTERRAN_0",
     "histTERRAN_1",
@@ -308,6 +310,7 @@
   "rez\\help_txt.tbl": {
    "xml": "SD/rez/help_txt.xml",
    "base": null,
+   "base_rows": 0,
    "ids": [
     "STR_HELP_1",
     "STR_HELP_1_1",
@@ -367,6 +370,7 @@
   "rez\\network.tbl": {
    "xml": "SD/rez/network.xml",
    "base": null,
+   "base_rows": 0,
    "ids": [
     "strDELETE_ERR_s",
     "strREPLACE_ERR_s",
@@ -542,6 +546,7 @@
   "rez\\stat_txt.tbl": {
    "xml": "SD/rez/stat_txt.xml",
    "base": "rez/stat_txt.tbl",
+   "base_rows": 1539,
    "ids": [
     "FIRST_UNIT_STRING",
     "FIRST_UNIT_STRING_1",
@@ -3147,6 +3152,7 @@
   "rez\\tips.tbl": {
    "xml": "SD/rez/tips.xml",
    "base": null,
+   "base_rows": 0,
    "ids": [
     "STR_TIP_TUT1",
     "STR_TIP_T1",

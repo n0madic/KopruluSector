@@ -2,7 +2,7 @@
 iscript, aiscript, fonts, palettes, portraits, sounds, tilesets, ui, grpmeta and campaign containers.
 
 `build` makes every one; `scr-manifest` runs it over the reference install so that the input manifest holds each file they
-read, `converter locale` takes `strings`, `ui` and `fonts` for its base (converter/base.py). Nothing
+read. Nothing
 is written: the runtime reads the original files (stage D5), and of the converted containers only `console.kpd` remains
 (`converter console`, converter/emit/hd_ui.py).
 """

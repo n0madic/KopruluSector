@@ -25,7 +25,7 @@ Not included: multiplayer, Battle.net, replays and custom (UMS) maps.
 
 | What | For |
 |---|---|
-| Python 3.10+ with [Pillow](https://pypi.org/project/Pillow/) | the converter's steps not yet in `kp_convert`: the console, the HD art, the cinematics and the languages' text (`python3 -m pip install Pillow`; [ADR 0019](docs/adr/0019-install-or-repack-converter-in-c.md)) |
+| Python 3.10+ with [Pillow](https://pypi.org/project/Pillow/) | the converter's steps not yet in `kp_convert`: the console, the HD art and the cinematics (`python3 -m pip install Pillow`; [ADR 0019](docs/adr/0019-install-or-repack-converter-in-c.md)) |
 | [StormLib](https://github.com/ladislav-zezula/StormLib) (`brew install stormlib`, Debian/Ubuntu `libstorm-dev`) | the Python converter's reading of the 1.17 install's MPQ archives (`cinematics --data`; Remastered's `--scr` does without it). `kp_convert` and the game build their own from the sources `tools/toolchain/fetch.sh` downloads. `KOPRULU_STORMLIB` names the library when the loader does not find it (on Windows `StormLib.dll` or `storm.dll`) |
 | GNU make (optional) | the shortcuts of the [Makefile](#quick-start-with-make) |
 | FFmpeg (`ffmpeg`, `ffprobe` on the `PATH`) | the portraits (`data` decodes their movies, from either install) and the cinematics; the 1.17 cinematics need its `libvpx-vp9` encoder |
@@ -45,14 +45,14 @@ The [Makefile](Makefile) chains the steps below. Run `make` alone to see every t
 
 ```bash
 make convert SC=/path/to/StarCraft          # from a 1.17.0.1 folder, with the repack and its cinematics
-make convert-remastered SCR=/path/to/StarCraft   # from Remastered, with HD, cinematics and languages
+make convert-remastered SCR=/path/to/StarCraft   # from Remastered, with HD and cinematics (the languages in its repack)
 make macos                                   # or windows, linux, web, android, ios, ios-sim
 make web serve                               # build the web version and serve it on http://localhost:8793/
 make run ARGS="--graphics hd2"               # a development build, started from the repository root
 ```
 
 Settings are passed as variables: `HD=hd2|hd|all`, `CINE=sd|hd2|all` (Remastered's sets; the 1.17 install has
-only `sd`; `none` converts no cinematics), `LOCALE=all|ruRU|...`, `VARIANT=release|debug`, `OUT=<folder>` (default
+only `sd`; `none` converts no cinematics), `VARIANT=release|debug`, `OUT=<folder>` (default
 `generated`). The sections below show what each target runs.
 
 ## 1. Convert the data
@@ -76,7 +76,7 @@ cmake -S . -B build/convert-windows -G Ninja -DCMAKE_BUILD_TYPE=Release -DKP_TOO
   -DCMAKE_TOOLCHAIN_FILE=tools/toolchain/cross-windows.cmake && cmake --build build/convert-windows --target kp_convert
 ```
 
-The rest (the console, the HD art, the cinematics, the languages' text) is still `python3 -m converter`, until
+The rest (the console, the HD art, the cinematics) is still `python3 -m converter`, until
 `kp_convert` takes it over ([phase C](docs/phaseC.md)).
 
 ### From StarCraft: Brood War 1.17.0.1
@@ -127,13 +127,12 @@ python3 -m converter hd --scr "$SCR" --variant hd2
 # Cinematics and their subtitles (sd, hd2 or all)
 python3 -m converter cinematics --scr "$SCR" --variant hd2
 
-# Languages: the text needs the font tool built first (see "Desktop build" below)
-cmake -S . -B build/cmake -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build/cmake --target kp_fnt_make
-python3 -m converter locale --scr "$SCR" --locale all    # or ruRU, deDE, frFR, plPL
+# Every string of each language the install holds checked: generated/reports/locale-<LOC>.json
+build/cmake/kp_convert locale-check "$SCR"    # --locale ruRU for one
 ```
 
-The languages' speech needs no conversion: the game plays it from the install, or from the repack's language groups
-below.
+The languages need no conversion: the game builds their text, glyphs and speech from the install's own files, or from
+the repack's language groups below ([ADR 0019](docs/adr/0019-install-or-repack-converter-in-c.md), stages C2 and C3).
 
 ### The repack
 
@@ -144,9 +143,9 @@ that is smaller (libvorbis, on the processor's cores; each kept in `generated/ca
 WAVs). The Ogg files' bytes can differ between processors, never what they decode to within the encoder's rounding. The repack has priority over an install in `--data`. The bundles
 carry the repack: a computer's the one file of `--single`, a phone's and the web's the groups (`make repack` writes
 both). From Remastered each language the install holds gets a group of its own, `koprulu-locale-<loc>.mpq`, even with
-`--single`: its maps, spoken lines and unit voices, a sound in Ogg Vorbis at 22,050 Hz mono when that is smaller
-(`--locales "ruRU deDE"` or `none` picks them). No converted SD data remains: the languages' packs compute their base
-from the install they are converted from.
+`--single`: its texts (the XML strings, the glue's text files, the subtitles), maps, spoken lines and unit voices, a
+sound in Ogg Vorbis at 22,050 Hz mono when that is smaller (`--locales "ruRU deDE"` or `none` picks them); the core
+holds Remastered's TrueType fonts the languages' glyphs are drawn from.
 
 ```bash
 build/cmake/kp_convert repack "$SC"             # generated/repack: koprulu-core.mpq, a group per mission, the music, the cinematics
@@ -161,7 +160,7 @@ between versions and the game refuses data of an older schema.
 
 `tools/product.sh <platform> [release|debug]` builds a complete bundle: the repack (`koprulu.mpq` on a computer, the
 groups on a phone and the web, which fetches a mission's group before the mission starts) and what was converted
-beside it (the console's pieces, the HD art, the cinematics, the languages with their repack groups). The result goes to
+beside it (the console's pieces, the HD art, the cinematics), with the repack's language groups. The result goes to
 `dist/product/<platform>/`.
 
 ```bash
@@ -179,7 +178,7 @@ What goes into a bundle is chosen by environment variables. Each defaults to eve
 | Variable | Values | Meaning |
 |---|---|---|
 | `KOPRULU_CINEMATICS` | `auto`, `none`, `sd`, `hd2`, `both` | the cinematics packs and the video player (libvpx is downloaded and built) |
-| `KOPRULU_LOCALES` | `auto`, `none`, `"ruRU deDE"` | the languages, with their speech where the repack has their group (not on the web yet) |
+| `KOPRULU_LOCALES` | `auto`, `none`, `"ruRU deDE"` | the languages: the repack's language groups (`auto`: each it has; not on the web yet) |
 | `KOPRULU_PHONE_BLOCKS` | `astc`, `etc2` | the texture format of a phone's HD art. ASTC is the default. Use ETC2 for devices without ASTC, which otherwise draw the original art |
 | `KOPRULU_GENERATED` | a folder | the converter's output, if it is not `generated/` |
 | `KOPRULU_DIST` | a folder | where the bundles go instead of `dist/product/`, such as a second bundle of another conversion |
@@ -221,7 +220,7 @@ the settings for one run:
 
 | Option | Meaning |
 |---|---|
-| `--data DIR` | the data folder (default: the current folder when it holds `generated/`, else `data/` beside the executable; with no source named, its `generated/repack-single`, else `generated/repack`, is the original data); any number of times: a folder with a 1.17 install, StarCraft: Remastered's install or a repack (`koprulu.mpq`, or `koprulu-core.mpq` and its groups: `kp_convert repack`) is the original data, read and checked at run time ([ADR 0018](docs/adr/0018-original-data-at-run-time.md)): a 1.17 install or StarCraft: Remastered's runs the game, its interface, sounds and music with no conversion (Remastered's files that only its own formats hold, DDS, XML and WebM, rebuilt when read; its HD portraits read from it too; the cinematics played from it as they are, the 1.17 Smacker files or Remastered's WebM with the subtitles of its language; the languages' speech played from it or from the repack's language groups; the rest of the HD art and the languages' text still come from `generated/` when it is there) |
+| `--data DIR` | the data folder (default: the current folder when it holds `generated/`, else `data/` beside the executable; with no source named, its `generated/repack-single`, else `generated/repack`, is the original data); any number of times: a folder with a 1.17 install, StarCraft: Remastered's install or a repack (`koprulu.mpq`, or `koprulu-core.mpq` and its groups: `kp_convert repack`) is the original data, read and checked at run time ([ADR 0018](docs/adr/0018-original-data-at-run-time.md)): a 1.17 install or StarCraft: Remastered's runs the game, its interface, sounds and music with no conversion (Remastered's files that only its own formats hold, DDS, XML and WebM, rebuilt when read; its HD portraits read from it too; the cinematics played from it as they are, the 1.17 Smacker files or Remastered's WebM with the subtitles of its language; the languages' text and speech built from it or from the repack's language groups; the rest of the HD art still comes from `generated/` when it is there) |
 | `--res-log PATH` | the original files read, their status and source, written when the program ends |
 | `--graphics original\|hd2\|hd` | the art (HD needs `converter hd`) |
 | `--lighting on\|off` | the HD sprites' lighting |

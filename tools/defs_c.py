@@ -73,7 +73,8 @@ def built_tables() -> list[tuple[str, bytes]]:
     scenario's packs for kp_convert scenarios' index (SPAK: as MPAK, by the scenario's name). Stage C2: the languages
     (LANG, defs/l10n/locales.json's in its order, the base's first: u8 count; per language u8 length and its ID, u8
     length and its own name in UTF-8) and the missions whose language's triggers may differ from the base's in more than
-    TIME (SPEX, its `speech`: a names table of "<locale> <campaign>/<mission>").
+    TIME (SPEX, its `speech`: a names table of "<locale> <campaign>/<mission>"). Stage C3: the languages' rules
+    (l10n_tables).
     """
     from converter import missions
     from converter.emit import cinematics_smk
@@ -111,7 +112,89 @@ def built_tables() -> list[tuple[str, bytes]]:
     out.append(("LANG", bytes([len(l10n["locales"])]) + b"".join(
         bytes([len(i)]) + i + bytes([len(n)]) + n for i, n in ((r["id"].encode(), r["name"].encode()) for r in l10n["locales"]))))
     out.append(("SPEX", names_table([f"{e['locale']} {e['mission']}" for e in l10n.get("speech", ())])))
+    out += l10n_tables(l10n)
     return out
+
+
+def text16(text: str) -> bytes:
+    raw = text.encode("utf-8")
+    if len(raw) > 0xFFFF:
+        raise ValueError(f"defs/l10n: a text of {len(raw)} bytes is longer than 65535")
+    return struct.pack("<H", len(raw)) + raw
+
+
+def once_each(entries: list[dict], name: str, key) -> list[dict]:
+    """locales.json's list `name`, refused when two entries of a language name the same key (the later would silently
+    replace the earlier)."""
+    seen = set()
+    for e in entries:
+        k = (e["locale"], *key(e))
+        if k in seen:
+            raise ValueError(f"defs/l10n/locales.json's {name} names {' '.join(map(str, k))} twice")
+        seen.add(k)
+    return entries
+
+
+def counted(entries: list[bytes]) -> bytes:
+    return struct.pack("<H", len(entries)) + b"".join(entries)
+
+
+def l10n_tables(l10n: dict) -> list[tuple[str, bytes]]:
+    """defs/l10n's rules for kp_locale.c (stage C3, ADR 0019), each u16 count of entries; a name is u8 length and its
+    bytes, a text u16 length and its UTF-8, the locale the entry's first name (LTPL's none):
+    - LROW (`rows`): the section ("STAT"), u16 row (1-based), the text;
+    - LEXC (`exceptions`): the section, the row's id;
+    - LTPL (`templates`): the name with its braces ("{CurrentYear}"), the text;
+    - LKEP (`keep`): the dialog, u16 record;
+    - LTXT (`texts`): the dialog, u16 record, the text;
+    - LLAY (`layout`): the dialog, u16 record, u8 flags (1: rect, 2: text), 4 i16 rect, 4 i16 text rect (0 where none);
+    - LSTR (`strings`): the mission ("expterran/terran03"), u16 string, the text;
+    - LOWN (defs/l10n/koprulu-<locale>.json's `dialogs`, the locales' order): the dialog, the base's text, the text;
+    - LCPG: u16 code points of windows-1250, -1251 and -1252's bytes 0x80..0xff (one a code page leaves undefined
+      none), sorted, each once: the glyph set's start."""
+    def loc(e: dict) -> bytes:
+        return name_bytes(e["locale"])
+
+    rows = once_each(l10n.get("rows", []), "rows", lambda e: (e["table"], int(e["row"])))
+    exceptions = once_each(l10n.get("exceptions", []), "exceptions", lambda e: (e["table"], e["row"]))
+    keep = once_each(l10n.get("keep", []), "keep", lambda e: (e["dialog"], int(e["record"])))
+    texts = once_each(l10n.get("texts", []), "texts", lambda e: (e["dialog"], int(e["record"])))
+    layout = once_each(l10n.get("layout", []), "layout", lambda e: (e["dialog"], int(e["record"])))
+    strings = once_each(l10n.get("strings", []), "strings", lambda e: (e["mission"], int(e["string"])))
+    for e in rows:
+        if len(e["table"].encode("ascii")) != 4:
+            raise ValueError(f"defs/l10n/locales.json's rows: {e['table']!r} is no section")
+    lrow = [loc(e) + e["table"].encode("ascii") + struct.pack("<H", int(e["row"])) + text16(e["text"]) for e in rows]
+    lexc = [loc(e) + name_bytes(e["table"]) + name_bytes(e["row"]) for e in exceptions]
+    ltpl = [name_bytes("{%s}" % t["name"]) + text16(t["text"]) for t in l10n.get("templates", [])]
+    lkep = [loc(e) + name_bytes(e["dialog"]) + struct.pack("<H", int(e["record"])) for e in keep]
+    ltxt = [loc(e) + name_bytes(e["dialog"]) + struct.pack("<H", int(e["record"])) + text16(e["text"]) for e in texts]
+    llay = []
+    for e in layout:
+        rect, text = e.get("rect"), e.get("text")
+        flags = (1 if rect else 0) | (2 if text else 0)
+        llay.append(loc(e) + name_bytes(e["dialog"]) + struct.pack("<HB4h4h", int(e["record"]), flags,
+                                                                  *(rect or (0, 0, 0, 0)), *(text or (0, 0, 0, 0))))
+    lstr = [loc(e) + name_bytes(e["mission"]) + struct.pack("<H", int(e["string"])) + text16(e["text"]) for e in strings]
+    lown = []
+    for row in l10n["locales"]:
+        path = ROOT / "defs/l10n" / f"koprulu-{row['id']}.json"
+        if not path.exists():
+            continue
+        for dialog, pairs in json.loads(path.read_text(encoding="utf-8"))["dialogs"].items():
+            for base, text in pairs.items():
+                lown.append(name_bytes(row["id"]) + name_bytes(dialog) + text16(base) + text16(text))
+    codes = set()
+    for codepage in ("cp1250", "cp1251", "cp1252"):
+        for byte in range(0x80, 0x100):
+            try:
+                codes.add(ord(bytes([byte]).decode(codepage)))
+            except UnicodeDecodeError:
+                pass
+    lcpg = struct.pack(f"<H{len(codes)}H", len(codes), *sorted(codes))
+    return [("LROW", counted(lrow)), ("LEXC", counted(lexc)), ("LTPL", counted(ltpl)), ("LKEP", counted(lkep)),
+            ("LTXT", counted(ltxt)), ("LLAY", counted(llay)), ("LSTR", counted(lstr)), ("LOWN", counted(lown)),
+            ("LCPG", lcpg)]
 
 
 def scr_tables(profile_id: str) -> list[tuple[str, bytes]]:
@@ -125,8 +208,9 @@ def scr_tables(profile_id: str) -> list[tuple[str, bytes]]:
     - SGRP: u16 count; per GRP with extras its name, u16 palette, u16 frames (0: not a GRP of plain rows); with frames u16
       box width, height and per frame u8 x, y, width, height, u32 offset;
     - SSMK: u16 count; per SMK its name, u16 frames, u8 ring, i32 frame rate (the header's), u16 palette;
-    - STBL: u16 count; per string table its name, the XML's and the base TBL's names (length 0: none), u16 ids (each u8
-      length, 0xFF: none) and u16 entries of NULs inside a string, each u16 string, u16 count, u16 positions;
+    - STBL: u16 count; per string table its name, the XML's and the base TBL's names (length 0: none), u16 the base TBL's
+      rows (0: none; a language's XML holds them by position), u16 ids (each u8 length, 0xFF: none) and u16 entries of
+      NULs inside a string, each u16 string, u16 count, u16 positions;
     - SBIN: u16 count; per dialog its name, u32 skeleton size, u32 its zlib size and bytes, u16 texts; per text u32
       offset, u16 length, u8 hotkey, u8 pointers and their u32 fields, u16 source length and bytes ("id:<xml>#<id>",
       "name:<text>" in latin-1, empty: none)."""
@@ -170,7 +254,7 @@ def scr_tables(profile_id: str) -> list[tuple[str, bytes]]:
     for name in sorted(texts["tbl"], key=str.lower):
         t = texts["tbl"][name]
         stbl += name_bytes(normalize(name)) + name_bytes(t["xml"]) + name_bytes(t["base"] or "")
-        stbl += struct.pack("<H", len(t["ids"]))
+        stbl += struct.pack("<HH", t.get("base_rows", 0), len(t["ids"]))
         stbl += b"".join(b"\xff" if i is None else name_bytes(i) for i in t["ids"])
         nuls = sorted((int(k), v) for k, v in t["nuls"].items())
         stbl += struct.pack("<H", len(nuls))

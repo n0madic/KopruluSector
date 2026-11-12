@@ -7,7 +7,7 @@ from __future__ import annotations
 import struct
 
 from . import container as kpf
-from . import kpd, kpm
+from . import kpd
 
 HEX_PREVIEW = 32
 
@@ -26,25 +26,6 @@ def _tbl(payload: bytes) -> list[str]:
     lines = [f"{len(entries)} entries, {len(offsets)} distinct offsets"]
     lines += [f"  {i + 1}: {e[:60]!r}" for i, e in enumerate(entries[:3])]
     return lines
-
-
-def _wide_tbl(payload: bytes) -> list[str]:
-    """A language's table (section schema 2, ADR 0016): u32 count, u32 offsets from the section's start."""
-    count = struct.unpack_from("<I", payload)[0]
-    offsets = struct.unpack_from(f"<{count}I", payload, 4)
-    lines = [f"{count} entries, UTF-8, {len(payload)} bytes"]
-    for i, at in enumerate(offsets[:3]):
-        end = payload.find(b"\0", at)
-        lines.append(f"  {i + 1}: {payload[at:end if end >= 0 else None][:60].decode('utf-8', 'replace')!r}")
-    return lines
-
-
-def _supplement(payload: bytes) -> list[str]:
-    """A glyph supplement (docs/formats/kpd.md): u32 count, count pairs of u32 code point and offset, FNT's glyphs."""
-    count = struct.unpack_from("<I", payload)[0]
-    codes = [struct.unpack_from("<I", payload, 4 + 8 * k)[0] for k in range(count)]
-    span = f": U+{codes[0]:04X}..U+{codes[-1]:04X}" if codes else ""
-    return [f"{count} glyphs{span}"]
 
 
 def _files(payload: bytes) -> list[str]:
@@ -254,11 +235,6 @@ def _trks(payload: bytes) -> list[str]:
     return [f"{payload[0]} tracks (track:OGG bytes, L loops): " + " ".join(lines)]
 
 
-def _strs(payload: bytes) -> list[str]:
-    count = struct.unpack_from("<H", payload, 0)[0]
-    return [f"{count} map strings, {len(payload)} bytes"]
-
-
 def _count16(what: str):
     def decode(payload: bytes) -> list[str]:
         return [f"{struct.unpack_from('<H', payload, 0)[0]} {what}"]
@@ -282,7 +258,6 @@ DECODERS = {
               b"TUNI": _bytes("player colours"), b"TMIN": _bytes("minimap colours"),
               b"TSEL": _bytes("selection colours"), b"THPB": _bytes("health bar colours")},
     b"FONT": {**{f.encode(): _font for f in ("F8  ", "F10 ", "F14 ", "F16 ", "F16X")},
-              **{f.encode(): _supplement for f in ("U8  ", "U10 ", "U14 ", "U16 ", "U16X")},
               b"VFNT": _files, b"TFGM": _bytes("colour rows"), b"TFNT": _bytes("colour rows")},
     b"UI  ": {b"DLGS": _dlgs, b"POOL": _bytes("strings"), b"TFNT": _bytes("theme colour banks"),
               b"TEFF": _bytes("theme effect tables"), b"DGRP": _count16("dialog GRP headers")},
@@ -292,7 +267,6 @@ DECODERS = {
               b"LOFS": _lofs, b"AFRM": _afrm},
     b"PACK": {b"ATLS": _pack_atls, b"FRMS": _pack_frms, b"PAGE": _pack_page, b"SNDS": _snds},
     b"MUSC": {b"TRKS": _trks},
-    kpm.KIND: {b"STRS": _strs, b"TRIG": _records(kpm.TRIGGER_SIZE), b"MBRF": _records(kpm.TRIGGER_SIZE)},
 }
 
 
@@ -312,9 +286,7 @@ def dump(data: bytes, section: str | None = None) -> str:
         out.append(f"[{name}] {cls} schema {s.schema_version} size {len(s.payload)} crc {s.crc32:08x} flags {s.flags:#x}")
         if s.section_class == kpf.CLASS_DERIVED:
             out.append(f"  producer {s.algorithm_id.decode('latin1')} v{s.algorithm_version} inputs {s.inputs_hash.hex()}")
-        if c.kind == b"STRS" and s.schema_version == kpd.WIDE_TBL_SCHEMA:
-            out += ["  " + line for line in _wide_tbl(s.payload)]
-        elif s.fourcc in decoders:
+        if s.fourcc in decoders:
             out += ["  " + line for line in decoders[s.fourcc](s.payload)]
         else:
             out.append("  " + s.payload[:HEX_PREVIEW].hex(" ") + (" ..." if len(s.payload) > HEX_PREVIEW else ""))

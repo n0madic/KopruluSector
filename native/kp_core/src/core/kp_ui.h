@@ -1189,15 +1189,23 @@ struct KpUi {
 	int button_set_count;
 	const uint8_t *tbl[KP_UI_TBLS];  /* strings.kpd's tables (KpUiData.tbl) */
 	size_t tbl_size[KP_UI_TBLS];
-	uint8_t tbl_wide[KP_UI_TBLS];    /* a language's table: u32 count and offsets (section schema KP_UI_TBL_WIDE) */
+	uint8_t tbl_wide[KP_UI_TBLS];    /* a language's table: u32 count and offsets (the original's u16) */
 	char error[256];
 };
 
-/* A language's overlay packs (ADR 0016), any of them NULL: generated/locale/<loc>/strings.kpd and ui.kpd,
- * generated/locale/glyphs.kpd, and the speech's sound records. The bytes must outlive the interface. */
+/* A language's texts, glyphs and speech over the interface's base (ADR 0016; ADR 0019, stage C3: kp_locale.c builds
+ * them from the data's own files), each part NULL or 0 for the base's. The bytes must outlive the interface. */
 typedef struct {
-	const uint8_t *strings, *ui, *glyphs;
-	size_t strings_size, ui_size, glyphs_size;
+	const uint8_t *tbl[KP_UI_TBLS]; /* KpUiData.tbl's order, u32 count and offsets */
+	size_t tbl_size[KP_UI_TBLS];
+	const uint8_t *dlgs, *pool;     /* KpUiDialogs' form, the base's dialogs */
+	size_t dlgs_size, pool_size;
+	const KpUiFile *files;          /* glue files over the base's (the credits' and the epilogues' rez\*.txt) */
+	int file_count;
+	const uint8_t *supplements[KP_UI_FNT_FONTS]; /* each FNT font's glyph supplement (kp_ui_text_add_supplement) */
+	size_t supplement_sizes[KP_UI_FNT_FONTS];
+	const KpUiFile *vector_fonts;   /* the regular and the wide TrueType font */
+	int vector_font_count;
 	const uint8_t *speech; /* the speech's SFX (u16 count, the records: kp_ui_data_speech_sounds; ADR 0019, stage C2) */
 	size_t speech_size;
 } KpUiLocale;
@@ -1205,13 +1213,11 @@ typedef struct {
 #define KP_UI_SOUND_RECORD 22 /* sounds.kpd SFX: u16 flags, format, channels, u32 rate, average bytes per second, u16 block,
                                * bits, u32 length */
 
-#define KP_UI_TBL_WIDE 2 /* the section schema of a table with u32 offsets */
-
 /* kp_ui_new_data (kp_ui_data.h) makes a KpUi; kp_ui_free releases it. */
 void kp_ui_free(KpUi *ui);
-/* The overlays over the interface's base (its KpUiData), read before the base part by part: a part that is corrupt, of
- * another kind or schema, or with other row counts or dialogs than the base's stays the base's, the first such in
- * ui->locale_problem; the speech's sound records likewise, in ui->speech_problem. */
+/* The language's parts over the interface's base (its KpUiData), read before the base part by part: a part that is
+ * malformed or has other row counts or dialogs than the base's stays the base's, the first such in ui->locale_problem;
+ * the speech's sound records likewise, in ui->speech_problem. */
 void kp_ui_set_locale(KpUi *ui, const KpUiLocale *locale);
 /* The game's font set (LoadFontSetGame 0x465c40: font8, font10, font16, font16x) or the glue's (0x465ce0: font10,
  * font14, font16, font16x), and the text colour rows of tFontGam.pcx (game) or a theme's tFont bank. */

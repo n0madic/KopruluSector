@@ -39,22 +39,16 @@
 #define GPU_ERROR_LIMIT 4 /* --cine-check: the mean byte error of a GPU picture against the CPU's (the chroma sampled
                            * between its texels there, copied here; 0 for the sRGB movies) */
 
-/* --locale's subtitles over the index just read, the file read once (ADR 0016); none or a refused one leaves the pack's. */
+/* The language's subtitles (the flow's: kp_locale.c's SUBS) over the pack's index as read, laid over before each run
+ * (ADR 0016): a language the main menu chooses replaces the flow's bytes. None, or a refused one, leaves the pack's. */
 static void locale_subtitles(KpApp *a)
 {
-	char path[128];
 	KpError err;
-	if (a->flags.locale[0] == 0 || strcmp(a->flags.locale, KP_LOCALE_BASE) == 0) return;
-	if (a->cine.locale_subs == NULL) {
-		snprintf(path, sizeof path, "generated/locale/%s/cinematics.kpd", a->flags.locale);
-		a->cine.locale_subs = kp_app_read(a, path, &a->cine.locale_subs_size);
-		if (a->cine.locale_subs == NULL) {
-			SDL_Log("language %s: no %s, the pack's subtitles", a->flags.locale, path);
-			return;
-		}
-	}
-	if (kp_cine_subs_overlay(&a->cine.run.index, a->cine.locale_subs, a->cine.locale_subs_size, &err) != 0) {
-		SDL_Log("language %s: %s; the pack's subtitles", a->flags.locale, err.msg);
+	if (a->cine.pack.count == 0 || a->cine.run.active) return;
+	a->cine.run.index = a->cine.pack;
+	if (a->flow.text.subs == NULL) return;
+	if (kp_cine_subs_overlay(&a->cine.run.index, a->flow.text.subs, a->flow.text.subs_size, &err) != 0) {
+		SDL_Log("language %s: %s; the pack's subtitles", a->flow.text.locale, err.msg);
 	}
 }
 
@@ -77,7 +71,7 @@ static int index_file(KpApp *a, const char *rel)
 	rc = kp_cine_index(&a->cine.run.index, head, n, (size_t)size, kp_io_read_into, io, &err);
 	SDL_CloseIO(io);
 	if (rc != 0) SDL_Log("%s (%s)", err.msg, path);
-	else locale_subtitles(a);
+	else a->cine.pack = a->cine.run.index;
 	return rc;
 }
 #endif
@@ -211,7 +205,7 @@ static int index_file(KpApp *a, const char *rel)
 		free(a->cine.head);
 		a->cine.head = NULL;
 	} else {
-		locale_subtitles(a);
+		a->cine.pack = a->cine.run.index;
 	}
 	return rc;
 }
@@ -617,6 +611,7 @@ static void draw(KpApp *a, const KpVideoPicture *pic)
 
 int kp_app_cine_start(KpApp *a, const int *ids, int n, int preludes)
 {
+	locale_subtitles(a);
 	return kp_cine_run_start(&a->cine.run, ids, n, preludes);
 }
 
@@ -877,6 +872,7 @@ int kp_app_cine_check(KpApp *a, const char *dir)
 	}
 #endif
 	kp_app_cine_stop(a); /* a movie of --cine-play keeps the pack's file and its own player */
+	locale_subtitles(a);
 	if (!SDL_CreateDirectory(dir)) kp_dev_line("cine check: %s: %s", dir, SDL_GetError());
 	if (!ix->original && !(file = SDL_IOFromFile(a->cine.path, "rb"))) {
 		kp_dev_line("cine check: cannot open %s: %s", a->cine.path, SDL_GetError());
@@ -894,9 +890,7 @@ void kp_app_cine_stop(KpApp *a) { kp_cine_run_stop(&a->cine.run); }
 
 void kp_app_cine_language(KpApp *a)
 {
-	free(a->cine.locale_subs);
-	a->cine.locale_subs = NULL;
-	a->cine.locale_subs_size = 0;
+	if (a->cine.pack.count > 0) a->cine.run.index = a->cine.pack; /* the old language's bytes are gone */
 }
 
 void kp_app_cine_free(KpApp *a)

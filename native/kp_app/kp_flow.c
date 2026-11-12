@@ -40,22 +40,26 @@ static double now(KpFlow *f) { return f->host.now(f->host.ctx); }
 
 static const char MISSIONS[] = "missions/"; /* a campaign mission's key: "missions/" + its campaign and name */
 
-/* A language's text over the campaign mission just loaded (ADR 0016: generated/locale/<loc>/missions/), which
- * kp_host_game_text takes; none for the base's, or a refused one, leaves the mission's, with one line. */
+/* A language's text over the campaign mission just loaded (kp_locale_mission: its map's strings from the data), which
+ * kp_host_game_text takes; the base's, a map the data lacks or a refused one leaves the mission's, with one line. */
 static void mission_text(KpFlow *f, const KpDataMission *entry)
 {
-	const char *id = f->flags->locale;
-	char path[256];
-	uint8_t *overlay;
+	const char *id = f->flags->locale, *name = entry->key + sizeof MISSIONS - 1;
+	KpHostGame *hg = &f->session->host;
+	KpLocaleFound found;
+	uint8_t *strs = NULL;
 	size_t size = 0;
+	int k, rc;
 	KpError e;
 	if (id[0] == 0 || strcmp(id, KP_LOCALE_BASE) == 0 || strncmp(entry->key, MISSIONS, sizeof MISSIONS - 1) != 0) return;
-	snprintf(path, sizeof path, "generated/locale/%s/missions/%s.kpm", id, entry->key + sizeof MISSIONS - 1);
-	if (!(overlay = f->host.read(f->host.ctx, path, &size))) {
-		say(f, "language %s: no %s, the mission's own text", id, path);
-	} else if (kp_host_game_text(&f->session->host, overlay, size, &e) != 0) {
-		say(f, "language %s: %s: %s", id, path, e.msg);
-	}
+	memset(&found, 0, sizeof found);
+	e.msg[0] = 0;
+	rc = kp_locale_mission(&f->data->raw, id, name, &hg->data.mission, &found, &strs, &size, NULL, &e);
+	for (k = 0; k < found.problem_count; k++) say(f, "language %s: %s; that string stays the mission's", id, found.problems[k]);
+	kp_locale_found_free(&found);
+	if (rc == 0) say(f, "language %s: the data has no map of %s, the mission's own text", id, name);
+	else if (rc < 0) say(f, "language %s: %s; the mission's own text", id, e.msg);
+	else if (kp_host_game_text(hg, strs, size, &e) != 0) say(f, "language %s: %s: %s", id, name, e.msg);
 }
 
 /* A language's speech over the campaign mission just loaded (ADR 0019, stage C2): the TIME of its map's triggers, which
@@ -1237,24 +1241,16 @@ void kp_flow_frame(KpFlow *f)
 
 /* --- the languages (ADR 0016) --- */
 
-#define LOCALE_GLYPHS 0  /* f->locale_files: generated/locale/glyphs.kpd, <loc>/strings.kpd, <loc>/ui.kpd */
-#define LOCALE_STRINGS 1
-#define LOCALE_UI 2
-#define LOCALE_SPEECH 3  /* the speech's sound records (kp_ui_data_speech_sounds): its voices' durations */
-
 static void free_locale(KpFlow *f)
 {
-	int k;
-	for (k = 0; k < KP_FLOW_LOCALE_FILES; k++) {
-		free(f->locale_files[k]);
-		f->locale_files[k] = NULL;
-	}
+	kp_locale_free(&f->text);
+	kp_locale_glyphs_free(&f->glyphs);
+	free(f->speech_sounds);
+	f->speech_sounds = NULL;
 	memset(&f->locale, 0, sizeof f->locale);
 }
 
-/* generated/locale/glyphs.kpd's LOCS (u8 count; per language u8 length + ID, u8 length + its own name) as the languages,
- * each installed for the text when it is the base or has its strings, for the speech when it is the base or the data
- * has its speech (KP_DATA_SPEECH_MARKER: Remastered's languages not downloaded have none). */
+/* Whether the data has a language's speech (KP_DATA_SPEECH_MARKER: Remastered's languages not downloaded have none) */
 static int has_speech(KpFlow *f, const char *id)
 {
 	char path[128];
@@ -1267,45 +1263,38 @@ static int has_speech(KpFlow *f, const char *id)
 	return head != NULL;
 }
 
+/* The profile's languages (LANG: defs/l10n/locales.json's, the base's first), each installed for the text when it is the
+ * base or the data holds its strings (kp_locale_held), for the speech when it is the base or the data has its speech. */
 static void list_languages(KpFlow *f)
 {
 	KpUiLanguages *l = &f->languages;
-	KpKpf c;
-	KpError e;
-	const KpKpfSection *s;
+	const KpDefsTable *t = kp_defs_table(f->data->raw.profile, "LANG");
+	size_t at = 1;
+	int k;
 	memset(l, 0, sizeof *l);
 	l->text = l->speech = l->chosen_text = l->chosen_speech = -1;
-	if (f->locale.glyphs == NULL || kp_kpf_parse(&c, f->locale.glyphs, f->locale.glyphs_size, "glyphs.kpd", 0, &e) != 0) {
-		return;
-	}
-	if ((s = kp_kpf_find(&c, "LOCS")) != NULL && s->size >= 1) {
-		size_t at = 1;
-		int k;
-		for (k = 0; k < s->data[0] && l->count < KP_UI_LANGUAGES; k++) {
-			char path[96];
-			size_t id_n, name_n;
-			char *id = l->list[l->count].id, *name = l->list[l->count].name;
-			if (at + 1 > s->size || at + 1 + (id_n = s->data[at]) + 1 > s->size
-				|| at + 2 + id_n + (name_n = s->data[at + 1 + id_n]) > s->size) {
-				say(f, "language: generated/locale/glyphs.kpd: LOCS is damaged");
-				break;
-			}
-			if (id_n == 0 || id_n >= KP_UI_LANGUAGE_ID || name_n >= KP_UI_LANGUAGE_NAME) {
-				at += 2 + id_n + name_n;
-				continue;
-			}
-			memcpy(id, s->data + at + 1, id_n);
-			id[id_n] = 0;
-			memcpy(name, s->data + at + 2 + id_n, name_n);
-			name[name_n] = 0;
-			at += 2 + id_n + name_n;
-			snprintf(path, sizeof path, "generated/locale/%s/strings.kpd", id);
-			l->list[l->count].text = strcmp(id, KP_LOCALE_BASE) == 0 || f->host.exists(f->host.ctx, path);
-			l->list[l->count].speech = strcmp(id, KP_LOCALE_BASE) == 0 || has_speech(f, id);
-			l->count++;
+	if (t == NULL || t->size < 1) return;
+	for (k = 0; k < t->data[0] && l->count < KP_UI_LANGUAGES; k++) {
+		size_t id_n, name_n;
+		char *id = l->list[l->count].id, *name = l->list[l->count].name;
+		if (at + 1 > t->size || at + 1 + (id_n = t->data[at]) + 1 > t->size
+			|| at + 2 + id_n + (name_n = t->data[at + 1 + id_n]) > t->size) {
+			say(f, "language: the profile's LANG is damaged");
+			break;
 		}
+		if (id_n == 0 || id_n >= KP_UI_LANGUAGE_ID || name_n >= KP_UI_LANGUAGE_NAME) {
+			at += 2 + id_n + name_n;
+			continue;
+		}
+		memcpy(id, t->data + at + 1, id_n);
+		id[id_n] = 0;
+		memcpy(name, t->data + at + 2 + id_n, name_n);
+		name[name_n] = 0;
+		at += 2 + id_n + name_n;
+		l->list[l->count].text = strcmp(id, KP_LOCALE_BASE) == 0 || kp_locale_held(&f->data->raw, id);
+		l->list[l->count].speech = strcmp(id, KP_LOCALE_BASE) == 0 || has_speech(f, id);
+		l->count++;
 	}
-	kp_kpf_free(&c);
 }
 
 static int language_at(const KpUiLanguages *l, const char *id)
@@ -1343,7 +1332,7 @@ int kp_flow_match_language(const KpUiLanguages *l, const char *wanted)
 
 /* The language of the start: --locale's; for the glue (not the checks', --mission's, the screenshots' or the benches':
  * theirs is the base's with its original fonts) the profile's when installed, else the system's first installed, else
- * the base's. None without the glyphs (a conversion of the 1.17 data alone). */
+ * the base's. */
 static void choose_language(KpFlow *f)
 {
 	const KpUiLanguages *l = &f->languages;
@@ -1394,46 +1383,64 @@ static void read_speech(KpFlow *f)
 		free(sfx);
 		return;
 	}
-	f->locale.speech = f->locale_files[LOCALE_SPEECH] = sfx;
+	f->locale.speech = f->speech_sounds = sfx;
 	f->locale.speech_size = size;
 	say(f, "speech of %s: %d voices", speech, voices);
 }
 
-/* The language's overlays (ADR 0016): the glyphs for any language, the text for one that is not the base's, the speech's
- * (read_speech); one that is missing leaves the base's, with one line. The glue's start chooses the language once it has the glyphs' list. */
+/* The language's text (kp_locale_build) for one that is not the base's: what does not fit stays the base's, a line each. */
+static void read_text(KpFlow *f)
+{
+	const char *locale = f->flags->locale;
+	KpError e;
+	int k;
+	if (strcmp(locale, KP_LOCALE_BASE) == 0) return;
+	if (!kp_locale_held(&f->data->raw, locale)) {
+		say(f, "language %s: the data has none of its strings, the base's text", locale);
+		return;
+	}
+	if (kp_locale_build(&f->text, &f->data->ui, &f->data->raw, locale, &e) != 0) {
+		say(f, "language %s: %s; the base's text", locale, e.msg);
+		return;
+	}
+	for (k = 0; k < f->text.found.problem_count; k++) {
+		say(f, "language %s: %s; that text stays the base's", locale, f->text.found.problems[k]);
+	}
+}
+
+/* The glyphs of the language's characters (kp_locale_glyphs), the base's too (the vector fonts' text); none from a data
+ * without Remastered's TrueType fonts (the 1.17 install), whose FNT fonts keep their own. */
+static void read_glyphs(KpFlow *f)
+{
+	KpLocaleFound found;
+	KpError e;
+	int k;
+	memset(&found, 0, sizeof found);
+	if (kp_locale_glyphs(&f->glyphs, &f->data->ui, &f->data->raw, f->text.locale[0] ? &f->text : NULL, &found, &e) < 0) {
+		say(f, "language %s: %s; the fonts' own glyphs", f->flags->locale, e.msg);
+	}
+	for (k = 0; k < found.problem_count; k++) say(f, "language %s: %s", f->flags->locale, found.problems[k]);
+	kp_locale_found_free(&found);
+}
+
+/* The language (ADR 0016; ADR 0019, stage C3): the glue's start chooses it and the speech among the languages the data
+ * holds; then the speech's (read_speech) and, for a language chosen, its text and the glyphs. A part that cannot be had
+ * leaves the base's, with one line. The checks and --mission keep the base's text with the original fonts. */
 static void read_locale(KpFlow *f)
 {
-	static const char *const NAMES[KP_FLOW_LOCALE_FILES] = { NULL, "strings.kpd", "ui.kpd" };
-	const char *locale = f->flags->locale;
-	int k, glue = locale[0] == 0 && !keeps_originals(f) && f->flags->mission[0] == 0;
+	int glue = f->flags->locale[0] == 0 && !keeps_originals(f) && f->flags->mission[0] == 0;
 	free_locale(f);
 	memset(&f->languages, 0, sizeof f->languages);
-	if (locale[0] != 0 || glue) {
-		f->locale_files[LOCALE_GLYPHS] = f->host.read(f->host.ctx, "generated/locale/glyphs.kpd", &f->locale.glyphs_size);
-		f->locale.glyphs = f->locale_files[LOCALE_GLYPHS];
-		if (f->locale.glyphs == NULL) {
-			if (!glue) say(f, "language %s: no generated/locale/glyphs.kpd", locale);
-		} else {
-			list_languages(f);
-			choose_language(f);
-			choose_speech(f);
-		}
+	if (f->flags->locale[0] != 0 || glue) {
+		list_languages(f);
+		choose_language(f);
+		choose_speech(f);
 	}
 	read_speech(f);
-	if (f->locale.glyphs == NULL || strcmp(locale, KP_LOCALE_BASE) == 0) return;
-	for (k = LOCALE_STRINGS; k < LOCALE_SPEECH; k++) {
-		char path[128];
-		size_t size = 0;
-		snprintf(path, sizeof path, "generated/locale/%s/%s", locale, NAMES[k]);
-		if (!(f->locale_files[k] = f->host.read(f->host.ctx, path, &size))) say(f, "language %s: no %s", locale, path);
-		if (k == LOCALE_STRINGS) {
-			f->locale.strings = f->locale_files[k];
-			f->locale.strings_size = size;
-		} else {
-			f->locale.ui = f->locale_files[k];
-			f->locale.ui_size = size;
-		}
-	}
+	if (f->flags->locale[0] == 0) return;
+	read_text(f);
+	read_glyphs(f);
+	kp_locale_to_ui(f->text.locale[0] ? &f->text : NULL, &f->glyphs, &f->locale);
 }
 
 /* The main menu's languages and the current ones to the new interface. */

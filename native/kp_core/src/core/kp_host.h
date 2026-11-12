@@ -46,7 +46,7 @@ void kp_host_shared_free(KpHostShared *sh);
 
 typedef struct {
 	KpGameData data;
-	uint8_t *text; /* a language's overlay of the mission's strings (owned; kp_host_game_text) */
+	uint8_t *text; /* a language's STR of the mission (owned; kp_host_game_text) */
 	uint8_t *speech; /* the mission's TRIG and MBRF with a language's TIME (owned; kp_host_game_speech) */
 	KpRngGame rng;
 	KpRngCrt crt;
@@ -67,10 +67,9 @@ int kp_host_game_load_from(KpHostGame *hg, const KpHostShared *sh, const KpDat *
 /* The loaded mission's tileset as its original files, tileset\<name>.cv5 and .vf4, which kp_host_game_start needs: 0,
  * or -1 with the error (hg kept). */
 int kp_host_game_tileset_files(KpHostGame *hg, const KpFiles *files, KpError *err);
-/* A language's text over a loaded game, before its start: the MISN overlay's STRS (ADR 0016), taken and freed with the
- * game. -1 with the error (the mission's own text stays) when it is corrupt, of another kind or schema than a mission
- * or has other strings than the mission. */
-int kp_host_game_text(KpHostGame *hg, uint8_t *overlay, size_t size, KpError *err);
+/* A language's text over a loaded game, before its start: its STR (ADR 0016; kp_locale_mission's), taken and freed with
+ * the game. -1 with the error (the mission's own text stays, strs freed) when it has another string count. */
+int kp_host_game_text(KpHostGame *hg, uint8_t *strs, size_t size, KpError *err);
 /* A language's speech over a loaded game, before its start (ADR 0019, stage C2): the TIME of its map's triggers and
  * briefing (a transmission's and a wait's milliseconds), the language's scenario KP_HOST_SPEECH_MAP read through raw
  * (Remastered's names: kp_res_raw_files) and merged into a copy of the mission's records, taken and freed with the

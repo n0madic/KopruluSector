@@ -27,8 +27,14 @@
  *       koprulu.mpq (the cinematics' and the languages' groups beside it) into generated/repack-single; a WAV as Ogg
  *       Vorbis when that is smaller (--wav keeps the WAVs; each encoded once into --cache,
  *       generated/cache/repack-vorbis); --res-log: a run's kp_res log, the names it read unlisted go in too;
- *       --locales: the languages whose speech goes in, each its koprulu-locale-<locale>.mpq ("ruRU,deDE"; "none";
- *       by default every language of the profile but the base's whose speech the install holds)
+ *       --locales: the languages that go in (their texts and speech), each its koprulu-locale-<locale>.mpq
+ *       ("ruRU,deDE"; "none"; by default every language of the profile but the base's the install holds)
+ *   locale-check DIR [--locale L|all] [--out generated]
+ *       each language (all: every one of the profile's but the base's the install holds) built from the source's
+ *       files as the game builds it (kp_locale.h): its texts, every campaign mission's strings and the glyphs, a
+ *       report each in <out>/reports/locale-<locale>.json (the tables', dialogs', scripts' and missions' counts, the
+ *       subtitled movies, the glyphs, the rows an exception lets differ, the texts mended, the problems: a text the
+ *       game refuses and shows the base's of, a character no glyph draws). The exit status is 1 on any problem.
  *   scenarios DIR [--specs tests/scenarios] [--out generated]
  *       the test scenarios (kp_scenario.h): <out>/scenarios/<name>.chk of each spec and their list
  *       <out>/scenarios/index.txt, a line each: name, base mission, tileset, width, height, resource packs ("a,b,c",
@@ -53,6 +59,7 @@
 #include "kp_icon.h"
 #include "kp_json.h"
 #include "kp_kpf.h"
+#include "kp_locale.h"
 #include "kp_mission.h"
 #include "kp_ogg.h"
 #include "kp_present.h"
@@ -381,6 +388,7 @@ static int repack_locales(KpRes *res, const char *spec, char ids[LOCALES_MAX][LO
 			if (k > 0 && id_n < LOCALE_ID && n < LOCALES_MAX) {
 				snprintf(ids[n], LOCALE_ID, "%.*s", (int)id_n, (const char *)lang->data + at + 1);
 				snprintf(marker, sizeof marker, KP_DATA_SPEECH_MARKER, ids[n]);
+				if (!kp_res_raw_held(res, marker)) snprintf(marker, sizeof marker, KP_LOCALE_PROBE, ids[n]);
 				if (kp_res_raw_held(res, marker)) {
 					out[n] = ids[n];
 					n++;
@@ -570,6 +578,229 @@ done:
 	return rc;
 }
 
+/* A JSON string: UTF-8 as it is, the quote, the backslash and the control bytes escaped. */
+static void json_string(KpBuf *b, const char *s)
+{
+	kp_buf_printf(b, "\"");
+	for (; *s; s++) {
+		if (*s == '"' || *s == '\\') kp_buf_printf(b, "\\%c", *s);
+		else if ((unsigned char)*s < 0x20) kp_buf_printf(b, "\\u%04x", (unsigned)(unsigned char)*s);
+		else kp_buf_printf(b, "%c", *s);
+	}
+	kp_buf_printf(b, "\"");
+}
+
+static void json_lines(KpBuf *b, const char *key, char *const *lines, int count, int last)
+{
+	int k;
+	kp_buf_printf(b, " \"%s\": [", key);
+	for (k = 0; k < count; k++) {
+		kp_buf_printf(b, "%s\n  ", k ? "," : "");
+		json_string(b, lines[k]);
+	}
+	kp_buf_printf(b, "%s]%s\n", count ? "\n " : "", last ? "" : ",");
+}
+
+/* A line (malloc'd, taken) at the end of a list of a build's findings; 0, or -1 out of memory (the line freed). */
+static int push_line(char ***lines, int *count, int *cap, char *line)
+{
+	if (*count == *cap) {
+		int grown_cap = *cap ? 2 * *cap : 64;
+		char **grown = (char **)realloc(*lines, (size_t)grown_cap * sizeof *grown);
+		if (!grown) {
+			free(line);
+			return -1;
+		}
+		*lines = grown;
+		*cap = grown_cap;
+	}
+	(*lines)[(*count)++] = line;
+	return 0;
+}
+
+static void move_lines(char ***to, int *count, int *cap, char **from, int *from_count)
+{
+	int k;
+	for (k = 0; k < *from_count; k++) {
+		push_line(to, count, cap, from[k]);
+		from[k] = NULL;
+	}
+	*from_count = 0;
+}
+
+/* The problems and the texts mended of `from` moved to the end of `to`'s (the report lists them together). */
+static void take_findings(KpLocaleFound *to, KpLocaleFound *from)
+{
+	move_lines(&to->problems, &to->problem_count, &to->problem_cap, from->problems, &from->problem_count);
+	move_lines(&to->mended, &to->mended_count, &to->mended_cap, from->mended, &from->mended_count);
+}
+
+static int cmp_names(const void *a, const void *b) { return strcmp(*(const char *const *)a, *(const char *const *)b); }
+
+/* A language's report (the Python converter's form until stage C3): its problems' count, -1 when it was not built. */
+static int locale_report(const KpData *d, const char *locale, const char *out)
+{
+	static const char *const TABLES[KP_UI_TBLS] = { "STAT", "NETW", "GLUA", "GHST", "TIPS", "HELP" };
+	static const char *const FONTS[KP_UI_FNT_FONTS] = { "U8", "U10", "U14", "U16", "U16X" };
+	static const char MISSIONS[] = "missions/";
+	KpLocale l;
+	KpLocaleGlyphs g;
+	KpLocaleFound missions_found, glyphs_found;
+	KpError e;
+	KpBuf b;
+	char path[PATH], err[MESSAGE], (*names)[PATH];
+	int k, first = 1, problems, glyphs;
+	if (kp_locale_build(&l, &d->ui, &d->raw, locale, &e) != 0) {
+		fprintf(stderr, "kp_convert: %s\n", e.msg);
+		return -1;
+	}
+	memset(&missions_found, 0, sizeof missions_found);
+	memset(&glyphs_found, 0, sizeof glyphs_found);
+	/* the glyphs of the language's texts, as the game builds them before any mission */
+	if ((glyphs = kp_locale_glyphs(&g, &d->ui, &d->raw, &l, &glyphs_found, &e)) < 0) {
+		fprintf(stderr, "kp_convert: %s %s\n", locale, e.msg);
+		kp_locale_free(&l);
+		return -1;
+	}
+	kp_buf_init(&b);
+	kp_buf_printf(&b, "{\n \"locale\": \"%s\",\n \"tables\": {", locale);
+	for (k = 0; k < KP_UI_TBLS; k++) {
+		const KpLocaleTableReport *t = &l.tables[k];
+		kp_buf_printf(&b, "%s\n  \"%s\": {\"rows\": %d, \"translated\": %d, \"shorter\": %d, \"bytes\": %llu}", k ? "," : "",
+			TABLES[k], t->rows, t->translated, t->shorter, (unsigned long long)t->bytes);
+	}
+	kp_buf_printf(&b, "\n },\n \"dialogs\": {\"translated\": %d, \"kept\": %d, \"layout\": %d, \"bytes\": %llu},\n",
+		l.dialogs_translated, l.dialogs_kept, l.dialogs_laid_out, (unsigned long long)l.pool_size);
+	kp_buf_printf(&b, " \"scripts\": {\"translated\": [");
+	if (l.script_count > 0 && (names = (char (*)[PATH])malloc((size_t)l.script_count * sizeof *names)) != NULL) {
+		const char **order = (const char **)malloc((size_t)l.script_count * sizeof *order);
+		for (k = 0; k < l.script_count; k++) snprintf(names[k], PATH, "%.*s", (int)l.scripts[k].path_len, l.scripts[k].path);
+		for (k = 0; order && k < l.script_count; k++) order[k] = names[k];
+		if (order) qsort(order, (size_t)l.script_count, sizeof *order, cmp_names);
+		for (k = 0; k < l.script_count; k++) {
+			kp_buf_printf(&b, "%s", k ? ", " : "");
+			json_string(&b, order ? order[k] : names[k]);
+		}
+		free(order);
+		free(names);
+	}
+	kp_buf_printf(&b, "], \"base\": %d},\n \"missions\": {", l.scripts_left);
+	for (k = 0; k < d->mission_count; k++) {
+		const KpDataMission *entry = &d->missions[k];
+		const char *name = entry->key + sizeof MISSIONS - 1;
+		KpMission m;
+		uint8_t *strs = NULL;
+		size_t size = 0;
+		int counts[3] = { 0, 0, 0 }, rc;
+		if (!entry->catalog || !entry->directory[0] || strncmp(entry->key, MISSIONS, sizeof MISSIONS - 1) != 0) continue;
+		kp_buf_printf(&b, "%s\n  ", first ? "" : ",");
+		first = 0;
+		json_string(&b, name);
+		if (kp_data_mission(d, entry, NULL, 0, &m, &e) != 0) {
+			kp_buf_printf(&b, ": {}");
+			fprintf(stderr, "kp_convert: %s: %s\n", entry->key, e.msg);
+			continue;
+		}
+		rc = kp_locale_mission(&d->raw, locale, name, &m, &missions_found, &strs, &size, counts, &e);
+		kp_mission_free(&m);
+		free(strs);
+		if (rc < 0) { /* the map is damaged, or its strings do not fit the base's: the mission's own text */
+			size_t n = (size_t)snprintf(err, sizeof err, "%s: %s", name, e.msg) + 1;
+			char *line = (char *)malloc(n < sizeof err ? n : sizeof err);
+			if (line) {
+				memcpy(line, err, n < sizeof err ? n : sizeof err);
+				line[(n < sizeof err ? n : sizeof err) - 1] = 0;
+				push_line(&missions_found.problems, &missions_found.problem_count, &missions_found.problem_cap, line);
+			}
+			kp_buf_printf(&b, ": {}");
+			continue;
+		}
+		if (rc == 0) kp_buf_printf(&b, ": {\"translated\": 0}");
+		else kp_buf_printf(&b, ": {\"translated\": %d, \"kept\": %d, \"looked_up\": %d}", counts[0], counts[1], counts[2]);
+	}
+	kp_buf_printf(&b, "\n },\n \"subtitles\": %d,\n \"glyphs\": ", l.subtitles);
+	if (glyphs > 0) {
+		kp_locale_glyphs_cover(&g, &d->ui, &missions_found, &glyphs_found); /* the missions' characters too */
+		kp_buf_printf(&b, "{\"codes\": %d, \"dropped\": [", g.code_count);
+		for (k = 0; k < g.dropped_count; k++) kp_buf_printf(&b, "%s%d", k ? ", " : "", (int)g.dropped[k]);
+		kp_buf_printf(&b, "], \"bytes\": {");
+		for (k = 0; k < KP_UI_FNT_FONTS; k++)
+			kp_buf_printf(&b, "%s\"%s\": %llu", k ? ", " : "", FONTS[k], (unsigned long long)g.supplement_sizes[k]);
+		kp_buf_printf(&b, "}},\n");
+	} else {
+		kp_buf_printf(&b, "null,\n"); /* no TrueType fonts in the source: the FNT fonts' own glyphs */
+	}
+	take_findings(&l.found, &missions_found);
+	take_findings(&l.found, &glyphs_found);
+	json_lines(&b, "exceptions", l.found.exceptions, l.found.exception_count, 0);
+	json_lines(&b, "mended", l.found.mended, l.found.mended_count, 0);
+	json_lines(&b, "problems", l.found.problems, l.found.problem_count, 1);
+	kp_buf_printf(&b, "}\n");
+	problems = l.found.problem_count;
+	snprintf(path, sizeof path, "%s/reports/locale-%s.json", out, locale);
+	if (kp_fs_write_if_changed(path, b.data ? b.data : "", b.size, err, sizeof err) < 0) {
+		fprintf(stderr, "kp_convert: %s\n", err);
+		problems = -1;
+	} else {
+		printf("%s: %d tables, %d dialog texts, %d scripts, %d movies' subtitles, %d glyphs per font, %d problems (%s)\n",
+			locale, KP_UI_TBLS, l.dialogs_translated, l.script_count, l.subtitles, glyphs > 0 ? g.code_count : 0, problems, path);
+		for (k = 0; k < problems && k < SHOWN_FAILURES; k++) fprintf(stderr, "%s: %s\n", locale, l.found.problems[k]);
+	}
+	kp_buf_free(&b);
+	if (glyphs > 0) kp_locale_glyphs_free(&g);
+	kp_locale_found_free(&missions_found);
+	kp_locale_found_free(&glyphs_found);
+	kp_locale_free(&l);
+	return problems;
+}
+
+static int cmd_locale_check(int argc, char **argv)
+{
+	const char *dir = NULL, *only = "all", *out = "generated", *locales[LOCALES_MAX];
+	char ids[LOCALES_MAX][LOCALE_ID], path[PATH], err[MESSAGE];
+	int i, count, shown = 0, failed = 0, checked = 0;
+	KpData d;
+	KpError e;
+	KpRes *res;
+	for (i = 0; i < argc; i++) {
+		if (strcmp(argv[i], "--locale") == 0 && i + 1 < argc) only = argv[++i];
+		else if (strcmp(argv[i], "--out") == 0 && i + 1 < argc) out = argv[++i];
+		else if (argv[i][0] == '-' || dir) return -1;
+		else dir = argv[i];
+	}
+	if (!dir) return -1;
+	snprintf(path, sizeof path, "%s/reports", out);
+	if (kp_fs_mkdirs(path, err, sizeof err) != 0) {
+		fprintf(stderr, "kp_convert: %s\n", err);
+		return 1;
+	}
+	if (!(res = open_sources(&dir, 1, &shown))) return 2;
+	if ((count = repack_locales(res, strcmp(only, "all") == 0 ? NULL : only, ids, locales)) < 0) {
+		kp_res_close(res);
+		return 2;
+	}
+	if (kp_data_build(&d, res, NULL, 0, NULL, 0, &e) != 0) {
+		fprintf(stderr, "kp_convert: %s\n", e.msg);
+		kp_res_close(res);
+		return 1;
+	}
+	for (i = 0; i < count; i++) {
+		int problems;
+		if (!kp_locale_held(&d.raw, locales[i])) {
+			fprintf(stderr, "kp_convert: %s: the source holds none of its strings\n", locales[i]);
+			failed = 1;
+			continue;
+		}
+		problems = locale_report(&d, locales[i], out);
+		failed |= problems != 0;
+		checked++;
+	}
+	if (checked == 0 && !failed) printf("locale-check: the source holds no language but the base\n");
+	kp_data_free(&d);
+	kp_res_close(res);
+	return failed;
+}
+
 static int cmd_scenarios(int argc, char **argv)
 {
 	const char *dir = NULL, *out = "generated", *specs = "tests/scenarios";
@@ -697,6 +928,7 @@ static const struct {
 	{ "icon", "icon DIR [--out DIR]", cmd_icon },
 	{ "repack", "repack DIR [--out DIR] [--single] [--wav] [--res-log FILE] [--cache DIR] [--threads N] [--locales LIST]",
 		cmd_repack },
+	{ "locale-check", "locale-check DIR [--locale L|all] [--out DIR]", cmd_locale_check },
 	{ "scenarios", "scenarios DIR [--specs DIR] [--out DIR]", cmd_scenarios },
 	{ "terrain", "terrain DIR [--out DIR]", cmd_terrain },
 };

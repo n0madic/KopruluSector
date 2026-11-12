@@ -159,12 +159,10 @@ static void subtitles_of_a_language_replace_the_packs(KpT *T)
 	static const char TEXT[] = "\xd0\xa2\xd0\xb5\xd0\xba\xd1\x81\xd1\x82";
 	enum { CLIPS = 3, CUE = 16, HEAD = 12, ROW = 8, TEXT_SIZE = sizeof TEXT - 1 };
 	uint8_t subs_section[HEAD + CLIPS * ROW + CUE + TEXT_SIZE], *row = subs_section + HEAD, *cue = row + CLIPS * ROW;
-	size_t size, overlay_size;
+	size_t size;
 	const uint8_t *pack;
-	uint8_t *overlay;
 	Memory m;
 	KpCineIndex ix;
-	KpKpfOut out;
 	KpCineSubs *subs = (KpCineSubs *)calloc(1, sizeof *subs);
 	KpError err;
 	if (!subs) kp_t_fail(T, "out of memory");
@@ -183,13 +181,7 @@ static void subtitles_of_a_language_replace_the_packs(KpT *T)
 	put_u32(cue + 4, 250);
 	put_u32(cue + 12, TEXT_SIZE);
 	memcpy(cue + CUE, TEXT, TEXT_SIZE);
-	memset(&out, 0, sizeof out);
-	out.fourcc = "SUBS";
-	out.payload = subs_section;
-	out.size = sizeof subs_section;
-	kp_t_eq(T, kp_kpf_build(KP_CINE_KIND, 2, 0, "test", NULL, &out, 1, &overlay, &overlay_size), 0, "a pack");
-	kp_t_defer(T, free, overlay);
-	kp_t_eq(T, kp_cine_subs_overlay(&ix, overlay, overlay_size, &err), 0, "%s", err.msg);
+	kp_t_eq(T, kp_cine_subs_overlay(&ix, subs_section, sizeof subs_section, &err), 0, "%s", err.msg);
 	kp_t_eq_str(T, ix.subtitles, "ruRU", "the language's");
 	kp_t_eq(T, ix.clips[0].cue_count, 0, "clip 0's row");
 	kp_t_eq(T, ix.clips[1].cue_count, 1, "clip 1's row");
@@ -199,14 +191,6 @@ static void subtitles_of_a_language_replace_the_packs(KpT *T)
 	kp_t_ok(T, subs->cues[0].size == TEXT_SIZE && memcmp(subs->text + subs->cues[0].at, TEXT, TEXT_SIZE) == 0, "its text");
 	/* refusals */
 	{
-		uint8_t *file = NULL;
-		size_t file_size;
-		kp_t_eq(T, kp_kpf_build(KP_CINE_KIND, KP_CINE_SCHEMA + 1, 0, "test", NULL, &out, 1, &file, &file_size), 0, "a pack");
-		kp_t_defer(T, free, file);
-		kp_t_eq(T, kp_cine_subs_overlay(&ix, file, file_size, &err), -1, "another schema");
-		kp_t_ok(T, strstr(err.msg, "schema") != NULL, "%s", err.msg);
-	}
-	{
 		static const struct { size_t at; uint32_t value; const char *why; } BAD[] = {
 			{ 8, 1000, "does not add up" }, /* more text than the section has */
 			{ HEAD + ROW, 1, "out of place" },
@@ -214,34 +198,20 @@ static void subtitles_of_a_language_replace_the_packs(KpT *T)
 		};
 		size_t k;
 		for (k = 0; k < sizeof BAD / sizeof BAD[0]; k++) {
-			uint8_t bad[sizeof subs_section], *file = NULL;
-			size_t file_size;
+			uint8_t bad[sizeof subs_section];
 			memcpy(bad, subs_section, sizeof bad);
 			put_u32(bad + BAD[k].at, BAD[k].value);
-			out.payload = bad;
-			kp_t_eq(T, kp_kpf_build(KP_CINE_KIND, 2, 0, "test", NULL, &out, 1, &file, &file_size), 0, "a pack");
-			kp_t_defer(T, free, file);
-			kp_t_eq(T, kp_cine_subs_overlay(&ix, file, file_size, &err), -1, "%s", BAD[k].why);
+			kp_t_eq(T, kp_cine_subs_overlay(&ix, bad, sizeof bad, &err), -1, "%s", BAD[k].why);
 			kp_t_ok(T, strstr(err.msg, BAD[k].why) != NULL, "%s", err.msg);
 		}
-		{
-			uint8_t *file = NULL;
-			size_t file_size;
-			out.payload = subs_section;
-			out.size = HEAD + ROW; /* a row less than the pack's clips: only clip 0's */
-			put_u32(subs_section + 4, 0);
-			put_u32(subs_section + 8, 0);
-			memset(row, 0, ROW);
-			kp_t_eq(T, kp_kpf_build(KP_CINE_KIND, 2, 0, "test", NULL, &out, 1, &file, &file_size), 0, "a pack");
-			kp_t_defer(T, free, file);
-			kp_t_eq(T, kp_cine_subs_overlay(&ix, file, file_size, &err), -1, "no row for a clip");
-			kp_t_ok(T, strstr(err.msg, "no row") != NULL, "%s", err.msg);
-			out.size = 4;
-			file = NULL;
-			kp_t_eq(T, kp_kpf_build(KP_CINE_KIND, 2, 0, "test", NULL, &out, 1, &file, &file_size), 0, "a pack");
-			kp_t_defer(T, free, file);
-			kp_t_eq(T, kp_cine_subs_overlay(&ix, file, file_size, &err), -1, "a cut head");
-		}
+		/* a row less than the pack's clips: only clip 0's */
+		put_u32(subs_section + 4, 0);
+		put_u32(subs_section + 8, 0);
+		memset(row, 0, ROW);
+		kp_t_eq(T, kp_cine_subs_overlay(&ix, subs_section, HEAD + ROW, &err), -1, "no row for a clip");
+		kp_t_ok(T, strstr(err.msg, "no row") != NULL, "%s", err.msg);
+		kp_t_eq(T, kp_cine_subs_overlay(&ix, subs_section, 4, &err), -1, "a cut head");
+		kp_t_eq(T, kp_cine_subs_overlay(&ix, NULL, 0, &err), -1, "none");
 	}
 	/* a refusal leaves what was read */
 	kp_t_eq(T, ix.clips[1].cue_count, 1, "clip 1's row stays");

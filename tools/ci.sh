@@ -28,9 +28,10 @@
 #     (tools/oracle/export_smk_ffmpeg.py --check);
 #   KOPRULU_SCR=<StarCraft: Remastered install dir> classifies the manifest's files on that install
 #     (converter/tests/test_scr_source.py) and, with KOPRULU_ORIGINAL, compares Remastered's DAT tables and
-#     scripts with the profile's (converter/tests/test_casc.py); it also converts the install's languages (every
-#     check of converter locale on each it holds, their base computed from the install), test_speech plays them with
-#     the install's speech (ADR 0019, stage C2), and KOPRULU_APP's product runs each language with its speech;
+#     scripts with the profile's (converter/tests/test_casc.py); it also checks every string of each language the
+#     install holds (kp_convert locale-check, its reports in generated/reports; ADR 0019, stage C3), test_locale and
+#     test_speech build the languages from the install's files (stages C2 and C3), and KOPRULU_APP's product runs each
+#     language with its speech, from the install and from its repack's language groups;
 #   KOPRULU_APP=1 builds the product for macOS (tools/product.sh macos debug, needs generated/ and its repack,
 #     generated/repack-single: kp_convert repack DIR --single; ADR 0018, stage D8b) and runs its
 #     development checks, with no window on the screen and no sound (--headless, APP_WINDOW's size whatever the
@@ -238,9 +239,9 @@ step "native build (CMake): kp_core, its tools and the C suites, checked as C an
 cmake -S . -B build/cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DKP_ASTC=ON >/dev/null
 cmake --build build/cmake >/dev/null
 if [ -n "${KOPRULU_SCR:-}" ]; then
-  # before the C suites: test_locale reads what this writes, and an unchanged language leaves the files as they are
-  step "the languages' packs: every check of converter locale on each language the install holds (ADR 0016)"
-  "$PYTHON" -m converter locale --scr "$KOPRULU_SCR" --locale all --out generated 2>&1 | tail -5
+  # a string refused fails the step (its first ones printed); the product's runs below play the languages it lists
+  step "the languages: every string of each language the install holds (kp_convert locale-check; ADR 0019, stage C3)"
+  logged build/locale_check.log 8 build/cmake/kp_convert locale-check "$KOPRULU_SCR" --out generated
 fi
 if [ -n "${KOPRULU_ORIGINAL:-}" ]; then
   step "data readers (ADR 0018): every file of the input manifest read from the 1.17 install through kp_res, checked"
@@ -394,9 +395,7 @@ if [ -n "$LLVM_CLANG" ]; then
 fi
 if [ -d generated ]; then
   step "the converter's containers parsed under ASan and UBSan (console.kpd, the HD files, the cinematics' packs)"
-  # a language's packs: test_locale reads them as the overlays they are
-  find generated \( -path generated/locale -o -path generated/cache \) -prune -o \
-    -name "*.kpd" -print | sort | xargs build/cmake-asan/kp_load_check | tail -1
+  find generated -path generated/cache -prune -o -name "*.kpd" -print | sort | xargs build/cmake-asan/kp_load_check | tail -1
 fi
 if command -v emcmake >/dev/null && command -v node >/dev/null; then
   # the jobs are wasm's under node, their dispatch the host's runner
@@ -580,43 +579,45 @@ if [ -n "${KOPRULU_APP:-}" ]; then
     SCRIPT_RUN=determinism_scr_repack app_script determinism 0 "$APP" --data build/repack/scr
     grep -qF 'data: the original data from a repack' build/script_determinism_scr_repack.err
     diff -r build/script/determinism_scr build/script/determinism_scr_repack
-    # the languages' groups (ADR 0019, stage C2): their maps' TIME and voices' records are the install's
-    step "the speech from Remastered's repack: its languages' groups give what the install gives"
-    env KP_TEST_SCR=build/repack/scr "$RES_ORIGINAL" build/cmake/kp_test test_speech:the_speech_equals_the_converters \
-      test_speech:the_speech_sound_records_replace_the_bases | tail -1
+    # the languages' groups (ADR 0019, stages C2 and C3): their texts, maps' strings and TIME and voices' records are
+    # the install's
+    step "the languages from Remastered's repack: its language groups give what the install gives"
+    env KP_TEST_SCR=build/repack/scr "$RES_ORIGINAL" build/cmake/kp_test test_locale:the_languages_equal_the_converters \
+      test_speech:the_speech_equals_the_converters test_speech:the_speech_sound_records_replace_the_bases | tail -1
+    # each language locale-check listed (ADR 0016; ADR 0019, stage C3: built from the install's files): the menu, from
+    # the install and from the repack's language group, and terran01's screens (with the HD art hd_game.kps's walk,
+    # without it the game's first screen) with the language's speech, none of them reaching a character with no glyph
+    for loc in $(sed -n 's/^\([a-z][a-z][A-Z][A-Z]\): [0-9]* tables, .*/\1/p' build/locale_check.log); do
+      step "product in $loc: the menu, a mission's screens and speech, no character without a glyph (ADR 0016)"
+      mkdir -p "build/locale_check/$loc"
+      language=(--data . --data "$KOPRULU_SCR" --locale "$loc")
+      app_check "locale_menu_$loc" "$APP" "${language[@]}" --after 2 --screenshot "build/locale_check/$loc/menu.png"
+      app_check "locale_menu_repack_$loc" "$APP" --data build/repack/scr --locale "$loc" --after 2 \
+        --screenshot "build/locale_check/$loc/menu_repack.png"
+      logs=("build/locale_menu_$loc.err" "build/locale_menu_$loc.log" "build/locale_menu_repack_$loc.err"
+        "build/locale_menu_repack_$loc.log")
+      if [ -d "${KOPRULU_GENERATED:-generated}/hd" ]; then
+        SCRIPT_RUN="locale_$loc" app_script hd_game 0 "$APP" "${language[@]}" --speech "$loc" --mission terran/terran01
+        logs+=("build/script_locale_$loc.err" "build/script_locale_$loc.log")
+        ls "build/script/locale_$loc"/*.png | wc -l
+      else
+        app_check "locale_game_$loc" "$APP" "${language[@]}" --speech "$loc" --mission terran/terran01 --play --after 3 \
+          --screenshot "build/locale_check/$loc/game.png"
+        logs+=("build/locale_game_$loc.err" "build/locale_game_$loc.log")
+        [ -s "build/locale_check/$loc/game.png" ]
+      fi
+      if grep -hE "no glyph|language $loc:|speech $loc:|the base.s voices" "${logs[@]}"; then
+        echo "ci: the product's language $loc: a character without a glyph, or the language's text or speech refused" >&2
+        exit 1
+      fi
+      if ! grep -qhF "speech of $loc: terran/terran01:" "${logs[@]}"; then
+        echo "ci: the product's language $loc: terran01 did not take the speech's TIME" >&2
+        exit 1
+      fi
+      [ -s "build/locale_check/$loc/menu.png" ]
+      [ -s "build/locale_check/$loc/menu_repack.png" ]
+    done
   fi
-  # each converted language from the source tree's generated/ (the bundle holds none until stage L4): the menu and
-  # terran01's screens (with the HD art hd_game.kps's walk, without it the game's first screen), none of them reaching
-  # a character with no glyph; the mission plays with the language's speech from the install (ADR 0019, stage C2)
-  for strings in generated/locale/*/strings.kpd; do
-    [ -f "$strings" ] || continue
-    loc=$(basename "$(dirname "$strings")")
-    step "product in $loc: the menu, a mission's screens and speech, no character without a glyph (ADR 0016)"
-    mkdir -p "build/locale_check/$loc"
-    speech=() # left from a run with KOPRULU_SCR, a language plays without its speech
-    if [ -n "${KOPRULU_SCR:-}" ]; then speech=(--data "$KOPRULU_SCR" --speech "$loc"); fi
-    app_check "locale_menu_$loc" "$APP" --data . --locale "$loc" --after 2 --screenshot "build/locale_check/$loc/menu.png"
-    logs=("build/locale_menu_$loc.err" "build/locale_menu_$loc.log")
-    if [ -d "${KOPRULU_GENERATED:-generated}/hd" ]; then
-      SCRIPT_RUN="locale_$loc" app_script hd_game 0 "$APP" --data . ${speech[@]+"${speech[@]}"} --locale "$loc" --mission terran/terran01
-      logs+=("build/script_locale_$loc.err" "build/script_locale_$loc.log")
-      ls "build/script/locale_$loc"/*.png | wc -l
-    else
-      app_check "locale_game_$loc" "$APP" --data . ${speech[@]+"${speech[@]}"} --locale "$loc" --mission terran/terran01 --play --after 3 \
-        --screenshot "build/locale_check/$loc/game.png"
-      logs+=("build/locale_game_$loc.err" "build/locale_game_$loc.log")
-      [ -s "build/locale_check/$loc/game.png" ]
-    fi
-    if grep -hE "no glyph|language $loc:|speech $loc:|the base.s voices" "${logs[@]}"; then
-      echo "ci: the product's language $loc: a character without a glyph, or a language's pack or speech refused" >&2
-      exit 1
-    fi
-    if [ -n "${KOPRULU_SCR:-}" ] && ! grep -qhF "speech of $loc: terran/terran01:" "${logs[@]}"; then
-      echo "ci: the product's language $loc: terran01 did not take the speech's TIME" >&2
-      exit 1
-    fi
-    [ -s "build/locale_check/$loc/menu.png" ]
-  done
   if [ "$CINEMATICS" != none ]; then
     for variant in sd hd2; do
       [ -f "${KOPRULU_GENERATED:-generated}/video/cinematics-$variant.kpd" ] || continue

@@ -18,18 +18,6 @@
 extern "C" {
 #endif
 
-/* The containers' kinds and schemas (converter/kpf/kpd.py) a language's and the speech's overlays have. */
-#define KP_UI_DATA_UI_KIND "UI  "
-#define KP_UI_DATA_UI_SCHEMA 4
-#define KP_UI_DATA_FONTS_KIND "FONT"
-#define KP_UI_DATA_FONTS_SCHEMA 1
-#define KP_UI_DATA_STRINGS_KIND "STRS"
-#define KP_UI_DATA_STRINGS_SCHEMA 1
-#define KP_UI_DATA_SOUNDS_KIND "SNDS"
-#define KP_UI_DATA_SOUNDS_SCHEMA 2
-#define KP_UI_DATA_PORTRAITS_KIND "PORT"
-#define KP_UI_DATA_PORTRAITS_SCHEMA 2
-
 #define KP_UI_FONT_COLOUR_ROWS 192 /* game\tFontGam.pcx: 24 rows of 8 (fonts.kpd TFGM) */
 #define KP_UI_THEME_FONT_ROWS 48   /* a theme's tFont.pcx prefix (ui.kpd TFNT) */
 

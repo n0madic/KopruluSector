@@ -457,8 +457,10 @@ def build_texts(read_original, names: list[str], storage: CascStorage) -> dict:
             xml = local(f"SD/rez/{stem}.xml", f"locales/enUS/Assets/rez/{stem}.xml")
             if xml is None:
                 continue
-            base = f"rez/{stem}.tbl" if local(f"rez/{stem}.tbl") else None
-            out["tbl"][name] = rebuild.string_table(rebuild.tbl_spans(read_original(name)), xml[0], strings(xml), base)
+            found = local(f"rez/{stem}.tbl")
+            out["tbl"][name] = rebuild.string_table(rebuild.tbl_spans(read_original(name)), xml[0], strings(xml),
+                                                    found[0] if found else None,
+                                                    len(rebuild.tbl_spans(found[1])) if found else 0)
         elif lower.startswith("rez/") and lower.endswith(".bin"):
             own = [(k, v) for k, v in rc3 if k.lower().startswith(stem + "-")]
             own.sort(key=lambda kv: int(kv[0].rsplit("-", 1)[1]) if kv[0].rsplit("-", 1)[1].isdigit() else 1 << 30)

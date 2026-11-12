@@ -104,11 +104,7 @@ class UiTest(unittest.TestCase):
         """koprulu-dialogs.json's labels: the main menu's version label, the text of a record that has none."""
         assert kpd.koprulu_labels() == {"rez\\gluMain.bin": {10: b"Remake based on the original version %s"}}
         dlgs, pool = kpd.dialogs_section({"rez\\x.bin": _synthetic()}, None, {"rez\\x.bin": {2: b"V %s"}})
-        from converter.emit import locale
-
-        (d,) = locale.read_dialogs(dlgs)
-        record = d.widgets[2]
-        assert locale.pool_text(pool, record[locale.WIDGET_TEXT_AT], record[locale.WIDGET_TEXT_LEN]) == b"V %s"
+        assert b"V %s\0" in pool
         for labels in ({"rez\\x.bin": {1: b"x"}}, {"rez\\x.bin": {0: b"x"}}, {"rez\\x.bin": {3: b"x"}},
                        {"rez\\none.bin": {2: b"x"}}):
             with self.assertRaises(dialog.DialogError, msg=labels):  # a record with a text, the dialog, none, no dialog

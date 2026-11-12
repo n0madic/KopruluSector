@@ -52,14 +52,14 @@ typedef struct {
 
 typedef struct {
 	Str name, xml, base;
-	uint32_t ids, nul_entries;
-	const uint8_t *ids_at, *nuls_at;
+	uint32_t base_rows, ids, nul_entries;
+	const uint8_t *ids_at, *ids_end, *nuls_at;
 } TblEntry;
 
 typedef struct {
 	Str name;
 	uint32_t raw_size, packed_size, texts;
-	const uint8_t *packed, *texts_at;
+	const uint8_t *packed, *texts_at, *texts_end;
 } BinEntry;
 
 typedef struct {
@@ -234,12 +234,14 @@ static int parse(KpResScr *s, const KpDefsProfile *p)
 		e->name = str8(&c);
 		e->xml = str8(&c);
 		e->base = str8(&c);
+		e->base_rows = u16(&c);
 		e->ids = u16(&c);
 		e->ids_at = c.p;
 		for (j = 0; j < e->ids && !c.bad; j++) {
 			uint32_t n = u8(&c);
 			if (n != 0xff) take(&c, n);
 		}
+		e->ids_end = c.p;
 		e->nul_entries = u16(&c);
 		e->nuls_at = c.p;
 		for (j = 0; j < e->nul_entries && !c.bad; j++) {
@@ -266,6 +268,7 @@ static int parse(KpResScr *s, const KpDefsProfile *p)
 			take(&c, 4 * (size_t)u8(&c));
 			take(&c, u16(&c));
 		}
+		e->texts_end = c.p;
 	}
 	return c.bad ? -1 : 0;
 }
@@ -352,6 +355,9 @@ static int is_rc3(const char *path, size_t len)
 	}
 	return 1;
 }
+
+/* How an install's XML is read (kp_scr_xml_strings) */
+static int xml_mode(const char *path, size_t len) { return is_rc3(path, len) ? KP_SCR_XML_RC3 : KP_SCR_XML_1252; }
 
 static int is_remapped(const char *key)
 {
@@ -754,7 +760,7 @@ static const KpScrStrings *xml_of(KpResScr *s, KpCasc *casc, const char *path, s
 	memcpy(x->path, name, len + 1);
 	raw = kp_casc_read(casc, name, &size, why, sizeof why); /* none: no strings (every text of it empty) */
 	if (raw) {
-		if (kp_scr_xml_strings(raw, size, is_rc3(name, len), &x->strings, why, sizeof why) != 0)
+		if (kp_scr_xml_strings(raw, size, xml_mode(name, len), &x->strings, why, sizeof why) != 0)
 			memset(&x->strings, 0, sizeof x->strings);
 		free(raw);
 	}
@@ -783,10 +789,10 @@ static uint8_t *remake_tbl(KpCasc *casc, const TblEntry *e, const KpDefsInput *i
 			return NULL;
 		}
 	}
-	if (kp_scr_xml_strings(xml, xml_size, is_rc3(xml_name, strlen(xml_name)), &strings, why, sizeof why) != 0) goto done;
+	if (kp_scr_xml_strings(xml, xml_size, xml_mode(xml_name, strlen(xml_name)), &strings, why, sizeof why) != 0) goto done;
 	if (!(spans = (KpScrSpan *)calloc(e->ids ? e->ids : 1, sizeof *spans))) goto strings_done;
 	ids.p = e->ids_at;
-	ids.end = e->ids_at + 0x7fffffff;
+	ids.end = e->ids_end;
 	ids.bad = 0;
 	for (k = 0; k < e->ids; k++) {
 		uint32_t n = u8(&ids);
@@ -835,20 +841,37 @@ done:
 	return out;
 }
 
+int kp_res_scr_table(const KpResScr *s, const char *key, KpResScrTable *out)
+{
+	uint32_t k;
+	for (k = 0; s && k < s->tbl_count; k++) {
+		const TblEntry *e = &s->tbl[k];
+		if (!str_is(e->name, key)) continue;
+		out->xml = e->xml.s;
+		out->xml_len = e->xml.n;
+		out->base_rows = e->base_rows;
+		out->ids = e->ids;
+		out->ids_at = e->ids_at;
+		out->ids_end = e->ids_end;
+		return 0;
+	}
+	return -1;
+}
+
 /* A dialog BIN from its skeleton and its texts (rebuild.dialog_from_table): a name as the table keeps it, a Remastered
- * string by its source "id:<xml>#<id>" (empty when it has none) */
-static uint8_t *remake_bin(KpResScr *s, KpCasc *casc, const BinEntry *e, const KpDefsInput *in, size_t *size,
-	KpResStatus *status, char *source)
+ * string by its source "id:<xml>#<id>" through text_of (empty when it has none) */
+static uint8_t *dialog_of(const BinEntry *e, KpResScrText text_of, void *ctx, size_t *size)
 {
 	uLongf raw_size = e->raw_size;
 	uint8_t *skeleton = (uint8_t *)malloc(e->raw_size ? e->raw_size : 1), *out = NULL;
 	KpScrDialogText *texts = (KpScrDialogText *)calloc(e->texts ? e->texts : 1, sizeof *texts);
 	Cursor c;
 	uint32_t k;
+	*size = 0;
 	if (!skeleton || !texts || uncompress(skeleton, &raw_size, e->packed, e->packed_size) != Z_OK || raw_size != e->raw_size)
 		goto done;
 	c.p = e->texts_at;
-	c.end = e->texts_at + 0x7fffffff;
+	c.end = e->texts_end;
 	c.bad = 0;
 	for (k = 0; k < e->texts; k++) {
 		KpScrDialogText *t = &texts[k];
@@ -866,21 +889,52 @@ static uint8_t *remake_bin(KpResScr *s, KpCasc *casc, const BinEntry *e, const K
 			t->text_size = n - 5;
 		} else if (n >= 3 && memcmp(src, "id:", 3) == 0) {
 			const char *hash = (const char *)memchr(src + 3, '#', n - 3);
-			const KpScrStrings *strings = hash ? xml_of(s, casc, src + 3, (size_t)(hash - src - 3)) : NULL;
-			const KpScrString *v = strings ? kp_scr_string(strings, hash + 1, (size_t)(src + n - hash - 1)) : NULL;
-			if (v) {
-				t->text = v->value;
-				t->text_size = v->size;
-			}
+			if (hash)
+				t->text = text_of(ctx, src + 3, (size_t)(hash - src - 3), hash + 1, (size_t)(src + n - hash - 1), &t->text_size);
 		}
 	}
-	if (!c.bad && (out = kp_scr_dialog(skeleton, e->raw_size, texts, e->texts, size)) != NULL) {
-		*status = judged(in, out, *size);
-		snprintf(source, KP_RES_SOURCE_NAME, "defs/scr texts");
-	}
+	if (!c.bad) out = kp_scr_dialog(skeleton, e->raw_size, texts, e->texts, size);
 done:
 	free(skeleton);
 	free(texts);
+	return out;
+}
+
+uint8_t *kp_res_scr_dialog(const KpResScr *s, const char *key, KpResScrText text_of, void *ctx, size_t *size)
+{
+	uint32_t k;
+	*size = 0;
+	for (k = 0; s && k < s->bin_count; k++)
+		if (str_is(s->bin[k].name, key)) return dialog_of(&s->bin[k], text_of, ctx, size);
+	return NULL;
+}
+
+/* remake_bin's texts: Remastered's strings of the install's XMLs */
+typedef struct {
+	KpResScr *s;
+	KpCasc *casc;
+} InstallText;
+
+static const uint8_t *install_text(void *ctx, const char *xml, size_t xml_len, const char *id, size_t id_len, size_t *size)
+{
+	InstallText *it = (InstallText *)ctx;
+	const KpScrStrings *strings = xml_of(it->s, it->casc, xml, xml_len);
+	const KpScrString *v = strings ? kp_scr_string(strings, id, id_len) : NULL;
+	*size = v ? v->size : 0;
+	return v ? v->value : NULL;
+}
+
+static uint8_t *remake_bin(KpResScr *s, KpCasc *casc, const BinEntry *e, const KpDefsInput *in, size_t *size,
+	KpResStatus *status, char *source)
+{
+	InstallText it;
+	uint8_t *out;
+	it.s = s;
+	it.casc = casc;
+	if ((out = dialog_of(e, install_text, &it, size)) != NULL) {
+		*status = judged(in, out, *size);
+		snprintf(source, KP_RES_SOURCE_NAME, "defs/scr texts");
+	}
 	return out;
 }
 

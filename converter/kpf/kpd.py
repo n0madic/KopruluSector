@@ -94,7 +94,6 @@ TILESET_SCHEMA = 1
 TILESET_EXTENSIONS = ("cv5", "vx4", "vr4", "vf4", "wpe", "grp")
 
 # Runtime string tables: section fourcc -> MPQ path.
-WIDE_TBL_SCHEMA = 2  # a language's table section: u32 count and offsets (schema 1: the original's u16)
 TBL_FILES = {
     "STAT": "rez\\stat_txt.tbl",
     "NETW": "rez\\network.tbl",

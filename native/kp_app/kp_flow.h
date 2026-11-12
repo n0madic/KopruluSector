@@ -10,6 +10,7 @@
 
 #include "kp_data.h"
 #include "kp_hud.h"
+#include "kp_locale.h"
 #include "kp_session.h"
 
 #ifdef __cplusplus
@@ -25,7 +26,6 @@ enum { KP_APP_CINE_LOGO = 0, KP_APP_CINE_EXPANSION_INTRO = 24 };
 
 #define KP_APP_RES_DIRS 4 /* the folders of original data --data names */
 
-#define KP_LOCALE_BASE "enUS" /* the language of the base's text: it has no text overlays */
 
 /* The development switches (command-line flags). */
 typedef struct {
@@ -124,8 +124,6 @@ typedef struct {
 	int (*mission_files)(void *ctx, const KpDataMission *m, char *err, size_t err_size);
 } KpFlowHost;
 
-#define KP_FLOW_LOCALE_FILES 4 /* a language's packs the flow reads: the glyphs, the strings, the ui, the speech's sounds */
-
 typedef struct KpFlow {
 	KpFlowHost host;
 	/* what the product loaded for every game (not owned; set before kp_flow_init): the original data (ADR 0018: the
@@ -134,10 +132,13 @@ typedef struct KpFlow {
 	KpAppFlags *flags;
 	const KpData *data;
 	const KpSaveIdentity *identity;
-	/* the language (ADR 0016): its overlays of the interface and their bytes (kp_flow_init reads them), the languages
-	 * installed (generated/locale/glyphs.kpd's LOCS), another choice of the main menu's to start over in */
+	/* the language (ADR 0016; ADR 0019, stage C3: kp_flow_init builds it from the data's own files): its texts, the
+	 * glyphs and the speech's sound records, all of it as the interface takes it; the profile's languages (LANG) the data
+	 * holds; another choice of the main menu's to start over in */
 	KpUiLocale locale;
-	uint8_t *locale_files[KP_FLOW_LOCALE_FILES];
+	KpLocale text;
+	KpLocaleGlyphs glyphs;
+	uint8_t *speech_sounds;
 	KpUiLanguages languages;
 	int language_chosen;
 	const uint8_t *console_art; /* console.kpd (kp_ui_set_console_art), or NULL */

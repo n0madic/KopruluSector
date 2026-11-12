@@ -3,7 +3,7 @@
   "deDE's texts of Koprulu's own dialogs and records (defs/ui/koprulu-dialogs.json), which the language's data",
   "lack: per dialog, the base's text exactly (the hotkey's byte and colours included) -> the language's. A text",
   "with flag 0x200 keeps an ASCII hotkey: a letter the text highlights, free among its dialog's, as the language's",
-  "own dialogs have it. converter locale (converter/emit/locale.py) checks each as one of the language's rows and",
+  "own dialogs have it. kp_locale.c (native/kp_app) checks each as one of the language's rows and",
   "adds its characters to the glyphs; a text with no entry stays the base's."
  ],
  "dialogs": {

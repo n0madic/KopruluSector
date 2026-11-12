@@ -1,19 +1,19 @@
 # Game data files (`.kpd`)
 
-The game's global data as the [Koprulu container](container.md) lays it out, built by `converter/kpf/kpd.py`. Since [ADR 0018](../adr/0018-original-data-at-run-time.md) (stage D8d) no file of this page is written but `console.kpd` (`python3 -m converter console --scr DIR`, or `hd`): the runtime builds the same structures from the original files in C (`*_from_files`, [phase D](../phaseD.md)), and the converter builds the containers in memory only, to record what the game reads (`converter scr-manifest`) and as the base the languages' and the speech's overlays are measured against (`converter/base.py`). The overlays (`locale/`, `speech/` below) keep these layouts; the C suites' interface fixture is `ui.kpd`, `fonts.kpd`, `sounds.kpd` and `portraits.kpd` of `converter/kpf/fixtures.py`. The sections below are what the runtime's structures hold, whatever they are built from.
+The game's global data as the [Koprulu container](container.md) lays it out, built by `converter/kpf/kpd.py`. Since [ADR 0018](../adr/0018-original-data-at-run-time.md) (stage D8d) no file of this page is written but `console.kpd` (`python3 -m converter console --scr DIR`, or `hd`): the runtime builds the same structures from the original files in C (`*_from_files`, [phase D](../phaseD.md)), and the converter builds the containers in memory only, to record what the game reads (`converter scr-manifest`). A language's parts ([below](#a-languages-parts-adr-0016-adr-0019-stage-c3)) keep these layouts, built in memory by the runtime since ADR 0019's stage C3; the C suites' interface fixture is `ui.kpd`, `fonts.kpd`, `sounds.kpd` and `portraits.kpd` of `converter/kpf/fixtures.py`. The sections below are what the runtime's structures hold, whatever they are built from.
 
 The sections that hold the executable's tables rather than the install's files (`COLS`, the requirements `RQ**`, `SLOT`, `ui.kpd`'s `BTNS`, `STLY`, `MUSI`, `VOLT`, `ACCL`, `ESTB`, `campaign.kpd`'s `TABL`, `CHEA`) are compiled into the runtime ([ADR 0018](../adr/0018-original-data-at-run-time.md), stage D2: `tools/defs_c.py`, the same bytes; the readers take the profile's table, `kp_defs_table`). Stage D3 builds the containers' structures from the original files in C (`*_from_files`, [phase D](../phaseD.md#d3-as-built)) and compiles the lists that takes as well (`UBIN`, `UTHM`, `UTHF`, `UDGR`, `UGRP`, `UPCX`, `UGLF`, `UCRD`, `KBIN`, `KEXT`, `KLAB`, `FNTP`, `CYC0`..`CYC7`), stage D4 the CHK loader tables (`CHKL`) and each campaign mission's packs (`MPAK`), stage D7 the cinematics an install's movies are played as (`CINM`: u16 movies, u16 preludes; per movie of `defs/campaign/cinematics.json`'s table u8 length, its name, u32 size and the SHA-256 of its copy in the reference 1.17 install; per prelude u8 cinematic, u8 prelude): no container has sections of those names.
 
 | File | Kind | Status |
 |---|---|---|
 | `dat.kpd` | `DAT ` | in memory (the manifest's reads) |
-| `strings.kpd` | `STRS` | in memory (the languages' base); a language's overlay |
+| `strings.kpd` | `STRS` | in memory (the manifest's reads) |
 | `iscript.kpd` | `ISCR` | in memory (the manifest's reads) |
 | `aiscript.kpd` | `AISC` | in memory (the manifest's reads) |
 | `tilesets/<name>.kpd` | `TSET` | in memory (the manifest's reads) |
 | `palettes.kpd` | `PALS` | in memory (the manifest's reads) |
-| `fonts.kpd` | `FONT` | in memory (the languages' base); the C suites' fixture |
-| `ui.kpd` | `UI  ` | in memory (the languages' base); a language's overlay; the C suites' fixture |
+| `fonts.kpd` | `FONT` | in memory (the manifest's reads); the C suites' fixture |
+| `ui.kpd` | `UI  ` | in memory (the manifest's reads); the C suites' fixture |
 | `console.kpd` | `CONW` | written (from a Remastered install: `console`, `hd`; `converter/emit/hd_ui.py`) |
 | `sounds.kpd` | `SNDS` | in memory; the C suites' fixture |
 | `portraits.kpd` | `PORT` | in memory (the manifest's reads); the C suites' fixture |
@@ -251,27 +251,20 @@ A zero skip plots even mask 0; a positive skip plots only a nonzero mask inside 
 
 **Verification.** All 4,460 native glyph blits of `native-text-probes.json` reproduce byte for byte: every glyph of every font, two colour rows, two strides.
 
-## `locale/`: a language's overlays ([ADR 0016](../adr/0016-localization.md))
+## A language's parts ([ADR 0016](../adr/0016-localization.md); [ADR 0019](../adr/0019-install-or-repack-converter-in-c.md), stage C3)
 
-`python3 -m converter locale --scr DIR --locale LOC` writes them under `generated/locale/`, from a StarCraft: Remastered install only. Each is a container of its base's kind and schema, holding only what the language changes. A loader finds a section in the overlay first, then in the base; one of another kind, schema or row count is refused and the base stays (`kp_ui_set_locale`, `kp_host_game_text`, `kp_cine_subs_overlay`). A conversion removes a pack of the language it did not write, so subtitles or a map the language no longer has do not stay loaded.
+The runtime builds a language from StarCraft: Remastered's own files, `locales/<loc>/Assets/` in the install or the repack's language group ([the repack](repack.md)): `kp_locale_build`, `kp_locale_mission` and `kp_locale_glyphs` (`native/kp_app/kp_locale.c`), by the rules `defs/l10n/` holds (compiled by `tools/defs_c.py`). Its parts go to the interface as a `KpUiLocale` (`kp_ui_set_locale`), a mission's strings to `kp_host_game_text`, the subtitles to `kp_cine_subs_overlay`; a part of other row counts or dialogs than the base's, or malformed, is refused and the base's stays. Nothing is written: `kp_convert locale-check DIR` builds every part of each language a source holds and writes the checks to `reports/locale-<loc>.json`. Until stage C3 `python3 -m converter locale` wrote the same parts as overlays under `generated/locale/` (`glyphs.kpd`, `<loc>/strings.kpd`, `ui.kpd`, `cinematics.kpd`, `missions/*.kpm`), which nothing reads now.
 
-| File | Kind | Sections |
-|---|---|---|
-| `glyphs.kpd` | `FONT` | `VFNT`, `U8  `, `U10 `, `U14 `, `U16 `, `U16X`, `LOCS`; one for all languages |
-| `<loc>/strings.kpd` | `STRS` | `STAT`, `NETW`, `GLUA`, `GHST`, `TIPS`, `HELP` of section schema 2 |
-| `<loc>/ui.kpd` | `UI  ` | `DLGS`, `POOL` (the base's records, the language's texts; it ends in a NUL), `GFIL` (its `rez\*.txt`, read before the base's) |
-| `<loc>/cinematics.kpd` | `CINE` | `SUBS` with one row per movie of the original's table (`defs/campaign/cinematics.json`), a clip's by its id |
-| `<loc>/missions/<campaign>/<mission>.kpm` | `MISN` | `STRS` ([kpm](kpm.md)) |
+| Part | Form |
+|---|---|
+| the six tables | `STAT`, `NETW`, `GLUA`, `GHST`, `TIPS`, `HELP`'s rows from the language's XML, as a language's table below |
+| the dialogs | `DLGS`, `POOL` (the base's records, the language's texts; it ends in a NUL) |
+| the glue's text files | `GFIL`'s form: its `rez\*.txt`, read before the base's |
+| the subtitles | `SUBS` (packs.md's form), one row per movie of the original's table (`defs/campaign/cinematics.json`), a clip's by its id |
+| a mission's strings | `STRS` ([kpm](kpm.md)), built when the mission loads |
+| the glyphs | a supplement per FNT font (below) and `VFNT`: Remastered's Eurostile and Eurostile Extended (font16x's) |
 
-## `speech/`: a language's speech (removed in stage C2)
-
-`python3 -m converter speech` wrote a language's speech as overlays under `generated/speech/<loc>/` (stage L5 of [ADR 0016](../adr/0016-localization.md)): each mission's `TRIG` and `MBRF` with the language's `TIME` (`MISN`), its lines and the unit voices as `MSND`, and the language's `SFX ` records (`SNDS`). Since [ADR 0019](../adr/0019-install-or-repack-converter-in-c.md)'s stage C2 the runtime reads the language's own files from the install or the repack's language group instead ([the repack](repack.md)): the TIME from its maps (`kp_host_game_speech`), the lines and voices as they are, the records from the voices' WAV headers (`kp_ui_data_speech_sounds`).
-
-**A table of section schema 2.** u32 count (the base's), count u32 offsets from the section's start at `4 * id`, the rows in UTF-8 with their NUL. `stat_txt` in Russian is past u16's reach. Lookup as `0x4c13b0`.
-
-**`VFNT`.** `kpd.files_section`: Remastered's Eurostile (`fonts\Eurostile.ttf`) and Eurostile Extended (`fonts\EurostileExtended.ttf`, font16x's). It replaces `ui.kpd`'s while this pack is there.
-
-**`LOCS`.** The languages of `defs/l10n/locales.json`: u8 count; per language u8 length, its id (ASCII), u8 length, its name in its own language (UTF-8). The menu's language dialog shows the installed ones (a language is installed when its `<loc>/strings.kpd` is there).
+**A language's table.** u32 count (the base's), count u32 offsets from the table's start at `4 * id`, the rows in UTF-8 with their NUL. `stat_txt` in Russian is past u16's reach. Lookup as `0x4c13b0`.
 
 **A glyph supplement.** One per FNT font, the same code points in each: every code point of the languages' code pages (cp1250, cp1251), of a language's text and of the languages converted before, except those with a byte slot in the FNT (ASCII and windows-1252's upper half).
 
@@ -283,13 +276,17 @@ A zero skip plots even mask 0; a positive skip plots only a nonzero mask inside 
 
 The advance is `x + width + 1`, as a slot's. A glyph stays in its FNT font's cell: `y + height` is at most the font's tallest glyph (byte 7), with the rows past it cut, because text lines are a cell apart. `kp_ui_text_add_supplement` refuses a section out of this form as a whole. A code point in neither a slot nor the supplement has width 0 and is logged once.
 
+## `speech/`: a language's speech (removed in stage C2)
+
+`python3 -m converter speech` wrote a language's speech as overlays under `generated/speech/<loc>/` (stage L5 of [ADR 0016](../adr/0016-localization.md)): each mission's `TRIG` and `MBRF` with the language's `TIME` (`MISN`), its lines and the unit voices as `MSND`, and the language's `SFX ` records (`SNDS`). Since [ADR 0019](../adr/0019-install-or-repack-converter-in-c.md)'s stage C2 the runtime reads the language's own files from the install or the repack's language group instead ([the repack](repack.md)): the TIME from its maps (`kp_host_game_speech`), the lines and voices as they are, the records from the voices' WAV headers (`kp_ui_data_speech_sounds`).
+
 ## `console.kpd` (schema 1)
 
 The console's shape on a screen other than the original's ([ADR 0011](../adr/0011-interface-panels-and-layouts.md), 2026-11-05), from StarCraft: Remastered's art, for every kind of graphics; a file of its own, as `data --data` (the 1.17 install) has no such art. Optional: without it the console stays the original's, in the `classic` arrangement. Section `CONW`: u8 races; per race a letter (`z`, `t`, `p`), 127 bytes (the colour table: the most used palette indices of the race's console PCX), then five records (left piece, centre piece, right piece, left tile, right tile): i16 x, y (logical, in the console PCX's coordinates), u16 width, height, period (the tiles': they repeat every period columns from x; the pieces 0), width × height cells: 0 none, else 1 + the colour's place in the table, `0x80` where the art covers less than half the logical pixel (the HD art's edge: a silhouette, not an SD pixel).
 
 ## `ui.kpd` (schema 4)
 
-- **Reader:** `native/kp_core/src/core/kp_ui_core.c` (`kp_ui_new_data` over a `KpUiData`; a language's overlay).
+- **Reader:** `native/kp_core/src/core/kp_ui_core.c` (`kp_ui_new_data` over a `KpUiData`; a language's parts, `kp_ui_set_locale`).
 - **Parser and fixup model:** `converter/formats/dialog.py`.
 - **Tests:**
   - `converter/tests/test_ui.py`;

@@ -68,19 +68,24 @@ uint8_t *kp_scr_plain_grp(uint32_t box_w, uint32_t box_h, const KpScrGrpRecord *
 uint8_t *kp_scr_remap_grp(const uint8_t *grp, size_t size, const uint8_t *wpe, size_t wpe_size, KpIndexMap *map,
 	size_t *out_size);
 
-/* A string of Remastered's XML: its id and its value in windows-1252 (rebuild.xml_strings; with rc3, RC3.xml's escapes
- * undone as rebuild.unescape_rc3 does) */
+/* How kp_scr_xml_strings gives a value */
+#define KP_SCR_XML_1252 0     /* in windows-1252 (rebuild.xml_strings) */
+#define KP_SCR_XML_RC3 1      /* in windows-1252, RC3.xml's escapes undone (rebuild.unescape_rc3) */
+#define KP_SCR_XML_LANGUAGE 2 /* a language's: its UTF-8 as the file has it, the escapes undone (rebuild.unescape_utf8) */
+/* A string of Remastered's XML: its id and its value (KP_SCR_XML_*); bad: a language's escape is past a byte, and the
+ * value is the file's with its entities undone */
 typedef struct {
 	char *id;
 	uint8_t *value;
 	size_t size;
+	int bad;
 } KpScrString;
 typedef struct {
 	KpScrString *items;
 	uint32_t count;
 } KpScrStrings;
-/* 0, -1 with err (a value not UTF-8, an escape past a byte, out of memory). */
-int kp_scr_xml_strings(const uint8_t *xml, size_t size, int rc3, KpScrStrings *out, char *err, size_t err_size);
+/* 0, -1 with err (out of memory; but for a language's, a value not UTF-8 or an escape past a byte). */
+int kp_scr_xml_strings(const uint8_t *xml, size_t size, int mode, KpScrStrings *out, char *err, size_t err_size);
 void kp_scr_strings_free(KpScrStrings *s);
 /* The value of an id, the last of equal ids (a dict's); NULL when none. */
 const KpScrString *kp_scr_string(const KpScrStrings *s, const char *id, size_t id_len);

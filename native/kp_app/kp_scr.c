@@ -26,6 +26,7 @@
 #define GRP_COUNT_MAX 0x3f
 #define GRP_REPEAT_MIN 3
 #define BYTE_MAX 0xff
+#define REPLACEMENT_CHARACTER 0xfffd /* U+FFFD: what Python's decoding with errors="replace" gives */
 #define TBL_OFFSET_MAX 0xffff
 #define WPE_ENTRY 4
 
@@ -362,8 +363,15 @@ static int python_cp1252(int32_t cp)
 	return b < 0 ? '?' : b;
 }
 
-/* rebuild.unescape_rc3 over value (n bytes) into out (no longer): its length, -1 for a code past a byte */
-static long unescape_rc3(const uint8_t *v, size_t n, uint8_t *out)
+/* Python's cp1252 decoding with errors="replace": the 5 bytes it leaves undefined are U+FFFD */
+static int32_t python_cp1252_char(uint8_t b)
+{
+	return b == 0x81 || b == 0x8d || b == 0x8f || b == 0x90 || b == 0x9d ? REPLACEMENT_CHARACTER : kp_text_from_byte(b);
+}
+
+/* rebuild.unescape_rc3 over value (n bytes) into out (no longer): its length, -1 for a code past a byte. language: a
+ * code past ASCII is its windows-1252 character in UTF-8 (unescape_utf8's; "\\NNN" is longer than its 3 bytes). */
+static long unescape_rc3(const uint8_t *v, size_t n, uint8_t *out, int language)
 {
 	size_t i = 0, o = 0;
 	/* the codes first (\\N or \N, up to 3 digits), then line breaks and tabs: two passes as the converter's two
@@ -378,7 +386,8 @@ static long unescape_rc3(const uint8_t *v, size_t n, uint8_t *out)
 			uint32_t code = 0, k;
 			for (k = 0; k < d; k++) code = code * 10 + (uint32_t)(v[j + k] - '0');
 			if (code > BYTE_MAX) return -1;
-			out[o++] = (uint8_t)code;
+			if (language && code >= KP_TEXT_ASCII_END) o += kp_text_encode(python_cp1252_char((uint8_t)code), out + o);
+			else out[o++] = (uint8_t)code;
 			i = j + d;
 		} else {
 			out[o++] = v[i++];
@@ -400,8 +409,52 @@ static long unescape_rc3(const uint8_t *v, size_t n, uint8_t *out)
 	return (long)o;
 }
 
-/* An XML value (its entities undone) from UTF-8 to windows-1252, then RC3's escapes: into s, -1 with err. */
-static int string_value(const uint8_t *v, size_t n, int rc3, KpScrString *s, char *err, size_t err_size)
+/* rebuild.LANGUAGE_ESCAPES in place, left to right: four backslashes are one, a backslash's quote a quote; the length */
+static size_t unescape_language(uint8_t *t, size_t n)
+{
+	size_t i = 0, o = 0;
+	while (i < n) {
+		if (n - i >= 4 && memcmp(t + i, "\\\\\\\\", 4) == 0) {
+			t[o++] = '\\';
+			i += 4;
+		} else if (n - i >= 2 && t[i] == '\\' && t[i + 1] == '"') {
+			t[o++] = '"';
+			i += 2;
+		} else {
+			t[o++] = t[i++];
+		}
+	}
+	return o;
+}
+
+/* A language's value (its entities undone, text t bytes, taken): RC3's escapes with its codes past ASCII in UTF-8, then
+ * the language's own; one past a byte leaves the value as it is, bad. */
+static int language_value(uint8_t *text, size_t t, KpScrString *s, char *err, size_t err_size)
+{
+	uint8_t *out = (uint8_t *)malloc(t + 1);
+	long len;
+	if (!out) {
+		free(text);
+		return fail(err, err_size, "out of memory");
+	}
+	if ((len = unescape_rc3(text, t, out, 1)) < 0) {
+		free(out);
+		text[t] = 0;
+		s->value = text;
+		s->size = t;
+		s->bad = 1;
+		return 0;
+	}
+	free(text);
+	s->size = unescape_language(out, (size_t)len);
+	out[s->size] = 0;
+	s->value = out;
+	return 0;
+}
+
+/* An XML value (its entities undone) from UTF-8 to windows-1252, then RC3's escapes (or a language's: language_value):
+ * into s, -1 with err. */
+static int string_value(const uint8_t *v, size_t n, int mode, KpScrString *s, char *err, size_t err_size)
 {
 	uint8_t *text = (uint8_t *)malloc(n + 1), *out;
 	size_t i = 0, t = 0, at = 0;
@@ -424,6 +477,7 @@ static int string_value(const uint8_t *v, size_t n, int rc3, KpScrString *s, cha
 			text[t++] = v[i++];
 		}
 	}
+	if (mode == KP_SCR_XML_LANGUAGE) return language_value(text, t, s, err, err_size);
 	if (!kp_text_valid_utf8(text, t)) {
 		free(text);
 		return fail(err, err_size, "a string is not UTF-8");
@@ -434,8 +488,8 @@ static int string_value(const uint8_t *v, size_t n, int rc3, KpScrString *s, cha
 	}
 	for (i = 0; i < t;) out[at++] = (uint8_t)python_cp1252(kp_text_next(text, t, &i));
 	free(text);
-	if (rc3) {
-		if ((len = unescape_rc3(out, at, out)) < 0) {
+	if (mode == KP_SCR_XML_RC3) {
+		if ((len = unescape_rc3(out, at, out, 0)) < 0) {
 			free(out);
 			return fail(err, err_size, "an escape is past a byte");
 		}
@@ -447,7 +501,7 @@ static int string_value(const uint8_t *v, size_t n, int rc3, KpScrString *s, cha
 	return 0;
 }
 
-int kp_scr_xml_strings(const uint8_t *xml, size_t size, int rc3, KpScrStrings *out, char *err, size_t err_size)
+int kp_scr_xml_strings(const uint8_t *xml, size_t size, int mode, KpScrStrings *out, char *err, size_t err_size)
 {
 	const uint8_t *end = xml + size, *p = xml;
 	uint32_t cap = 0;
@@ -492,7 +546,7 @@ int kp_scr_xml_strings(const uint8_t *xml, size_t size, int rc3, KpScrStrings *o
 			memcpy(s->id, id, (size_t)(id_end - id));
 			s->id[id_end - id] = 0;
 			out->count++;
-			if (string_value(value, (size_t)(value_end - value), rc3, s, err, err_size) != 0) {
+			if (string_value(value, (size_t)(value_end - value), mode, s, err, err_size) != 0) {
 				kp_scr_strings_free(out);
 				return -1;
 			}

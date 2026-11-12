@@ -13,7 +13,7 @@ The converter becomes `kp_convert`, in C, sharing its builders with the runtime.
 | C0 | ADR 0019; libogg, libvorbis with vorbisenc and libvpx's VP9 encoder built for the host's tools (`KP_ENCODERS`); the spikes | done 2026-11-11 |
 | C1 | `kp_convert`: `repack`, `verify`, `digests`, `extract` (`kp_data_probe` folded in), `icon`, `scenarios`, `terrain`, on macOS, Linux and Windows; the Makefile, README, `tools/product.sh` and `tools/ci.sh` on `kp_convert`; `manifest`, the listing v3 and `kp_res_raw_stream_open` moved to the stages that need them | done 2026-11-11 |
 | C2 | Speech: the lines and voices of `locales/<loc>/Assets/` played as they are, TIME merged from the language's CHK when a mission loads; the repack's language group recompressed; the speech overlays go | done 2026-11-12 |
-| C3 | Language texts: `kp_locale.c` (the six tables, dialogs by `defs/l10n`, `rez\*.txt`, the maps' STR, subtitles, the glyphs at start, VFNT from TTF); `kp_convert locale-check`; the text overlays and `glyphs.kpd` go | |
+| C3 | Language texts: `kp_locale.c` (the six tables, dialogs by `defs/l10n`, `rez\*.txt`, the maps' STR, subtitles, the glyphs at start, VFNT from TTF); `kp_convert locale-check`; the text overlays and `glyphs.kpd` go | done 2026-11-12 |
 | C4 | Cinematics: the 1.17 SMK transcoded to VP9 and Vorbis in our own WebM by `kp_convert repack`; Remastered's WebM as they are; `CINE` and FFmpeg go | |
 | C5 | The HD world: `kp_anim.c`, `images.rel`, the grouped packer, the HD page thread over anim; `HDTS`/`HDWA` from the originals; `HDPK`/`HDTS`/`HDWA` in the `hd2`/`hd` groups | |
 | C6 | The HD interface, portraits, console: `kp_convert hd-ui-table` writes `defs/scr/hd-ui-bw-1.17.0.1.json`; `HDUI`/`CONW` built from the originals; `HDUI`/`HDPV`/`CONW` in the `ui` group | |
@@ -158,3 +158,42 @@ Each is cached as `<sha256>-q3-s<serial>-speech.ogg`. From `/Applications/StarCr
 - Remastered's repack logs six `cannot size locales/enUS/...: CascLib error 1007` lines (enUS lines of `expterran/terran02` and `terran05b` offline in this install), not looked into.
 - The full `kp_test` under Wine stopped with a stack overflow (`___chkstk_ms`). The cause is `test_session`'s tests: each puts two `KpProfile`s (1.26 MB each) on the main thread's stack, and mingw gives that thread 2 MB, where macOS and Linux give 8 MB. The app keeps its profile inside `KpApp`, not on the stack. With the executable's stack reserve raised to 8 MB, all 25 tests pass. The link flag comes with C3. `test_save` stopped there too, with no output; under 8 MB it runs on.
 
+## C3 as built (2026-11-12)
+
+**The language built from its own files** (`native/kp_app/kp_locale.c`). `kp_locale_build` makes a language's parts over the interface's base from `locales/<loc>/Assets/` in the install or the repack's language group (`KpData.raw`), by the rules `converter/emit/locale.py` had:
+- the six tables in UTF-8 with u32 offsets, from the language's XML (`kp_scr_xml_strings`): `stat_txt` by position over Remastered's own TBL's rows (`base_rows`, now in `defs/scr/texts-bw-1.17.0.1.json`), the others by the manifest's ids (the profile's `STBL`); a span's NUL mended by the base's row (`with_nuls`), the second escaping of the languages' XML undone;
+- the dialogs: each original dialog rebuilt from the profile's `SBIN` with the language's strings (`kp_res_scr_dialog`), its records the base's but for their texts and `layout`'s rectangles; our own dialogs' texts from `defs/l10n/koprulu-<loc>.json`;
+- the credits' and epilogues' `rez\*.txt`; the subtitles (`.srt` to `SUBS`, `kp_cine_subs_srt`).
+
+`defs/l10n/locales.json`'s rules are compiled into the profile (`tools/defs_c.py`: `LROW`, `LEXC`, `LTPL`, `LKEP`, `LTXT`, `LLAY`, `LSTR`, `LOWN`). Every text is checked as the converter checked it: UTF-8, the base's printf conversions and NULs, no control byte the base does not use, no Remastered substitution left, a button's form, an ASCII hotkey. A text that fails keeps the base's and is named; a part that does not fit (another row count, another dialog) stays the base's whole. A language is held when the data has `locales/<loc>/Assets/rez/RC3.xml` (`kp_locale_held`); the main menu lists the profile's `LANG` entries the data holds, and with none but the base the glue chooses enUS.
+
+**A mission's strings** (`kp_locale_mission`). When a campaign mission loads, the language's map is read and its STR laid over the mission's: each row the language's but those the game looks up by their text (the sounds' paths, Set Next Scenario's map name: `kp_mission_string_looked_up`) and `strings`' own texts. `kp_host_game_text` takes the result (the same count, at least 2 bytes, or refused with a log line); a map the data lacks leaves the mission's own text.
+
+**The glyphs at start** (`kp_locale_glyphs`). The FNT fonts' supplements are rasterized from Remastered's TrueType pair (`font/EUROSTILE-REG.TTF`, `font/EUROSTILEEXT-REG.TTF`) through `kp_fnt_supplement`: the code points of the languages' code pages, of the languages' names and of the chosen language's text, but those with a byte slot of their own. The same pair is `VFNT`, the vector fonts. A data without the pair (the 1.17 install) keeps the FNT fonts' own glyphs. `kp_locale_glyphs_cover` names a code point a text uses that neither a slot nor the supplement draws; `locale-check` applies it to the missions' strings too.
+
+**The interface takes structures.** `KpUiLocale` holds the parts as pointers (`tbl`, `dlgs`, `pool`, `files`, `supplements`, `vector_fonts`, `speech`), not containers; `kp_ui_set_locale` checks each against the base as before. The cinematics keep the pack's own index (`KpAppCine.pack`) and lay the language's `SUBS` over a copy before each run and check (`kp_cine_subs_overlay` over the bytes). The overlay readers are gone: `KP_FLOW_LOCALE_FILES`, `overlay_parse`, `LOCS`, the kinds' and schemas' defines.
+
+**`kp_convert locale-check DIR [--locale L|all] [--out DIR]`** builds every part of each language a source holds, the 64 missions' strings and the glyphs, and writes `<out>/reports/locale-<loc>.json` in the converter's form (tables, dialogs, scripts, missions, subtitles, glyphs, exceptions, mended, problems); any problem exits 1. From `/Applications/StarCraft`: deDE, frFR, plPL, ruRU, 0 problems, the reports equal the Python converter's but `scripts.base`, a count where it was a list. One language takes 1.3 s from the install, 0.7 s from the repack.
+
+**The repack's language groups hold the texts.** `kp_convert repack` from Remastered adds to each `koprulu-locale-<loc>.mpq` exactly the files the runtime reads for the language: `kp_locale_names` runs `kp_locale_held`, `kp_locale_build` and `kp_locale_mission` for each catalog mission over a `KpFiles` that records each name, so no list is kept apart. The core gets the TrueType pair (the base's vector fonts need it too). The groups grow by about 0.15 MB each (deDE 78.6 MB, frFR 71.5 MB, plPL 73.8 MB, ruRU 70.8 MB), `koprulu.mpq` by 1 MB (132.2 MB). A group written at C2 holds no texts: the language's text stays the base's.
+
+**Equal to the Python converter.** Before `converter locale` went, its output was recorded in `tests/golden/locale/converter.json`: the SHA-256 of each language's six tables, `DLGS`, `POOL`, 64 scripts, `SUBS` (20 movies), each of the 64 missions' `STRS`, the translated rows' counts (6,937; plPL 3,663) and the glyphs (175 codes, the five supplements, `VFNT`). `test_locale.the_languages_equal_the_converters` builds all four languages from the install and from its repack and equals it byte for byte. The base matters for the rows a language keeps: the golden is equal over Remastered's own base (`kp_data_build` over the install), whose TIPS row 80 is empty where 1.17's reads "Tell everyone you know to buy Starcraft.".
+
+**The tools.**
+- `tools/ci.sh`: `kp_convert locale-check` over `KOPRULU_SCR` replaces `converter locale`, and its list drives the product's language runs: each language's menu from the install and from Remastered's repack, terran01 with its speech (`--data . --data "$KOPRULU_SCR" --locale LOC`). `test_locale.the_languages_equal_the_converters` runs again over the repack, beside `test_speech`'s two.
+- `tools/product.sh`: `KOPRULU_LOCALES` picks the repack's language groups (`auto`: each it has); `generated/locale/` and `glyphs.kpd` are no longer staged; the web carries none (`TODO`).
+- `Makefile`: `locale-check` replaces `locale` and `fnt-tool`.
+
+**Windows' stack.** Every executable on Windows links an 8 MB main-thread stack (`KP_STACK_BYTES` in `CMakeLists.txt`, macOS's and Linux's; mingw's default is 2 MB), the open item of C2: under Wine `test_session`, `test_save`, `test_locale`, `test_cine`, `test_flow` and `test_convert` pass, 141 tests.
+
+**Removed:** `converter locale`, `converter/emit/locale.py`, `converter/base.py`, `converter/tests/test_locale.py`, the `kp_fnt_make` tool (`kp_fnt_supplement` stays, the runtime's), the dump's decoders of the overlays' sections.
+
+**Decisions taken in C3:**
+- **The glue chooses enUS** when the data holds no other language (before: none chosen, `""`), so the choice is always a language of the list.
+- **The glyphs are built for the base's text too**, from the install's TrueType pair: the vector fonts are Remastered's own, as `glyphs.kpd` gave them.
+- **`kp_locale_names` records the reads** rather than listing names, so the repack holds what the runtime reads and nothing else.
+
+**Open after C3:**
+- `generated/locale/` from the Python converter stays on disk where it was written; nothing reads it (remove it by hand).
+- The glyphs' time on the Fold7 is not measured (no device attached); C7's device run covers the language with its speech.
+- The web carries no language group yet (C7).
