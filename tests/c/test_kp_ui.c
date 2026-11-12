@@ -229,7 +229,6 @@ static void timers_replay_the_original(KpT *T)
 /* --- the text engine (tests/golden/oracle/ui/text_cases.json, tools/oracle/export_text_cases.py) --- */
 
 #define SENTINEL 0xa5
-#define TITLE_FONT_ROWS 40 /* the probes' TFNT bank: glue\title\tFont.pcx's first 40 bytes (export_text_cases.py) */
 
 /* A font of the original data's interface by its name (FNTP's order: the decoded FNT and one NUL). */
 static const uint8_t *font(KpT *T, const char *name, size_t *n)
@@ -317,17 +316,15 @@ static void check_value(KpT *T, int n, const char *kind, const KpJson *c, const 
 static void text_matches_the_original_probes(KpT *T)
 {
 	const KpJson *g, *cases;
-	size_t tfgm_n, tfnt_n = TITLE_FONT_ROWS;
-	const uint8_t *tfgm;
-	uint8_t tfnt[TITLE_FONT_ROWS];
+	size_t tfgm_n, tfnt_n;
+	const uint8_t *tfgm, *tfnt; /* the probes' TFNT bank: the title's rows (export_text_cases.py) */
 	int n, packets = 0, tbls = 0;
 	uint8_t *buf;
-	KpError err;
 	if (!kp_t_ready(T, "test_kp_ui.text_matches_the_original_probes", UI_FILES)) return;
 	tfgm = kp_t_data(T)->ui.font_rows.data;
 	tfgm_n = kp_t_data(T)->ui.font_rows.size;
-	kp_t_ok(T, kp_files_pcx_prefix(&kp_t_data(T)->files, "glue\\title\\tFont.pcx", tfnt, tfnt_n, &err) == 0, "%s",
-		err.msg);
+	tfnt = kp_t_data(T)->ui.title_font_rows.data;
+	tfnt_n = kp_t_data(T)->ui.title_font_rows.size;
 	g = kp_t_golden(T, "tests/golden/oracle/ui/text_cases.json");
 	cases = kp_json_get(g, "cases");
 	buf = (uint8_t *)malloc(1 << 16);

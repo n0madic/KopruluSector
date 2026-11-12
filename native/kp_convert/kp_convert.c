@@ -50,6 +50,12 @@
  *   terrain DIR [--out generated]
  *       the terrain checks' CRCs: <out>/viewer/<tileset>.mcrc, the CRC-32 of each megatile's 32 x 32 indices
  *       (koprulu --autotest compares the drawn terrain with them)
+ *   manifest DIR [--out PATH] [--check]
+ *       the input manifest (kp_manifest.h; ADR 0019): what the game reads from the profile's 1.17 install, recorded by
+ *       kp_res as the runtime's loaders read it, into PATH, by default defs/scr/inputs-<profile>.json (tools/defs_c.py
+ *       compiles it; a damaged copy keeps that file's row). DIR is the reference install: the profile's executable and
+ *       its archives' sizes. --check: any copy of the release (the executable checked), the manifest compared with
+ *       PATH, the exit status 1 when they differ (tools/ci.sh: a file the runtime starts or stops reading)
  *
  * DIR is the folder --data names: an install, or for verify a repack too.
  */
@@ -70,6 +76,7 @@
 #include "kp_json.h"
 #include "kp_kpf.h"
 #include "kp_locale.h"
+#include "kp_manifest.h"
 #include "kp_mission.h"
 #include "kp_ogg.h"
 #include "kp_present.h"
@@ -1055,6 +1062,80 @@ static int cmd_hd_ui_table(int argc, char **argv)
 	return 0;
 }
 
+/* The reference install's archives (manifest): each of the profile's, of its size. */
+static int reference_archives(const char *dir, const KpDefsProfile *p)
+{
+	int k, failed = 0;
+	for (k = 0; k < p->archive_count; k++) {
+		char path[PATH];
+		uint64_t size = 0;
+		int found;
+		snprintf(path, sizeof path, "%s/%s", dir, p->archives[k].name);
+		if ((found = kp_fs_size(path, &size) == 0) && size == p->archives[k].size) continue;
+		fprintf(stderr, "kp_convert: %s: not the reference install's (%s; profile %s: %u bytes): kp_convert manifest --check "
+			"compares another copy's\n", path, found ? "another size" : "missing", p->id, (unsigned)p->archives[k].size);
+		failed = 1;
+	}
+	return failed ? -1 : 0;
+}
+
+static int cmd_manifest(int argc, char **argv)
+{
+	const KpDefsProfile *p = &kp_defs_bw_1_17_0_1;
+	const char *dir = NULL, *out = NULL;
+	char path[PATH], err[MESSAGE];
+	int i, check = 0, changed;
+	uint8_t *committed;
+	size_t committed_size = 0;
+	KpManifestCounts counts;
+	char *text;
+	double t0 = kp_work_seconds();
+	for (i = 0; i < argc; i++) {
+		if (strcmp(argv[i], "--out") == 0 && i + 1 < argc) out = argv[++i];
+		else if (strcmp(argv[i], "--check") == 0) check = 1;
+		else if (argv[i][0] == '-' || dir) return -1;
+		else dir = argv[i];
+	}
+	if (!dir) return -1;
+	if (!out) {
+		snprintf(path, sizeof path, "defs/scr/inputs-%s.json", p->id);
+		out = path;
+	}
+	if (check_executable(dir, p) != 0 || (!check && reference_archives(dir, p) != 0)) return 2;
+	committed = kp_fs_read(out, &committed_size, err, sizeof err);
+	if (!committed && (check || err[0])) {
+		fprintf(stderr, "kp_convert: %s\n", err[0] ? err : out);
+		return 2;
+	}
+	text = kp_manifest_build(dir, (const char *)committed, committed_size, &counts, warn_line, NULL, err, sizeof err);
+	if (!text) {
+		fprintf(stderr, "kp_convert: %s\n", err);
+		free(committed);
+		return 1;
+	}
+	printf("manifest: %d files (%d damaged in the install), %d absent, %d palettes in %.1f s\n", counts.files,
+		counts.damaged, counts.absent, counts.palettes, kp_work_seconds() - t0);
+	if (check) {
+		size_t n = strlen(text), at = 0;
+		unsigned long line = 1;
+		if ((changed = n != committed_size || memcmp(text, committed, n) != 0) != 0) {
+			for (; at < n && at < committed_size && text[at] == (char)committed[at]; at++)
+				if (text[at] == '\n') line++;
+			printf("manifest: %s differs from the install's reads at line %lu: kp_convert manifest DIR writes them\n", out, line);
+		} else {
+			printf("manifest: %s is the install's reads\n", out);
+		}
+	} else if ((changed = kp_fs_write_if_changed(out, text, strlen(text), err, sizeof err)) < 0) {
+		fprintf(stderr, "kp_convert: %s\n", err);
+	} else {
+		printf("manifest: %s %s\n", out, changed ? "written" : "the same");
+		changed = 0;
+	}
+	free(text);
+	free(committed);
+	return changed ? 1 : 0;
+}
+
 static const struct {
 	const char *name, *usage;
 	int (*run)(int argc, char **argv);
@@ -1069,6 +1150,7 @@ static const struct {
 	{ "scenarios", "scenarios DIR [--specs DIR] [--out DIR]", cmd_scenarios },
 	{ "terrain", "terrain DIR [--out DIR]", cmd_terrain },
 	{ "hd-ui-table", "hd-ui-table DIR [--out PATH]", cmd_hd_ui_table },
+	{ "manifest", "manifest DIR [--out PATH] [--check]", cmd_manifest },
 };
 
 static int usage(void)

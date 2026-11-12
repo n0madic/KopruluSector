@@ -5,17 +5,16 @@ the MPQ `Resolver` (mpq/profile.py) from a 1.17 install, `ScrSource` (casc/sourc
 StarCraft: Remastered install. The conversion only calls `read`, `has` and `data_set_hash`, and takes
 the rules tables from `profile.id`'s `defs/`; no step reads the executable.
 
-`RecordingSource` wraps a source and records what the conversion reads; `scr-manifest` turns that record
-into `defs/scr/inputs-<profile>.json` (inputs.py), the hashes both sources are checked against.
+`RecordingSource` wraps a source and records the names read (tools/research/scr_manifest.py builds the text tables
+of them); the input manifest `defs/scr/inputs-<profile>.json` (inputs.py) is `kp_convert manifest`'s, kp_res recording
+the runtime's own reads.
 """
 from __future__ import annotations
 
-import hashlib
 from typing import Protocol
 
 from .errors import ConverterError
 from .mpq.profile import Profile
-from .mpq.stormlib import MpqFileNotFound, StormLibError
 
 
 class SourceError(ConverterError, RuntimeError):
@@ -39,36 +38,20 @@ class Source(Protocol):
 
 
 class RecordingSource:
-    """Forwards to `inner` and records each file read (its SHA-256, size and what `describe` keeps of it), each
-    name `has` denied and each copy the archives hold but cannot give whole (`damaged`: a disc copied with a bad read;
-    scr-manifest keeps the manifest's entry for it)."""
+    """Forwards to `inner` and records the name of each file read, in the order first read."""
 
-    def __init__(self, inner: Source, describe=None):
+    def __init__(self, inner: Source):
         self.inner = inner
         self.profile = inner.profile
-        self.describe = describe
-        self.files: dict[str, tuple[str, int, dict | None]] = {}
-        self.absent: set[str] = set()
-        self.damaged: set[str] = set()
+        self.names: dict[str, None] = {}
 
     def read(self, name: str) -> tuple[str, bytes]:
-        try:
-            provider, data = self.inner.read(name)
-        except MpqFileNotFound:
-            raise
-        except StormLibError:
-            self.damaged.add(name)
-            raise
-        if name not in self.files:
-            extras = self.describe(name, data) if self.describe else None
-            self.files[name] = (hashlib.sha256(data).hexdigest(), len(data), extras)
+        provider, data = self.inner.read(name)
+        self.names.setdefault(name)
         return provider, data
 
     def has(self, name: str) -> bool:
-        found = self.inner.has(name)
-        if not found:
-            self.absent.add(name)
-        return found
+        return self.inner.has(name)
 
     def data_set_hash(self) -> bytes:
         return self.inner.data_set_hash()

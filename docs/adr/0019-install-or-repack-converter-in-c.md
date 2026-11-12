@@ -190,7 +190,10 @@ The stages that use them (C3, C5, C7) measure them. After C7 ([phase C](../phase
   writers, the analyzer, the missions' survey, the packs' membership, the UI tables and their tests. The command line,
   the derived terrain's and the packer's Python twins, `dump` and `fixtures.py` were deleted.
 - **The research's commands** are scripts: `tools/research/scr_manifest.py`, `scr_compare.py`, `scr_digests.py`.
-  `scr_manifest.py` stays Python (it records the analyzer's survey); `kp_convert manifest` is a `TODO:`.
+  `scr_manifest.py` stays Python for the packs and the text tables (it records the analyzer's survey). The input
+  manifest is `kp_convert manifest`'s since 2026-11-12: `kp_res` records what the runtime's own loaders read from the
+  reference install (`KpResConfig.record`), so a file the runtime starts to read needs no twin, and `tools/ci.sh`
+  checks it (`--check`; [phase C](../phaseC.md#after-c7-kp_convert-manifest-2026-11-12)).
 - **The fixtures are committed** (`tests/fixtures/kpf/`, 2.2 MB, synthetic), with the expectations the Python twins
   computed; the 8 MiB container is built by `test_data.c`.
 - **The derived terrain** (walk, regions, contours) of the 68 campaign CHKs is compared with the native evidence by

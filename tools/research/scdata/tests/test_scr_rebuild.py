@@ -99,7 +99,6 @@ class RebuildTest(unittest.TestCase):
         image = pcx.decode(data)
         assert image.pixels == bytes([0, 0, 0, 5, 5, 5]) and image.palette == PALETTE
         assert data[12:16] == header[:4] and data[68:70] == header[4:]
-        assert rebuild.describe_pcx(data)["header"] == header.hex()
 
     def test_fit_modes(self):
         assert rebuild.fit_mode(4, 2, 2, 1) == rebuild.FIT_SAMPLE and rebuild.fits(4, 2, 2, 1)
@@ -157,7 +156,6 @@ class RebuildTest(unittest.TestCase):
         layout = {"box": [4, 4], "frames": [[0, 0, 2, 2, 30], [1, 1, 2, 2, 30], [0, 0, 2, 1, 34]]}
         data = rebuild.uncompressed_grp(layout, [b"\1\2\3\4", b"", b"\5\6"], 36)
         assert data[30:36] == b"\1\2\3\4\5\6"
-        assert rebuild.uncompressed_grp_layout(data) == layout
         frame = grp.Frame(0, 0, 2, 1, bytes([3, 0]), bytes([grp.OPAQUE, grp.TRANSPARENT]))
         wpe = bytes([9, 9, 9, 0]) * 256
         out = grp.decode(rebuild.remap_grp(grp.Grp(2, 1, (frame,)), wpe, PALETTE))

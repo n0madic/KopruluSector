@@ -65,59 +65,6 @@ CV5_GROUP = 52
 CV5_FILLED = {"desert": (770, 1024), "platform": (933, 1024), "twilight": (797, 1024)}
 
 
-def palette_groups(files: dict[str, tuple[str, int, dict | None]]) -> tuple[dict[str, list[str]], dict[str, str]]:
-    """The PCX files of each palette (by its hash), and for each GRP of a directory holding PCX files the palette most
-    of them have: a rebuilt image takes its palette from a PCX of its group that Remastered keeps exactly."""
-    groups: dict[str, list[str]] = {}
-    by_dir: dict[str, list[str]] = {}
-    for n, (_, _, extras) in sorted(files.items(), key=lambda kv: kv[0].lower()):
-        if n.lower().endswith(".pcx") and extras:
-            groups.setdefault(extras["palette"], []).append(n)
-            by_dir.setdefault(n.lower().rsplit("\\", 1)[0], []).append(extras["palette"])
-    grp_palettes = {}
-    for n in files:
-        folder = n.lower().rsplit("\\", 1)[0]
-        if n.lower().endswith(".grp") and folder in by_dir:
-            palettes = by_dir[folder]
-            grp_palettes[n] = max(sorted(set(palettes)), key=palettes.count)
-    return groups, grp_palettes
-
-
-def write_manifest(path: Path, profile_id: str, files: dict[str, tuple[str, int, dict | None]], absent: set[str]) -> None:
-    """One file per line: [name, size, sha256] and its extras (rebuild.describe; a GRP's palette), sorted by name;
-    the PCX files of each palette."""
-    groups, grp_palettes = palette_groups(files)
-    pcx_palettes = {e[2]["palette"]: e[2]["_palette_rgb"] for n, e in files.items()  # a kept entry has no RGB
-                    if n.lower().endswith(".pcx") and e[2] and "_palette_rgb" in e[2]}
-    rows = []
-    for name, (sha, size, extras) in sorted(files.items(), key=lambda kv: kv[0].lower()):
-        extras = dict(extras or {})
-        if name in grp_palettes:
-            extras["palette"] = grp_palettes[name]
-        if "_used" in extras:
-            screen = rebuild.screen_palette(extras["_palette_rgb"], extras["_used"], pcx_palettes)
-            if screen is not None:
-                extras["palette"] = screen
-        extras = {k: v for k, v in extras.items() if not k.startswith("_")}  # kept for the steps above only
-        rows.append([name, size, sha, extras] if extras else [name, size, sha])
-    lines = [json.dumps(row) for row in rows]
-    absent_lines = [json.dumps(n) for n in sorted(absent - set(files), key=str.lower)]
-    text = (
-        "{\n"
-        f' "comment": "The files profile {profile_id}\'s game reads from the 1.17 install: name, size, SHA-256 '
-        '(hashes only). kp_res checks a StarCraft: Remastered install against them (tools/defs_c.py compiles them); '
-        'written by python3 tools/research/scr_manifest.py --data DIR.",\n'
-        f' "profile": {json.dumps(profile_id)},\n'
-        ' "files": [\n  ' + ",\n  ".join(lines) + "\n ],\n"
-        ' "absent": [\n  ' + ",\n  ".join(absent_lines) + "\n ],\n"
-        ' "palettes": {\n  ' + ",\n  ".join(f"{json.dumps(k)}: {json.dumps(v)}" for k, v in sorted(groups.items()))
-        + "\n }\n"
-        "}\n"
-    )
-    path.parent.mkdir(parents=True, exist_ok=True)
-    write_if_changed(path, text)
-
-
 def _sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 

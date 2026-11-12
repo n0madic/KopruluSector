@@ -18,7 +18,7 @@ import zlib
 from dataclasses import dataclass
 
 from ..errors import ConverterError
-from ..formats import dds, dialog, grp, pcx, smk
+from ..formats import dds, dialog, grp, pcx
 from ..formats.palette import OPAQUE, Colours, IndexMap
 
 
@@ -89,17 +89,6 @@ def pcx_from_dds(dds_file: bytes, size: tuple[int, int], palette: Colours, heade
     image, above = fit(dds.decode(dds_file), width, height)
     pixels = bytes(width * above) + indices(image, palette)
     return pcx_file(width, height, pixels, palette, header)
-
-
-def describe_pcx(data: bytes) -> dict:
-    """The manifest's extras of an original PCX: its pixels' and colours' hashes and its varying header bytes."""
-    image = pcx.decode(data)
-    palette = b"".join(bytes(c) for c in image.palette)
-    return {"pixels": plane_hash(image.width, image.height, image.pixels),
-            "rgb": plane_hash(image.width, image.height, rgb_plane(image.pixels, image.palette)),
-            "palette": hashlib.sha256(palette).hexdigest(),
-            "size": [image.width, image.height], "header": (data[12:16] + data[68:70]).hex(),
-            "_palette_rgb": palette}
 
 
 # String tables. A TBL is a u16 count, u16 offsets and the strings' spans, each up to the next offset: a span may
@@ -295,20 +284,6 @@ GRP_HEADER = struct.Struct("<3H")
 GRP_FRAME = struct.Struct("<BBBBI")
 
 
-def uncompressed_grp_layout(data: bytes) -> dict | None:
-    """The frame table of a dialog GRP whose frames are plain rows (the glue's Dlg.grp; frames may share rows),
-    or None for a row-compressed GRP."""
-    count, width, height = GRP_HEADER.unpack_from(data)
-    frames = [GRP_FRAME.unpack_from(data, GRP_HEADER.size + GRP_FRAME.size * i) for i in range(count)]
-    if not frames or any(off + w * h > len(data) for _, _, w, h, off in frames):
-        return None
-    try:
-        grp.decode(data)
-        return None
-    except grp.GrpError:
-        return {"box": [width, height], "frames": [list(f) for f in frames]}
-
-
 def uncompressed_grp(layout: dict, frames: list[bytes], size: int) -> bytes:
     """A plain-rows GRP of `layout` whose frame k holds `frames[k]` (frames sharing rows keep the first's)."""
     out = bytearray(size)
@@ -321,42 +296,6 @@ def uncompressed_grp(layout: dict, frames: list[bytes], size: int) -> bytes:
             out[off:off + w * h] = frames[k][:w * h]
             written.add(off)
     return bytes(out)
-
-
-def describe(name: str, data: bytes) -> dict | None:
-    """What the manifest keeps of an original file besides its hash, so that it can be rebuilt and judged."""
-    ext = name.lower().rsplit(".", 1)[-1]
-    if ext == "pcx":
-        return describe_pcx(data)
-    if ext == "grp":
-        layout = uncompressed_grp_layout(data)
-        if layout is not None:
-            layout["pixels"] = hashlib.sha256(data[GRP_HEADER.size + GRP_FRAME.size * len(layout["frames"]):]).hexdigest()
-        return layout
-    if ext == "smk":
-        h, frames = smk.decode(data)
-        used = set()
-        for f in frames:
-            used.update(f.indices)
-        out = {"smk": [h.width, h.height, h.frames, int(h.ring_frame), struct.unpack_from("<i", data, 16)[0]]}
-        if len({f.palette for f in frames}) == 1:  # one palette: maybe its screen's (screen_palette)
-            out["_palette_rgb"], out["_used"] = frames[0].palette, sorted(used)
-        return out
-    return None
-
-
-SCREEN_PALETTE_TOLERANCE = 4  # a glue movie's palette is its screen's but for rounding (6-bit entries)
-
-
-def screen_palette(palette: bytes, used: list[int], palettes: dict[str, bytes]) -> str | None:
-    """The PCX palette (by hash) a movie's indices are drawn with: the one whose colours at the indices the movie uses
-    differ least from its own, if by no more than SCREEN_PALETTE_TOLERANCE (a portrait has a palette of its own)."""
-    best, best_diff = None, SCREEN_PALETTE_TOLERANCE + 1
-    for sha, other in sorted(palettes.items()):
-        diff = max((abs(palette[3 * i + c] - other[3 * i + c]) for i in used for c in range(3)), default=0)
-        if diff < best_diff:
-            best, best_diff = sha, diff
-    return best
 
 
 # The manifest's text tables, made once from both installs (scr-manifest --scr): string ids and NUL positions of the

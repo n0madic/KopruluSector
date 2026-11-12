@@ -16,12 +16,14 @@
 #include "kp_icon.h"
 #include "kp_json.h"
 #include "kp_kpf.h"
+#include "kp_manifest.h"
 #include "kp_movie.h"
 #include "kp_mpq.h"
 #include "kp_ogg.h"
 #include "kp_repack.h"
 #include "kp_res.h"
 #include "kp_scenario.h"
+#include "kp_scr.h"
 #include "kp_sha256.h"
 #include "kp_test_app.h"
 #include "kp_webm.h"
@@ -1215,6 +1217,173 @@ static void movies_equal_the_converters(KpT *T)
 	kp_t_log(T, "%d movies as the converter's, their Vorbis %+lld bytes from oggenc's", compared, (long long)vorbis_apart);
 }
 
+/* --- kp_convert manifest (kp_manifest.c) --- */
+
+static const char *sha_hex(KpT *T, const void *data, size_t size)
+{
+	uint8_t d[KP_SHA256_SIZE];
+	char hex[2 * KP_SHA256_SIZE + 1];
+	kp_sha256(data, size, d);
+	kp_sha256_hex(d, hex);
+	return kp_t_strdup(T, hex);
+}
+
+/* rebuild.py plane_hash: the SHA-256 of u16 w, u16 h and the plane. */
+static const char *plane_hex(KpT *T, uint32_t w, uint32_t h, const uint8_t *plane, size_t size)
+{
+	uint8_t *b = (uint8_t *)malloc(4 + size);
+	kp_t_ok(T, b != NULL, "out of memory");
+	kp_t_defer(T, free, b);
+	kp_le_put16(b, w);
+	kp_le_put16(b + 2, h);
+	memcpy(b + 4, plane, size);
+	return sha_hex(T, b, 4 + size);
+}
+
+static void manifest_free(void *p) { kp_manifest_free((KpManifest *)p); }
+
+static void manifest_log(void *ctx, const char *line) { kp_buf_printf((KpBuf *)ctx, "%s\n", line); }
+
+static KpManifest *manifest_new(KpT *T, KpBuf *log)
+{
+	KpManifest *m = kp_manifest_new(log ? manifest_log : NULL, log);
+	kp_t_ok(T, m != NULL, "out of memory");
+	kp_t_defer(T, manifest_free, m);
+	return m;
+}
+
+static void record_bytes(KpManifest *m, const char *name, const void *data, size_t size)
+{
+	kp_manifest_record(m, name, KP_RES_RECORD_READ, (const uint8_t *)data, size);
+}
+
+/* The rows, the absent names and the palette groups of what was recorded, as the research's write_manifest wrote
+ * them: a PCX's pixels, colours, palette, size and header bytes; a GRP of plain rows its layout, a GRP in a folder of
+ * PCX files the palette most of them have; a movie of one palette its header and the PCX palette within the tolerance
+ * at the indices it draws; a damaged copy the committed row; a name looked for and not found once, unless read. */
+static void manifest_describes_what_was_read(KpT *T)
+{
+	static const uint8_t PIXELS[8] = { 0, 1, 2, 5, 5, 2, 1, 0 }, PIXELS_B[8] = { 1, 2, 5, 5, 2, 1, 0, 3 };
+	static const uint8_t HEADER[6] = { 1, 2, 3, 4, 5, 6 };
+	static const uint8_t GRP_ROWS[8] = { 0xff, 0xff, 1, 2, 3, 4, 5, 6 }; /* rows of packets past the file: plain */
+	static const char COMMITTED[] = "{\n \"files\": [\n  [\"sound\\\\Bad.wav\", 5, \"00ff\"],\n  [\"x\", 1, \"aa\"]\n ]\n}\n";
+	uint8_t pal_p[768], pal_q[768], rgb[3 * 8], *pcx_a, *pcx_b, *pcx_c, *dlg, *movie, x_grp[20];
+	size_t a_size, b_size, c_size, movie_size, k;
+	const char *p_sha, *q_sha, *first, *second;
+	KpScrGrpRecord rec = { 0, 0, 4, 2, 14 };
+	uint8_t *rows = (uint8_t *)GRP_ROWS;
+	KpManifestCounts counts;
+	KpBuf *log = kp_t_buf(T), *head = kp_t_buf(T), *tail = kp_t_buf(T);
+	KpManifest *m = manifest_new(T, log);
+	KpJsonDoc doc;
+	const KpJson *root, *files, *pcx;
+	char err[512], *text;
+	for (k = 0; k < 768; k++) {
+		pal_p[k] = (uint8_t)(k * 7);
+		pal_q[k] = (uint8_t)(k * 7 + 1);
+	}
+	pal_p[15] = 4, pal_p[16] = 4, pal_p[17] = 0; /* index 5, the movie's, within 4 of its black */
+	pal_q[15] = 5, pal_q[16] = 0, pal_q[17] = 0; /* 5 from it: outside */
+	p_sha = sha_hex(T, pal_p, 768);
+	q_sha = sha_hex(T, pal_q, 768);
+	pcx_a = kp_scr_pcx(4, 2, PIXELS, pal_p, HEADER, &a_size);
+	pcx_b = kp_scr_pcx(4, 2, PIXELS_B, pal_p, HEADER, &b_size);
+	pcx_c = kp_scr_pcx(4, 2, PIXELS, pal_q, HEADER, &c_size);
+	dlg = kp_scr_plain_grp(4, 2, &rec, 1, &rows, 22);
+	kp_t_ok(T, pcx_a && pcx_b && pcx_c && dlg, "out of memory");
+	kp_t_defer(T, free, pcx_a);
+	kp_t_defer(T, free, pcx_b);
+	kp_t_defer(T, free, pcx_c);
+	kp_t_defer(T, free, dlg);
+	memset(x_grp, 0, sizeof x_grp); /* one 8 x 8 frame at 14 in 20 bytes: not plain rows */
+	kp_le_put16(x_grp, 1);
+	x_grp[2] = x_grp[4] = 8;
+	x_grp[8] = x_grp[9] = 8;
+	x_grp[10] = 14;
+	movie = kp_t_smk(T, 8, 8, 2, 5, NULL, NULL, NULL, &movie_size); /* no palette record: black, index 5 drawn */
+
+	kp_manifest_record(m, "glue/Pal/a.pcx", KP_RES_RECORD_MISSING, NULL, 0); /* looked for, then read */
+	kp_manifest_record(m, "glue/Pal/a.pcx", KP_RES_RECORD_OPENED, NULL, 0);
+	record_bytes(m, "glue\\pal\\A.PCX", pcx_a, a_size); /* the first spelling stays */
+	record_bytes(m, "glue\\pal\\B.pcx", pcx_b, b_size);
+	record_bytes(m, "glue\\pal\\c.pcx", pcx_c, c_size);
+	record_bytes(m, "glue\\pal\\dlg.grp", dlg, 22);
+	record_bytes(m, "unit\\x.grp", x_grp, sizeof x_grp);
+	record_bytes(m, "smk\\m.smk", movie, movie_size);
+	kp_manifest_record(m, "music\\x.wav", KP_RES_RECORD_OPENED, NULL, 0);
+	record_bytes(m, "music\\x.wav", "RIFF", 4);
+	kp_manifest_record(m, "music\\x.wav", KP_RES_RECORD_DAMAGED, NULL, 0); /* read whole once: kept */
+	kp_manifest_record(m, "sound\\Bad.wav", KP_RES_RECORD_OPENED, NULL, 0);
+	kp_manifest_record(m, "sound\\bad.wav", KP_RES_RECORD_DAMAGED, NULL, 0);
+	kp_manifest_record(m, "b.dat", KP_RES_RECORD_MISSING, NULL, 0);
+	kp_manifest_record(m, "a/Gone.dat", KP_RES_RECORD_MISSING, NULL, 0);
+	kp_manifest_record(m, "A\\GONE.DAT", KP_RES_RECORD_MISSING, NULL, 0);
+	text = kp_manifest_text(m, "test-1", COMMITTED, sizeof COMMITTED - 1, &counts, err, sizeof err);
+	kp_t_ok(T, text != NULL, "%s", err);
+	kp_t_defer(T, free, text);
+	kp_t_eq(T, counts.files, 8, "files");
+	kp_t_eq(T, counts.damaged, 1, "damaged");
+	kp_t_eq(T, counts.absent, 2, "absent");
+	kp_t_eq(T, counts.palettes, 2, "palettes");
+	kp_t_ok(T, strstr(kp_buf_text(log), "sound\\Bad.wav: the reference install's copy cannot be read whole") != NULL,
+		"the damaged copy logged: %s", kp_buf_text(log));
+
+	/* the rows, sorted by name in lower case, as json.dumps writes them */
+	first = strcmp(p_sha, q_sha) < 0 ? p_sha : q_sha;
+	second = first == p_sha ? q_sha : p_sha;
+	for (k = 0; k < 8; k++) memcpy(rgb + 3 * k, pal_p + 3 * (size_t)PIXELS[k], 3);
+	kp_buf_printf(head, "{\n \"comment\": \"The files profile test-1's game reads from the 1.17 install: name, size, "
+		"SHA-256 (hashes only). kp_res checks a StarCraft: Remastered install against them (tools/defs_c.py compiles "
+		"them); written by kp_convert manifest DIR.\",\n \"profile\": \"test-1\",\n \"files\": [\n");
+	kp_buf_printf(head, "  [\"glue\\\\Pal\\\\a.pcx\", %u, \"%s\", {\"pixels\": \"%s\", \"rgb\": \"%s\", \"palette\": \"%s\", "
+		"\"size\": [4, 2], \"header\": \"010203040506\"}],\n", (unsigned)a_size, sha_hex(T, pcx_a, a_size),
+		plane_hex(T, 4, 2, PIXELS, 8), plane_hex(T, 4, 2, rgb, sizeof rgb), p_sha);
+	kp_t_ok(T, strncmp(text, kp_buf_text(head), strlen(kp_buf_text(head))) == 0, "the head and the first row:\n%s",
+		text);
+	kp_buf_printf(tail, "  [\"glue\\\\pal\\\\dlg.grp\", 22, \"%s\", {\"box\": [4, 2], \"frames\": [[0, 0, 4, 2, 14]], "
+		"\"pixels\": \"%s\", \"palette\": \"%s\"}],\n  [\"music\\\\x.wav\", 4, \"%s\"],\n", sha_hex(T, dlg, 22),
+		sha_hex(T, dlg + 14, 8), p_sha, sha_hex(T, "RIFF", 4));
+	kp_buf_printf(tail, "  [\"smk\\\\m.smk\", %u, \"%s\", {\"smk\": [8, 8, 2, 0, -6666], \"palette\": \"%s\"}],\n"
+		"  [\"sound\\\\Bad.wav\", 5, \"00ff\"],\n  [\"unit\\\\x.grp\", 20, \"%s\"]\n ],\n", (unsigned)movie_size,
+		sha_hex(T, movie, movie_size), p_sha, sha_hex(T, x_grp, sizeof x_grp));
+	kp_buf_printf(tail, " \"absent\": [\n  \"a\\\\Gone.dat\",\n  \"b.dat\"\n ],\n \"palettes\": {\n  \"%s\": [%s],\n  \"%s\": [%s]\n }\n}\n",
+		first, first == p_sha ? "\"glue\\\\Pal\\\\a.pcx\", \"glue\\\\pal\\\\B.pcx\"" : "\"glue\\\\pal\\\\c.pcx\"",
+		second, first == p_sha ? "\"glue\\\\pal\\\\c.pcx\"" : "\"glue\\\\Pal\\\\a.pcx\", \"glue\\\\pal\\\\B.pcx\"");
+	kp_t_ok(T, strstr(text, kp_buf_text(tail)) != NULL, "the GRP of plain rows, the movie, the damaged copy, the "
+		"absent names and the groups:\n%s\nwanted the end:\n%s", text, kp_buf_text(tail));
+
+	kp_json_doc_init(&doc);
+	root = kp_json_parse(&doc, text, strlen(text), err, sizeof err);
+	kp_t_ok(T, root != NULL, "JSON: %s", err);
+	files = kp_json_get(root, "files");
+	kp_t_eq(T, kp_json_len(files), 8, "rows");
+	pcx = kp_json_at(kp_json_at(files, 2), 3); /* c.pcx */
+	kp_t_eq_str(T, kp_json_field_str(pcx, "palette", ""), q_sha, "c.pcx's palette");
+	kp_json_doc_free(&doc);
+}
+
+/* What cannot be written: a file only opened, a damaged copy the committed manifest has no row of, a PCX without its
+ * palette. */
+static void manifest_refuses_what_it_cannot_describe(KpT *T)
+{
+	static const char COMMITTED[] = "{\n \"files\": [\n  [\"other.wav\", 5, \"00ff\"]\n ]\n}\n";
+	KpManifestCounts counts;
+	KpManifest *m = manifest_new(T, NULL);
+	char err[512];
+	kp_manifest_record(m, "music\\x.wav", KP_RES_RECORD_OPENED, NULL, 0);
+	kp_t_ok(T, kp_manifest_text(m, "test-1", NULL, 0, &counts, err, sizeof err) == NULL, "an opened file");
+	kp_t_ok(T, strstr(err, "music\\x.wav: opened, never read whole") != NULL, "%s", err);
+	m = manifest_new(T, NULL);
+	kp_manifest_record(m, "sound\\bad.wav", KP_RES_RECORD_DAMAGED, NULL, 0);
+	kp_t_ok(T, kp_manifest_text(m, "test-1", COMMITTED, sizeof COMMITTED - 1, &counts, err, sizeof err) == NULL, "a damaged copy");
+	kp_t_ok(T, strstr(err, "sound\\bad.wav: the reference install's copy cannot be read whole and the manifest has no row") != NULL,
+		"%s", err);
+	m = manifest_new(T, NULL);
+	record_bytes(m, "glue\\x.pcx", "not a picture", 13);
+	kp_t_ok(T, kp_manifest_text(m, "test-1", NULL, 0, &counts, err, sizeof err) == NULL, "a PCX that does not read");
+	kp_t_ok(T, strstr(err, "glue\\x.pcx: not an 8-bit PCX with its palette") != NULL, "%s", err);
+}
+
 #else
 #define SKIPPED(name) \
 	static void name(KpT *T) { kp_t_skip(T, "built without KP_ENCODERS"); }
@@ -1234,6 +1403,8 @@ SKIPPED(fs_lists_writes_removes)
 SKIPPED(work_runs_every_job_once)
 SKIPPED(webm_reads_back)
 SKIPPED(movies_equal_the_converters)
+SKIPPED(manifest_describes_what_was_read)
+SKIPPED(manifest_refuses_what_it_cannot_describe)
 #endif
 
 static const KpTest TESTS[] = {
@@ -1253,6 +1424,8 @@ static const KpTest TESTS[] = {
 	{ "work_runs_every_job_once", work_runs_every_job_once, 0 },
 	{ "webm_reads_back", webm_reads_back, 0 },
 	{ "movies_equal_the_converters", movies_equal_the_converters, 0 },
+	{ "manifest_describes_what_was_read", manifest_describes_what_was_read, 0 },
+	{ "manifest_refuses_what_it_cannot_describe", manifest_refuses_what_it_cannot_describe, 0 },
 };
 
 KP_SUITE(kp_suite_convert, "test_convert", TESTS);

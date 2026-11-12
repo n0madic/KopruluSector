@@ -648,7 +648,8 @@ done:
 	return rc;
 }
 
-/* fonts.kpd: each font's plaintext and one NUL (FNTP's paths, F8..F16X), TFGM game\tFontGam.pcx's rows. */
+/* fonts.kpd: each font's plaintext and one NUL (FNTP's paths, F8..F16X), TFGM game\tFontGam.pcx's rows, TFNT the
+ * title's glue\title\tFont.pcx's. */
 static int fonts(KpUiData *d, const KpFiles *f, KpError *err)
 {
 	const KpDefsTable *t;
@@ -670,6 +671,10 @@ static int fonts(KpUiData *d, const KpFiles *f, KpError *err)
 	if (kp_files_pcx_prefix(f, "game\\tFontGam.pcx", rows, KP_UI_FONT_COLOUR_ROWS, err) != 0) return -1;
 	d->font_rows.data = rows;
 	d->font_rows.size = KP_UI_FONT_COLOUR_ROWS;
+	if (!(rows = (uint8_t *)own(d, malloc(KP_UI_TITLE_FONT_ROWS)))) return fail(err, "out of memory");
+	if (kp_files_pcx_prefix(f, "glue\\title\\tFont.pcx", rows, KP_UI_TITLE_FONT_ROWS, err) != 0) return -1;
+	d->title_font_rows.data = rows;
+	d->title_font_rows.size = KP_UI_TITLE_FONT_ROWS;
 	return 0;
 }
 

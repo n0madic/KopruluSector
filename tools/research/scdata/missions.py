@@ -2,10 +2,10 @@
 mission sounds and resource packs.
 
 `load_catalog` reads every catalog scenario; `survey` adds the resource packs of each (scdata/analyze/profile.py) and
-checks that the prerelease scenarios outside the catalog are rejected natively, in memory: nothing is written. `scr-manifest`
-runs it over the reference install so that the manifest holds every file these read, and `write_packs` records each
-mission's packs in `defs/campaign/packs-<profile>.json`, which the runtime compiles (tools/defs_c.py MPAK) for the missions it
-reads from their CHK (stage D4).
+checks that the prerelease scenarios outside the catalog are rejected natively, in memory: nothing is written.
+tools/research/scr_manifest.py runs it over the reference install, and `write_packs` records each mission's packs in
+`defs/campaign/packs-<profile>.json`, which the runtime compiles (tools/defs_c.py MPAK) for the missions it reads from
+their CHK (stage D4).
 """
 from __future__ import annotations
 

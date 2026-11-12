@@ -20,6 +20,7 @@ extern "C" {
 
 #define KP_UI_FONT_COLOUR_ROWS 192 /* game\tFontGam.pcx: 24 rows of 8 (fonts.kpd TFGM) */
 #define KP_UI_THEME_FONT_ROWS 48   /* a theme's tFont.pcx prefix (ui.kpd TFNT) */
+#define KP_UI_TITLE_FONT_ROWS 40   /* glue\title\tFont.pcx: 5 rows of 8 (fonts.kpd TFNT) */
 
 typedef struct {
 	const uint8_t *data;
@@ -40,6 +41,10 @@ typedef struct KpUiData {
 	KpUiBytes theme_effects;     /* TEFF: u16 size, then each theme's tEffect.pcx */
 	KpUiBytes fonts[KP_UI_FNT_FONTS]; /* fonts.kpd F8..F16X: the decoded FNT and one NUL */
 	KpUiBytes font_rows;         /* TFGM */
+	/* fonts.kpd TFNT: the title screen's colour rows, which InitTitleScreen 0x4b5450 loads with title.pcx (GFIL) for
+	 * its loading text (InitTitleLoadingText 0x4b5300, colour table 2). TODO: the title screen (CreateTitleScreen
+	 * 0x4b5570, rez\titledlg.bin) is not drawn yet; these rows are carried for it. */
+	KpUiBytes title_font_rows;
 	KpUiBytes tbl[KP_UI_TBLS];   /* strings.kpd: STAT, NETW, GLUA, GHST, TIPS, HELP in UTF-8 */
 	KpUiBytes sounds;            /* sounds.kpd SFX: u16 count, KP_UI_SOUND_RECORD bytes a sound */
 	KpUiBytes sound_packs;       /* PACK: u16 count, a byte a sound (its pack + 1, 0 none) */

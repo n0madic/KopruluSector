@@ -484,8 +484,8 @@ in the background as before (`build/python-tests.log`).
 - **The Python test runner stays, renamed.** The plan removed `tools/converter_tests.py`; the research's readers keep
   their tests, and CI still runs them.
 - **`scr-manifest` stays in Python** (`tools/research/scr_manifest.py`): it records what the game reads from the
-  analyzer's survey, which is research code. `kp_convert manifest` (the reads `kp_res` records itself) is a `TODO:` in
-  the script.
+  analyzer's survey, which is research code. `kp_convert manifest` (the reads `kp_res` records itself) was a `TODO:` in
+  the script; it writes the input manifest since 2026-11-12 ([below](#after-c7-kp_convert-manifest-2026-11-12)).
 - **The fixtures are committed** rather than written by `kp_convert`: they are small and synthetic, and their
   expectations are the Python twins' values, which nothing could recompute once the twins were gone.
 - **`test_derive`'s synthetic cases are dropped** (the builders' steps on hand-made maps). The C test covers the 68
@@ -512,7 +512,7 @@ run again once the screen is on.
 - `generated/hd/`, `generated/locale/`, `generated/video/`, `generated/data/console.kpd` and
   `generated/cache/repack-ogg` stay on disk where the Python converter and C1 wrote them; nothing reads them. Remove them
   by hand. Deleted after C7.
-- `kp_convert manifest` (see above).
+- `kp_convert manifest` (see above). Written in C since 2026-11-12 ([below](#after-c7-kp_convert-manifest-2026-11-12)).
 
 ## After C7: the open items (2026-11-12)
 
@@ -628,5 +628,56 @@ run again once the screen is on.
   the glyphs and the rest of the flow's start in them.
 - **A start from the install** to the main menu: about 0.95 s from the window, of it the consoles' art 81 ms.
 
-**Still open:**
-- `kp_convert manifest` (the TODO in `tools/research/scr_manifest.py`): its design waits for approval.
+**Still open:** none of phase C's own (`kp_convert manifest`, the last, is below).
+
+## After C7: `kp_convert manifest` (2026-11-12)
+
+The input manifest `defs/scr/inputs-bw-1.17.0.1.json` is written in C from what the runtime's own loaders read, so a
+file the runtime starts to read is in it without a twin in Python (the design approved on 2026-11-12).
+
+- **`kp_res` records the reads** (`KpResConfig.record`, `KpResRecord`): a file read whole with its bytes
+  (`kp_res_read`), one only opened (`kp_res_head`, `kp_res_stream_open`), a name looked for and not found (a read, an
+  open, `kp_res_exists`), a copy the archives hold but cannot give whole. With a recorder the install is the
+  reference: nothing is checked against the compiled manifest, the names it lists absent are looked for, and an
+  unlisted read is not logged. `test_res.res_records_the_reference_reads`, `res_damaged_copy_reads_its_head`.
+- **`kp_convert manifest DIR [--out PATH] [--check]`** (`native/kp_convert/kp_manifest.{h,c}`) runs the runtime's
+  loaders over the reference install, on one thread, in one pass of 13 s: `kp_data_build` (the DAT, the scripts,
+  grpmeta's GRP and LO files, the palettes and the tilesets' remapping PCX files, the campaign, the interface: its
+  dialogs, pictures, fonts, texts, cursors, sounds, music and portraits), each catalog mission (`kp_data_mission`: its
+  map, its speech, its tileset's walk) and every tileset (`kp_tileset_from_files`); the test scenarios and the terrain
+  checks read nothing those do not. The files only opened are then read whole. What is kept of a file besides its
+  hash is the research's `rebuild.describe`, ported: a PCX's pixels, colours, palette, size and header bytes; a GRP of
+  plain rows' layout; a movie's header and, for a movie of one palette, the PCX palette within 4 of it at the indices
+  it draws; each GRP of a folder of PCX files the palette most of them have. The text is written as `json.dumps` wrote
+  it. `test_convert.manifest_describes_what_was_read`, `manifest_refuses_what_it_cannot_describe`.
+- **Failure modes:** a copy the reference install cannot read whole keeps the committed manifest's row, with a warning
+  (the reference `StarCraft.mpq`'s `PAB05ura.wav`, issue #2), and one the manifest has no row of stops it; a folder
+  that is Remastered or a repack is refused; without `--check` the archives must have the reference's sizes, with it
+  any copy of the release will do (the executable checked).
+- **CI:** `kp_convert manifest "$KOPRULU_ORIGINAL" --check` after `verify`: a loader that starts or stops reading a file
+  fails until the manifest is written again.
+- **The Python writer is gone:** `write_manifest`, `palette_groups`, `damaged_entries` and `rebuild.describe` with its
+  helpers (`describe_pcx`, `uncompressed_grp_layout`, `screen_palette`). `RecordingSource` records the names read;
+  `tools/research/scr_manifest.py` writes `defs/campaign/packs-*.json` and `defs/scr/texts-*.json` alone, both byte
+  for byte as before.
+
+**Against the Python manifest** every row is equal but 20:
+- 16 rows were a second spelling of a file the manifest has (`glue\Pal*\tFont.pcx` beside `glue\pal*\tfont.pcx`,
+  `rez\gluCmpgn.bin` beside `rez\glucmpgn.bin`, `sound\Misc\Button.WAV` beside `button.wav`, ...): Python recorded by
+  spelling, `kp_manifest` by the normalized name (the first spelling read). `tools/defs_c.py` kept one of each
+  already, so the compiled files are the same; the palette groups (`SPAL`, `SPCX`) lose their second spellings.
+- The four prerelease `VER=57` maps (`protoss\tutorial`, `terran\terran07`, `terran\terran10`, `zerg\tutorial`):
+  the research's survey read them to check that the native preflight refuses them; the game never reads them.
+  `test_chk` still reads them from the 1.17 install, unlisted.
+
+The absent names are equal, and so are the palette groups but for those spellings. `kp_convert digests` over
+Remastered gives the same status and SHA-256 for every file but the four maps, and `tools/research/scr_digests.py`'s
+twin is equal to it.
+
+**Found on the way: the title screen's colour rows.** The first run left out `glue\title\tFont.pcx`, and Remastered's
+`glue\title\title.pcx` lost the donor of its palette (`colour-equal` became `missing`). The original's `InitTitleScreen`
+(`0x4b5450`) loads it with `title.pcx` (`LoadFontColorTable`) for the loading text; Python's `fonts.kpd` carried it as
+`TFNT`, but the interface data in C did not read it. It reads it now beside the title's picture
+(`KpUiData.title_font_rows`, 40 bytes, `kp_ui_data.c` `fonts`), and `test_kp_ui.text_matches_the_original_probes`
+takes the title's bank from it. The title screen itself (`CreateTitleScreen` `0x4b5570`) is not drawn yet: a `TODO:`
+in `kp_ui_data.h`.

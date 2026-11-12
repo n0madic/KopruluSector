@@ -91,6 +91,8 @@ struct KpRes {
 	void *log_ctx;
 	int (*repack_file)(void *ctx, const char *file, char *out, size_t size);
 	void *repack_ctx;
+	void (*record)(void *ctx, const char *name, KpResRecord what, const uint8_t *data, size_t size); /* NULL: none */
+	void *record_ctx;
 	Repack repack[KP_RES_REPACK_MAX];
 	int repack_count;
 	char repack_dir[KP_RES_PATH]; /* the core's folder ("" when it is not a folder's) */
@@ -128,6 +130,19 @@ static void say(const KpRes *r, const char *fmt, const char *a, const char *b)
 	if (!r->log) return;
 	snprintf(line, sizeof line, fmt, a, b ? b : "");
 	r->log(r->log_ctx, line);
+}
+
+/* What the caller's recorder is told (KpResConfig.record) */
+static void record(const KpRes *r, const char *name, KpResRecord what, const uint8_t *data, size_t size)
+{
+	if (r->record) r->record(r->record_ctx, name, what, data, size);
+}
+
+/* Whether the manifest lists the name (normalized) as absent from the reference install: not looked for, but by the
+ * recorder of that install (KpResConfig.record), which writes the manifest */
+static int listed_absent(const KpRes *r, const char *key)
+{
+	return !r->record && kp_defs_listed(r->profile->absent, r->profile->absent_count, key);
 }
 
 static void set_err(char *err, size_t err_size, const char *text)
@@ -685,6 +700,8 @@ KpRes *kp_res_open(const char *const *dirs, int count, const KpResConfig *config
 	r->log_ctx = config ? config->log_ctx : NULL;
 	r->repack_file = config ? config->repack_file : NULL;
 	r->repack_ctx = config ? config->repack_ctx : NULL;
+	r->record = config ? config->record : NULL;
+	r->record_ctx = config ? config->record_ctx : NULL;
 	for (k = 0; k < count; k++) {
 		const char *dir = dirs[k];
 		KpResSourceKind kind = kp_res_detect(dir, r->profile);
@@ -925,7 +942,7 @@ static uint8_t *read_mpq(KpRes *r, const char *key, size_t *size, KpResStatus *s
 		snprintf(source, KP_RES_NAME, "%s", r->archive_names[k]);
 		if (!in) {
 			*status = KP_RES_UNLISTED;
-		} else if (simulation_input(key) ? !matches(b, got, in) : got != in->size) {
+		} else if (!r->record && (simulation_input(key) ? !matches(b, got, in) : got != in->size)) {
 			uint8_t d[KP_SHA256_SIZE];
 			char hex[2 * KP_SHA256_SIZE + 1];
 			kp_sha256(b, got, d);
@@ -976,7 +993,7 @@ uint8_t *kp_res_read(KpRes *r, const char *name, size_t *size, KpResStatus *stat
 	if (err_size) err[0] = 0;
 	source[0] = 0;
 	normalize(name, key, sizeof key);
-	if (kp_defs_listed(r->profile->absent, r->profile->absent_count, key)) {
+	if (listed_absent(r, key)) {
 		st = KP_RES_ABSENT;
 	} else if ((b = read_repack(r, key, size, source)) != NULL) {
 		st = KP_RES_REPACKED;
@@ -985,19 +1002,23 @@ uint8_t *kp_res_read(KpRes *r, const char *name, size_t *size, KpResStatus *stat
 	} else if (r->install == KP_RES_SOURCE_CASC) {
 		b = read_casc(r, key, 0, size, &st, source);
 	}
-	if (st == KP_RES_UNLISTED && !map_find(&r->seen, key)) say(r, "res: %s is not in the input manifest: read unchecked from %s", name, source);
+	if (st == KP_RES_UNLISTED && !r->record && !map_find(&r->seen, key))
+		say(r, "res: %s is not in the input manifest: read unchecked from %s", name, source);
 	if (st == KP_RES_DIFFERS && !map_find(&r->seen, key)) say(r, "res: %s differs from the 1.17 file: Remastered's %s is read", name, source);
 	seen(r, key, st, source);
+	if (b) record(r, name, KP_RES_RECORD_READ, b, *size);
+	else if (st == KP_RES_ERROR) record(r, name, KP_RES_RECORD_DAMAGED, NULL, 0);
+	else if (st == KP_RES_MISSING) record(r, name, KP_RES_RECORD_MISSING, NULL, 0);
 	if (status) *status = st;
 	return b;
 }
 
-int kp_res_exists(KpRes *r, const char *name)
+static int exists(KpRes *r, const char *name)
 {
 	char key[KP_RES_NAME], mname[KP_RES_NAME], names[CASC_MOVED_COUNT + 2 * CASC_PREFIX_COUNT][KP_RES_NAME];
 	int k, n;
 	normalize(name, key, sizeof key);
-	if (kp_defs_listed(r->profile->absent, r->profile->absent_count, key))
+	if (listed_absent(r, key))
 		return 0;
 	if (map_find(&r->listed, key) || (r->casc && kp_defs_input(r->profile, key))) return 1;
 	mpq_name(key, mname, sizeof mname);
@@ -1009,6 +1030,13 @@ int kp_res_exists(KpRes *r, const char *name)
 			if (kp_casc_has(r->casc, names[k])) return 1;
 	}
 	return 0;
+}
+
+int kp_res_exists(KpRes *r, const char *name)
+{
+	int found = exists(r, name);
+	if (!found) record(r, name, KP_RES_RECORD_MISSING, NULL, 0);
+	return found;
 }
 
 const char *kp_res_text_locale(const KpRes *r) { return r->text_locale; }
@@ -1042,12 +1070,13 @@ static KpResStream *open_file(KpRes *r, const char *name, int own, uint64_t *siz
 	normalize(name, key, sizeof key);
 	mpq_name(key, mname, sizeof mname);
 	in = kp_defs_input(r->profile, key);
-	if (kp_defs_listed(r->profile->absent, r->profile->absent_count, key))
+	if (listed_absent(r, key))
 		goto none;
 	if ((e = map_find(&r->listed, key)) != NULL
 		&& (s->mpq = own ? kp_mpq_open(r->repack[e->archive].path, 1, err, err_size) : r->repack[e->archive].mpq) != NULL) {
 		if ((s->mpq_file = kp_mpq_file_open(s->mpq, mname, size, err, err_size)) != NULL && *size == e->size) {
 			seen(r, key, KP_RES_REPACKED, r->repack[e->archive].file);
+			record(r, name, KP_RES_RECORD_OPENED, NULL, 0);
 			return s;
 		}
 		say(r, "res: %s in %s differs from its listing or cannot be read: the install's is read", mname, r->repack[e->archive].name);
@@ -1061,13 +1090,14 @@ static KpResStream *open_file(KpRes *r, const char *name, int own, uint64_t *siz
 		if (!(s->mpq = own ? kp_mpq_open(r->archives[k].path, 1, err, err_size) : r->archives[k].mpq)
 			|| !(s->mpq_file = kp_mpq_file_open(s->mpq, mname, size, err, err_size)))
 			goto fail;
-		if (in && *size != in->size) {
+		if (in && !r->record && *size != in->size) {
 			if (err_size) snprintf(err, err_size, "%s: %s has size %llu; profile %s expects size %u", r->archives[k].path,
 				mname, (unsigned long long)*size, r->profile->id, (unsigned)in->size);
 			seen(r, key, KP_RES_REFUSED, r->archive_names[k]);
 			goto fail;
 		}
 		seen(r, key, in ? KP_RES_EXACT : KP_RES_UNLISTED, r->archive_names[k]);
+		record(r, name, KP_RES_RECORD_OPENED, NULL, 0);
 		return s;
 	}
 	if (r->casc) {
@@ -1082,14 +1112,17 @@ static KpResStream *open_file(KpRes *r, const char *name, int own, uint64_t *siz
 			}
 			snprintf(source, sizeof source, "CASC %s", names[k]);
 			seen(r, key, !in ? KP_RES_UNLISTED : *size == in->size ? KP_RES_EXACT : KP_RES_DIFFERS, source);
+			record(r, name, KP_RES_RECORD_OPENED, NULL, 0);
 			return s;
 		}
 	}
 none:
 	seen(r, key, KP_RES_MISSING, "");
+	record(r, name, KP_RES_RECORD_MISSING, NULL, 0);
 	kp_res_stream_close(s);
 	return NULL;
 fail:
+	record(r, name, KP_RES_RECORD_DAMAGED, NULL, 0);
 	kp_res_stream_close(s);
 	return NULL;
 }
@@ -1126,13 +1159,17 @@ uint8_t *kp_res_head(KpRes *r, const char *name, size_t want, size_t *got, uint6
 	*got = 0;
 	normalize(name, key, sizeof key);
 	if ((e = map_find(&r->listed, key)) != NULL && e->head) {
-		if ((b = ogg_head(e, want, got, total, err, err_size)) != NULL) seen(r, key, KP_RES_REPACKED, r->repack[e->archive].file);
+		if ((b = ogg_head(e, want, got, total, err, err_size)) != NULL) {
+			seen(r, key, KP_RES_REPACKED, r->repack[e->archive].file);
+			record(r, name, KP_RES_RECORD_OPENED, NULL, 0);
+		}
 		return b;
 	}
 	if (!(s = open_file(r, name, 0, total, err, err_size))) return NULL;
 	n = *total < want ? (size_t)*total : want;
 	if (!(b = (uint8_t *)malloc(n + 1)) || kp_res_stream_read(s, 0, b, n) != 0) {
 		if (err_size) snprintf(err, err_size, "%s: %s", name, b ? "cannot be read" : "out of memory");
+		if (b) record(r, name, KP_RES_RECORD_DAMAGED, NULL, 0);
 		free(b);
 		kp_res_stream_close(s);
 		return NULL;

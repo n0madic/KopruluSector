@@ -1,7 +1,7 @@
 """StarCraft: Remastered as a source of profile bw-1.17.0.1's files (scdata/casc/source.py).
 
-Synthetic storages check the lookup order, the moved files, the tileset rebuilds, the manifest's absent names, a
-damaged 1.17 copy's entry kept, and the report. With KOPRULU_SCR every manifest file is classified on the real install, and
+Synthetic storages check the lookup order, the moved files, the tileset rebuilds, the manifest's absent names and the
+report. With KOPRULU_SCR every manifest file is classified on the real install, and
 the exact and derived files may not drop below the counts measured on 1.23.10.13515.
 """
 from __future__ import annotations
@@ -13,11 +13,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scdata.casc.source import CV5_GROUP, ScrSource, vx4_from_vx4ex, write_manifest
-from scdata.inputs import Entry, Manifest, ManifestError, damaged_entries, manifest_path
+from scdata.casc.source import CV5_GROUP, ScrSource, vx4_from_vx4ex
+from scdata.inputs import Entry, Manifest, manifest_path
 from scdata.mpq.profile import Profile
-from scdata.mpq.stormlib import StormLibError
-from scdata.source import RecordingSource, SourceError
+from scdata.source import SourceError
 from scdata.tests.test_casc import write_storage
 
 SCR = os.environ.get("KOPRULU_SCR")
@@ -104,7 +103,7 @@ class SyntheticSourceTest(unittest.TestCase):
         original = rebuild.pcx_file(2, 1, bytes([7, 0]), palette, bytes([1, 2, 3, 4, 1, 0]))
         rgba = bytes((*palette[7], 255)) + bytes(4)
         files = {"glue\\PalX\\tFont.pcx": donor, "glue\\PalX\\Backgnd.pcx": original}
-        extras = {n: {k: v for k, v in rebuild.describe(n, d).items() if not k.startswith("_")} for n, d in files.items()}
+        extras = {n: pcx_extras(d) for n, d in files.items()}
         groups = {extras["glue\\PalX\\Backgnd.pcx"]["palette"]: list(files)}
         with self.source({"glue/palx/tfont.pcx": donor, "SD/glue/palx/backgnd.DDS": dds_rgba(2, 1, rgba)}, files,
                          extras=extras, palettes=groups) as s:
@@ -112,55 +111,24 @@ class SyntheticSourceTest(unittest.TestCase):
             assert s.status["glue\\PalX\\Backgnd.pcx"][0] == "derived"
             assert pcx.decode(s.read("glue\\PalX\\Backgnd.pcx")[1]).palette == palette
 
-    def test_manifest_round_trip_through_a_recording(self):
-        files = {"arr\\units.dat": b"units", "rez\\stat_txt.tbl": b"strings"}
 
-        class Inner:
-            profile = PROFILE
+def pcx_extras(data: bytes) -> dict:
+    """What the manifest keeps of an original PCX (kp_manifest.c describe_pcx): its pixels' and colours' hashes, its
+    palette's, its size and its varying header bytes."""
+    from scdata.casc import rebuild
+    from scdata.formats import pcx
 
-            def read(self, name):
-                if name == "bad.wav":  # a damaged copy: StormLib cannot read it whole
-                    raise StormLibError(f"{name}: short read")
-                return "MPQ", files[name]
-
-            def has(self, name):
-                return name in files or name == "bad.wav"
-
-            def data_set_hash(self):
-                return bytes(32)
-
-            def close(self):
-                pass
-
-        rec = RecordingSource(Inner())
-        for name in files:
-            rec.read(name)
-        assert not rec.has("glue\\none.pcx")
-        with self.assertRaises(StormLibError):
-            rec.read("bad.wav")
-        assert rec.damaged == {"bad.wav"}
-        sound = Entry(hashlib.sha256(b"sound copy").hexdigest(), 10, "bad.wav", {})  # the committed entry
-        with mock_manifest_dir(self.root):
-            with self.assertRaises(ManifestError):  # no entry to keep yet
-                damaged_entries(PROFILE.id, rec.damaged)
-            write_manifest(manifest_path(PROFILE.id), PROFILE.id, {sound.name: (sound.sha256, sound.size, {})}, set())
-            write_manifest(manifest_path(PROFILE.id), PROFILE.id, {**rec.files, **damaged_entries(PROFILE.id, rec.damaged)},
-                           rec.absent)
-            m = Manifest.load(PROFILE.id)
-        assert m.files["arr/units.dat"] == Entry(hashlib.sha256(b"units").hexdigest(), 5, "arr\\units.dat", {})
-        assert m.files["bad.wav"] == sound and m.absent == {"glue/none.pcx"}
+    image = pcx.decode(data)
+    return {"pixels": rebuild.plane_hash(image.width, image.height, image.pixels),
+            "rgb": rebuild.plane_hash(image.width, image.height, rebuild.rgb_plane(image.pixels, image.palette)),
+            "palette": hashlib.sha256(b"".join(bytes(c) for c in image.palette)).hexdigest(),
+            "size": [image.width, image.height], "header": (data[12:16] + data[68:70]).hex()}
 
 
 def mock_filled(table):
     from unittest import mock
 
     return mock.patch.dict("scdata.casc.source.CV5_FILLED", table, clear=True)
-
-
-def mock_manifest_dir(path: Path):
-    from unittest import mock
-
-    return mock.patch("scdata.inputs.MANIFEST_DIR", path)
 
 
 class ManifestTest(unittest.TestCase):

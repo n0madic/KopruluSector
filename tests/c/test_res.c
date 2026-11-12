@@ -191,7 +191,23 @@ static Dir *test_install(KpT *T)
 	return d;
 }
 
-static KpRes *open_res(KpT *T, Profile *p, const char *const *dirs, int count)
+/* What a recorder was told (KpResConfig.record; kp_convert manifest's is kp_manifest_record): a line a name. */
+typedef struct {
+	char lines[2048];
+} Recorded;
+
+static void recorder(void *ctx, const char *name, KpResRecord what, const uint8_t *data, size_t size)
+{
+	static const char *const WHAT[] = { "read", "opened", "missing", "damaged" };
+	Recorded *rec = (Recorded *)ctx;
+	size_t n = strlen(rec->lines);
+	snprintf(rec->lines + n, sizeof rec->lines - n, "%s %s%s%.*s\n", WHAT[what], name, data ? ": " : "",
+		data ? (int)size : 0, data ? (const char *)data : "");
+}
+
+/* kp_res over dirs with the test profile, its lines in p->log; with rec, a recorder's (the install read as the
+ * reference). */
+static KpRes *open_res_recorded(KpT *T, Profile *p, const char *const *dirs, int count, Recorded *rec)
 {
 	KpResConfig c;
 	char err[512];
@@ -200,10 +216,19 @@ static KpRes *open_res(KpT *T, Profile *p, const char *const *dirs, int count)
 	c.profile = &p->profile;
 	c.log = profile_log;
 	c.log_ctx = p;
+	if (rec) {
+		c.record = recorder;
+		c.record_ctx = rec;
+	}
 	r = kp_res_open(dirs, count, &c, err, sizeof err);
 	kp_t_ok(T, r != NULL, "%s", err);
 	kp_t_defer(T, res_close, r);
 	return r;
+}
+
+static KpRes *open_res(KpT *T, Profile *p, const char *const *dirs, int count)
+{
+	return open_res_recorded(T, p, dirs, count, NULL);
 }
 
 /* reads name: its status, its text (NULL when nothing was read) and the error in err */
@@ -266,6 +291,7 @@ static void res_damaged_copy_reads_its_head(KpT *T)
 	uint64_t total = 0;
 	uint32_t x = 1, data_end, at, k;
 	Profile p;
+	Recorded rec;
 	Dir *d = dir_new(T);
 	KpRes *r;
 	KpResStatus st;
@@ -306,6 +332,58 @@ static void res_damaged_copy_reads_its_head(KpT *T)
 	kp_t_ok(T, head != NULL, "its head reads: %s", err);
 	kp_t_ok(T, head && got == HEAD && total == BIG && memcmp(head, big, HEAD) == 0, "its first %d bytes", HEAD);
 	free(head);
+	/* recorded (kp_convert manifest keeps the committed row of a copy it cannot read whole): opened, then damaged */
+	memset(&rec, 0, sizeof rec);
+	r = open_res_recorded(T, &p, dirs, 1, &rec);
+	free(kp_res_head(r, "a\\bad.wav", HEAD, &got, &total, err, sizeof err));
+	kp_t_ok(T, read_text(T, r, "a\\bad.wav", &st, err, sizeof err) == NULL && st == KP_RES_ERROR, "still damaged");
+	kp_t_eq_str(T, rec.lines, "opened a\\bad.wav\ndamaged a\\bad.wav\n", "recorded");
+}
+
+/* With a recorder (kp_convert manifest) the install is the reference: a copy that differs from the manifest is read
+ * as it is, a name the manifest lists absent is looked for, and nothing read unlisted is logged; each name asked for
+ * is recorded as asked: read whole with its bytes, opened (a head, a stream), looked for and not found. */
+static void res_records_the_reference_reads(KpT *T)
+{
+	static const char *const C[] = { "a\\gone.dat", "found after all", NULL };
+	Profile p;
+	Recorded rec;
+	Dir *d;
+	KpRes *r;
+	KpResStatus st;
+	KpResStream *s;
+	char err[512];
+	const char *dirs[1];
+	size_t got = 0;
+	uint64_t total = 0;
+	profile_init(T, &p);
+	memset(&rec, 0, sizeof rec);
+	d = test_install(T);
+	dir_mpq(T, d, "C.mpq", C);
+	dirs[0] = d->dir;
+	r = open_res_recorded(T, &p, dirs, 1, &rec);
+	kp_t_eq_str(T, read_text(T, r, "a/two.dat", &st, err, sizeof err), TWO_CHANGED, "the install's copy as it is");
+	kp_t_eq(T, st, KP_RES_EXACT, "two's status");
+	kp_t_eq_str(T, read_text(T, r, "a\\gone.dat", &st, err, sizeof err), "found after all", "an absent name looked for");
+	kp_t_eq(T, st, KP_RES_UNLISTED, "gone's status");
+	kp_t_ok(T, strstr(p.log, "is not in the input manifest") == NULL, "nothing logged unlisted: %s", p.log);
+	kp_t_ok(T, read_text(T, r, "a\\three.dat", &st, err, sizeof err) == NULL && st == KP_RES_MISSING, "three missing");
+	kp_t_ok(T, kp_res_exists(r, "a/one.dat") && !kp_res_exists(r, "a/four.dat"), "exists");
+	free(kp_res_head(r, "A\\ONE.dat", 4, &got, &total, err, sizeof err));
+	kp_t_eq(T, (int64_t)got, 4, "one's head");
+	s = kp_res_stream_open(r, "a\\extra.txt", &total, err, sizeof err);
+	kp_t_ok(T, s != NULL, "a stream: %s", err);
+	kp_res_stream_close(s);
+	kp_t_ok(T, kp_res_stream_open(r, "a\\nope.dat", &total, err, sizeof err) == NULL, "no stream of a missing file");
+	kp_t_eq_str(T, rec.lines,
+		"read a/two.dat: two, changed\n"
+		"read a\\gone.dat: found after all\n"
+		"missing a\\three.dat\n"
+		"missing a/four.dat\n"
+		"opened A\\ONE.dat\n"
+		"opened a\\extra.txt\n"
+		"missing a\\nope.dat\n",
+		"recorded");
 }
 
 static void res_install_needs_its_core_archives(KpT *T)
@@ -1106,6 +1184,7 @@ static const KpTest TESTS[] = {
 	{ "sha256_hex_decodes", sha256_hex_decodes, 0 },
 	{ "res_reads_a_1_17_install_checked", res_reads_a_1_17_install_checked, 0 },
 	{ "res_damaged_copy_reads_its_head", res_damaged_copy_reads_its_head, 0 },
+	{ "res_records_the_reference_reads", res_records_the_reference_reads, 0 },
 	{ "res_install_needs_its_core_archives", res_install_needs_its_core_archives, 0 },
 	{ "res_hashes_only_what_the_simulation_reads", res_hashes_only_what_the_simulation_reads, 0 },
 	{ "res_repack_comes_before_the_install", res_repack_comes_before_the_install, 0 },

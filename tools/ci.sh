@@ -21,6 +21,7 @@
 #     does not qualify stops the run; default: Homebrew's llvm, or a clang on the PATH that qualifies; the step is
 #     skipped without one);
 #   KOPRULU_ORIGINAL=<dir with StarCraft.exe and the profile MPQs> enables the tests that read original data,
+#     kp_convert manifest --check (the input manifest is what the runtime's loaders read from the install; ADR 0019),
 #     kp_convert verify's read of every manifest file through StormLib (ADR 0018; KOPRULU_SCR: kp_convert digests'
 #     through CascLib, each file's status and SHA-256 equal to tools/research/scr_digests.py's, the Remastered rebuilds
 #     included) and kp_convert's test scenarios and terrain checks written from the install into generated/ (from
@@ -261,6 +262,10 @@ fi
 if [ -n "${KOPRULU_ORIGINAL:-}" ]; then
   step "data readers (ADR 0018): every file of the input manifest read from the 1.17 install through kp_res, checked"
   build/cmake/kp_convert verify "$KOPRULU_ORIGINAL" 2>/dev/null | tail -4
+  # the input manifest is what the runtime's own loaders read from the install (kp_res recording them, ADR 0019): a
+  # loader that starts or stops reading a file fails here until `kp_convert manifest DIR` writes it again
+  step "the input manifest is the install's reads through the runtime's loaders (kp_convert manifest --check)"
+  build/cmake/kp_convert manifest "$KOPRULU_ORIGINAL" --check 2>&1 | tail -2
   if [ -z "$PUBLIC" ] && command -v ffmpeg >/dev/null; then
     # stage D7: test_movies decodes the install's Smacker movies (palette records, sound) as FFmpeg does
     step "the 1.17 cinematics' FFmpeg decodes are current (tools/oracle/export_smk_ffmpeg.py)"

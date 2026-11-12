@@ -63,10 +63,24 @@ typedef enum {
 typedef struct KpRes KpRes;
 typedef struct KpResStream KpResStream;
 
+/* What KpResConfig.record is told of a name the caller looks for (ADR 0019: kp_convert manifest) */
+typedef enum {
+	KP_RES_RECORD_READ,    /* read whole: its bytes */
+	KP_RES_RECORD_OPENED,  /* its head read or opened as a stream: no bytes (the recorder reads it whole) */
+	KP_RES_RECORD_MISSING, /* looked for, not found */
+	KP_RES_RECORD_DAMAGED, /* a copy the sources hold but cannot give whole (a disc copied with a bad read, issue #2) */
+} KpResRecord;
+
 typedef struct {
 	const KpDefsProfile *profile; /* NULL: kp_defs_bw_1_17_0_1 */
 	void (*log)(void *ctx, const char *line); /* NULL: no log */
 	void *log_ctx;
+	/* Each name of the profile's files the caller looks for, as it names it (kp_res_read, kp_res_head,
+	 * kp_res_stream_open, kp_res_exists; not Remastered's own names, kp_res_raw_*), and what was found. With it a 1.17
+	 * install is read as the profile's reference, which kp_convert manifest writes the input manifest from: as it is,
+	 * nothing checked against the manifest, the names it lists as absent looked for. NULL: none. */
+	void (*record)(void *ctx, const char *name, KpResRecord what, const uint8_t *data, size_t size);
+	void *record_ctx;
 	/* The program's own repack, outside the folders (Android: its groups in the APK's assets), NULL: none. A repack
 	 * file by its name (koprulu.mpq, else koprulu-core.mpq, then the groups the core's listing names): 1 and what
 	 * kp_mpq_open opens it by in out (a slice, kp_mpq_slice_name), 0 when there is no such file, -1 with the reason in
