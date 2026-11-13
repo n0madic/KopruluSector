@@ -13,6 +13,7 @@ int kp_index_map_init(KpIndexMap *m, const uint8_t palette[768])
 {
 	memset(m, 0, sizeof *m);
 	memcpy(m->palette, palette, sizeof m->palette);
+	memset(m->usable, 0xff, sizeof m->usable);
 	m->keys = (uint32_t *)calloc(FIRST_CAP, sizeof *m->keys);
 	m->values = (uint8_t *)malloc(FIRST_CAP);
 	if (!m->keys || !m->values) {
@@ -31,6 +32,8 @@ void kp_index_map_free(KpIndexMap *m)
 	m->values = NULL;
 	m->cap = m->count = 0;
 }
+
+void kp_index_map_only(KpIndexMap *m, const uint8_t *usable) { memcpy(m->usable, usable, sizeof m->usable); }
 
 static size_t slot_of(uint32_t key, size_t cap) { return (size_t)((key * 2654435761u) >> 8) & (cap - 1); }
 
@@ -67,7 +70,12 @@ static uint8_t find(const KpIndexMap *m, uint8_t r, uint8_t g, uint8_t b, int op
 	int32_t best_d = 0x7fffffff;
 	for (i = 0; i < 256; i++) {
 		const uint8_t *c = m->palette + 3 * i;
-		int32_t dr = (int32_t)c[0] - r, dg = (int32_t)c[1] - g, db = (int32_t)c[2] - b, d = dr * dr + dg * dg + db * db;
+		int32_t dr, dg, db, d;
+		if (!(m->usable[i >> 3] & (1u << (i & 7)))) continue;
+		dr = (int32_t)c[0] - r;
+		dg = (int32_t)c[1] - g;
+		db = (int32_t)c[2] - b;
+		d = dr * dr + dg * dg + db * db;
 		if (d == 0) {
 			found = i;
 			if (opaque) break; /* the lowest; a translucent pixel takes the highest */

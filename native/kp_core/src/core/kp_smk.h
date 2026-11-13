@@ -8,10 +8,12 @@
  *
  * It also plays KPW1, the stand-in for an SMK that only StarCraft: Remastered's WebM copy has (ADR 0018, stage D6;
  * kp_res and scdata/formats/kpw.py make it): "KPW1", u32 width, height, frames, i32 frame rate, u32 flags (the SMK
- * header's: 1 a ring movie, whose extra last frame leads back to frame 1), the 768 bytes of its screen's palette, then
- * the WebM. Frame n is the WebM's frame n (its last past its end), each pixel its colour's index in that palette
- * (kp_index_map.h), transparent (0) below alpha 128. The WebM is decoded by the codec the host gives
- * (kp_smk_set_video: libvpx, which the core does not link); without one a KPW1 does not open. */
+ * header's: 1 a ring movie, whose extra last frame leads back to frame 1; KPW1's own: 2, the palette's entries a pixel
+ * may take follow it), the 768 bytes of its screen's palette, with flag 2 a set of 256 bits (bit i & 7 of byte i >> 3:
+ * entry i usable; a portrait's, drawn over the tilesets' and the ready rooms' palettes, only the entries they share),
+ * then the WebM. Frame n is the WebM's frame n (its last past its end), each pixel its colour's index in that palette
+ * among the usable entries (kp_index_map.h), transparent (0) below alpha 128. The WebM is decoded by the codec the
+ * host gives (kp_smk_set_video: libvpx, which the core does not link); without one a KPW1 does not open. */
 #ifndef KP_SMK_H
 #define KP_SMK_H
 
@@ -25,6 +27,9 @@ extern "C" {
 #endif
 
 #define KP_SMK_TREES 4
+#define KP_SMK_RING 1u /* the header's flags: a ring movie (an SMK's and a KPW1's) */
+#define KP_SMK_KPW_SHARED 2u /* a KPW1's flags: its usable entries follow its palette */
+#define KP_SMK_KPW_HEADER (24 + 768) /* a KPW1's header and palette */
 #define KP_SMK_TRACKS 7 /* the sound tracks a movie may have */
 
 typedef struct {

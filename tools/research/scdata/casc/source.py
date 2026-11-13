@@ -24,12 +24,14 @@ from pathlib import Path
 
 from ..emit.files import write_if_changed
 from ..formats import dds, grp, kpw, pcx
-from ..formats.palette import Colours
+from ..formats.palette import TILESETS, Colours, PaletteError, decode_wpe
 from ..inputs import Entry, Manifest
 from ..mpq.profile import Profile
 from ..source import SourceError
 from . import rebuild
 from .storage import CascError, CascStorage, normalize
+
+PORTRAITS = "portrait/"  # the portraits' movies, drawn over the tilesets' and the ready rooms' palettes
 
 log = logging.getLogger(__name__)
 
@@ -97,6 +99,7 @@ class ScrSource:
         # a palette group's palette (one palette per hash) or a folder's neighbour's, by (palette hash, folder)
         self._palettes: dict[tuple[str, str], Colours] = {}
         self._dialog_frames: list[str] | None = None  # the glue themes' Dlg.dds.grp files in the storage
+        self._shared: frozenset[int] | None = None  # the portraits' usable palette entries (_shared_entries)
 
     def close(self) -> None:
         self.storage.close()
@@ -279,8 +282,21 @@ class ScrSource:
                 return None
             # drawn in its screen's palette: the movie's indices are that palette's
             rgb = b"".join(bytes(c) for c in palette)
-            return "approximation", found[0], kpw.encode(*size, frames, rate, bool(ring), rgb, found[1])
+            usable = self._shared_entries() if key.startswith(PORTRAITS) else None
+            return "approximation", found[0], kpw.encode(*size, frames, rate, bool(ring), rgb, found[1], usable)
         return None
+
+    def _shared_entries(self) -> frozenset[int] | None:
+        """The palette entries every tileset's palette gives one colour, which a portrait's pixels take (kp_res_scr.c's
+        shared_entries: the ready rooms' palettes equal the tilesets' there; 0, 14..199 and 255); None when a palette
+        does not read."""
+        if self._shared is None:
+            try:  # a palette of another size refused, as the C's does
+                wpes = [decode_wpe(self.read(f"tileset\\{t}.wpe")[1]).rgb for t in TILESETS]
+            except (SourceError, CascError, PaletteError):
+                return None
+            self._shared = frozenset(i for i in range(256) if len({w[i] for w in wpes}) == 1)
+        return self._shared
 
     @staticmethod
     def _judged(entry: Entry, data: bytes) -> str:

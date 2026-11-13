@@ -247,7 +247,7 @@ static void kpw_plays(KpT *T, const char *name, uint32_t width, uint32_t height,
 	data = kp_t_read(T, path, &size);
 	indices = kp_t_read(T, indices_path, &indices_size);
 	kp_t_eq(T, (int64_t)indices_size, (int64_t)area * (frames + 1), "%s: the fixture's frames and the ring frame", name);
-	webm = kp_webm_open(data + 24 + 768, size - 24 - 768, err, sizeof err);
+	webm = kp_webm_open(data + KP_SMK_KPW_HEADER, size - KP_SMK_KPW_HEADER, err, sizeof err);
 	kp_t_ok(T, webm != NULL, "%s: its WebM opens: %s", name, err);
 	kp_t_eq(T, kp_webm_width(webm) * 1000 + kp_webm_height(webm), width * 1000 + height, "%s: the WebM's size", name);
 	kp_webm_close(webm);
@@ -283,6 +283,45 @@ static void kpw_movie_plays_as_an_smk(KpT *T)
 	kp_t_eq(T, kp_smk_open(&s, data, 24 + 767), -1, "a palette cut short is refused");
 	data[4] = 9; /* width 9, the WebM's 8 */
 	kp_t_eq(T, kp_smk_open(&s, data, size), -1, "a header of another width than the WebM's is refused");
+}
+
+/* A KPW1 with flag 2 (kp_smk.h: a portrait's, drawn over several screens' palettes) maps its colours among the entries
+ * of the set after its palette only: the fixture's frame 0 again with every entry it took but 0 left out takes none of
+ * them; a set cut short is refused. */
+static void kpw_takes_only_its_usable_entries(KpT *T)
+{
+	const uint32_t header = KP_SMK_KPW_HEADER, set = KP_INDEX_USABLE_SIZE;
+	size_t size;
+	const uint8_t *data = kp_t_read(T, DIR "movie.kpw", &size);
+	uint8_t *shared, used[256];
+	uint32_t i, area, left_out = 0;
+	KpSmk s;
+	memset(used, 0, sizeof used);
+	if (kp_smk_open(&s, data, size) != 0) kp_t_fail(T, "movie.kpw does not open");
+	kp_t_eq(T, kp_smk_decode(&s), 0, "its frame 0");
+	area = s.width * s.height;
+	for (i = 0; i < area; i++) used[s.pixels[i]] = 1;
+	kp_smk_close(&s);
+	if ((shared = (uint8_t *)malloc(size + set)) == NULL) kp_t_fail(T, "out of memory");
+	kp_t_defer(T, free, shared);
+	memcpy(shared, data, header);
+	kp_le_put32(shared + 20, kp_le_u32(data + 20) | KP_SMK_KPW_SHARED);
+	memset(shared + header, 0xff, set);
+	for (i = 1; i < 256; i++) {
+		if (!used[i]) continue;
+		shared[header + (i >> 3)] &= (uint8_t)~(1u << (i & 7));
+		left_out++;
+	}
+	kp_t_ok(T, left_out > 0, "frame 0 takes an entry besides 0");
+	memcpy(shared + header + set, data + header, size - header);
+	if (kp_smk_open(&s, shared, size + set) != 0) kp_t_fail(T, "movie.kpw with its usable entries does not open");
+	kp_t_eq(T, kp_smk_decode(&s), 0, "its frame 0");
+	for (i = 0; i < area; i++) {
+		kp_t_ok(T, s.pixels[i] == 0 || !used[s.pixels[i]], "pixel %u takes entry %u, left out", (unsigned)i,
+			(unsigned)s.pixels[i]);
+	}
+	kp_smk_close(&s);
+	kp_t_eq(T, kp_smk_open(&s, shared, header + set - 1), -1, "a set cut short is refused");
 }
 
 /* An SMK keeps one block: the four header trees' entries and the frame's pixels (a portrait opens one at every change).
@@ -394,6 +433,7 @@ static void video_target_is_the_movie_size(KpT *T)
 
 static const KpTest TESTS[] = {
 	{ "kpw_movie_plays_as_an_smk", kpw_movie_plays_as_an_smk, 0 },
+	{ "kpw_takes_only_its_usable_entries", kpw_takes_only_its_usable_entries, 0 },
 	{ "video_target_is_the_movie_size", video_target_is_the_movie_size, 0 },
 	{ "smk_header_opens_in_one_block", smk_header_opens_in_one_block, 0 },
 	{ "table_strings_are_no_formats", table_strings_are_no_formats, 0 },

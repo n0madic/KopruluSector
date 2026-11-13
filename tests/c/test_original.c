@@ -11,6 +11,7 @@
 #include "kp_ui_data.h"
 #include "../../native/kp_core/src/core/kp_dat.h"
 #include "../../native/kp_core/src/core/kp_mission.h"
+#include "../../native/kp_core/src/core/kp_smk.h"
 
 static int bytes_eq(const uint8_t *a, size_t an, const uint8_t *b, size_t bn)
 {
@@ -58,6 +59,36 @@ static int ui_paths_eq(const KpUiFile *x, int xn, const KpUiFile *y, int yn)
 	return 1;
 }
 
+/* A portrait movie of Remastered's is a KPW1 whose pixels take only the palette entries every screen it is drawn on
+ * shares (kp_smk.h's flag 2; kp_res_scr.c's shared_entries: the tilesets' palettes, which the ready rooms' equal there):
+ * 0, 14..199 and 255. Before, the nearest colour in the whole palette gave 3 to 4% of a portrait's pixels entries
+ * 200..254, green and red dots in a briefing (the user's report of 2026-11-13). */
+static void portrait_takes_shared_entries(KpT *T, const KpUiFile *f, int k)
+{
+	const uint8_t *set = f->data + KP_SMK_KPW_HEADER;
+	uint32_t i, n, frame;
+	int shared = 1;
+	KpSmk s;
+	if (f->size <= KP_SMK_KPW_HEADER + KP_INDEX_USABLE_SIZE || memcmp(f->data, "KPW1", 4) != 0)
+		kp_t_fail(T, "portrait movie %d is no KPW1 (%zu bytes)", k, f->size);
+	if ((kp_le_u32(f->data + 20) & KP_SMK_KPW_SHARED) == 0) kp_t_fail(T, "portrait movie %d has no usable entries", k);
+	for (i = 0; i < 256; i++)
+		shared &= ((set[i >> 3] >> (i & 7)) & 1) == (i == 0 || i == 255 || (i >= 14 && i <= 199));
+	kp_t_ok(T, shared, "portrait movie %d: the usable entries 0, 14..199 and 255", k);
+	if (kp_smk_open(&s, f->data, f->size) != 0) kp_t_fail(T, "portrait movie %d does not open", k);
+	n = s.width * s.height;
+	for (frame = 0; frame < s.frames; frame++) {
+		if (kp_smk_decode(&s) != 0) kp_t_fail(T, "portrait movie %d: frame %u does not decode", k, (unsigned)frame);
+		for (i = 0; i < n; i++) {
+			uint8_t v = s.pixels[i];
+			if (v != 0 && v != 255 && (v < 14 || v > 199))
+				kp_t_fail(T, "portrait movie %d: frame %u's pixel %u takes entry %u", k, (unsigned)frame, (unsigned)i,
+					(unsigned)v);
+		}
+	}
+	kp_smk_close(&s);
+}
+
 /* The interface over StarCraft: Remastered's files (stage D6: the dialogs' BINs and the TBLs rebuilt from its XML, the
  * PCXs and GRPs from its DDS, the portraits' SMKs as KPW1 over its WebM) has the 1.17 interface's parts: the same
  * dialogs with the same records' counts, the same files by name, the fonts, the sounds' records and the portraits'
@@ -88,9 +119,7 @@ static void remastered_interface(KpT *T)
 		&& memcmp(a->portrait_rows, b->portrait_rows, (size_t)a->portrait_row_count * 8) == 0, "the portraits' rows");
 	kp_t_ok(T, ui_paths_eq(a->portrait_files, a->portrait_file_count, b->portrait_files, b->portrait_file_count),
 		"the portraits' movies by name");
-	for (k = 0; k < b->portrait_file_count; k++)
-		kp_t_ok(T, b->portrait_files[k].size > 4 && memcmp(b->portrait_files[k].data, "KPW1", 4) == 0,
-			"portrait movie %d is a KPW1", k);
+	for (k = 0; k < b->portrait_file_count; k++) portrait_takes_shared_entries(T, &b->portrait_files[k], k);
 	kp_t_ok(T, a->status_layout_count == b->status_layout_count && a->button_set_count == b->button_set_count
 		&& bytes_eq(a->cheats, a->cheats_size, b->cheats, b->cheats_size)
 		&& bytes_eq(a->establishing, a->establishing_size, b->establishing, b->establishing_size),

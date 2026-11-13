@@ -6,10 +6,8 @@
 #include <string.h>
 
 #define HEADER_SIZE 104
-#define KPW_HEADER_SIZE (24 + 768) /* "KPW1", width, height, frames, frame rate, flags, the palette */
 #define KPW_ALPHA_CUT 128 /* a pixel below this alpha is transparent (index 0) */
 #define SMK_NODE 0x80000000u
-#define FLAG_RING 1u
 #define TYPE_PALETTE 1u
 #define SMALL_VALUES 256
 #define SMALL_NODES 512
@@ -265,20 +263,22 @@ void kp_smk_close(KpSmk *s)
 static int kpw_open(KpSmk *s, const uint8_t *data, size_t size)
 {
 	uint32_t w = 0, h = 0;
+	size_t webm_at = KP_SMK_KPW_HEADER;
 	s->kpw = 1;
 	s->width = kp_le_u32(data + 4);
 	s->height = kp_le_u32(data + 8);
 	s->frames = kp_le_u32(data + 12);
 	s->frame_rate = (int32_t)kp_le_u32(data + 16);
 	s->flags = kp_le_u32(data + 20);
-	s->ring = (s->flags & FLAG_RING) ? 1u : 0u;
+	s->ring = (s->flags & KP_SMK_RING) ? 1u : 0u;
+	if (s->flags & KP_SMK_KPW_SHARED) webm_at += KP_INDEX_USABLE_SIZE;
 	if (!video_codec || s->width == 0 || s->height == 0 || s->width > 4096 || s->height > 4096 || s->frames == 0
-		|| s->frames > 65536)
+		|| s->frames > 65536 || size < webm_at)
 		return -1;
-	if (!(s->video = video_codec->open(data + KPW_HEADER_SIZE, size - KPW_HEADER_SIZE, &w, &h)) || w != s->width
-		|| h != s->height)
+	if (!(s->video = video_codec->open(data + webm_at, size - webm_at, &w, &h)) || w != s->width || h != s->height)
 		return -1;
 	if (alloc_mem(s, NULL) != 0 || kp_index_map_init(&s->map, data + 24) != 0) return -1;
+	if (s->flags & KP_SMK_KPW_SHARED) kp_index_map_only(&s->map, data + KP_SMK_KPW_HEADER);
 	kp_smk_rewind(s);
 	return 0;
 }
@@ -301,7 +301,7 @@ int kp_smk_open(KpSmk *s, const uint8_t *data, size_t size)
 	uint32_t tree_size, tree_sizes[KP_SMK_TREES], count, i;
 	Bits b;
 	memset(s, 0, sizeof *s);
-	if (size >= KPW_HEADER_SIZE && memcmp(data, "KPW1", 4) == 0) {
+	if (size >= KP_SMK_KPW_HEADER && memcmp(data, "KPW1", 4) == 0) {
 		s->data = data;
 		s->size = size;
 		if (kpw_open(s, data, size) != 0) {
@@ -319,7 +319,7 @@ int kp_smk_open(KpSmk *s, const uint8_t *data, size_t size)
 	s->frames = kp_le_u32(data + 12);
 	s->frame_rate = (int32_t)kp_le_u32(data + 16);
 	s->flags = kp_le_u32(data + 20);
-	s->ring = (s->flags & FLAG_RING) ? 1u : 0u;
+	s->ring = (s->flags & KP_SMK_RING) ? 1u : 0u;
 	tree_size = kp_le_u32(data + 52);
 	for (i = 0; i < KP_SMK_TREES; i++) tree_sizes[i] = kp_le_u32(data + 56 + 4 * i);
 	if (s->width == 0 || s->height == 0 || s->width > 4096 || s->height > 4096 || s->frames == 0 || s->frames > 65536) {

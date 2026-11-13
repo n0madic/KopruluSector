@@ -1710,7 +1710,8 @@ static void vector_text_logs_the_glyphs(KpT *T)
 }
 
 /* With the vector text on, the canvas takes the live glyphs out of a surface it composes (what lay under them in their
- * place) and lists them at their canvas pens; a later draw over a glyph drops it or clips it to its uncovered pixels.
+ * place) and lists them at their canvas pens; a later draw over a glyph drops it or cuts it to the rectangles of its
+ * box the draw left uncovered.
  * Off, the canvas keeps the glyphs' pixels and lists none. */
 static void vector_text_takes_the_glyphs_out_of_the_canvas(KpT *T)
 {
@@ -1718,8 +1719,9 @@ static void vector_text_takes_the_glyphs_out_of_the_canvas(KpT *T)
 	KpUi *ui;
 	KpUiCanvas *c;
 	KpUiSurface s;
+	KpUiCanvasGlyph first[11];
 	uint8_t codes[256];
-	int32_t k, x, y, inked = 0, cut;
+	int32_t k, x, y, inked = 0, cut, wide, line;
 	if (!kp_t_ready(T, "test_kp_ui.vector_text_takes_the_glyphs_out_of_the_canvas", UI_FILES)) return;
 	u = kp_t_ui(T, 0);
 	ui = u->ui;
@@ -1737,6 +1739,7 @@ static void vector_text_takes_the_glyphs_out_of_the_canvas(KpT *T)
 		kp_t_ok(T, c->glyphs[k].whole && c->glyphs[k].y == 9 && c->glyphs[k].x == 10 + ui->glyph_log.glyphs[k].pen_x,
 			"glyph %d at its canvas pen", (int)k);
 	}
+	memcpy(first, c->glyphs, sizeof first);
 	for (y = 0; y < 40; y++) {
 		for (x = 0; x < 200; x++) inked += c->pixels[2 * (y * 200 + x) + 1] != 0;
 	}
@@ -1751,6 +1754,26 @@ static void vector_text_takes_the_glyphs_out_of_the_canvas(KpT *T)
 	kp_t_eq(T, c->glyph_count, 7, "the covered glyphs dropped");
 	kp_t_ok(T, !c->glyphs[0].whole && c->glyphs[0].clip[0] >= cut, "the o cut where the fill ends");
 	for (k = 1; k < c->glyph_count; k++) kp_t_ok(T, c->glyphs[k].whole, "glyph %d uncovered", (int)k + 4);
+	/* a line across a glyph (a popup's frame over the menu's text, the user's report of 2026-11-13): the glyph is
+	 * listed once on each side, neither piece over the line (its uncovered pixels' box held the line) */
+	for (k = 1, wide = 0; k < 11; k++) {
+		if (first[k].box[0] > first[wide].box[0]) wide = k;
+	}
+	line = first[wide].x + first[wide].box[2] + first[wide].box[0] / 2;
+	kp_ui_canvas_begin(ui, c);
+	kp_ui_canvas_layer(ui, c, &s, 10, 5);
+	kp_ui_canvas_fill(c, line, 0, 1, 40, 7);
+	kp_ui_canvas_text_end(ui, c);
+	kp_ui_canvas_end(c);
+	kp_t_eq(T, c->glyph_count, 12, "the glyph across the line listed twice");
+	for (k = 0, cut = 0; k < c->glyph_count; k++) {
+		const KpUiCanvasGlyph *g = &c->glyphs[k];
+		if (g->code != first[wide].code || g->x != first[wide].x) continue;
+		kp_t_ok(T, !g->whole && (g->clip[2] <= line || g->clip[0] >= line + 1), "piece %d beside the line: %d..%d",
+			(int)cut, (int)g->clip[0], (int)g->clip[2]);
+		cut++;
+	}
+	kp_t_eq(T, cut, 2, "the pieces of the glyph across the line");
 	/* off: the bitmaps */
 	kp_ui_set_vector_text(ui, 1, 0, codes);
 	kp_ui_canvas_begin(ui, c);

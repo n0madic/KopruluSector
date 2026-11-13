@@ -13,6 +13,9 @@
 #define GLYPH_AGE 120               /* composes a glyph stays in the log without being found live */
 #define OWNER_SEQ 0x7fffu           /* the owner plane's draw */
 #define OWNER_TINT 0x8000u          /* the owner plane's flag: a translucent dialog blended over the pixel since */
+#define PART_PIECES 4               /* the rectangles a vector glyph's part is cut into at most (more: its pixels' box) */
+#define GLYPH_PIECES (2 * PART_PIECES) /* a vector glyph's at most: its parts', plain and blended */
+#define GLYPH_FIRST 256             /* the glyph list's first size */
 
 /* Writes a pixel of the frame being composed. */
 static void put(KpUiCanvas *c, int32_t x, int32_t y, uint8_t index, uint8_t alpha)
@@ -118,18 +121,21 @@ static int vector_font(const KpUi *ui, const uint8_t *font)
 	return 0;
 }
 
-/* Room for n listed glyphs, and for the twice as many kp_ui_canvas_text_end may make of them. */
+/* Room for n listed glyphs, and for the GLYPH_PIECES times as many kp_ui_canvas_text_end may make of them. */
 static int text_room(KpUiCanvas *c, int32_t n)
 {
 	if (n > c->glyph_capacity) {
-		int32_t cap = c->glyph_capacity ? 2 * c->glyph_capacity : 256;
+		int32_t cap = c->glyph_capacity ? 2 * c->glyph_capacity : GLYPH_FIRST;
 		KpUiCanvasGlyph *grown = (KpUiCanvasGlyph *)realloc(c->glyphs, (size_t)cap * sizeof *grown);
 		if (grown == NULL) return -1;
 		c->glyphs = grown;
 		c->glyph_capacity = cap;
 	}
-	if (2 * n > c->spare_capacity) {
-		int32_t cap = 2 * c->glyph_capacity;
+	if (GLYPH_PIECES * n > c->spare_capacity) {
+		/* doubled from its own size, not from the list's: the two swap at every text_end, and a list grown from the
+		 * other's size took that factor again at every swap */
+		int32_t cap = c->spare_capacity ? c->spare_capacity : GLYPH_PIECES * GLYPH_FIRST;
+		while (cap < GLYPH_PIECES * n) cap *= 2;
 		KpUiCanvasGlyph *grown = (KpUiCanvasGlyph *)realloc(c->spare, (size_t)cap * sizeof *grown);
 		if (grown == NULL) return -1;
 		c->spare = grown;
@@ -240,6 +246,70 @@ static void keep_transcript(KpUi *ui)
 	}
 }
 
+/* A glyph's bitmap box on the canvas, within the canvas and its part's rectangle (x0, y0, x1, y1 exclusive). */
+static void glyph_area(const KpUiCanvas *c, const KpUiCanvasGlyph *v, const KpUiGlyph *g, int32_t dx, int32_t dy,
+	int32_t area[4])
+{
+	area[0] = v->x + v->box[2];
+	area[1] = v->y + v->box[3];
+	area[2] = area[0] + v->box[0];
+	area[3] = area[1] + v->box[1];
+	if (g->part) {
+		if (g->clip[0] + dx > area[0]) area[0] = g->clip[0] + dx;
+		if (g->clip[1] + dy > area[1]) area[1] = g->clip[1] + dy;
+		if (g->clip[2] + dx < area[2]) area[2] = g->clip[2] + dx;
+		if (g->clip[3] + dy < area[3]) area[3] = g->clip[3] + dy;
+	}
+	if (area[0] < 0) area[0] = 0;
+	if (area[1] < 0) area[1] = 0;
+	if (area[2] > c->w) area[2] = c->w;
+	if (area[3] > c->h) area[3] = c->h;
+}
+
+/* Whether the canvas pixel of `owner` shows the draw `seq` (no later draw wrote it) in the part `tinted` (a translucent
+ * dialog blended over it, or not). */
+static int open_as(uint16_t owner, uint16_t seq, int tinted)
+{
+	return (owner & OWNER_SEQ) <= seq && ((owner & OWNER_TINT) != 0) == tinted;
+}
+
+/* The pixels of area that show the draw seq in the part `tinted`, as rectangles: each row's runs, a run under one of
+ * the same columns in the row above lengthening its rectangle. Returns their count, -1 for more than PART_PIECES. */
+static int32_t open_pieces(const KpUiCanvas *c, const int32_t area[4], uint16_t seq, int tinted,
+	int32_t pieces[PART_PIECES][4])
+{
+	int32_t n = 0, x, y, i;
+	for (y = area[1]; y < area[3]; y++) {
+		const uint16_t *row = c->owner + (size_t)y * (size_t)c->w;
+		for (x = area[0]; x < area[2];) {
+			int32_t x0;
+			if (!open_as(row[x], seq, tinted)) {
+				x++;
+				continue;
+			}
+			for (x0 = x; x < area[2] && open_as(row[x], seq, tinted); x++) {}
+			for (i = 0; i < n && !(pieces[i][0] == x0 && pieces[i][2] == x && pieces[i][3] == y); i++) {}
+			if (i < n) {
+				pieces[i][3] = y + 1;
+				continue;
+			}
+			if (n == PART_PIECES) return -1;
+			pieces[n][0] = x0;
+			pieces[n][1] = y;
+			pieces[n][2] = x;
+			pieces[n++][3] = y + 1;
+		}
+	}
+	return n;
+}
+
+/* Whether a rectangle is the glyph's whole bitmap box. */
+static int whole_box(const KpUiCanvasGlyph *v, const int32_t r[4])
+{
+	return r[0] == v->x + v->box[2] && r[1] == v->y + v->box[3] && r[2] == r[0] + v->box[0]
+		&& r[3] == r[1] + v->box[1];
+}
+
 void kp_ui_canvas_text_end(KpUi *ui, KpUiCanvas *c)
 {
 	KpUiGlyphLog *log;
@@ -248,14 +318,15 @@ void kp_ui_canvas_text_end(KpUi *ui, KpUiCanvas *c)
 	if (ui == NULL) return;
 	log = &ui->glyph_log;
 	/* each glyph's pixels no later draw covers, those a translucent dialog blended over apart: a glyph covered whole
-	 * is dropped, one covered in part is clipped to its uncovered pixels, and the blended ones are a glyph of their own
-	 * in the blended colours */
+	 * is dropped, one covered in part is cut to the rectangles of its bitmap's box no later draw covers (a dialog's frame
+	 * line across it stays over it), and the blended ones are a glyph of their own in the blended colours */
 	for (k = 0; k < c->glyph_count; k++) {
 		const KpUiCanvasGlyph *v = &c->glyphs[k];
 		const KpUiGlyph *g = &log->glyphs[v->glyph];
 		int32_t stride = log->surfaces[g->surface].stride, dx = v->x - g->pen_x, dy = v->y - g->pen_y;
-		int32_t box[2][4], part;
+		int32_t box[2][4], part, area[4], pieces[PART_PIECES][4], n, i;
 		uint32_t j, seen[2] = { 0, 0 };
+		int whole;
 		for (part = 0; part < 2; part++) {
 			box[part][0] = c->w;
 			box[part][1] = c->h;
@@ -274,30 +345,29 @@ void kp_ui_canvas_text_end(KpUi *ui, KpUiCanvas *c)
 			if (cx + 1 > box[part][2]) box[part][2] = cx + 1;
 			if (cy + 1 > box[part][3]) box[part][3] = cy + 1;
 		}
+		glyph_area(c, v, g, dx, dy, area);
 		for (part = 0; part < 2; part++) {
-			KpUiCanvasGlyph *o;
 			if (seen[part] == 0) continue;
-			o = &c->spare[kept++];
-			*o = *v;
-			o->glyph = 0; /* the log's entry only while the frame is composed */
-			o->whole = !g->part && seen[part] == g->count;
-			if (g->part && seen[part] == g->count) {
-				o->clip[0] = g->clip[0] + dx;
-				o->clip[1] = g->clip[1] + dy;
-				o->clip[2] = g->clip[2] + dx;
-				o->clip[3] = g->clip[3] + dy;
-			} else {
-				memcpy(o->clip, box[part], sizeof o->clip);
-				if (g->part) {
-					if (g->clip[0] + dx > o->clip[0]) o->clip[0] = g->clip[0] + dx;
-					if (g->clip[1] + dy > o->clip[1]) o->clip[1] = g->clip[1] + dy;
-					if (g->clip[2] + dx < o->clip[2]) o->clip[2] = g->clip[2] + dx;
-					if (g->clip[3] + dy < o->clip[3]) o->clip[3] = g->clip[3] + dy;
-				}
+			n = open_pieces(c, area, v->seq, part, pieces);
+			whole = !g->part && n == 1 && whole_box(v, pieces[0]);
+			if (n <= 0) { /* more pieces than kept: its pixels' box within its area (the render opens a side at its
+			               * bitmap's edge, so the area's sides there cut nothing) */
+				pieces[0][0] = box[part][0] > area[0] ? box[part][0] : area[0];
+				pieces[0][1] = box[part][1] > area[1] ? box[part][1] : area[1];
+				pieces[0][2] = box[part][2] < area[2] ? box[part][2] : area[2];
+				pieces[0][3] = box[part][3] < area[3] ? box[part][3] : area[3];
+				n = 1;
 			}
-			if (part) {
-				o->fill = c->tint_row[o->fill];
-				o->shadow = c->tint_row[o->shadow];
+			for (i = 0; i < n && kept < c->spare_capacity; i++) {
+				KpUiCanvasGlyph *o = &c->spare[kept++];
+				*o = *v;
+				o->glyph = 0; /* the log's entry only while the frame is composed */
+				o->whole = whole;
+				memcpy(o->clip, pieces[i], sizeof o->clip);
+				if (part) {
+					o->fill = c->tint_row[o->fill];
+					o->shadow = c->tint_row[o->shadow];
+				}
 			}
 		}
 	}

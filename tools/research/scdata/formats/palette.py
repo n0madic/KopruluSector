@@ -9,7 +9,8 @@ IndexMap is the rule StarCraft: Remastered's RGBA images are brought back to 1.1
 - an opaque pixel takes the lowest index of its colour, a translucent one (the popups' 170) the highest, which
   is how 1.17's files use their duplicate colours (measured on 173 images: 154 exact);
 - a colour the palette lacks (DXT's rounding) takes the nearest one (the least squared distance, the lowest index of
-  equals).
+  equals);
+- given a set of usable entries (a portrait's KPW1, formats/kpw.py), only those, by the same rule.
 """
 from __future__ import annotations
 
@@ -72,11 +73,13 @@ def rotate_simple(colors: list, low: int, high: int) -> None:
 class IndexMap:
     """RGBA -> palette index by the rule above, memoised per colour."""
 
-    def __init__(self, palette: Colours):
+    def __init__(self, palette: Colours, usable: frozenset[int] | None = None):
         self.palette = palette
+        self.usable = [i for i in range(len(palette)) if usable is None or i in usable]
         self.lowest: dict[tuple[int, int, int], int] = {}
         self.highest: dict[tuple[int, int, int], int] = {}
-        for i, c in enumerate(palette):
+        for i in self.usable:
+            c = palette[i]
             self.lowest.setdefault(c, i)
             self.highest[c] = i
         self.nearest: dict[tuple[int, int, int], int] = {}
@@ -90,6 +93,6 @@ class IndexMap:
             return found
         near = self.nearest.get(c)
         if near is None:
-            near = self.nearest[c] = min(range(len(self.palette)), key=lambda i: (
+            near = self.nearest[c] = min(self.usable, key=lambda i: (
                 (self.palette[i][0] - r) ** 2 + (self.palette[i][1] - g) ** 2 + (self.palette[i][2] - b) ** 2, i))
         return near

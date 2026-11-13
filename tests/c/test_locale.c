@@ -1009,6 +1009,7 @@ static void the_languages_text_is_valid_and_has_glyphs(KpT *T)
 #define GLUE_BUTTON 14 /* a glue screen's FLC or text button (the briefing's portraits have movies) */
 #define TOOLTIP_TEXT_X 2 /* kp_ui_tooltip.c's text from x 2 */
 #define STATUS_DIALOG "rez\\statdata.bin"
+#define MAIN_MENU "rez\\gluMain.bin"
 #define KILLS_NUMBER " 9999" /* the widest count a status line shows after its label (kp_ui_status.c's MAX_SHOWN) */
 #define SUPPLY_NUMBER " 200" /* the most supply a line counts */
 #define STATUS_LINE 192
@@ -1282,6 +1283,53 @@ static void the_languages_texts_fit(KpT *T)
 	lc.base = base_cuts;
 	for_each_language(T, &in, "test_locale.real_language", language_texts_fit, &lc);
 	kp_t_eq(T, lc.fresh, 0, "texts that do not fit, listed in " WIDTHS_REPORT " of:%s", "<locale>", lc.languages);
+}
+
+/* The main menu's buttons whose text is wider than its text box, in its font: a second line, which the game type popup
+ * (gluGameMode, 140..499 x 140..339) covers when it opens over the menu (the user's report of ruRU's "Одиночная игра",
+ * 2026-11-13). Their count, each named in the log. */
+static int main_menu_second_lines(KpT *T, KpUi *ui, const char *label)
+{
+	int32_t d, c;
+	int lines = 0;
+	kp_ui_font_set(ui, 0);
+	d = kp_ui_load_dialog(ui, MAIN_MENU);
+	if (d < 0) kp_t_fail(T, "%s: %s: %s", label, MAIN_MENU, ui->error);
+	kp_ui_init_dialog(ui, d, NULL);
+	for (c = ui->controls[d].child; c >= 0; c = ui->controls[c].next) {
+		const KpUiControl *k = &ui->controls[c];
+		const uint8_t *text = k->text;
+		/* kp_ui_find_line_break: from the box's left side, a word that ends past its right side goes to the next line */
+		int32_t width, box = (int32_t)k->extra[2] - (int32_t)k->extra[0];
+		if (k->type != GLUE_BUTTON || text == NULL) continue;
+		if ((k->flags & KP_UI_HOTKEY_PREFIX) && text[0] != 0) text++;
+		ui->text.flags = k->text_format;
+		kp_ui_select_control_font(ui, k);
+		if (k->flags & KP_UI_NO_SPACING) ui->text.spacing = 0;
+		width = kp_ui_text_width(&ui->text, text);
+		(void)kp_ui_text_select_font(&ui->text, NULL, 0);
+		if (width <= box) continue;
+		kp_t_log(T, "%s: %s control %d: \"%s\" is %d pixels in a text box of %d", label, MAIN_MENU, (int16_t)k->id,
+			(const char *)text, (int)width, (int)box);
+		lines++;
+	}
+	kp_ui_destroy_dialog(ui, d);
+	return lines;
+}
+
+static void language_main_menu_lines(KpT *T, const Install *in, const char *locale, void *ctx)
+{
+	*(int *)ctx += main_menu_second_lines(T, real_language(T, in, locale), locale);
+}
+
+static void the_main_menus_texts_take_one_line(KpT *T)
+{
+	Install in;
+	int lines = 0;
+	install(T, &in);
+	kp_t_eq(T, main_menu_second_lines(T, ui_over(T, &in.d->ui), "enUS"), 0, "the base's main menu");
+	for_each_language(T, &in, "test_locale.the_main_menus_texts_take_one_line", language_main_menu_lines, &lines);
+	kp_t_eq(T, lines, 0, "the languages' main menu texts on a second line");
 }
 
 /* The hook of the width report (KpUiTextCut): a control's text past its clip is told with the control and where the
@@ -1863,6 +1911,7 @@ static const KpTest TESTS[] = {
 	{ "the_languages_text_is_valid_and_has_glyphs", the_languages_text_is_valid_and_has_glyphs, 0 },
 	{ "a_text_that_does_not_fit_is_told", a_text_that_does_not_fit_is_told, 0 },
 	{ "the_languages_texts_fit", the_languages_texts_fit, 0 },
+	{ "the_main_menus_texts_take_one_line", the_main_menus_texts_take_one_line, 0 },
 	{ "the_missions_texts_fit", the_missions_texts_fit, 0 },
 	{ "the_atlas_holds_the_supplement_at_scale_4", the_atlas_holds_the_supplement_at_scale_4, 0 },
 	{ "mission_text_refusals_leave_the_missions_own", mission_text_refusals_leave_the_missions_own, 0 },

@@ -7,16 +7,19 @@
 
 #include "kp_index_map.h"
 #include "kp_kpf.h"
+#include "kp_mission.h"
 #include "kp_scr.h"
 #include "kp_sha256.h"
+#include "kp_smk.h"
 #include "kp_webm.h"
 #include "zlib.h"
 
 #define NONE16 0xffffu
 #define MAKING_MAX 8   /* the files being rebuilt, one inside another (a donor's rebuild inside its user's) */
 #define NAME_MAX_LEN 512
-#define KPW_HEADER (24 + 768)
-#define KPW_RING 1u
+#define PORTRAITS "portrait/" /* the portraits' movies, drawn over more than one screen's palette */
+#define TILESET_WPE "tileset\\%s.wpe"
+#define WPE_SIZE 1024 /* 256 x R, G, B, unused */
 #define DIALOG_THEMES_MAX 32
 
 /* The original GRPs Remastered dropped, rebuilt from another GRP drawn with another palette (source.py REMAPPED): the
@@ -107,6 +110,8 @@ struct KpResScr {
 	size_t xml_count, xml_cap;
 	char themes[DIALOG_THEMES_MAX][NAME_MAX_LEN]; /* the glue themes' Dlg.dds.grp, sorted (source.py _dialog_frames) */
 	int theme_count;
+	int shared_read;      /* shared_entries looked: 1 found, -1 a tileset's palette did not read */
+	uint8_t shared[KP_INDEX_USABLE_SIZE];
 };
 
 /* --- the tables --- */
@@ -938,20 +943,61 @@ static uint8_t *remake_bin(KpResScr *s, KpCasc *casc, const BinEntry *e, const K
 	return out;
 }
 
+/* The palette entries every tileset's palette gives one colour (the user's report of 2026-11-13). A portrait is drawn
+ * over the tileset's palette in a game and over the ready room's (glue\PalR?\Backgnd.pcx) in a briefing; in profile
+ * bw-1.17.0.1 the three rooms' palettes equal the tilesets' on exactly these entries (0, 14..199 and 255), and 1.17's
+ * portraits use only them, but for team colour pixels (8..13) in a few and the Zealot's index 1. The nearest colour of
+ * Remastered's lossy WebM in the whole palette took entries 200..254 for 3 to 4% of a portrait's pixels, which the ready
+ * rooms show green. 0, -1 when a palette does not read (the portraits then take any entry). */
+static int shared_entries(KpRes *r, KpResScr *s, uint8_t usable[KP_INDEX_USABLE_SIZE])
+{
+	uint8_t first[WPE_SIZE];
+	int t, i;
+	if (s->shared_read == 0) {
+		memset(s->shared, 0xff, sizeof s->shared);
+		s->shared_read = 1;
+		for (t = 0; t < KP_TILESETS && s->shared_read > 0; t++) {
+			char name[64], err[8];
+			size_t size = 0;
+			KpResStatus st;
+			uint8_t *wpe;
+			snprintf(name, sizeof name, TILESET_WPE, KP_TILESET_NAMES[t]);
+			if (!(wpe = kp_res_read(r, name, &size, &st, err, sizeof err)) || size != WPE_SIZE) {
+				s->shared_read = -1;
+			} else if (t == 0) {
+				memcpy(first, wpe, WPE_SIZE);
+			} else {
+				for (i = 0; i < 256; i++) {
+					if (memcmp(wpe + 4 * i, first + 4 * i, 3) != 0) s->shared[i >> 3] &= (uint8_t)~(1u << (i & 7));
+				}
+			}
+			free(wpe);
+		}
+	}
+	if (s->shared_read < 0) return -1;
+	memcpy(usable, s->shared, sizeof s->shared);
+	return 0;
+}
+
 /* A movie only Remastered's WebM has, as the KPW1 that stands in for its SMK (kp_smk.h): the SMK's size, frame count,
- * rate and ring flag, the palette of its screen (its indices are that palette's), then the WebM */
+ * rate and flags (ring; a portrait's, the entries all its screens' palettes share), the palette of its screen (its
+ * indices are that palette's), the usable entries with flag KP_SMK_KPW_SHARED, then the WebM */
 static uint8_t *remake_smk(KpRes *r, KpResScr *s, KpCasc *casc, const char *key, const SmkEntry *e, size_t *size,
 	KpResStatus *status, char *source, uint8_t palette[768])
 {
-	size_t webm_size = 0;
-	uint8_t *webm = sd_or_root(casc, key, ".webm", &webm_size, source), *out;
-	uint32_t w, h;
+	size_t webm_size = 0, at = KP_SMK_KPW_HEADER;
+	uint8_t *webm = sd_or_root(casc, key, ".webm", &webm_size, source), *out, usable[KP_INDEX_USABLE_SIZE];
+	uint32_t w, h, flags = e->ring ? KP_SMK_RING : 0;
 	if (!webm) return NULL;
+	if (strncmp(key, PORTRAITS, strlen(PORTRAITS)) == 0 && shared_entries(r, s, usable) == 0) {
+		flags |= KP_SMK_KPW_SHARED;
+		at += sizeof usable;
+	}
 	/* TODO: a movie with a palette of its own (none in profile bw-1.17.0.1: every SMK's palette is a screen's) would
 	 * need its colours, which the converter took with FFmpeg's palettegen */
 	/* the size the WebM's, which may differ from the SMK's (scdata/formats/kpw.py) */
 	if (e->group == NONE16 || palette_for(r, s, key, e->group, palette) != 0
-		|| kp_webm_size(webm, webm_size, &w, &h) != 0 || !(out = (uint8_t *)malloc(KPW_HEADER + webm_size + 1))) {
+		|| kp_webm_size(webm, webm_size, &w, &h) != 0 || !(out = (uint8_t *)malloc(at + webm_size + 1))) {
 		free(webm);
 		return NULL;
 	}
@@ -960,11 +1006,12 @@ static uint8_t *remake_smk(KpRes *r, KpResScr *s, KpCasc *casc, const char *key,
 	kp_le_put32(out + 8, h);
 	kp_le_put32(out + 12, e->frames);
 	kp_le_put32(out + 16, (uint32_t)e->rate);
-	kp_le_put32(out + 20, e->ring ? KPW_RING : 0);
+	kp_le_put32(out + 20, flags);
 	memcpy(out + 24, palette, 768);
-	memcpy(out + KPW_HEADER, webm, webm_size);
+	if (flags & KP_SMK_KPW_SHARED) memcpy(out + KP_SMK_KPW_HEADER, usable, sizeof usable);
+	memcpy(out + at, webm, webm_size);
 	free(webm);
-	*size = KPW_HEADER + webm_size;
+	*size = at + webm_size;
 	*status = KP_RES_APPROXIMATION;
 	return out;
 }

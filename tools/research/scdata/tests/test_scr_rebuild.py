@@ -40,6 +40,13 @@ class KpwTest(unittest.TestCase):
         assert (h.signature, h.width, h.height, h.frames, h.ring_frame, h.decoded_frames) == (b"KPW1", 3, 2, 3, True, 4)
         assert abs(h.ms_per_frame - 66.67) < 1e-9
 
+    def test_usable_entries_follow_the_palette(self):
+        data = kpw.encode(3, 2, 3, 100, False, bytes(768), b"webm", frozenset({0, 14, 199, 255}))
+        assert kpw.header(data) == (3, 2, 3, 100, False)
+        bits = data[kpw.HEADER.size + 768:kpw.HEADER.size + 768 + kpw.USABLE_SIZE]
+        assert bits == kpw.usable_bits((0, 14, 199, 255)) and data[-4:] == b"webm"
+        assert bits[0] == 1 and bits[1] == 0x40 and bits[24] == 0x80 and bits[31] == 0x80
+
     def test_rejects_malformed(self):
         with self.assertRaises(kpw.KpwError):
             kpw.encode(2, 2, 1, 100, False, bytes(767), b"")
@@ -91,6 +98,9 @@ class RebuildTest(unittest.TestCase):
         assert index(9, 9, 9, 255) == 1  # opaque: the lowest duplicate
         assert index(9, 9, 9, 170) == 2  # translucent: the highest
         assert index(190, 10, 10, 255) == 3  # not in the palette: the nearest
+        only = palette.IndexMap(colours, frozenset({0, 2, 4}))  # a portrait's usable entries (formats/kpw.py)
+        assert only(9, 9, 9, 255) == 2  # its colour's lowest usable entry
+        assert only(190, 10, 10, 255) == 2  # the nearest usable one, not 3
 
     def test_pcx_from_a_shorter_image_and_its_header(self):
         rgba = bytes([5, 5, 5, 255]) * 3

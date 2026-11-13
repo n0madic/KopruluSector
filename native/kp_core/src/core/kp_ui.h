@@ -1956,8 +1956,9 @@ typedef struct {
 	uint8_t advance, fill, shadow, has_shadow;
 	uint8_t box[4];               /* its bitmap as its FNT header: width, height, x and y from the pen */
 	int whole;                    /* all its glyph's pixels, none covered by a later draw */
-	int32_t clip[4];              /* else where it is drawn: its uncovered pixels' box, or its part's rectangle (x0, y0,
-	                               * x1, y1 exclusive) */
+	int32_t clip[4];              /* else where it is drawn: a rectangle of its bitmap's box no later draw covers, within
+	                               * its part's rectangle (x0, y0, x1, y1 exclusive); a glyph cut by a cover across it
+	                               * is listed once per rectangle */
 	uint16_t seq;                 /* the draw that placed it */
 	size_t glyph;                 /* its entry in the glyph log while the frame is composed (0 after) */
 } KpUiCanvasGlyph;

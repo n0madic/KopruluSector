@@ -24,7 +24,6 @@
 #define FRAMES 3
 #define FILL 7 /* every pixel's index */
 #define KPW_FIXTURE "tests/fixtures/kpf/movie.kpw"
-#define KPW_HEADER (24 + 768) /* a KPW1's header and palette before its WebM */
 #define FFMPEG_GOLDEN "tests/golden/oracle/cinematics/smk_ffmpeg.json" /* tools/oracle/export_smk_ffmpeg.py */
 
 /* --- the movie --- */
@@ -251,7 +250,8 @@ static void webm_movie_plays(KpT *T)
 	data = kp_t_read(T, KPW_FIXTURE, &size);
 	memset(&named, 0, sizeof named);
 	strcpy(named.name, "smk\\fixture");
-	m = kp_cine_movie_webm(data + KPW_HEADER, size - KPW_HEADER, &named, &err); /* the KPW1's WebM: VP9, no sound */
+	/* the KPW1's WebM: VP9, no sound */
+	m = kp_cine_movie_webm(data + KP_SMK_KPW_HEADER, size - KP_SMK_KPW_HEADER, &named, &err);
 	kp_t_ok(T, m != NULL, "%s", err.msg);
 	c = kp_cine_movie_clip(m);
 	kp_t_ok(T, c->width == kp_le_u32(data + 4) && c->height == kp_le_u32(data + 8), "the WebM's size");
@@ -269,7 +269,7 @@ static void webm_movie_plays(KpT *T)
 	kp_t_eq(T, kp_cine_advance(p, kp_cine_frame_ms(c, c->frames), &err), KP_CINE_END, NULL);
 	kp_cine_free(p);
 	kp_cine_movie_free(m);
-	kp_t_ok(T, kp_cine_movie_webm(data + KPW_HEADER, 100, &named, &err) == NULL, "a cut WebM refused");
+	kp_t_ok(T, kp_cine_movie_webm(data + KP_SMK_KPW_HEADER, 100, &named, &err) == NULL, "a cut WebM refused");
 }
 
 /* --- subtitles --- */

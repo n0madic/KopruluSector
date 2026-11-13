@@ -7,9 +7,11 @@ drawn on; `kp_smk.c` plays it like an SMK (libvpx through the host's codec) and 
 Layout (little endian): "KPW1", u32 width, u32 height (the WebM's: Remastered drew 4 of profile bw-1.17.0.1's 549
 movies narrower than their SMKs, glue\\mainmenu\\multion.smk 240 x 224 for 356 x 224), u32 frames, i32 frame rate
 (the SMK header's: > 0 milliseconds, < 0 in 10 microsecond units), u32 flags (the SMK header's: 1 a ring movie, whose
-extra last frame leads back to frame 1), 768 bytes of palette (R, G, B), then the WebM. Frame n is the WebM's frame n (its last past
-its end), each pixel its colour's index in the palette by formats/palette.py's IndexMap, transparent (index 0) below
-alpha 128.
+extra last frame leads back to frame 1; KPW1's own: 2, a set of usable entries follows the palette), 768 bytes of
+palette (R, G, B), with flag 2 the 32 bytes of a set of the palette's entries (bit i & 7 of byte i >> 3: entry i
+usable; a portrait's: the entries the tilesets' palettes share, which it is drawn over in a game, as are the ready
+rooms' in a briefing), then the WebM. Frame n is the WebM's frame n (its last past its end), each pixel its colour's
+index in the palette among the usable entries by formats/palette.py's IndexMap, transparent (index 0) below alpha 128.
 """
 from __future__ import annotations
 
@@ -26,6 +28,8 @@ MAGIC = b"KPW1"
 HEADER = struct.Struct("<4sIIIiI")
 PALETTE_SIZE = 768
 FLAG_RING = 1
+FLAG_SHARED = 2
+USABLE_SIZE = 32  # the set of usable entries after the palette with FLAG_SHARED
 ALPHA_CUT = 128  # a pixel below this alpha is transparent (index 0)
 LIBVPX = {"vp8": "libvpx", "vp9": "libvpx-vp9"}  # FFmpeg's own VP8/VP9 decoders drop alpha
 
@@ -34,11 +38,23 @@ class KpwError(ConverterError, ValueError):
     """Malformed KPW1 data or a decoder failure."""
 
 
-def encode(width: int, height: int, frames: int, frame_rate: int, ring: bool, palette: bytes, webm: bytes) -> bytes:
-    """`frames` is the SMK header's count (without the ring frame)."""
+def usable_bits(entries) -> bytes:
+    """The set of palette entries as KPW1 stores it."""
+    bits = bytearray(USABLE_SIZE)
+    for i in entries:
+        bits[i >> 3] |= 1 << (i & 7)
+    return bytes(bits)
+
+
+def encode(width: int, height: int, frames: int, frame_rate: int, ring: bool, palette: bytes, webm: bytes,
+           usable: frozenset[int] | None = None) -> bytes:
+    """`frames` is the SMK header's count (without the ring frame); `usable` the entries its pixels may take (None:
+    any)."""
     if len(palette) != PALETTE_SIZE:
         raise KpwError("palette must be 768 bytes")
-    return HEADER.pack(MAGIC, width, height, frames, frame_rate, FLAG_RING if ring else 0) + palette + webm
+    flags = (FLAG_RING if ring else 0) | (FLAG_SHARED if usable is not None else 0)
+    shared = usable_bits(usable) if usable is not None else b""
+    return HEADER.pack(MAGIC, width, height, frames, frame_rate, flags) + palette + shared + webm
 
 
 # Matroska's elements on the way to a video track's size (the IDs keep their length marker)
@@ -122,9 +138,16 @@ def decode(data: bytes) -> tuple[tuple[int, int, int, int, bool], bytes, list[by
     head = header(data)
     width, height, frames, _, ring = head
     palette = data[HEADER.size:HEADER.size + PALETTE_SIZE]
+    at, usable = HEADER.size + PALETTE_SIZE, None
+    if HEADER.unpack_from(data)[5] & FLAG_SHARED:
+        if len(data) < at + USABLE_SIZE:
+            raise KpwError("its usable entries cut short")
+        bits = data[at:at + USABLE_SIZE]
+        usable = frozenset(i for i in range(256) if bits[i >> 3] >> (i & 7) & 1)
+        at += USABLE_SIZE
     ffmpeg.require(KpwError, "decode StarCraft: Remastered's WebM")
     with tempfile.NamedTemporaryFile(suffix=".webm") as f:
-        f.write(data[HEADER.size + PALETTE_SIZE:])
+        f.write(data[at:])
         f.flush()
         fields = ffmpeg.probe(f.name, "v:0", ("codec_name", "width", "height"), KpwError)
         if fields is None:
@@ -139,7 +162,7 @@ def decode(data: bytes) -> tuple[tuple[int, int, int, int, bool], bytes, list[by
     rgba, size = run.stdout, width * height * 4
     if not rgba or len(rgba) % size:
         raise KpwError("decoded video size is not whole frames")
-    index = IndexMap(tuple(tuple(palette[i:i + 3]) for i in range(0, PALETTE_SIZE, 3)))
+    index = IndexMap(tuple(tuple(palette[i:i + 3]) for i in range(0, PALETTE_SIZE, 3)), usable)
     words = array.array("I", rgba)  # one lookup per pixel: its RGBA as one word (little endian: R lowest)
     known: dict[int, int] = {}
 
