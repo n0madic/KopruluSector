@@ -26,15 +26,16 @@ Not included: multiplayer, Battle.net, replays and custom (UMS) maps.
 
 | What | For |
 |---|---|
-| Python 3.10+ with [Pillow](https://pypi.org/project/Pillow/) (optional) | no part of the game or of its data ([ADR 0019](docs/adr/0019-install-or-repack-converter-in-c.md)): the web build's server (`tools/web_serve.py`) and its runs in a headless Chrome (`tools/web_run.py`), the compiled tables' generator (`tools/defs_c.py`), the research tools and their readers (`tools/research/scdata`), the oracles and the checks of `tools/ci.sh` that use them (`python3 -m pip install Pillow`) |
+| Python 3.10+ | no part of the game or of its data ([ADR 0019](docs/adr/0019-install-or-repack-converter-in-c.md)): the web build's server (`tools/web_serve.py`) and its runs (`tools/web_run.py`), the compiled tables' generator (`tools/defs_c.py`), the research tools and their readers (`tools/research/scdata`), the checks of `tools/ci.sh`, and the Android build (`tools/native/android_app.sh` patches SDL's Java with it). The standard library is enough for these. Optional packages: [Pillow](https://pypi.org/project/Pillow/) for the research raster test (`python3 -m pip install Pillow`; the test is skipped without it), and `unicorn`, `capstone`, `pefile` for the reverse-engineering scripts in `tools/research` and `tools/oracle`, which also need the original executable |
+| Google Chrome or Chromium (optional) | `tools/web_run.py`, the web build's headless runs that `tools/ci.sh` makes (`KOPRULU_CHROME` names the binary when it is not Google Chrome on macOS or `google-chrome`, `chromium`, `chromium-browser` on the `PATH`) |
 | [StormLib](https://github.com/ladislav-zezula/StormLib) (`brew install stormlib`, Debian/Ubuntu `libstorm-dev`) | the research tools and their tests, which read the 1.17 install's MPQ archives. `kp_convert` and the game build their own from the sources `tools/toolchain/fetch.sh` downloads. `KOPRULU_STORMLIB` names the library when the loader does not find it (on Windows `StormLib.dll` or `storm.dll`) |
 | GNU make (optional) | the shortcuts of the [Makefile](#quick-start-with-make) |
 | FFmpeg (`ffmpeg`, `ffprobe` on the `PATH`) (optional) | research only: the golden of the 1.17 movies' decodes (`tools/oracle/export_smk_ffmpeg.py`, which `tools/ci.sh` checks when FFmpeg is there) and the research readers' Remastered movies. The game decodes, and `kp_convert` encodes, the movies, sounds, music and speech with their own libraries |
-| CMake 3.20+, Ninja, a C compiler (Clang or GCC) | every build |
+| CMake 3.20+ (3.24+ for Android), Ninja, a C compiler (Clang or GCC) and a C++ compiler | every build (the sources are C99, checked as C++11; CascLib and the Arm ASTC encoder are C++) |
 | curl, `patch` | `tools/toolchain/fetch.sh` downloads the pinned SDL 3.4 sources, the readers of the original data (StormLib, CascLib, zlib, bzip2), the video decoders (libvpx, nestegg) and the encoders of the tools (libvpx's VP9, libogg, libvorbis) and checks them by SHA-256 |
 | Xcode | macOS and iOS |
 | Emscripten (`emcmake` on the `PATH`) | the web |
-| Android SDK, NDK 29, a JDK | Android (`ANDROID_HOME`, default `~/Library/Android/sdk`) |
+| Android SDK, NDK 29, a JDK, a macOS host | Android (`ANDROID_HOME`, default `~/Library/Android/sdk`; the script uses macOS's `sed -i ''`). Gradle 9.7.1 and the Android Gradle plugin 9.1.1 are the script's pinned versions (`GRADLE_VERSION`, `AGP_VERSION`) |
 | mingw-w64 (`x86_64-w64-mingw32-gcc`) | Windows, cross-compiled from macOS or Linux |
 | Docker | Linux (the build runs in the container of `tools/native/linux.Dockerfile`) |
 | NASM 2.14+ (optional) | faster cinematics decoding on x86-64 |
@@ -66,6 +67,13 @@ The bundles do not carry it: a bundle is its output, the repack. Build it once:
 ```bash
 tools/toolchain/fetch.sh
 cmake -S . -B build/cmake -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build/cmake --target kp_convert
+```
+
+The phones' HD sets in ASTC (`hd2-astc`, below) need the Arm encoder in `kp_convert`. Without it `kp_convert repack` refuses that set. `make convert` and `make repack` build it this way:
+
+```bash
+tools/toolchain/fetch.sh astc
+cmake -S . -B build/cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DKP_ASTC=ON && cmake --build build/cmake --target kp_convert
 ```
 
 `kp_convert.exe` for Windows is built with mingw-w64 on macOS or Linux:
