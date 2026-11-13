@@ -12,6 +12,7 @@
 #include <string.h>
 
 #include "kp_flow.h"
+#include "kp_ids.h"
 #include "kp_script_flow.h"
 
 #define FRAME_S 0.016            /* a frame of the host's clock */
@@ -36,6 +37,9 @@
 #define EXIT_QUIT_MISSION 4
 #define EXIT_RESTART 5
 #define EXIT_VICTORY 6
+#define EXIT_DEFEAT 7
+#define RESULT_FRAMES 600        /* the result dialog's timer (TickResultDialogTimer 0x4be340) on the host's clock */
+#define GAME_SECONDS 75          /* a game's length the score screen tells */
 #define RESULT_VICTORY KP_CAMPAIGN_RESULT_VICTORY
 #define EXPANSION_PROTOSS01 "expprotoss/protoss01"
 #define EXPANSION_PROTOSS02 "expprotoss/protoss02"
@@ -803,6 +807,49 @@ static void victory_without_a_step_opens_the_main_menu(KpT *T)
 		click(H, SCORE_CONTINUE);
 		for (k = 0; k < END_FRAMES && H->f.glue.screen != KP_GLUE_MENUS; k++) frame(H);
 		in_menus(H, KP_GLUE_MAIN, part == 0 ? "without a run" : "a run without its row");
+	}
+}
+
+/* A game the trigger system ends (the cheats' victory, then their defeat) reaches its score screen with every player:
+ * the computers ApplyPendingResults 0x4be020 retired when the human won (11) and the human it retired when they lost
+ * (10), as CaptureScoreRoster 0x461e00 lists them; the elapsed time the game's, not less the interface's whole clock
+ * (the result's pause kp_core took had no tick of the interface's, issue #4). */
+static void score_screen_lists_every_player_and_the_games_time(KpT *T)
+{
+	int part;
+	for (part = 0; part < 2; part++) {
+		Host *H = glue_host(T, 0);
+		const KpUiScoreData *d;
+		KpGame *g;
+		double started;
+		int k, p, computers = 0, listed = 0;
+		play(H, PROTOSS01);
+		g = H->f.session->g;
+		frames(H, 60);
+		H->f.game_started_at -= GAME_SECONDS;
+		started = H->f.game_started_at;
+		kp_exec_cheat(g, kp_cheats(g) | (part == 0 ? KP_CHEAT_NO_COW_LEVEL : KP_CHEAT_GAME_OVER_MAN));
+		for (k = 0; k < RESULT_FRAMES && !H->f.ui->result_open; k++) frame(H);
+		kp_t_ok(T, H->f.ui->result_open, "part %d: the result dialog", part);
+		game_event(H, KP_EVENT_GAME_EXIT, part == 0 ? EXIT_VICTORY : EXIT_DEFEAT, NULL);
+		kp_t_eq(T, H->f.glue.screen, KP_GLUE_SCORE, "part %d: the score screen", part);
+		d = &H->f.ui->score.data;
+		kp_t_ok(T, d->elapsed >= GAME_SECONDS && d->elapsed <= (uint32_t)(H->now - started),
+			"part %d: the game's %u s (%u)", part, (unsigned)GAME_SECONDS, (unsigned)d->elapsed);
+		for (p = 0; p < 8; p++) {
+			int64_t c = g->players.controller[p];
+			if (d->roster[p].type != 0) listed++;
+			if (c == KP_CTRL_DEFEATED_COMPUTER) {
+				computers++;
+				kp_t_eq(T, d->roster[p].type, KP_CTRL_DEFEATED_COMPUTER, "part %d: player %d, a retired computer", part, p);
+				kp_t_ok(T, d->roster[p].name[0] != 0, "part %d: player %d named", part, p);
+			}
+		}
+		kp_t_eq(T, d->roster[g->local_player].type, part == 0 ? KP_CTRL_HUMAN : KP_CTRL_DEFEATED_HUMAN,
+			"part %d: the human", part);
+		if (part == 0) kp_t_ok(T, computers > 0, "the computers retired by the victory");
+		kp_t_eq(T, d->count, listed, "part %d: each listed", part);
+		kp_t_ok(T, listed > 1, "part %d: more than the human (%d)", part, listed);
 	}
 }
 
@@ -2889,6 +2936,7 @@ static const KpTest TESTS[] = {
 	{ "scrolled_briefing_text_keeps_its_glyphs", scrolled_briefing_text_keeps_its_glyphs, 0 },
 	{ "victory_goes_through_the_score_screen_to_the_next_game", victory_goes_through_the_score_screen_to_the_next_game, 0 },
 	{ "victory_without_a_step_opens_the_main_menu", victory_without_a_step_opens_the_main_menu, 0 },
+	{ "score_screen_lists_every_player_and_the_games_time", score_screen_lists_every_player_and_the_games_time, 0 },
 	{ "score_cinematics_play_before_the_next_game", score_cinematics_play_before_the_next_game, 0 },
 	{ "restart_plays_the_mission_again_from_its_room", restart_plays_the_mission_again_from_its_room, 0 },
 	{ "quit_mission_opens_the_campaign_menu", quit_mission_opens_the_campaign_menu, 0 },

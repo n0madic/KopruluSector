@@ -44,6 +44,13 @@ void kp_ui_pause_game(KpUi *ui)
 	ui->pause_tick = ui->now; /* 0x675180 */
 }
 
+void kp_ui_game_paused(KpUi *ui)
+{
+	/* kp_core sets KP_PAUSED itself where the original calls PauseGame 0x47cbb0 (TrigActPauseGame 0x4b6020, the result
+	 * dialog's OpenModelessDialog 0x46ecc0): the tick it takes then, which a later UnpauseGame discounts from */
+	ui->pause_tick = ui->now;
+}
+
 void kp_ui_unpause_game(KpUi *ui, int discount)
 {
 	/* UnpauseGame 0x47cc10: the paused seconds leave the game's elapsed clock (0x47a620) */

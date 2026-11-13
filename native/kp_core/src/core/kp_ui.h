@@ -1450,6 +1450,8 @@ void kp_ui_portrait_set_mode(KpUi *ui, uint32_t mode);
 /* PauseGame 0x47cbb0 / UnpauseGame 0x47cc10 of a single player's game (kp_core's KP_PAUSED, the trigger pause's). */
 void kp_ui_pause_game(KpUi *ui);
 void kp_ui_unpause_game(KpUi *ui, int discount);
+/* The game paused by kp_core (a trigger's Pause Game, the result): PauseGame's tick (0x675180) taken at its event. */
+void kp_ui_game_paused(KpUi *ui);
 
 /* --- the in-game console over a game (kp_ui_hud.c; plan phase 9B) --- */
 

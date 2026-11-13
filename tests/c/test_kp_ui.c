@@ -2775,6 +2775,33 @@ static void score_roster_holds_a_name_of_wide_characters(KpT *T)
 	kp_t_eq(T, (int64_t)strlen(kept), 48, "each whole");
 }
 
+/* A pause kp_core takes itself (a trigger's Pause Game, the result dialog's) takes PauseGame 0x47cbb0's tick: the
+ * interface's UnpauseGame 0x47cc10 later discounts the seconds since it, not since an older pause or the clock's start
+ * (issue #4: the score screen's elapsed time 00:00). */
+static void core_pause_takes_the_pause_tick(KpT *T)
+{
+	KpOracleUi *u;
+	KpOracleGame *game;
+	KpUi *ui;
+	if (!kp_t_ready(T, "test_kp_ui.core_pause_takes_the_pause_tick", UI_FILES)) return;
+	u = kp_t_ui(T, 0);
+	ui = u->ui;
+	game = terran01(T);
+	hud(T, ui, game->g);
+	ui->paused_seconds = 0;
+	ui->now = 100000;
+	kp_scalar_set(game->g, KP_PAUSED, 1); /* TrigActPauseGame 0x4b6020 */
+	kp_ui_game_event(ui, KP_EVENT_TRIGGER_PAUSE, 1, 0, 0, NULL);
+	ui->now = 103500;
+	kp_ui_unpause_game(ui, 1);
+	kp_t_eq(T, (int64_t)ui->paused_seconds, 3, "the trigger's pause");
+	ui->now = 200000;
+	kp_scalar_set(game->g, KP_PAUSED, 1); /* TickResultDialogTimer 0x4be340 */
+	kp_ui_game_event(ui, KP_EVENT_GAME_RESULT, VICTORY, 0, 0, NULL);
+	kp_t_eq(T, (int64_t)ui->paused_seconds, 3, "the result dialog opens over no paused time");
+	kp_t_eq(T, kp_scalar(game->g, KP_PAUSED), 1, "its game paused");
+}
+
 /* The canvas lists a glyph by its code point and a code point past 255 stays a code point: its byte slot says whether the
  * vector font draws it. */
 static void vector_text_takes_code_points_past_a_byte(KpT *T)
@@ -3429,6 +3456,7 @@ static const KpTest TESTS[] = {
 	{ "text_finds_glyphs_by_code_point", text_finds_glyphs_by_code_point, 0 },
 	{ "text_skips_a_character_with_no_glyph", text_skips_a_character_with_no_glyph, 0 },
 	{ "score_roster_holds_a_name_of_wide_characters", score_roster_holds_a_name_of_wide_characters, 0 },
+	{ "core_pause_takes_the_pause_tick", core_pause_takes_the_pause_tick, 0 },
 	{ "vector_text_takes_code_points_past_a_byte", vector_text_takes_code_points_past_a_byte, 0 },
 	{ "view_widens_the_game_area", view_widens_the_game_area, 0 },
 	{ "loaded_save_refreshes_the_console", loaded_save_refreshes_the_console, 0 },

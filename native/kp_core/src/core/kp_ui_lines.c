@@ -250,13 +250,18 @@ void kp_ui_game_event(KpUi *ui, int64_t kind, int64_t a, int64_t b, int64_t c, c
 	}
 	case KP_EVENT_SELECTION_GONE: kp_ui_selection_gone(ui, a); break;
 	case KP_EVENT_TRIGGER_PAUSE: /* TrigActUnpauseGame 0x4b6080: the cursor to the view's centre */
-		if (a == 0) kp_ui_warp_cursor(ui);
+		if (a != 0) kp_ui_game_paused(ui);
+		else kp_ui_warp_cursor(ui);
 		break;
 	case KP_EVENT_CAMERA: /* TrigActCenterView 0x4b6350 */
 		if (c == 0) kp_ui_start_pan(ui, (int32_t)a, (int32_t)b);
 		else kp_ui_end_pan(ui);
 		break;
-	case KP_EVENT_GAME_RESULT: (void)kp_ui_show_result(ui, (int)a); break;
+	case KP_EVENT_GAME_RESULT:
+		/* the game stood from this step: OpenModelessDialog's UnpauseGame finds no paused time to discount */
+		kp_ui_game_paused(ui);
+		(void)kp_ui_show_result(ui, (int)a);
+		break;
 	default: break;
 	}
 	(void)text;

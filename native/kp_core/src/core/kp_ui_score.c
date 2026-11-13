@@ -38,10 +38,6 @@
 #define FLAG_SELECTED KP_UI_CONSUMED /* a tab's bit 31 */
 #define FLAG_TITLE KP_UI_PRESSED     /* colour table 6 */
 #define FLAG_TILED 0x20000000u
-#define TYPE_COMPUTER 1
-#define TYPE_HUMAN 2
-#define TYPE_HUMAN_NETWORK 10
-#define TYPE_COMPUTER_NETWORK 11
 #define NAME_CLIP_RIGHT 184
 #define ICON_X 8
 #define ICON_Y 20
@@ -75,10 +71,12 @@ static KpUiScore *sc(KpUi *ui) { return &ui->score; }
 
 static int32_t control(KpUi *ui, int id) { return kp_ui_find_control(ui, sc(ui)->dialog, (int16_t)id); }
 
-static int listed(uint32_t type)
-{
-	return type == TYPE_COMPUTER || type == TYPE_HUMAN || type == TYPE_HUMAN_NETWORK || type == TYPE_COMPUTER_NETWORK;
-}
+/* The slot types the roster lists (CaptureScoreRoster 0x461e00): a computer or a human, still playing or retired. */
+static int is_computer(uint32_t type) { return type == KP_CTRL_COMPUTER || type == KP_CTRL_DEFEATED_COMPUTER; }
+
+static int is_human(uint32_t type) { return type == KP_CTRL_HUMAN || type == KP_CTRL_DEFEATED_HUMAN; }
+
+static int listed(uint32_t type) { return is_computer(type) || is_human(type); }
 
 /* The roster entry's colour index k (MapPlayerColor 0x41d560, then the score screen's table 0x536722). */
 static int colour_of(const KpUiScore *s, const KpUiScoreRow *r)
@@ -191,7 +189,7 @@ static int32_t sort_key(const KpUiScore *s, int i, int j)
 	if (!r->valid) return INVALID_KEY;
 	key = (uint32_t)r->value[TOTAL] * 8u + 8u - (uint32_t)j;
 	e = &s->data.roster[r->roster];
-	if (e->type != TYPE_COMPUTER && e->type != TYPE_COMPUTER_NETWORK && e->storm == s->data.local_storm) {
+	if (!is_computer(e->type) && e->storm == s->data.local_storm) {
 		/* TODO: the other Storm players' results (multiplayer) */
 		if (s->data.result == RESULT_VICTORY) key += WIN_BONUS;
 		else if (s->data.result == 2) key -= WIN_BONUS;
@@ -396,7 +394,7 @@ static void bind_rows(KpUi *ui)
 			c->draw = draw_name;
 			c->text = (const uint8_t *)e->name;
 			kp_ui_show_control(ui, ids[1]);
-			if (e->storm == s->data.local_storm && e->type != TYPE_COMPUTER && e->type != TYPE_COMPUTER_NETWORK) {
+			if (e->storm == s->data.local_storm && !is_computer(e->type)) {
 				c->flags |= KP_UI_PRESSED;
 			} else {
 				c->flags &= ~KP_UI_PRESSED;
@@ -721,24 +719,24 @@ void kp_ui_score_data(KpUi *ui, struct KpGame *g, int result, const char *player
 	out->elapsed = elapsed > ui->paused_seconds ? elapsed - ui->paused_seconds : 0;
 	for (p = 0; p < 8; p++) {
 		KpUiRosterEntry *e = &out->roster[p];
-		int64_t c = g->players.controller[p];
+		uint32_t c = (uint32_t)g->players.controller[p];
 		out->player_colours[p] = (uint8_t)p;
-		if (c == KP_CTRL_HUMAN) {
+		/* the slot's type as it stands, a player RetirePlayer 0x4bd7a0 defeated (10, 11) listed beside the others */
+		if (is_human(c)) {
 			(void)kp_text_copy_chars(e->name, sizeof e->name, player_name != NULL ? player_name : "", ROSTER_NAME_CHARS);
-			e->type = TYPE_HUMAN;
-		} else if (c == KP_CTRL_COMPUTER) {
+		} else if (is_computer(c)) {
 			int base = g->expansion ? EXPANSION_NAMES : ORIGINAL_NAMES;
 			int race = (int)g->players.race[p], offset = race == 0 ? 8 : race == 2 ? 16 : 0;
 			const uint8_t *name = kp_ui_tbl(ui, KP_UI_NETWORK, (uint8_t)(base + offset + p));
 			(void)kp_text_copy_chars(e->name, sizeof e->name, name != NULL ? (const char *)name : "", ROSTER_NAME_CHARS);
 			if (e->name[0] == 0) continue; /* offline: a computer without a name is not listed */
-			e->type = TYPE_COMPUTER;
 		} else {
 			continue;
 		}
+		e->type = c;
 		e->race = (uint8_t)g->players.race[p];
 		e->index = (uint32_t)p;
-		e->storm = c == KP_CTRL_HUMAN ? 0 : NO_STORM_PLAYER;
+		e->storm = is_human(c) ? 0 : NO_STORM_PLAYER;
 		if (g->players.force[p] >= 1 && g->players.force[p] <= 4) {
 			const char *force = kp_map_string(g, g->players.force_name[g->players.force[p] - 1]);
 			if (force != NULL) (void)kp_text_copy_chars(e->force, sizeof e->force, force, ROSTER_FORCE_CHARS);
