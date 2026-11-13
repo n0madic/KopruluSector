@@ -1378,6 +1378,8 @@ void kp_ui_show_control(KpUi *ui, int32_t control);
 void kp_ui_hide_control(KpUi *ui, int32_t control);
 void kp_ui_set_visible(KpUi *ui, int32_t control, int show);
 void kp_ui_mark_dirty(KpUi *ui, int32_t control);
+/* SetControlText 0x4c2820: the control's text, then MarkControlDirty (its rectangle repainted under the new text). */
+void kp_ui_set_control_text(KpUi *ui, int32_t control, const uint8_t *text);
 /* BindInteractProcedures 0x4c25b0: child ID k gets table[k - 1] (the original does not check the bound). */
 void kp_ui_bind_interacts(KpUi *ui, int32_t dialog, const KpUiInteract *table, int count);
 /* The timer callbacks: kp_ui_callback gives fn's number for kp_ui_set_timer (0 when the table is full); kp_ui_tick

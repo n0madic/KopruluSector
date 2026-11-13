@@ -2375,6 +2375,10 @@ static void game_deselections_send_selection_commands(KpT *T)
 #define CHAR 15
 #define COMMAND 16
 #define VICTORY 3
+#define SCORE_ROW_FIRST 13       /* gluscore.bin: row r's controls from 13 + 6r (the inset, the name, ...) */
+#define SCORE_ROW_CONTROLS 6
+#define SCORE_TAB_STRUCTURES 5   /* the tabs 3..6: Overview, Units, Structures, Resources */
+#define SCORE_SETTLE_FRAMES 400  /* 6.4 s of 16 ms frames */
 #define DEFEAT 2
 
 static KpOracleGame *terran01(KpT *T) { return kp_t_game(T, TERRAN01, 0, 0, NULL); }
@@ -2796,6 +2800,49 @@ static void score_roster_holds_a_name_of_wide_characters(KpT *T)
 	kept = d.roster[game->g->local_player].name;
 	kp_t_eq(T, (int64_t)kp_text_chars((const uint8_t *)kept), 24, "the original's 24 characters");
 	kp_t_eq(T, (int64_t)strlen(kept), 48, "each whole");
+}
+
+/* A tab that reorders the score screen's rows rebinds each row's name to another player through SetControlText 0x4c2820:
+ * the names' controls repainted, their background with them, not the new text over the old (GitHub issue #5). */
+static void score_tab_repaints_the_rows_names(KpT *T)
+{
+	KpOracleUi *u;
+	KpOracleGame *game;
+	KpUi *ui;
+	KpUiScoreData d;
+	Clock clock;
+	int32_t dialog, tab, name;
+	int r;
+	if (!kp_t_ready(T, "test_kp_ui.score_tab_repaints_the_rows_names", UI_FILES)) return;
+	u = kp_t_ui(T, KP_ORACLE_UI_STRINGS);
+	ui = u->ui;
+	game = terran01(T);
+	hud(T, ui, game->g);
+	kp_ui_end_game(ui);
+	kp_ui_score_data(ui, game->g, VICTORY, "Player", 20, &d);
+	kp_t_ok(T, d.count >= 2, "more than one row (%d)", d.count);
+	kp_t_ok(T, kp_ui_score_open(ui, &d) >= 0, "the score screen");
+	dialog = ui->score.dialog;
+	clock.ui = ui;
+	clock.now = ui->now;
+	frames(&clock, SCORE_SETTLE_FRAMES); /* the slide-in and the Overview's count-up to their ends */
+	for (r = 0; r < d.count; r++) {
+		name = kp_ui_find_control(ui, dialog, (int16_t)(SCORE_ROW_FIRST + SCORE_ROW_CONTROLS * r + 1));
+		kp_t_ok(T, name >= 0, "row %d's name", r);
+		kp_t_ok(T, (ui->controls[name].flags & (KP_UI_VISIBLE | KP_UI_DIRTY)) == KP_UI_VISIBLE,
+			"row %d's name shown and painted", r);
+	}
+	tab = kp_ui_find_control(ui, dialog, SCORE_TAB_STRUCTURES);
+	kp_t_ok(T, tab >= 0, "the Structures tab");
+	(void)kp_ui_send_user(ui, tab, KP_UI_CLOSE, 0);
+	kp_t_eq(T, ui->score.tab, 2, "the Structures tab selected");
+	for (r = 0; r < d.count; r++) {
+		const KpUiControl *c;
+		name = kp_ui_find_control(ui, dialog, (int16_t)(SCORE_ROW_FIRST + SCORE_ROW_CONTROLS * r + 1));
+		c = &ui->controls[name];
+		kp_t_ok(T, (c->flags & KP_UI_DIRTY) != 0, "row %d's name to repaint", r);
+		kp_t_eq_str(T, (const char *)c->text, ui->score.data.roster[ui->score.rows[r].roster].name, "row %d's player", r);
+	}
 }
 
 /* A pause kp_core takes itself (a trigger's Pause Game, the result dialog's) takes PauseGame 0x47cbb0's tick: the
@@ -3480,6 +3527,7 @@ static const KpTest TESTS[] = {
 	{ "text_skips_a_character_with_no_glyph", text_skips_a_character_with_no_glyph, 0 },
 	{ "score_roster_holds_a_name_of_wide_characters", score_roster_holds_a_name_of_wide_characters, 0 },
 	{ "core_pause_takes_the_pause_tick", core_pause_takes_the_pause_tick, 0 },
+	{ "score_tab_repaints_the_rows_names", score_tab_repaints_the_rows_names, 0 },
 	{ "vector_text_takes_code_points_past_a_byte", vector_text_takes_code_points_past_a_byte, 0 },
 	{ "view_widens_the_game_area", view_widens_the_game_area, 0 },
 	{ "loaded_save_refreshes_the_console", loaded_save_refreshes_the_console, 0 },

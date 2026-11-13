@@ -371,7 +371,8 @@ static void draw_tab(KpUi *ui, KpUiControl *c, int32_t x, int32_t y, const int16
 
 static void bind_rows(KpUi *ui)
 {
-	/* BindScoreRows 0x4626e0 */
+	/* BindScoreRows 0x4626e0: the rows' controls take their new players' texts through SetControlText 0x4c2820, so a
+	 * row whose player changed with the tab's order repaints its background under the name (GitHub issue #5) */
 	KpUiScore *s = sc(ui);
 	int i, k;
 	for (i = 0; i < KP_UI_SCORE_SLOTS; i++) {
@@ -392,7 +393,7 @@ static void bind_rows(KpUi *ui)
 			const KpUiRosterEntry *e = &s->data.roster[s->rows[i].roster];
 			c->user = (uint32_t)i + 1;
 			c->draw = draw_name;
-			c->text = (const uint8_t *)e->name;
+			kp_ui_set_control_text(ui, ids[1], (const uint8_t *)e->name);
 			kp_ui_show_control(ui, ids[1]);
 			if (e->storm == s->data.local_storm && !is_computer(e->type)) {
 				c->flags |= KP_UI_PRESSED;
@@ -405,13 +406,13 @@ static void bind_rows(KpUi *ui)
 			ui->controls[ids[2 + k]].wuser = (uint16_t)k;
 			ui->controls[ids[2 + k]].draw = draw_column;
 			ui->controls[ids[2 + k]].user = (uint32_t)i + 1;
-			ui->controls[ids[2 + k]].text = (const uint8_t *)s->rows[i].text[k];
+			kp_ui_set_control_text(ui, ids[2 + k], (const uint8_t *)s->rows[i].text[k]);
 			kp_ui_show_control(ui, ids[2 + k]);
 		}
 		if (ids[5] >= 0) {
 			ui->controls[ids[5]].user = (uint32_t)i + 1;
 			ui->controls[ids[5]].draw = draw_total;
-			ui->controls[ids[5]].text = (const uint8_t *)s->rows[i].text[TOTAL];
+			kp_ui_set_control_text(ui, ids[5], (const uint8_t *)s->rows[i].text[TOTAL]);
 			kp_ui_show_control(ui, ids[5]);
 		}
 	}

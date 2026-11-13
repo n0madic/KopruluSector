@@ -813,6 +813,12 @@ void kp_ui_mark_dirty(KpUi *ui, int32_t control)
 	invalidate(ui, control);
 }
 
+void kp_ui_set_control_text(KpUi *ui, int32_t control, const uint8_t *text)
+{
+	ui->controls[control].text = text;
+	kp_ui_mark_dirty(ui, control);
+}
+
 void kp_ui_show_control(KpUi *ui, int32_t control)
 {
 	if (ui->controls[control].flags & KP_UI_VISIBLE) return;
