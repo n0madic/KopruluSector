@@ -496,6 +496,9 @@ void kp_input_focus(KpApp *a, int active);
 void kp_input_text_sync(KpApp *a, int tapped);
 /* A mouse event at the logical screen's point (the checks' input too). */
 void kp_input_mouse(KpApp *a, int event, int32_t lx, int32_t ly);
+/* The mouse wheel's whole rows at the logical screen's point, > 0 away from the user (a finger's list drag too):
+ * kp_glue_wheel or kp_hud_wheel. */
+void kp_input_wheel(KpApp *a, int rows, int32_t lx, int32_t ly);
 /* The touch layer's host (once, before the first event). */
 void kp_input_init(KpApp *a);
 /* Each frame: the gestures' density and clock (a long press), a gesture cancelled when its screen changed. */

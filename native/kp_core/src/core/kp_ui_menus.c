@@ -947,12 +947,26 @@ static void login_done(KpUi *ui, int32_t r)
 	else screen_ended(ui, STATE_MAIN, KP_UI_MENU_STATE);
 }
 
+/* A dialog's wheel events give its list's scroll bar a row up (type 17: code 15) or down (18: 16); the original has no
+ * test for a list without a bar (LoginDialogProc 0x45a040, CreateGameDialogProc 0x4550e0). */
+static int wheel_list(KpUi *ui, int32_t list, const KpUiEvent *e)
+{
+	const KpUiList *l = list >= 0 ? ui->controls[list].list : NULL;
+	if (l != NULL && l->bar >= 0) {
+		(void)kp_ui_send_user(ui, l->bar, e->type == KP_UI_WHEEL_UP ? KP_UI_SCROLL_UP : KP_UI_SCROLL_DOWN, 0);
+	}
+	return 1;
+}
+
+static int is_wheel(const KpUiEvent *e) { return e->type == KP_UI_WHEEL_UP || e->type == KP_UI_WHEEL_DOWN; }
+
 static int login_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 {
 	/* LoginDialogProc 0x45a040 */
 	KpUiMenus *m = mn(ui);
 	int32_t self = (int32_t)(d - ui->controls);
 	KpUiInteract base = kp_ui_type_interact(0);
+	if (is_wheel(e)) return wheel_list(ui, login_list, e);
 	if (e->type != KP_UI_USER) return base(ui, d, e);
 	switch (e->code) {
 	case KP_UI_CREATE: /* LoadLoginProfiles 0x45a000 */
@@ -1756,6 +1770,7 @@ static int create_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 	/* CreateGameDialogProc 0x4550e0 */
 	int32_t self = (int32_t)(d - ui->controls);
 	KpUiInteract base = kp_ui_type_interact(0);
+	if (is_wheel(e)) return wheel_list(ui, create_list, e);
 	if (e->type != KP_UI_USER) return base(ui, d, e);
 	switch (e->code) {
 	case KP_UI_CREATE: {

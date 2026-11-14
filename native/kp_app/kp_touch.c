@@ -160,7 +160,14 @@ static void down(KpTouch *t, int64_t id, double x, double y, uint32_t now_ms)
 	if (t->parked && !t->placing && t->kind != KP_TOUCH_BUTTON) park(t, 0, 0, 0);
 	switch (t->kind) {
 	case KP_TOUCH_PANEL: {
-		int pair = second(t, KP_TOUCH_PANEL, x, y, now_ms);
+		int32_t row = t->host.list ? t->host.list(t->host.ud, (int32_t)floor(x), (int32_t)floor(y)) : 0;
+		int pair;
+		if (row > 0 && t->host.scroll) { /* a list that scrolls: a tap or a drag, known at the lift or the slop */
+			t->state = KP_TOUCH_PRESS_LIST;
+			t->row_h = row;
+			break;
+		}
+		pair = second(t, KP_TOUCH_PANEL, x, y, now_ms);
 		t->state = KP_TOUCH_PRESS_PANEL;
 		mouse(t, KP_UI_MOUSE_MOVE, x, y);
 		mouse(t, pair ? KP_UI_LEFT_DOUBLE : KP_UI_LEFT_DOWN, x, y);
@@ -223,6 +230,21 @@ static void move(KpTouch *t, int64_t id, double x, double y)
 		mouse(t, KP_UI_LEFT_DOWN, t->start_x, t->start_y);
 		mouse(t, KP_UI_MOUSE_MOVE, x, y);
 		break;
+	case KP_TOUCH_PRESS_LIST:
+		if (k != 0 || dist(t->start_x, t->start_y, x, y) <= KP_TOUCH_SLOP_DP * t->px_per_dp) break;
+		t->state = KP_TOUCH_SCROLL;
+		t->has_last = 0;
+		t->scroll_y = y;
+		break;
+	case KP_TOUCH_SCROLL: {
+		int rows;
+		if (k != 0) break;
+		rows = (int)trunc((y - t->scroll_y) / t->row_h);
+		if (rows == 0) break;
+		t->scroll_y += rows * t->row_h;
+		t->host.scroll(t->host.ud, rows, (int32_t)floor(t->start_x), (int32_t)floor(t->start_y));
+		break;
+	}
 	case KP_TOUCH_CONFIRM:
 		if (dist(t->start_x, t->start_y, x, y) <= KP_TOUCH_SLOP_DP * t->px_per_dp) break;
 		t->state = KP_TOUCH_AIMING;
@@ -264,8 +286,9 @@ static void up(KpTouch *t, int64_t id, double x, double y, uint32_t now_ms)
 	if (t->count == 2) { /* one of two let go: the other does nothing more until it is let go too */
 		int pressing = t->state == KP_TOUCH_PRESS_PANEL || t->state == KP_TOUCH_PRESS_BUTTON
 			|| t->state == KP_TOUCH_BUTTON_HELD;
+		int listing = t->state == KP_TOUCH_PRESS_LIST || t->state == KP_TOUCH_SCROLL;
 		t->count = 1;
-		if (pressing && k == 1) return; /* the panel's or the button's press goes on */
+		if ((pressing || listing) && k == 1) return; /* the panel's, the button's or the list's touch goes on */
 		if (t->state == KP_TOUCH_PRESS_PANEL) mouse(t, KP_UI_LEFT_UP, x, y);
 		else if (pressing) button(t, KP_TOUCH_BUTTON_END, x, y);
 		if (k == 0) t->finger[0] = t->finger[1];
@@ -276,6 +299,12 @@ static void up(KpTouch *t, int64_t id, double x, double y, uint32_t now_ms)
 	case KP_TOUCH_PRESS_PANEL:
 		mouse(t, KP_UI_LEFT_UP, x, y);
 		break;
+	case KP_TOUCH_PRESS_LIST: { /* a list's tap: the panel's press and release at the touch */
+		int pair = second(t, KP_TOUCH_PANEL, t->start_x, t->start_y, now_ms);
+		click(t, pair ? KP_UI_LEFT_DOUBLE : KP_UI_LEFT_DOWN, KP_UI_LEFT_UP, t->start_x, t->start_y);
+		remember(t, KP_TOUCH_PANEL, pair, t->start_x, t->start_y, now_ms);
+		break;
+	}
 	case KP_TOUCH_PRESS_VIEW:
 		tap(t, t->host.target(t->host.ud, (int32_t)floor(x), (int32_t)floor(y)), x, y, now_ms);
 		break;

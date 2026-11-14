@@ -5,6 +5,9 @@
  *
  *   panel (a dialog, a glue screen, the console)  touch: the pointer there and a press; move: a drag; lift: the release
  *                                                 (a button fires on a lift inside it, a slide off cancels it)
+ *   a panel's list whose rows do not fit          a tap: a click at the touch at its lift (a quick second one a double
+ *                                                 click); a drag past the slop scrolls it a row per row height moved
+ *                                                 (the wheel's rows), no click
  *   game view, a tap                              the smart tap: the host says select (a left click) or order (a right
  *                                                 click); a quick second select tap is a double click
  *   game view, a long press                       the other one of the tap's two
@@ -67,10 +70,15 @@ typedef struct {
 	void (*zoom)(void *ud, double factor, double x, double y);
 	/* a host button's moment (KP_TOUCH_BUTTON_*) at the logical point (NULL: no buttons) */
 	void (*button)(void *ud, int moment, int32_t x, int32_t y);
+	/* the row height in logical pixels of a panel's list that scrolls at the logical point, 0 none (NULL: no lists) */
+	int32_t (*list)(void *ud, int32_t x, int32_t y);
+	/* the list at the logical point scrolled by rows, > 0 toward its top (the finger moved down): the mouse wheel's */
+	void (*scroll)(void *ud, int rows, int32_t x, int32_t y);
 } KpTouchHost;
 
 enum { KP_TOUCH_IDLE, KP_TOUCH_PRESS_PANEL, KP_TOUCH_PRESS_VIEW, KP_TOUCH_BOX, KP_TOUCH_AIMING, KP_TOUCH_LONG,
-	KP_TOUCH_TWO, KP_TOUCH_SPENT, KP_TOUCH_PRESS_BUTTON, KP_TOUCH_BUTTON_HELD, KP_TOUCH_CONFIRM };
+	KP_TOUCH_TWO, KP_TOUCH_SPENT, KP_TOUCH_PRESS_BUTTON, KP_TOUCH_BUTTON_HELD, KP_TOUCH_CONFIRM, KP_TOUCH_PRESS_LIST,
+	KP_TOUCH_SCROLL };
 
 typedef struct {
 	int64_t id;
@@ -98,6 +106,8 @@ typedef struct {
 	 * one back where it was parked (the fingers look around before the tap on it) */
 	int placing, parked;
 	double park_x, park_y, off_x, off_y;
+	/* a list's drag: its row height, the finger's y its rows count from */
+	double row_h, scroll_y;
 } KpTouch;
 
 void kp_touch_init(KpTouch *t, const KpTouchHost *host);

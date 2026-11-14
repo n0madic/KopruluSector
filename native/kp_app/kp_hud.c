@@ -601,6 +601,34 @@ uint16_t kp_hud_back_key(const KpUi *ui)
 	return KP_HUD_VK_F10;
 }
 
+/* The interface's point (x, y) of the logical point taken by the placed dialog d (-1: none): the dialog's own place's,
+ * and -1 (the dialogs answer for themselves); else the logical point, and 1 on the console's art, 0 off it. */
+static int hud_point(const KpHud *h, int32_t d, int32_t lx, int32_t ly, int32_t *x, int32_t *y)
+{
+	int32_t px, py;
+	*x = lx;
+	*y = ly;
+	if (!h->has_composed) return 0;
+	if (d >= 0 && kp_canvas_place(h->canvas, d, &px, &py)) {
+		const KpUiControl *k = &h->ui->controls[d];
+		*x = k->left + lx - px;
+		*y = k->top + ly - py;
+		return -1;
+	}
+	if (lx >= 0 && ly >= 0 && lx < h->canvas->w && ly < h->canvas->h) {
+		uint8_t index, alpha;
+		kp_canvas_pixel(h->canvas, lx, ly, &index, &alpha);
+		return alpha == CONSOLE_A;
+	}
+	return 0;
+}
+
+/* The point a wheel or a finger scrolls a list at: a placed dialog's, or none off the dialogs (-1, -1). */
+static void hud_scroll_point(const KpHud *h, int32_t lx, int32_t ly, int32_t *x, int32_t *y)
+{
+	if (hud_point(h, h->has_composed ? panel_at(h->ui, h->canvas, lx, ly) : -1, lx, ly, x, y) >= 0) *x = *y = -1;
+}
+
 void kp_hud_input(KpHud *h, int event, int32_t lx, int32_t ly, int64_t cam_x, int64_t cam_y)
 {
 	KpUi *ui = h->ui;
@@ -616,16 +644,7 @@ void kp_hud_input(KpHud *h, int event, int32_t lx, int32_t ly, int64_t cam_x, in
 			|| event == KP_UI_RIGHT_DOUBLE)) {
 			h->gesture = d;
 		}
-		if (d >= 0 && kp_canvas_place(h->canvas, d, &px, &py)) {
-			const KpUiControl *k = &ui->controls[d];
-			x = k->left + lx - px;
-			y = k->top + ly - py;
-			over = -1; /* the dialogs answer for themselves */
-		} else if (lx >= 0 && ly >= 0 && lx < h->canvas->w && ly < h->canvas->h) {
-			uint8_t index, alpha;
-			kp_canvas_pixel(h->canvas, lx, ly, &index, &alpha);
-			over = alpha == CONSOLE_A;
-		}
+		over = hud_point(h, d, lx, ly, &x, &y);
 	}
 	h->buttons = kp_hud_buttons(h->buttons, event);
 	if (h->buttons == 0) h->gesture = -2;
@@ -638,6 +657,20 @@ void kp_hud_input(KpHud *h, int event, int32_t lx, int32_t ly, int64_t cam_x, in
 	e.y = (int16_t)y;
 	kp_ui_input_event(ui, &e);
 	pad_shift_spent(h, commands);
+}
+
+void kp_hud_wheel(KpHud *h, int rows, int32_t lx, int32_t ly)
+{
+	int32_t x, y;
+	hud_scroll_point(h, lx, ly, &x, &y);
+	kp_ui_wheel(h->ui, rows, x, y);
+}
+
+int32_t kp_hud_list_row(const KpHud *h, int32_t lx, int32_t ly)
+{
+	int32_t x, y;
+	hud_scroll_point(h, lx, ly, &x, &y);
+	return kp_ui_list_row_height(h->ui, kp_ui_scroll_list_at(h->ui, x, y, 0));
 }
 
 void kp_hud_take_commands(KpUi *ui, KpSession *s)
@@ -900,6 +933,17 @@ void kp_glue_input(KpGlue *g, int event, int32_t lx, int32_t ly)
 		return;
 	}
 	kp_ui_input_event(ui, &e);
+}
+
+void kp_glue_wheel(KpGlue *g, int rows, int32_t lx, int32_t ly)
+{
+	if (g->screen != KP_GLUE_TITLE) kp_ui_wheel(g->ui, rows, lx - g->place_x, ly - g->place_y);
+}
+
+int32_t kp_glue_list_row(const KpGlue *g, int32_t lx, int32_t ly)
+{
+	if (g->screen == KP_GLUE_TITLE) return 0;
+	return kp_ui_list_row_height(g->ui, kp_ui_scroll_list_at(g->ui, lx - g->place_x, ly - g->place_y, 0));
 }
 
 void kp_glue_key(KpGlue *g, int down, uint16_t vk, int repeating)

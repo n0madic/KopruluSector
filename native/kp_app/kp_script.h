@@ -53,6 +53,7 @@ typedef enum {
 	KP_SCRIPT_RELEASE,         /* p: the left button released there */
 	KP_SCRIPT_FINGER,          /* flag: KP_SCRIPT_FINGER_*; id: the finger; p */
 	KP_SCRIPT_TAP,             /* id: the finger; p: down and up there */
+	KP_SCRIPT_WHEEL,           /* n: the wheel's rows (> 0 away from the user); p: the mouse there */
 	KP_SCRIPT_TOUCH,           /* touch on: the touch layer's mode */
 	KP_SCRIPT_CHOOSE,          /* id: the video option's choice clicked */
 	KP_SCRIPT_PAUSE,
@@ -169,7 +170,7 @@ typedef struct {
 enum {
 	KP_SCRIPT_AT_XY,        /* x, y: logical pixels */
 	KP_SCRIPT_AT_WORLD,     /* x, y: the world's pixels */
-	KP_SCRIPT_AT_CONTROL,   /* name: the open dialog's control; flag: its right end (a slider's) */
+	KP_SCRIPT_AT_CONTROL,   /* name: the open dialog's control; flag: its right end (a slider's); x, y: an offset */
 	KP_SCRIPT_AT_UNIT,      /* name: the pick; x, y: an offset */
 	KP_SCRIPT_AT_PAD,       /* name: the touch pad's group button */
 	KP_SCRIPT_AT_PAD_TOGGLE,

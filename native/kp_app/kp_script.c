@@ -19,6 +19,7 @@
 #define MAX_SECONDS 86400              /* a time in seconds */
 #define MAX_FRAMES 10000000
 #define MAX_FINGER 255
+#define MAX_WHEEL 100 /* a wheel's rows either way */
 #define MAX_RADIUS 4096
 #define LOG_LINE 1024
 
@@ -454,6 +455,10 @@ static int parse_point(Parse *P, Words *W, KpScriptPoint *p)
 			W->at++;
 			p->flag = 1;
 		}
+		if (peek(W) && is_number(peek(W))) {
+			return take_int32(P, W, "the offset's x", -MAX_COORD, MAX_COORD, &p->x) != 0
+				|| take_int32(P, W, "the offset's y", -MAX_COORD, MAX_COORD, &p->y) != 0 ? -1 : 0;
+		}
 		return 0;
 	}
 	if (is(w, "unit") || is(w, "beside")) {
@@ -579,6 +584,16 @@ static int p_tap(Parse *P, Words *W, int at)
 {
 	KpScriptStep *st = STEP(at);
 	return take_int32(P, W, "the finger", 0, MAX_FINGER, &st->id) != 0 ? -1 : parse_point(P, W, &st->p);
+}
+
+static int p_wheel(Parse *P, Words *W, int at)
+{
+	KpScriptStep *st = STEP(at);
+	int32_t rows;
+	if (take_int32(P, W, "the rows", -MAX_WHEEL, MAX_WHEEL, &rows) != 0) return -1;
+	if (rows == 0) return fail(P, "a wheel turns at least a row");
+	st->n = rows;
+	return parse_point(P, W, &st->p);
 }
 
 static int p_word(Parse *P, Words *W, const char *want)
@@ -794,6 +809,7 @@ static const struct {
 	{ "release", KP_SCRIPT_RELEASE, p_point },
 	{ "finger", KP_SCRIPT_FINGER, p_finger },
 	{ "tap", KP_SCRIPT_TAP, p_tap },
+	{ "wheel", KP_SCRIPT_WHEEL, p_wheel },
 	{ "touch", KP_SCRIPT_TOUCH, p_touch },
 	{ "choose", KP_SCRIPT_CHOOSE, p_named },
 	{ "pause", KP_SCRIPT_PAUSE, p_none },

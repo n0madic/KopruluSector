@@ -33,6 +33,7 @@
 #define VK_HOME 0x24
 #define VK_UP 0x26
 #define VK_DOWN 0x28
+#define BAR_ARROWS 0x60000000u      /* the bar's arrows shown pressed (kp_ui_scrollbar.c's ACTION_LOW | ACTION_HIGH) */
 
 static KpUiList *ls(const KpUiControl *c) { return c->list; }
 static int32_t self_of(KpUi *ui, const KpUiControl *c) { return (int32_t)(c - ui->controls); }
@@ -95,23 +96,32 @@ static void update_bar(KpUi *ui, KpUiControl *c)
 	if (l->selected != KP_UI_LIST_NONE) (void)kp_ui_send_user(ui, l->bar, KP_UI_VALUE_CHANGED, l->top);
 }
 
-/* The bar's change callback 0x4c7300: the list's top follows unless the list tracks the mouse itself. */
+/* ListScrollBarChanged 0x4c7300: the list's top follows the bar unless its redraw is suspended (SetListRedraw(0)). */
 static void bar_changed(KpUi *ui, uint32_t list, int32_t value)
 {
 	KpUiControl *c = &ui->controls[(int32_t)list];
 	(void)value;
-	if (c->flags & FLAG_TRACKING) return;
+	if (c->flags & FLAG_SUSPENDED) return;
 	c->list->top = (uint8_t)kp_ui_scrollbar_pos(&ui->controls[c->list->bar]);
 	kp_ui_mark_dirty(ui, (int32_t)list);
 }
 
-/* ScrollListToItem 0x4c7280. */
+/* ScrollListToItem 0x4c7280: the bar's pressed arrows let go, the top moved to show the row and the bar told (code 11;
+ * not for row 0xff, whose top the next RecalcListLayout clamps). */
 static void scroll_to(KpUi *ui, KpUiControl *c, int index)
 {
 	KpUiList *l = ls(c);
-	(void)ui;
-	if (index < l->top) l->top = (uint8_t)index;
-	else if (index >= l->top + l->page) l->top = (uint8_t)(index - l->page + 1);
+	if (l->bar >= 0 && (ui->controls[l->bar].flags & BAR_ARROWS)) {
+		ui->controls[l->bar].flags &= ~BAR_ARROWS;
+		kp_ui_mark_dirty(ui, l->bar);
+	}
+	if (index < l->top) {
+		l->top = (uint8_t)index;
+		if (l->bar >= 0) (void)kp_ui_send_user(ui, l->bar, KP_UI_VALUE_CHANGED, l->top);
+	} else if (index >= l->top + l->page) {
+		l->top = (uint8_t)(index - l->page + 1);
+		if (l->bar >= 0 && index != KP_UI_LIST_NONE) (void)kp_ui_send_user(ui, l->bar, KP_UI_VALUE_CHANGED, l->top);
+	}
 }
 
 static int send_value(KpUi *ui, KpUiControl *c, uint32_t value)
@@ -221,7 +231,9 @@ void kp_ui_list_free(KpUiControl *c)
 
 int kp_ui_list_proc(KpUi *ui, KpUiControl *c, KpUiEvent *e)
 {
-	/* ListBoxProc 0x4c6480 */
+	/* ListBoxProc 0x4c6480
+	 * TODO: the original first gives event types 3-6 to its shown scroll bar when the dialog's point lies inside the bar
+	 * (a captured drag from the rows onto the bar drives the bar) and returns 1; not ported yet. */
 	KpUiList *l = ls(c);
 	int32_t self = self_of(ui, c);
 	switch (e->type) {
@@ -524,4 +536,52 @@ uint32_t kp_ui_list_data(const KpUi *ui, int32_t list, int index)
 	/* GetListItemData 0x4c6840 */
 	const KpUiList *l = list >= 0 ? ui->controls[list].list : NULL;
 	return l != NULL && index >= 0 && index < KP_UI_LIST_CAPACITY ? l->data[index] : 0;
+}
+
+int kp_ui_list_top(const KpUi *ui, int32_t list)
+{
+	const KpUiList *l = list >= 0 ? ui->controls[list].list : NULL;
+	return l == NULL ? 0 : l->top;
+}
+
+int32_t kp_ui_list_row_height(const KpUi *ui, int32_t list)
+{
+	const KpUiList *l = list >= 0 ? ui->controls[list].list : NULL;
+	return l == NULL ? 0 : l->row_h;
+}
+
+/* --- not the original's: the list a wheel or a finger scrolls (ADR 0011 point 5) --- */
+
+static int holds(const KpUiControl *c, int32_t x, int32_t y)
+{
+	return x >= c->left && x <= c->right && y >= c->top && y <= c->bottom;
+}
+
+/* A list box that takes events (HitTestDialog's rule) and whose rows do not fit: its scroll bar is shown. */
+static int scrolls(const KpUi *ui, const KpUiControl *c)
+{
+	const KpUiList *l = c->list;
+	if (c->type != 12 || l == NULL || l->bar < 0 || l->count <= l->page) return 0;
+	if (!(c->flags & KP_UI_VISIBLE) || (c->flags & KP_UI_DISABLED)) return 0;
+	if (!((c->id & 0x8000) || (c->flags & KP_UI_EVENTS))) return 0;
+	return (ui->controls[l->bar].flags & KP_UI_VISIBLE) != 0;
+}
+
+int32_t kp_ui_scroll_list_at(const KpUi *ui, int32_t x, int32_t y, int anywhere)
+{
+	int32_t d, c, only = -1, lists = 0;
+	for (d = ui->open; d >= 0; d = ui->controls[d].next) {
+		const KpUiControl *dl = &ui->controls[d];
+		if (!(dl->flags & KP_UI_VISIBLE)) continue;
+		if (!holds(dl, x, y) && !(dl->flags & KP_UI_CONSUMED)) continue;
+		for (c = dl->child; c >= 0; c = ui->controls[c].next) {
+			const KpUiControl *k = &ui->controls[c];
+			if (!scrolls(ui, k)) continue;
+			if (holds(k, x - dl->left, y - dl->top)) return c;
+			only = c;
+			lists++;
+		}
+		return anywhere && lists == 1 ? only : -1;
+	}
+	return -1;
 }

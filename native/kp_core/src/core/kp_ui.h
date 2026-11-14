@@ -131,7 +131,7 @@ enum {
 enum {
 	KP_UI_CREATE, KP_UI_DESTROY, KP_UI_CLOSE, KP_UI_ACTIVATE, KP_UI_HIT_TEST, KP_UI_FOCUS, KP_UI_FOCUS_LOST,
 	KP_UI_RECENTRE, KP_UI_TIMER, KP_UI_MOUSE_ENTER, KP_UI_POST_LOAD, KP_UI_VALUE_CHANGED, KP_UI_CODE_12, KP_UI_SHOW,
-	KP_UI_HIDE
+	KP_UI_HIDE, KP_UI_SCROLL_UP, KP_UI_SCROLL_DOWN /* 15, 16: a scroll bar's position less or more 1 (0x4c9630) */
 };
 
 /* The console's state (status.cpp, statres.cpp; atlas P36, P37). */
@@ -1737,6 +1737,21 @@ const uint8_t *kp_ui_list_text(const KpUi *ui, int32_t list, int index);
 void kp_ui_list_set_data(KpUi *ui, int32_t list, int index, uint32_t data);
 uint32_t kp_ui_list_data(const KpUi *ui, int32_t list, int index);
 void kp_ui_list_free(KpUiControl *c);
+/* A list's first row shown (+0x4d) and its rows' height (0: no list). */
+int kp_ui_list_top(const KpUi *ui, int32_t list);
+int32_t kp_ui_list_row_height(const KpUi *ui, int32_t list);
+/* Not the original's (ADR 0011 point 5): the list box a wheel or a finger scrolls at the point (the dialogs'
+ * coordinates). The topmost shown dialog that holds the point, or takes every mouse event (KP_UI_CONSUMED), decides: its
+ * list that takes events and whose rows do not fit (its scroll bar shown), under the point; with anywhere, else its only
+ * such list. -1: none. */
+int32_t kp_ui_scroll_list_at(const KpUi *ui, int32_t x, int32_t y, int anywhere);
+/* The mouse wheel at the point (the dialogs' coordinates): rows > 0 away from the user, < 0 toward. Each row is the
+ * original's wheel event (WM_MOUSEWHEEL in MainWindowProc 0x43f600, DispatchMouseWheel 0x43f5b0: type 17 away, 18
+ * toward, the point in the parameter as its lParam, no cursor), which the login's and the Load Replay's dialogs give
+ * their list's scroll bar (codes 15, 16: a row up or down). Not the original's (ADR 0011 point 5): an event no dialog
+ * takes scrolls the list kp_ui_scroll_list_at(anywhere) finds, as its bar's codes 15 and 16 (the missions' history, the
+ * saves, the help list ignore the wheel in the original). */
+void kp_ui_wheel(KpUi *ui, int rows, int32_t x, int32_t y);
 /* The scroll bars and sliders (kp_ui_scrollbar.c): ScrollBarProc 0x4c9630, the draw procedures 0x4c8d10 / 0x4c9060,
  * GetScrollPos 0x4c9920, SetScrollPos 0x4c9ae0, SetScrollRange 0x4c9b20, SetScrollSteps 0x4c9ad0, the callback. */
 int kp_ui_scrollbar_proc(KpUi *ui, KpUiControl *c, KpUiEvent *e);

@@ -1524,6 +1524,31 @@ void kp_ui_input_event(KpUi *ui, KpUiEvent *e)
 	if (e->type < KP_UI_EVENT_TYPES && in(ui)->proc[e->type]) in(ui)->proc[e->type](ui, e);
 }
 
+void kp_ui_wheel(KpUi *ui, int rows, int32_t x, int32_t y)
+{
+	uint16_t type = rows > 0 ? KP_UI_WHEEL_UP : KP_UI_WHEEL_DOWN;
+	int n = rows > 0 ? rows : -rows, k;
+	if (n > KP_UI_LIST_CAPACITY) n = KP_UI_LIST_CAPACITY; /* past a list's rows the rest move nothing */
+	for (k = 0; k < n; k++) {
+		KpUiEvent e;
+		int32_t list;
+		memset(&e, 0, sizeof e); /* DispatchMouseWheel 0x43f5b0: no cursor, the mouse's globals as they are */
+		e.type = type;
+		e.param = (uint32_t)(uint16_t)x | (uint32_t)(uint16_t)y << 16;
+		/* not the original's (ADR 0011 point 5): the list at the point, or its dialog's only one, goes first, as the
+		 * login's and the game creation's own wheel would move it; a paused game's text box stops every event a
+		 * dialog over it leaves (TextboxDialogProc 0x4b3960), the wheel's too */
+		list = kp_ui_scroll_list_at(ui, x, y, 1);
+		if (list >= 0) {
+			(void)kp_ui_send_user(ui, ui->controls[list].list->bar,
+				type == KP_UI_WHEEL_UP ? KP_UI_SCROLL_UP : KP_UI_SCROLL_DOWN, 0);
+			continue;
+		}
+		if (kp_ui_dispatch(ui, &e)) continue;
+		if (in(ui)->proc[type]) in(ui)->proc[type](ui, &e);
+	}
+}
+
 void kp_ui_set_keys(KpUi *ui, uint8_t shift, uint8_t ctrl, uint8_t alt, uint16_t mouse_state)
 {
 	KpUiInput *p = in(ui);

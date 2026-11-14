@@ -1,7 +1,7 @@
 /*
  * The touch layer's gestures (phase 10, ADR 0014; native/kp_app/kp_touch.c) over a host that records what they give:
  * a panel's press, the smart tap and its long press, the double tap, the box, the aim, a placement's confirmation, two
- * fingers.
+ * fingers, a list's tap and drag.
  */
 #include "kp_test.h"
 
@@ -22,6 +22,8 @@ typedef struct {
 	int ghost_x, ghost_y; /* a placement's preview: 64 x 64 pixels at the last move's point */
 	int anchor_waiting, anchor_x, anchor_y; /* a preview the interface put by itself, taken once */
 	int anchors;                            /* the times the layer asked */
+	int list_top, list_bottom, row_h;       /* a list that scrolls: its rows' height over these lines (0: none) */
+	int scrolled, scrolls, scroll_x, scroll_y; /* the rows it scrolled by, the calls, the last call's point */
 } Host;
 
 static int target(void *ud, int32_t x, int32_t y)
@@ -94,6 +96,22 @@ static void button(void *ud, int moment, int32_t x, int32_t y)
 	if (h->moment_count < LOG) h->moments[h->moment_count++] = moment;
 }
 
+static int32_t list(void *ud, int32_t x, int32_t y)
+{
+	Host *h = (Host *)ud;
+	(void)x;
+	return h->row_h > 0 && y >= h->list_top && y <= h->list_bottom ? h->row_h : 0;
+}
+
+static void scroll(void *ud, int rows, int32_t x, int32_t y)
+{
+	Host *h = (Host *)ud;
+	h->scrolled += rows;
+	h->scrolls++;
+	h->scroll_x = x;
+	h->scroll_y = y;
+}
+
 /* A touch layer over host h at 2 logical pixels per dp (a slop of 20 pixels). */
 static void start(KpTouch *t, Host *h, int kind)
 {
@@ -113,6 +131,8 @@ static void start(KpTouch *t, Host *h, int kind)
 	host.pan = pan;
 	host.zoom = zoom;
 	host.button = button;
+	host.list = list;
+	host.scroll = scroll;
 	kp_touch_init(t, &host);
 	kp_touch_set_density(t, 2);
 }
@@ -507,6 +527,96 @@ static void host_button_taps_and_holds(KpT *T)
 	kp_t_eq(T, h.count, 0, "no mouse events");
 }
 
+/* A panel whose list scrolls over lines 100..300 in rows of 18 pixels. */
+static void start_list(KpTouch *t, Host *h)
+{
+	start(t, h, KP_TOUCH_PANEL);
+	h->list_top = 100;
+	h->list_bottom = 300;
+	h->row_h = 18;
+}
+
+/* A drag on a list past the slop scrolls it a row per 18 pixels the finger moved since the slop (down: toward its top),
+ * at the touch's point, and gives the interface no mouse event. */
+static void list_drag_scrolls_by_rows(KpT *T)
+{
+	KpTouch t;
+	Host h;
+	start_list(&t, &h);
+	kp_touch_event(&t, KP_TOUCH_DOWN, 1, 100, 150, 1000);
+	kp_touch_event(&t, KP_TOUCH_MOVE, 1, 100, 160, 1010);
+	kp_t_eq(T, h.count + h.scrolls, 0, "nothing within the slop");
+	kp_touch_event(&t, KP_TOUCH_MOVE, 1, 100, 175, 1020);
+	kp_t_eq(T, h.scrolls, 0, "the slop passed: the rows count from here");
+	kp_touch_event(&t, KP_TOUCH_MOVE, 1, 100, 140, 1030); /* 35 pixels up: a row toward the end */
+	kp_t_eq(T, h.scrolled, -1, NULL);
+	kp_touch_event(&t, KP_TOUCH_MOVE, 1, 100, 100, 1040); /* 57 more from the row's line */
+	kp_t_eq(T, h.scrolled, -4, NULL);
+	kp_touch_event(&t, KP_TOUCH_MOVE, 1, 120, 130, 1050); /* back down 27 */
+	kp_t_eq(T, h.scrolled, -3, NULL);
+	kp_t_eq(T, h.scrolls, 3, NULL);
+	kp_t_eq(T, h.scroll_x, 100, "at the touch's point");
+	kp_t_eq(T, h.scroll_y, 150, NULL);
+	kp_touch_frame(&t, 3000); /* held long: still the drag */
+	kp_touch_event(&t, KP_TOUCH_UP, 1, 120, 130, 3100);
+	kp_t_eq(T, h.count, 0, "no press, no click");
+	kp_t_ok(T, !kp_touch_active(&t), NULL);
+}
+
+/* A tap on a list is the panel's click at the touch, given at the lift; a quick second one a double click (the dialog's
+ * default button), a third a click again. Off the list's lines the touch is the panel's press at once. */
+static void list_tap_clicks_at_the_touch(KpT *T)
+{
+	KpTouch t;
+	Host h;
+	static const int CLICK[] = { KP_UI_MOUSE_MOVE, KP_UI_LEFT_DOWN, KP_UI_LEFT_UP };
+	static const int DOUBLE[] = { KP_UI_MOUSE_MOVE, KP_UI_LEFT_DOUBLE, KP_UI_LEFT_UP };
+	static const int PRESS[] = { KP_UI_MOUSE_MOVE, KP_UI_LEFT_DOWN };
+	start_list(&t, &h);
+	kp_touch_event(&t, KP_TOUCH_DOWN, 1, 100, 150, 1000);
+	kp_t_eq(T, h.count, 0, "nothing at the touch");
+	kp_touch_event(&t, KP_TOUCH_MOVE, 1, 108, 156, 1050);
+	kp_touch_event(&t, KP_TOUCH_UP, 1, 108, 156, 1100);
+	kp_t_ok(T, events_are(&h, 0, 3, CLICK), "the click at the lift");
+	kp_t_eq(T, h.x[1], 100, "at the touch");
+	kp_t_eq(T, h.y[1], 150, NULL);
+	kp_touch_event(&t, KP_TOUCH_DOWN, 2, 104, 152, 1300);
+	kp_touch_event(&t, KP_TOUCH_UP, 2, 104, 152, 1350);
+	kp_t_ok(T, events_are(&h, 3, 3, DOUBLE), "the second tap: a double click");
+	kp_touch_event(&t, KP_TOUCH_DOWN, 3, 104, 152, 1500);
+	kp_touch_event(&t, KP_TOUCH_UP, 3, 104, 152, 1550);
+	kp_t_ok(T, events_are(&h, 6, 3, CLICK), "the third: a click again");
+	kp_touch_event(&t, KP_TOUCH_DOWN, 4, 100, 50, 3000);
+	kp_t_ok(T, events_are(&h, 9, 2, PRESS), "off the list: the panel's press at the touch");
+	kp_touch_event(&t, KP_TOUCH_UP, 4, 100, 50, 3050);
+	kp_t_eq(T, h.scrolls, 0, NULL);
+}
+
+/* A second finger on a list's touch does nothing: lifted, the first goes on (its drag still scrolls); the first lifted
+ * first, the touch is spent without its click. */
+static void second_finger_on_a_list(KpT *T)
+{
+	KpTouch t;
+	Host h;
+	start_list(&t, &h);
+	kp_touch_event(&t, KP_TOUCH_DOWN, 1, 100, 150, 1000);
+	kp_touch_event(&t, KP_TOUCH_DOWN, 2, 300, 150, 1010);
+	kp_touch_event(&t, KP_TOUCH_MOVE, 2, 350, 250, 1020);
+	kp_touch_event(&t, KP_TOUCH_UP, 2, 350, 250, 1030);
+	kp_t_eq(T, h.pan_x + h.pan_y + h.scrolls + h.count, 0, "no pan, no scroll, no press");
+	kp_touch_event(&t, KP_TOUCH_MOVE, 1, 100, 180, 1040);
+	kp_touch_event(&t, KP_TOUCH_MOVE, 1, 100, 200, 1050);
+	kp_t_eq(T, h.scrolled, 1, "the first finger's drag");
+	kp_touch_event(&t, KP_TOUCH_UP, 1, 100, 200, 1060);
+	kp_t_eq(T, h.count, 0, NULL);
+	kp_touch_event(&t, KP_TOUCH_DOWN, 3, 100, 150, 2000);
+	kp_touch_event(&t, KP_TOUCH_DOWN, 4, 300, 150, 2010);
+	kp_touch_event(&t, KP_TOUCH_UP, 3, 100, 150, 2020);
+	kp_touch_event(&t, KP_TOUCH_UP, 4, 300, 150, 2030);
+	kp_t_eq(T, h.count, 0, "no click");
+	kp_t_ok(T, !kp_touch_active(&t), NULL);
+}
+
 static const KpTest TESTS[] = {
 	{ "panel_press_follows_the_finger", panel_press_follows_the_finger, 0 },
 	{ "panel_double_tap_is_a_double_click", panel_double_tap_is_a_double_click, 0 },
@@ -524,6 +634,9 @@ static const KpTest TESTS[] = {
 	{ "cancel_lets_go_without_the_click", cancel_lets_go_without_the_click, 0 },
 	{ "thresholds_follow_the_density", thresholds_follow_the_density, 0 },
 	{ "host_button_taps_and_holds", host_button_taps_and_holds, 0 },
+	{ "list_drag_scrolls_by_rows", list_drag_scrolls_by_rows, 0 },
+	{ "list_tap_clicks_at_the_touch", list_tap_clicks_at_the_touch, 0 },
+	{ "second_finger_on_a_list", second_finger_on_a_list, 0 },
 };
 
 KP_SUITE(kp_suite_touch, "test_touch", TESTS);

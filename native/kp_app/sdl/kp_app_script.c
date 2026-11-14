@@ -399,6 +399,28 @@ static int mouse_step(KpApp *a, const KpScriptRun *run, const KpScriptStep *st, 
 	return 0;
 }
 
+/* wheel N P: the mouse moved to the point, then SDL's wheel event of N whole rows there (a wheel's notches). */
+static int wheel_step(KpApp *a, const KpScriptRun *run, const KpScriptStep *st, char *why, size_t size)
+{
+	SDL_Event e;
+	int32_t lx, ly;
+	float x, y;
+	if (kp_script_flow_point(&a->flow, run, &st->p, &lx, &ly, why, size) != 0) return -1;
+	kp_input_window_point(a, lx, ly, &x, &y);
+	mouse_motion(a, x, y);
+	memset(&e, 0, sizeof e);
+	e.wheel.type = SDL_EVENT_MOUSE_WHEEL;
+	e.wheel.timestamp = SDL_GetTicksNS();
+	e.wheel.windowID = SDL_GetWindowID(a->window);
+	e.wheel.y = (float)st->n;
+	e.wheel.integer_y = (Sint32)st->n;
+	e.wheel.direction = SDL_MOUSEWHEEL_NORMAL;
+	e.wheel.mouse_x = x;
+	e.wheel.mouse_y = y;
+	kp_input_event(a, &e);
+	return 0;
+}
+
 /* A finger at the point through the touch layer (kp_input_finger: the touch layer's way in; SDL's finger events carry
  * the touch device's normalised coordinates, which a hidden window has no mapping for). */
 static int finger_step(KpApp *a, const KpScriptRun *run, const KpScriptStep *st, char *why, size_t size)
@@ -680,6 +702,7 @@ static int host_exec(void *ud, KpScriptRun *run, const KpScriptStep *st, char *w
 	case KP_SCRIPT_RELEASE: return mouse_step(a, run, st, why, size);
 	case KP_SCRIPT_FINGER:
 	case KP_SCRIPT_TAP: return finger_step(a, run, st, why, size);
+	case KP_SCRIPT_WHEEL: return wheel_step(a, run, st, why, size);
 	case KP_SCRIPT_TOUCH: /* the touch layer's mode, its pad laid out next frame (a cancel is its way in) */
 		kp_input_finger(a, KP_TOUCH_CANCEL, 0, 0, 0);
 		return 0;

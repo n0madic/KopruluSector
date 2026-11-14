@@ -3948,6 +3948,117 @@ static void glue_login_delete_then_new_id_starts_without_progress(KpT *T)
 	kp_t_ok(T, memcmp(kp_profile_progress(G->profile), &none, sizeof none) == 0, "the new ID has no progress");
 }
 
+/* The top dialog's list box, -1 none. */
+static int32_t glue_list(const KpUi *ui)
+{
+	int32_t c;
+	for (c = ui->open >= 0 ? ui->controls[ui->open].child : -1; c >= 0; c = ui->controls[c].next) {
+		if (ui->controls[c].type == 12 && ui->controls[c].list != NULL) return c;
+	}
+	return -1;
+}
+
+/* The logical point of a list's row (its middle, inside the rows), with dx from its left. */
+static void glue_list_point(const Glue *G, int32_t list, int row, int32_t dx, int32_t *x, int32_t *y)
+{
+	const KpUiControl *d = &G->ui->controls[G->ui->open], *k = &G->ui->controls[list];
+	*x = G->glue->place_x + d->left + k->left + dx;
+	*y = G->glue->place_y + d->top + k->top + row * k->list->row_h + k->list->row_h / 2;
+}
+
+/* The list's scroll bar position. */
+static int bar_pos(KpUi *ui, int32_t list) { return kp_ui_scrollbar_pos(&ui->controls[ui->controls[list].list->bar]); }
+
+/* The mouse wheel over the glue's lists. The login's dialog gives its list's scroll bar each wheel event, a row a
+ * notch, wherever the pointer is (LoginDialogProc 0x45a040): after a click on a row too, whose tracking flag the
+ * release leaves (the list follows its bar unless its redraw is suspended, ListScrollBarChanged 0x4c7300; it followed
+ * only while that flag was clear), and a selection scrolled into view moves the bar (ScrollListToItem 0x4c7280). The load screen
+ * ignores the wheel in the original; the remake's list there scrolls under the pointer and anywhere over its dialog
+ * (kp_ui_wheel). A finger's list is found under the point only (kp_glue_list_row). */
+static void glue_wheel_scrolls_the_lists(KpT *T)
+{
+	enum { IDS = 20, SAVES = 20 };
+	Glue *G;
+	KpUi *ui;
+	int32_t list, x, y, ox, oy;
+	int k, page, last;
+	char name[KP_PROFILE_NAME];
+	if (!kp_t_ready(T, "test_hud.glue_wheel_scrolls_the_lists", GLUE_FILES)) return;
+	G = glue(T);
+	ui = G->ui;
+	G->profile->character_count = IDS;
+	for (k = 0; k < IDS; k++) snprintf(G->profile->characters[k].name, sizeof G->profile->characters[k].name, "ID%02d", k);
+	snprintf(G->profile->name, sizeof G->profile->name, "ID00");
+	for (k = 0; k < SAVES; k++) {
+		snprintf(name, sizeof name, "save%02d", k);
+		kp_profile_add_save(G->profile, name);
+	}
+	kp_glue_saves(ui, G->profile);
+	kp_glue_menus(G->glue, KP_GLUE_MAIN);
+	wait_for(G, "rez\\glumain.bin", 2000);
+	glue_click(G, 3, -1, -1); /* Single Player */
+	wait_for(G, "rez\\glugamemode.bin", 2000);
+	glue_key(G, 'e');
+	wait_for(G, "rez\\glulogin.bin", 2000);
+	list = glue_list(ui);
+	kp_t_ok(T, list >= 0 && ui->controls[list].list->bar >= 0, "the login's list and its bar");
+	if (list < 0 || ui->controls[list].list->bar < 0) return;
+	page = ui->controls[list].list->page;
+	last = IDS - page;
+	kp_t_ok(T, page > 0 && page < IDS, "the rows do not fit (%d a page)", page);
+	glue_list_point(G, list, 1, 8, &x, &y);
+	kp_t_eq(T, kp_glue_list_row(G->glue, x, y), ui->controls[list].list->row_h, "a finger's list under the point");
+	kp_glue_input(G->glue, MOUSE_MOVE, x, y); /* a click on row 1: the list's press tracks the pointer (0x40000000) */
+	glue_frame(G);
+	kp_glue_input(G->glue, LEFT_DOWN, x, y);
+	glue_frame(G);
+	kp_glue_input(G->glue, LEFT_UP, x, y);
+	for (k = 0; k < 10; k++) glue_frame(G);
+	kp_t_eq(T, kp_ui_list_selection(ui, list), 1, "the click selects its row");
+	kp_t_ok(T, (ui->controls[list].flags & 0x40000000u) != 0, "the list's tracking flag outlives the release");
+	kp_glue_wheel(G->glue, -3, x, y);
+	kp_t_eq(T, kp_ui_list_top(ui, list), 3, "three notches toward the user: three rows on");
+	kp_t_eq(T, bar_pos(ui, list), 3, "the bar with them");
+	glue_frame(G);
+	kp_glue_wheel(G->glue, 1, x, y);
+	kp_t_eq(T, kp_ui_list_top(ui, list), 2, "one away: a row back");
+	kp_glue_wheel(G->glue, -100, x, y);
+	kp_t_eq(T, kp_ui_list_top(ui, list), last, "no further than the last page");
+	ox = G->glue->place_x + ui->controls[ui->open].left + 4;
+	oy = G->glue->place_y + ui->controls[ui->open].top + 4;
+	kp_t_eq(T, kp_glue_list_row(G->glue, ox, oy), 0, "no finger's list off the rows");
+	kp_glue_wheel(G->glue, 1, ox, oy);
+	kp_glue_wheel(G->glue, 1, -1000, -1000);
+	kp_t_eq(T, kp_ui_list_top(ui, list), last - 2, "the login's list wherever the pointer is, off the screen too");
+	kp_ui_list_select(ui, list, 0);
+	kp_t_eq(T, kp_ui_list_selection(ui, list), 0, NULL);
+	kp_t_eq(T, kp_ui_list_top(ui, list), 0, "the selection scrolled into view");
+	kp_t_eq(T, bar_pos(ui, list), 0, "and the bar with it");
+	kp_ui_list_select(ui, list, IDS - 1);
+	kp_t_eq(T, kp_ui_list_top(ui, list), last, NULL);
+	kp_t_eq(T, bar_pos(ui, list), last, NULL);
+	kp_ui_list_select(ui, list, 0);
+	glue_key(G, 'o');
+	wait_for(G, "rez\\gluexpcmpgn.bin", 2000);
+	glue_click(G, 5, -1, -1); /* Load Game */
+	wait_for(G, "rez\\gluload.bin", 2000);
+	list = glue_list(ui);
+	kp_t_ok(T, list >= 0 && ui->controls[list].list->bar >= 0, "the load screen's list and its bar");
+	if (list < 0 || ui->controls[list].list->bar < 0) return;
+	kp_t_eq(T, kp_ui_list_count(ui, list), SAVES, NULL);
+	glue_list_point(G, list, 0, 8, &x, &y);
+	kp_glue_wheel(G->glue, -2, x, y);
+	kp_t_eq(T, kp_ui_list_top(ui, list), 2, "the remake's wheel under the pointer");
+	kp_t_eq(T, bar_pos(ui, list), 2, NULL);
+	ox = G->glue->place_x + ui->controls[ui->open].left + 4;
+	oy = G->glue->place_y + ui->controls[ui->open].top + 4;
+	kp_glue_wheel(G->glue, 1, ox, oy);
+	kp_t_eq(T, kp_ui_list_top(ui, list), 1, "and over its dialog, its only list");
+	kp_glue_wheel(G->glue, -1, -1000, -1000);
+	kp_t_eq(T, kp_ui_list_top(ui, list), 1, "nothing off the screen");
+	kp_t_eq(T, kp_ui_list_selection(ui, list), 0, "the wheel selects nothing");
+}
+
 /* A ready room ended by the phone's Back (Escape) with the game gone after it: the glue goes on to its menus and the
  * game's idle procedure (GameIdleThunk) is nowhere to be found. */
 static void glue_room_cancel_by_back_leaves_no_game_input(KpT *T)
@@ -4967,6 +5078,7 @@ static const KpTest TESTS[] = {
 	{ "replay_console_keeps_its_holes_and_fluff", replay_console_keeps_its_holes_and_fluff, 0 },
 	{ "one_key_is_one_hotkey", one_key_is_one_hotkey, 0 },
 	{ "glue_text_takes_code_points", glue_text_takes_code_points, 0 },
+	{ "glue_wheel_scrolls_the_lists", glue_wheel_scrolls_the_lists, 0 },
 	{ "type_selection_takes_the_units_cloaked_for_free", type_selection_takes_the_units_cloaked_for_free, 0 },
 	{ "double_click_selects_the_kind_on_the_screen", double_click_selects_the_kind_on_the_screen, 0 },
 	{ "a_right_click_in_the_selections_tick_orders", a_right_click_in_the_selections_tick_orders, 0 },

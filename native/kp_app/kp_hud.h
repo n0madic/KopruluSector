@@ -147,6 +147,10 @@ void kp_hud_text(KpUi *ui, const char *utf8);
 void kp_hud_text_key(KpUi *ui, const char *utf8, uint16_t vk);
 /* An input event at the logical point (lx, ly) with the view's top-left at map (cam_x, cam_y). */
 void kp_hud_input(KpHud *h, int event, int32_t lx, int32_t ly, int64_t cam_x, int64_t cam_y);
+/* The mouse wheel at the logical point (kp_ui_wheel: rows > 0 away from the user), on the placed dialog there. */
+void kp_hud_wheel(KpHud *h, int rows, int32_t lx, int32_t ly);
+/* The row height of the list a finger scrolls at the logical point (kp_ui_scroll_list_at), 0 none. */
+int32_t kp_hud_list_row(const KpHud *h, int32_t lx, int32_t ly);
 /* The commands the interface queued, into the session (the local player's). */
 void kp_hud_take_commands(KpUi *ui, KpSession *s);
 /* The view the interface moved to: 1 and its top-left, else 0. */
@@ -225,6 +229,10 @@ void kp_glue_score(KpGlue *g, KpGame *game, int result, uint32_t elapsed);
 KpGlueEvent kp_glue_frame(KpGlue *g, int32_t w, int32_t h, uint32_t now_ms, int *changed, uint8_t rgb[768],
 	int *palette);
 void kp_glue_input(KpGlue *g, int event, int32_t lx, int32_t ly);
+/* The mouse wheel at the logical point and the row height of the list a finger scrolls there, as kp_hud_wheel and
+ * kp_hud_list_row: none while the title stands. */
+void kp_glue_wheel(KpGlue *g, int rows, int32_t lx, int32_t ly);
+int32_t kp_glue_list_row(const KpGlue *g, int32_t lx, int32_t ly);
 /* A key and a text event while a glue screen shows (kp_hud_key, kp_hud_text_key): none while the title stands. */
 void kp_glue_key(KpGlue *g, int down, uint16_t vk, int repeating);
 void kp_glue_text(KpGlue *g, const char *utf8, uint16_t vk);

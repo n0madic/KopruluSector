@@ -56,6 +56,7 @@ The host runs the script after a frame is drawn and before it is shown.
 | | `press P`, `release P` | The left button pressed or released at P (a box: `press`, then `release`) |
 | | `finger down\|move\|up ID P` | A touch of finger ID (0..255) |
 | | `tap ID P` | A finger down and up at P |
+| | `wheel N P` | The mouse moved to P, then its wheel turned N rows (-100..100, not 0): N > 0 away from the user (a list's rows above), N < 0 toward (those below), as SDL's whole notches give them |
 | | `touch on` | The touch layer's mode |
 | | `choose NAME` | A video option's choice clicked |
 | Action | `pause`, `resume` | The game's clock |
@@ -87,7 +88,7 @@ The host runs the script after a frame is drawn and before it is shown.
 |---|---|
 | `X Y` | Logical pixels. The logical screen's size depends on the window, so plain numbers fit a fixed `--window` only |
 | `world X Y` | The world's pixels, through the camera |
-| `control NAME [right]` | The open dialog's control's centre; `right`: its right end (a slider's) |
+| `control NAME [right] [DX DY]` | The open dialog's control's centre; `right`: its right end (a slider's); DX DY: logical pixels from there |
 | `unit PICK [DX DY]` | A picked unit, with an offset |
 | `beside PICK D` | The ground D pixels right of a picked unit, or left of it at the view's edge |
 | `pad N`, `pad toggle` | The touch pad's group button, its toggle |
@@ -143,6 +144,7 @@ Names are in any case. A value read where what it is read from is missing has no
 | `moved:PICK` | the game | The world pixels the picked unit moved since its pick (rounded down); no value with no pick, or with its unit gone |
 | `pad.open`, `pad.count`, `pad.shown:N` | the console | The touch pad's groups opened; its buttons shown; 1 when its button N (0..11, `KP_UI_PAD_*`) is; another N is a parse error |
 | `gamma` | the interface | The gamma (100 the original's) |
+| `list.top`, `list.selected` | the interface | The topmost visible dialog's first visible list (in a game the modeless dialog's, in the glue the popup's or the screen's): its first row shown; its selected row, 255 none. No value with no list shown |
 | `portraits` | the interface | The portraits' mode: 0 none, 1 still, 2 animated |
 | `video.graphics`, `video.fog`, `video.water`, `video.font`, `video.lighting` | the interface | The video options: -1 auto, else the choice's value |
 | `video.serial`, `video.commits` | the interface | The video options' changes; the video dialog's OKs kept |

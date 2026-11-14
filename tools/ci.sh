@@ -46,7 +46,8 @@
 #     checks (play_1..5.kps: box selection, right clicks, the terrain, the fog and the palette pass against their CPU
 #     twins), the video options (video.kps: clicked through, the art following them), a save (save.kps: made during a
 #     transmission, loaded in its game and from its file, the saved view and minimap in the load's frame and its
-#     trigger wait ending), the touch layer (touch.kps: terran01 played by synthetic fingers), the music (music.kps: the
+#     trigger wait ending), the touch layer (touch.kps: terran01 played by synthetic fingers), a list's scrolling (lists.kps:
+#     the keystroke help scrolled by the wheel and a finger, a tap selecting its row), the music (music.kps: the
 #     title's after a ready room's Cancel and a quit mission, the game's after the room's Start and a load), a replay
 #     (replay.kps: a game's LastReplay.rep played back to the same simulation state, its console and its end) and, with KOPRULU_SCR,
 #     the HD art (hd_glue.kps, hd_game.kps on each race, hd_replay.kps: the glue's screens, the game's screens and menus and a replay's with no SD
@@ -647,6 +648,7 @@ if [ -n "${KOPRULU_APP:-}" ]; then
     case "$1" in
       video) [ -s build/script/video/kept.png ] ;;
       touch) [ -s build/script/touch/key_option.png ] ;;
+      lists) [ -s build/script/lists/tap.png ] ;;
       save)
         [ -s build/script/save/from-file.png ]
         [ ! -e "build/script/save/pref/save_-koprulu_20save_20check.kpsave" ] # check save-file took it
@@ -678,7 +680,7 @@ if [ -n "${KOPRULU_APP:-}" ]; then
   [ -z "${KOPRULU_ORIGINAL:-}" ] || queue unit_repack_original
   queue unit_autotest
   queue unit_determinism
-  for name in touch save replay; do queue unit_check "$name"; done
+  for name in touch lists save replay; do queue unit_check "$name"; done
   for n in 1 2 3 4 5; do queue unit_play "$n"; done
   step "product checks on the fixed clock, $APP_JOBS at a time, and the repacks: the autotest, the fixed clock's runs, the checks' and play scripts"
   batch build/app-jobs "$APP_JOBS"

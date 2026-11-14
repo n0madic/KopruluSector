@@ -317,8 +317,8 @@ int kp_ui_scrollbar_proc(KpUi *ui, KpUiControl *c, KpUiEvent *e)
 		case KP_UI_SHOW: case KP_UI_HIDE:
 			if ((uint16_t)c->id & ID_NO_SHOW) return 1;
 			break;
-		case KP_UI_SHOW + 2: kp_ui_scrollbar_set_pos(ui, self_of(ui, c), s->pos - 1); break; /* 15 */
-		case KP_UI_SHOW + 3: kp_ui_scrollbar_set_pos(ui, self_of(ui, c), s->pos + 1); break; /* 16 */
+		case KP_UI_SCROLL_UP: kp_ui_scrollbar_set_pos(ui, self_of(ui, c), s->pos - 1); break;
+		case KP_UI_SCROLL_DOWN: kp_ui_scrollbar_set_pos(ui, self_of(ui, c), s->pos + 1); break;
 		default: break;
 		}
 		return fallback(ui, c, e);

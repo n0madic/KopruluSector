@@ -152,6 +152,7 @@ On `build/app-script` (`--headless --window 1280x720`):
   - the key `race-build`. The race table and the unit roles moved here from `kp_app_dev.c`'s `HC_*`; the old copies go with SC6.
 - **Scripts:**
   - `video.kps`, `touch.kps`, `save.kps` with `save_verify.kps`;
+  - `lists.kps` (2026-11-14): terran01's keystroke help scrolled by the command `wheel` over its list, over its dialog and over the game view, then by a finger's drag both ways and a tap selecting a row (`list.top`, `list.selected`; a control's point with an offset, `control help.1 0 -68`);
   - `music.kps` (2026-11-12, GitHub issue #3): the music's tracks through the glue: the title's after a ready room's Cancel and a Quit Mission, the game's after the room's Start and a save loaded from the glue;
   - `play_1.kps` to `play_5.kps` with `play_tail.kps`, over the old flag's missions: `scenarios/marine_group`, `bench_200`, `bench_combat`, `terran/terran01` and `scenarios/creep_recede`;
   - `hd_glue.kps` and `hd_game.kps`, run over terran02, zerg02 and protoss02; `hd_replay.kps` (2026-11-14), a replay's console in HD.

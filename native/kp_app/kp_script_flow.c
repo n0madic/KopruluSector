@@ -17,7 +17,7 @@ enum {
 	V_CREEP_TILES, V_CREEP_RECEDING, V_TRIGGER_WAITING, V_PORTRAIT_MS, V_TARGETING, V_PLACING, V_GROUPS_HELD, V_PAD_OPEN,
 	V_PAD_COUNT, V_PAD_SHOWN, V_GAMMA, V_PORTRAITS, V_VIDEO_GRAPHICS, V_VIDEO_FOG, V_VIDEO_WATER, V_VIDEO_FONT,
 	V_VIDEO_LIGHTING, V_VIDEO_SERIAL, V_VIDEO_COMMITS, V_TEXT_VECTOR, V_SELECTION_HAS, V_SELECTION_FIRST, V_MOVED,
-	V_GROUP_HELD, V_REPLAY_ENDED, V_REPLAY_FRAMES, V_SIM_CRC, V_COUNT
+	V_GROUP_HELD, V_REPLAY_ENDED, V_REPLAY_FRAMES, V_SIM_CRC, V_LIST_TOP, V_LIST_SELECTED, V_COUNT
 };
 enum { NEED_UI, NEED_WORLD, NEED_GAME, NEED_CONSOLE }; /* what a value is read from */
 static const struct {
@@ -61,6 +61,8 @@ static const struct {
 	{ "replay.ended", KP_SCRIPT_ARG_NONE, NEED_GAME },     /* a replay's playback passed its record */
 	{ "replay.frames", KP_SCRIPT_ARG_NONE, NEED_GAME },    /* the replay's frames (its header's), 0 outside one */
 	{ "sim.crc", KP_SCRIPT_ARG_NONE, NEED_GAME },          /* the state's CRCs folded, the local interface's aside */
+	{ "list.top", KP_SCRIPT_ARG_NONE, NEED_UI },           /* the top dialog's list (top_list): its first row shown */
+	{ "list.selected", KP_SCRIPT_ARG_NONE, NEED_UI },      /* its selected row, 255 none */
 };
 #define GROUPS 10
 #define PLAYERS 12
@@ -477,6 +479,20 @@ static void fold_crc(void *ud, const char *category, uint32_t crc)
 	*folded = *folded * 31u + crc;
 }
 
+/* The shown list box of the topmost shown dialog that has one, -1 none. */
+static int32_t top_list(const KpUi *ui)
+{
+	int32_t d, c;
+	for (d = ui->open; d >= 0; d = ui->controls[d].next) {
+		if (!(ui->controls[d].flags & KP_UI_VISIBLE)) continue;
+		for (c = ui->controls[d].child; c >= 0; c = ui->controls[c].next) {
+			const KpUiControl *k = &ui->controls[c];
+			if (k->type == 12 && k->list != NULL && (k->flags & KP_UI_VISIBLE)) return c;
+		}
+	}
+	return -1;
+}
+
 int kp_script_flow_value(const KpFlow *f, const KpScriptRun *run, const KpScriptRef *ref, int64_t *out, char *why,
 	size_t size)
 {
@@ -552,6 +568,14 @@ int kp_script_flow_value(const KpFlow *f, const KpScriptRun *run, const KpScript
 			return -1;
 		}
 		*out = (kp_ui_groups_held(ui) >> ref->arg) & 1;
+		break;
+	case V_LIST_TOP:
+	case V_LIST_SELECTED:
+		if ((x = top_list(ui)) < 0) {
+			snprintf(why, size, "no list shown");
+			return -1;
+		}
+		*out = ref->id == V_LIST_TOP ? kp_ui_list_top(ui, x) : ui->controls[x].list->selected;
 		break;
 	case V_REPLAY_ENDED: *out = f->session->replay_ended != 0; break;
 	case V_REPLAY_FRAMES: *out = f->session->playing ? (int64_t)f->session->replay_frames : 0; break;
@@ -721,6 +745,8 @@ int kp_script_flow_point(const KpFlow *f, const KpScriptRun *run, const KpScript
 		break;
 	case KP_SCRIPT_AT_CONTROL:
 		if (control_point(f, p, x, y, why, size) != 0) return -1;
+		*x += p->x;
+		*y += p->y;
 		break;
 	case KP_SCRIPT_AT_CENTER:
 		view_size(f, &vw, &vh);

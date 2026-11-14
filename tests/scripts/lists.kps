@@ -1,0 +1,73 @@
+# A list whose rows do not fit scrolls by the mouse wheel and by a finger (docs/formats/script.md; ADR 0011 point 5:
+# the original's wheel reaches only the login's and the game creation's lists; ADR 0014: a finger's drag on a list is
+# the wheel's rows, a tap a click). terran01's keystroke help (help.bin, its list help.1 with 51 rows, 13 shown): the wheel
+# over the list moves it a row a notch both ways and stops at its ends, over the dialog beside the list it moves the
+# dialog's only list, over the game view nothing; a finger dragged down shows the rows above, dragged up those below,
+# and selects nothing; a tap selects the row under it. tools/ci.sh wants exit code 0 and "0 failures".
+mission terran/terran01
+options originals
+
+wait game
+# the tips at the game's start pause it: Return closes them
+until nodialog key Return
+menu help
+wait dialog helpmenu
+click control helpmenu.1
+wait dialog help
+wait frames 5
+log help list.top list.selected
+expect list.top == 0 and list.selected == 0
+wheel -3 control help.1
+wait frames 2
+log down list.top
+expect list.top == 3
+wheel 1 control help.1
+wait frames 2
+expect list.top == 2
+wheel 5 control help.1
+wait frames 2
+expect list.top == 0
+wheel -100 control help.1
+wait frames 2
+log end list.top
+mark end
+wheel -1 control help.1
+wait frames 2
+expect list.top == @end.list.top
+# the dialog's title beside the list, then the game view left of the dialog (logical x 50 on the narrowest screen too)
+wheel 4 control help.-1
+wait frames 2
+expect list.top == @end.list.top - 4
+wheel 4 50 200
+wait frames 2
+expect list.top == @end.list.top - 4
+shot wheel
+touch on
+wait seconds 0.3
+wheel 100 control help.1
+wait frames 2
+wheel -10 control help.1
+wait frames 2
+expect list.top == 10
+# a finger dragged 80 pixels down shows the rows above
+finger down 1 control help.1 0 -68
+finger move 1 control help.1 0 -28
+finger move 1 control help.1 0 12
+finger up 1 control help.1 0 12
+wait seconds 0.3
+log drag-down list.top list.selected
+mark drag
+expect list.top < 10 and list.selected == 0
+finger down 2 control help.1 0 32
+finger move 2 control help.1 0 -8
+finger move 2 control help.1 0 -48
+finger up 2 control help.1 0 -48
+wait seconds 0.3
+log drag-up list.top list.selected
+expect list.top == 10 and list.selected == 0
+# a tap on the list's third row shown (its rows 16 pixels from its top 104 above its centre) selects it
+tap 3 control help.1 0 -70
+wait seconds 0.5
+log tap list.top list.selected
+expect list.top == 10 and list.selected == 12
+shot tap

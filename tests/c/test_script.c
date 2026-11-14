@@ -65,7 +65,7 @@ static const struct {
 };
 
 static const char *const OP_NAMES[] = { "key", "text", "move", "click", "rclick", "press", "release", "finger", "tap",
-	"touch", "choose", "pause", "resume", "camera", "world", "fog", "save", "load", "load-file", "replay", "menu", "options-dialog",
+	"wheel", "touch", "choose", "pause", "resume", "camera", "world", "fog", "save", "load", "load-file", "replay", "menu", "options-dialog",
 	"activate", "select", "end-placement", "cancel-targeting", "audit", "hang", "wait-frames", "wait-time", "wait",
 	"until", "shot", "state", "ui", "log", "mark", "pick", "expect", "check", "quit" };
 typedef char op_names_cover_the_ops[sizeof OP_NAMES / sizeof OP_NAMES[0] == KP_SCRIPT_OPS ? 1 : -1];
@@ -358,6 +358,23 @@ static void parse_defaults(KpT *T)
 	kp_t_eq(T, s->watchdog_ms, KP_SCRIPT_WATCHDOG_MS, "the default watchdog");
 }
 
+static void parse_reads_the_wheel(KpT *T)
+{
+	KpScript *s;
+	Rec R;
+	rec_init(&R);
+	s = parse_ok(T, &R, "wheel -3 center 0 0\nwheel 100 10 20\nwheel 1 control ok 3 -4\nwheel 1 control gamma right\n");
+	kp_t_eq(T, s->count, 4, "the steps");
+	kp_t_ok(T, s->steps[0].op == KP_SCRIPT_WHEEL && s->steps[0].n == -3 && s->steps[0].p.kind == KP_SCRIPT_AT_CENTER,
+		"three rows toward the end at the center");
+	kp_t_ok(T, s->steps[1].op == KP_SCRIPT_WHEEL && s->steps[1].n == 100 && s->steps[1].p.kind == KP_SCRIPT_AT_XY
+		&& s->steps[1].p.x == 10 && s->steps[1].p.y == 20, "a hundred rows toward the top at a point");
+	kp_t_ok(T, s->steps[2].p.kind == KP_SCRIPT_AT_CONTROL && s->steps[2].p.name == 11 && !s->steps[2].p.flag
+		&& s->steps[2].p.x == 3 && s->steps[2].p.y == -4, "a control's point with an offset");
+	kp_t_ok(T, s->steps[3].p.kind == KP_SCRIPT_AT_CONTROL && s->steps[3].p.flag && s->steps[3].p.x == 0
+		&& s->steps[3].p.y == 0, "its right end without one");
+}
+
 static void parse_refuses_bad_lines(KpT *T)
 {
 	static const struct {
@@ -421,6 +438,10 @@ static void parse_refuses_bad_lines(KpT *T)
 		{ "select group 48 optional", "unexpected \"optional\"" },
 		{ "camera by 1", "the camera's y expected" },
 		{ "finger sideways 1 2 3", "a finger goes down, move or up" },
+		{ "wheel 0 10 20", "a wheel turns at least a row" },
+		{ "wheel 101 10 20", "the rows" },
+		{ "wheel -2", "a point expected" },
+		{ "wheel 1 control ok 3", "the offset's y expected" },
 		{ "touch off", "\"on\" expected, not \"off\"" },
 		{ "check frob", "unknown check \"frob\"" },
 		{ "check save-file", "the check's argument expected" },
@@ -824,6 +845,7 @@ static void live_failures_go_on(KpT *T)
 static const KpTest TESTS[] = {
 	{ "parse_reads_the_commands", parse_reads_the_commands, 0 },
 	{ "parse_defaults", parse_defaults, 0 },
+	{ "parse_reads_the_wheel", parse_reads_the_wheel, 0 },
 	{ "parse_refuses_bad_lines", parse_refuses_bad_lines, 0 },
 	{ "parse_reads_includes", parse_reads_includes, 0 },
 	{ "a_line_is_the_files", a_line_is_the_files, 0 },

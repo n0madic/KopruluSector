@@ -86,8 +86,8 @@ void kp_input_window_point(const KpApp *a, int32_t lx, int32_t ly, float *wx, fl
  * gives the interface the host's camera again). */
 typedef struct {
 	KpApp *a;
-	enum { CONSOLE_KEY, CONSOLE_TEXT, CONSOLE_MOUSE, CONSOLE_TARGET, CONSOLE_PAD } kind;
-	int down, repeat, event;
+	enum { CONSOLE_KEY, CONSOLE_TEXT, CONSOLE_MOUSE, CONSOLE_TARGET, CONSOLE_PAD, CONSOLE_WHEEL } kind;
+	int down, repeat, event; /* CONSOLE_WHEEL: event is its rows */
 	uint16_t vk;
 	const char *text;
 	int32_t lx, ly;
@@ -104,6 +104,7 @@ static void console_input(void *ud)
 	case CONSOLE_TEXT: kp_hud_text_key(a->flow.ui, in->text, a->text_vk); break;
 	case CONSOLE_TARGET: in->target = kp_hud_touch_target(&a->flow.hud, in->lx, in->ly, a->flow.cam_x, a->flow.cam_y); return;
 	case CONSOLE_PAD: kp_hud_pad_button(&a->flow.hud, in->event, in->lx, in->ly); break;
+	case CONSOLE_WHEEL: kp_hud_wheel(&a->flow.hud, in->event, in->lx, in->ly); break;
 	default: kp_hud_input(&a->flow.hud, in->event, in->lx, in->ly, a->flow.cam_x, a->flow.cam_y); break;
 	}
 	kp_hud_take_commands(a->flow.ui, a->flow.session);
@@ -190,6 +191,22 @@ static void point(KpApp *a, int event, int32_t lx, int32_t ly)
 	}
 }
 
+void kp_input_wheel(KpApp *a, int rows, int32_t lx, int32_t ly)
+{
+	if (rows == 0) return;
+	if (kp_flow_glue_active(&a->flow)) {
+		kp_glue_wheel(&a->flow.glue, rows, lx, ly);
+	} else if (console_on(a)) {
+		ConsoleInput in;
+		memset(&in, 0, sizeof in);
+		in.kind = CONSOLE_WHEEL;
+		in.event = rows;
+		in.lx = lx;
+		in.ly = ly;
+		console(a, &in);
+	}
+}
+
 void kp_input_mouse(KpApp *a, int event, int32_t lx, int32_t ly)
 {
 	a->mouse_lx = lx;
@@ -253,6 +270,15 @@ static void touch_pan(void *ud, int32_t dx, int32_t dy)
 	kp_flow_clamp_camera(&a->flow);
 }
 
+static int32_t touch_list(void *ud, int32_t x, int32_t y)
+{
+	KpApp *a = (KpApp *)ud;
+	if (kp_flow_glue_active(&a->flow)) return kp_glue_list_row(&a->flow.glue, x, y);
+	return console_on(a) ? kp_hud_list_row(&a->flow.hud, x, y) : 0;
+}
+
+static void touch_scroll(void *ud, int rows, int32_t x, int32_t y) { kp_input_wheel((KpApp *)ud, rows, x, y); }
+
 static void touch_button(void *ud, int moment, int32_t x, int32_t y)
 {
 	KpApp *a = (KpApp *)ud;
@@ -279,6 +305,8 @@ void kp_input_init(KpApp *a)
 	host.aim = touch_aim;
 	host.pan = touch_pan;
 	host.button = touch_button;
+	host.list = touch_list;
+	host.scroll = touch_scroll;
 	kp_touch_init(&a->touch, &host);
 }
 
@@ -505,6 +533,15 @@ void kp_input_event(KpApp *a, const SDL_Event *e)
 		input_mode(a, 0);
 		mouse(a, KP_UI_MOUSE_MOVE, e->motion.x, e->motion.y);
 		break;
+	case SDL_EVENT_MOUSE_WHEEL: {
+		/* a wheel's notches or a trackpad's scroll as SDL adds them up to whole ones, in the system's direction (a
+		 * natural scroll's too); the remake's list under the pointer takes them (kp_ui_wheel) */
+		int32_t lx, ly;
+		if (e->wheel.which == SDL_TOUCH_MOUSEID || e->wheel.integer_y == 0) break;
+		logical(a, e->wheel.mouse_x, e->wheel.mouse_y, &lx, &ly);
+		kp_input_wheel(a, e->wheel.integer_y, lx, ly);
+		break;
+	}
 	case SDL_EVENT_MOUSE_BUTTON_DOWN:
 	case SDL_EVENT_MOUSE_BUTTON_UP: {
 		int down = e->type == SDL_EVENT_MOUSE_BUTTON_DOWN;
