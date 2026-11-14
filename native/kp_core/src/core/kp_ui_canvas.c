@@ -12,8 +12,8 @@
 #define OPAQUE 255
 #define FLAG_BACKDROP 0x10000000u   /* a dialog composited onto the backdrop with its flags (0x4c5630) */
 #define GLYPH_AGE 120               /* composes a glyph stays in the log without being found live */
-#define OWNER_SEQ 0x7fffu           /* the owner plane's draw */
-#define OWNER_TINT 0x8000u          /* the owner plane's flag: a translucent dialog blended over the pixel since */
+#define OWNER_DRAW 0xffffu          /* the owner plane's draw that wrote the pixel */
+#define OWNER_TINT_SHIFT 16         /* above it, the last translucent draw that blended over the pixel since (0 none) */
 #define PART_PIECES 4               /* the rectangles a vector glyph's part is cut into at most (more: its pixels' box) */
 #define GLYPH_PIECES (2 * PART_PIECES) /* a vector glyph's at most: its parts', plain and blended */
 #define GLYPH_FIRST 256             /* the glyph list's first size */
@@ -50,7 +50,7 @@ static void put_tint(KpUiCanvas *c, int32_t x, int32_t y, uint8_t index, uint8_t
 	p = c->next + 2 * at;
 	p[0] = index;
 	p[1] = alpha;
-	if (c->text) c->owner[at] |= OWNER_TINT;
+	if (c->text) c->owner[at] = (c->owner[at] & OWNER_DRAW) | (uint32_t)c->seq << OWNER_TINT_SHIFT;
 	if (c->hd_plain) c->hd_plain[at] = c->plain;
 	if (c->ids_next) {
 		c->ids_next[at] = c->item;
@@ -267,11 +267,15 @@ static void glyph_area(const KpUiCanvas *c, const KpUiCanvasGlyph *v, const KpUi
 	if (area[3] > c->h) area[3] = c->h;
 }
 
+/* Whether a translucent draw after the draw `seq` blended over the canvas pixel of `owner`. A blend before it is not
+ * over it: a translucent dialog's own text lies on the background the dialog blended. */
+static int tinted_after(uint32_t owner, uint16_t seq) { return (owner >> OWNER_TINT_SHIFT) > seq; }
+
 /* Whether the canvas pixel of `owner` shows the draw `seq` (no later draw wrote it) in the part `tinted` (a translucent
- * dialog blended over it, or not). */
-static int open_as(uint16_t owner, uint16_t seq, int tinted)
+ * draw after it blended over it, or not). */
+static int open_as(uint32_t owner, uint16_t seq, int tinted)
 {
-	return (owner & OWNER_SEQ) <= seq && ((owner & OWNER_TINT) != 0) == tinted;
+	return (owner & OWNER_DRAW) <= seq && tinted_after(owner, seq) == tinted;
 }
 
 /* The pixels of area that show the draw seq in the part `tinted`, as rectangles: each row's runs, a run under one of
@@ -281,7 +285,7 @@ static int32_t open_pieces(const KpUiCanvas *c, const int32_t area[4], uint16_t 
 {
 	int32_t n = 0, x, y, i;
 	for (y = area[1]; y < area[3]; y++) {
-		const uint16_t *row = c->owner + (size_t)y * (size_t)c->w;
+		const uint32_t *row = c->owner + (size_t)y * (size_t)c->w;
 		for (x = area[0]; x < area[2];) {
 			int32_t x0;
 			if (!open_as(row[x], seq, tinted)) {
@@ -335,11 +339,11 @@ void kp_ui_canvas_text_end(KpUi *ui, KpUiCanvas *c)
 		}
 		for (j = g->first; j < g->first + g->count; j++) {
 			int32_t cx = dx + log->offsets[j] % stride, cy = dy + log->offsets[j] / stride;
-			uint16_t owner;
+			uint32_t owner;
 			if (cx < 0 || cy < 0 || cx >= c->w || cy >= c->h) continue;
 			owner = c->owner[(size_t)cy * (size_t)c->w + (size_t)cx];
-			if ((owner & OWNER_SEQ) != v->seq) continue;
-			part = (owner & OWNER_TINT) != 0;
+			if ((owner & OWNER_DRAW) != v->seq) continue;
+			part = tinted_after(owner, v->seq);
 			seen[part]++;
 			if (cx < box[part][0]) box[part][0] = cx;
 			if (cy < box[part][1]) box[part][1] = cy;
@@ -395,11 +399,11 @@ static void free_audit_plane(KpUiCanvas *c)
 int kp_ui_canvas_resize(KpUiCanvas *c, int32_t w, int32_t h)
 {
 	uint8_t *pixels, *next;
-	uint16_t *owner;
+	uint32_t *owner;
 	if (w < 1 || h < 1) return -1;
 	pixels = (uint8_t *)calloc((size_t)w * (size_t)h, 2);
 	next = (uint8_t *)calloc((size_t)w * (size_t)h, 2);
-	owner = (uint16_t *)calloc((size_t)w * (size_t)h, sizeof *owner);
+	owner = (uint32_t *)calloc((size_t)w * (size_t)h, sizeof *owner);
 	if (pixels == NULL || next == NULL || owner == NULL) {
 		free(pixels);
 		free(next);

@@ -1791,6 +1791,55 @@ static void vector_text_takes_the_glyphs_out_of_the_canvas(KpT *T)
 	kp_t_ok(T, ui->text.log == NULL && ui->glyph_log.count == 0, "recording off frees the log");
 }
 
+/* A translucent dialog's own text (the game menu's buttons, the user's report of 2026-11-14) lies on the background the
+ * dialog blended: its glyphs are whole, not cut to their FNT pixels' shape (the cut kept a 1-pixel column of the stem of
+ * т and г where the vector glyph, laid out elsewhere in its word, had none). A translucent draw after the text still
+ * blends it: the glyphs under it are listed in the blended colours. */
+static void vector_text_on_a_translucent_dialog_is_whole(KpT *T)
+{
+	KpOracleUi *u;
+	KpUi *ui;
+	KpUiCanvas *c;
+	KpUiSurface dialog, veil;
+	uint8_t codes[256], rgb[768], colour = 200, fill;
+	int32_t k, n;
+	if (!kp_t_ready(T, "test_kp_ui.vector_text_on_a_translucent_dialog_is_whole", UI_FILES)) return;
+	u = kp_t_ui(T, 0);
+	ui = u->ui;
+	c = vt_canvas(T, 200, 40);
+	memset(codes, 1, sizeof codes);
+	for (n = 0; n < 256; n++) rgb[3 * n] = rgb[3 * n + 1] = rgb[3 * n + 2] = (uint8_t)n;
+	kp_t_ok(T, kp_ui_game_effects(ui, rgb, NULL) == 0, "the effect tables");
+	ui->effects.colour[0] = colour;
+	kp_ui_set_vector_text(ui, 1, 1, codes);
+	dialog = vt_surface(T, colour); /* the dialog's background: its blend colour */
+	vt_draw(ui, &dialog, &ui->glyph_log);
+	veil = vt_surface(T, colour);
+	kp_ui_canvas_begin(ui, c);
+	kp_ui_canvas_fill(c, 0, 0, 200, 40, 7);
+	kp_ui_canvas_translucent(ui, c, &dialog, 10, 5);
+	kp_ui_canvas_text_end(ui, c);
+	kp_ui_canvas_end(c);
+	kp_t_eq(T, c->glyph_count, 11, "each glyph listed once");
+	fill = c->glyphs[0].fill;
+	for (k = 0; k < c->glyph_count; k++) {
+		kp_t_ok(T, c->glyphs[k].whole, "glyph %d whole on its dialog's blended background", (int)k);
+		kp_t_eq(T, c->glyphs[k].fill, fill, "glyph %d in its own colour", (int)k);
+	}
+	kp_ui_canvas_begin(ui, c);
+	kp_ui_canvas_fill(c, 0, 0, 200, 40, 7);
+	kp_ui_canvas_translucent(ui, c, &dialog, 10, 5);
+	kp_ui_canvas_translucent(ui, c, &veil, 10, 5);
+	kp_ui_canvas_text_end(ui, c);
+	kp_ui_canvas_end(c);
+	kp_t_eq(T, c->glyph_count, 11, "each glyph listed once under the veil");
+	for (k = 0; k < c->glyph_count; k++) {
+		kp_t_ok(T, c->glyphs[k].whole, "glyph %d whole under the veil", (int)k);
+		kp_t_eq(T, c->glyphs[k].fill, c->tint_row[fill], "glyph %d in the blended colour", (int)k);
+	}
+	kp_ui_set_vector_text(ui, 0, 0, NULL);
+}
+
 /* The edit box's caret ({4, glyph, 1} after the text) is drawn without advancing the pen, and the glyph log keeps it so:
  * the vector layout reads a glyph that advances as one more letter of the last word and moves the line's letters. */
 static void vector_text_logs_the_caret_without_advance(KpT *T)
@@ -3586,6 +3635,7 @@ static const KpTest TESTS[] = {
 	{ "screens_take_their_owners_once", screens_take_their_owners_once, 0 },
 	{ "vector_text_logs_the_glyphs", vector_text_logs_the_glyphs, 0 },
 	{ "vector_text_takes_the_glyphs_out_of_the_canvas", vector_text_takes_the_glyphs_out_of_the_canvas, 0 },
+	{ "vector_text_on_a_translucent_dialog_is_whole", vector_text_on_a_translucent_dialog_is_whole, 0 },
 	{ "vector_text_logs_the_caret_without_advance", vector_text_logs_the_caret_without_advance, 0 },
 	{ "vector_text_follows_a_blit", vector_text_follows_a_blit, 0 },
 	{ "vector_text_keeps_odd_fonts_bitmaps", vector_text_keeps_odd_fonts_bitmaps, 0 },

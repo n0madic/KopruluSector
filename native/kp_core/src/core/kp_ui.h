@@ -2068,8 +2068,9 @@ typedef struct {
 typedef struct {
 	int32_t w, h;
 	uint8_t *pixels, *next;
-	uint16_t *owner;              /* the draw of the frame that last wrote each pixel and whether a translucent dialog
-	                               * blended over it since (the vector text's cover; kept while `text`) */
+	uint32_t *owner;              /* the draw of the frame that last wrote each pixel (low 16 bits) and the last
+	                               * translucent draw that blended over it since (high 16 bits, 0 none): the vector
+	                               * text's cover, kept while `text` */
 	uint16_t seq;                 /* the frame's draws so far */
 	int text;                     /* the frame composes the vector text */
 	KpUiCanvasGlyph *glyphs;      /* the frame's vector glyphs (kp_ui_canvas_text_end leaves the visible ones) */
