@@ -35,6 +35,7 @@ The original records every game's commands and writes `LastReplay.rep` when the 
   The result dialog's clock (0x4be340) does not run in a replay. A session's playback of its own recording therefore equals the recording in every field only without the flag; tests use `replay_as_game` for that.
 - **Load Replay starts without a briefing,** so a replay has no briefing objectives.
 - **Transmissions:** a trigger's transmission waits until its sound ends, and the interface reports that end (`kp_trigger_release_wait`). A playback matches the original only with the interface's events at the original's frames: the oracle's goldens of the original's replays carry them (`tools/state_check.py --kind replays`).
+- **A trigger's Pause Game does not pause the replay** (a deviation, the user's choice of 2026-11-15). In the original, `PauseGame` 0x47cbb0 also pauses a replay (0x480e00(1)), and `RunPendingFrames` 0x444e30 then runs no triggers, so the trigger never unpauses it: a replay of the three missions with that action (terran m10, protoss m28, zerg m15) stands for good at it, the cursor hidden. Koprulu pauses only the game, as when the game was recorded: its triggers run, the transmission ends and the replay goes on as the recorded game did. The original's playback equals Koprulu's up to that pause; the files are the same, so the original stands on Koprulu's files of those missions too.
 - **Brood War and network names:** the name of the human in the header is the profile's; the computers' come from network.tbl as in 0x4074a0.
 
 ## Alternatives

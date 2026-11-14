@@ -13,8 +13,9 @@ later (`key-<f>-<key>.png`).
 
 Written to <out>: `trace.jsonl` (the frame digest of every frame, as a chain's), `dispatch.jsonl` (every buffer the
 dispatcher got from the feed: frame and hex bytes), `replay.json` (the screens visited,
-the frames, the end of the replay: FeedReplayCommands' end at the header's frame count calls 0x480e00(1) and the
-victory dialog 0x4bcff0), the oracle's logs (scenario.install_logs: commands.jsonl, ui.jsonl, triggers.jsonl, ...), and
+the frames, the end of the replay: FeedReplayCommands' end at the header's frame count calls SetReplayPaused
+0x480e00(1) and the victory dialog 0x4bcff0; PauseGame 0x47cbb0 and UnpauseGame 0x47cc10 reach 0x480e00 too, as
+`replay_pause` events), the oracle's logs (scenario.install_logs: commands.jsonl, ui.jsonl, triggers.jsonl, ...), and
 with `oracle` the state dumps of the first `state_steps` object steps (state.install) in states/: the shape of
 tools/state_check.py --kind replays.
 """
@@ -33,9 +34,14 @@ from .session import Session, write_json
 
 log = logging.getLogger(__name__)
 REPLAY_DIR = vfs.DOCUMENTS_DIR + "\\Starcraft\\maps\\replays"
-REPLAY_END = 0x480E00          # FeedReplayCommands' end of the replay, ECX = 1
+SET_REPLAY_PAUSED = 0x480E00   # SetReplayPaused, ECX = paused: FeedReplayCommands' end and the game's pause
 VICTORY_DIALOG = 0x4BCFF0
 FEED = 0x4769B0
+FEED_SIZE = 355
+# A replay paused by a trigger's Pause Game (TrigActPauseGame 0x4b6020 -> PauseGame 0x47cbb0 -> 0x480e00(1)) stands:
+# RunPendingFrames 0x444e30 leaves before the triggers while 0x67cc7c is set, so the trigger never unpauses it, and the
+# trigger pause hides the cursor and sets the default accelerators. The run ends after this much virtual time.
+STANDING_MS = 10_000
 DISPATCH = 0x475D30            # ExecuteTurnCommands: ECX bytes, EDX length, [esp+4] from replay
 PROFILE_NAME = "Replay"
 DIALOG_LIST = 0x6CE6D8
@@ -54,7 +60,7 @@ def run_replay(out: Path, rep: bytes, name: str = "A", cd: str = "original", exp
         from . import state
         state.install(s, tuple(range(1, state_steps + 1)), out / "states")
     with open(out / "trace.jsonl", "w") as trace, open(out / "dispatch.jsonl", "w") as dispatch:
-        st = {"last_frame": -1, "end_frame": None, "victory_frame": None, "feeds": 0}
+        st = {"last_frame": -1, "end_frame": None, "victory_frame": None, "feeds": 0, "paused": False, "frame_t": 0}
         events: list[dict] = []
 
         def ev(kind, **kw):
@@ -67,6 +73,7 @@ def run_replay(out: Path, rep: bytes, name: str = "A", cd: str = "original", exp
             if f == st["last_frame"]:
                 return
             st["last_frame"] = f
+            st["frame_t"] = m.clock_us // 1000
             if f in shots:
                 render.save_primary_surface(m, out / f"frame-{f}.png")
                 # the viewer's globals: local slot 0x508d50, local vision 0x672668, replay vision 0x67cc84, reveal 0x67cc88
@@ -74,7 +81,12 @@ def run_replay(out: Path, rep: bytes, name: str = "A", cd: str = "original", exp
                    reveal=m.r32(0x67CC88))
             trace.write(json.dumps(game.digest(m), separators=(",", ":")) + "\n")
 
-        def on_end():
+        def on_set_paused():
+            ret, paused = m.r32(m.esp), m.reg(X.UC_X86_REG_ECX) & 0xFF
+            if not FEED <= ret < FEED + FEED_SIZE:  # PauseGame 0x47cbb0 / UnpauseGame 0x47cc10 (tail calls)
+                ev("replay_pause", paused=paused, caller=f"{ret:#x}")
+                st["paused"] = bool(paused)
+                return
             if st["end_frame"] is None:
                 st["end_frame"] = m.r32(game.FRAME_COUNTER)
                 ev("replay_end")
@@ -93,7 +105,7 @@ def run_replay(out: Path, rep: bytes, name: str = "A", cd: str = "original", exp
 
         s.hook(game.FRAME_END_PC, on_frame_end)
         s.hook(DISPATCH, on_dispatch)
-        s.hook(REPLAY_END, on_end)
+        s.hook(SET_REPLAY_PAUSED, on_set_paused)
         s.hook(VICTORY_DIALOG, on_victory)
         from . import scenario
         logs = scenario.install_logs(s, out)
@@ -158,6 +170,9 @@ def run_replay(out: Path, rep: bytes, name: str = "A", cd: str = "original", exp
                                                     and m.clock_us // 1000 - events[-1]["t"] >= 5000):
                     render.save_primary_surface(m, out / "end.png")
                     finished = "replay ended"
+                elif st["paused"] and st["end_frame"] is None and m.clock_us // 1000 - st["frame_t"] >= STANDING_MS:
+                    render.save_primary_surface(m, out / "paused.png")
+                    finished = "paused by a trigger"
                 elif m.r16(game.GAME_MODE) == 4 and st["last_frame"] > 0:
                     finished = f"back in the glue (state {m.r32(game.GLUE_STATE)})"
         except Exception as e:  # noqa: BLE001 - the run's fault is its result

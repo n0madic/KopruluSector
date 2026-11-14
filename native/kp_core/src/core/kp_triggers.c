@@ -762,7 +762,9 @@ void kp_replay_leaderboard(KpGame *g, int action, uint16_t unit)
 }
 
 /* TrigActPauseGame 0x4b6020 of a single-player game: PauseGame 0x47cbb0 under a trigger (the accelerators and the
- * cursor layer are the interface's). */
+ * cursor layer are the interface's). Deviation (ADR 0020): in a replay PauseGame also pauses the replay (0x480e00(1)),
+ * and RunPendingFrames 0x444e30 then runs no triggers, so the original's replay stands for good here; Koprulu pauses
+ * only the game, and the replay goes on as the recorded game did. */
 static void pause_game(KpGame *g)
 {
 	KpTriggers *t = &g->trig;
