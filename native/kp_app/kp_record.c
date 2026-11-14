@@ -79,12 +79,17 @@ static void start_block(KpRecorder *r, int64_t frame)
 	r->open_frame = frame;
 }
 
-void kp_record_command(KpRecorder *r, int64_t frame, uint8_t storm, const uint8_t *cmd, size_t size)
+int kp_record_excluded(uint8_t id)
 {
 	size_t k;
-	if (!r->recording || !r->buf || size == 0 || size >= 0x100) return;
 	for (k = 0; k < sizeof EXCLUDED; k++)
-		if (cmd[0] == EXCLUDED[k]) return;
+		if (id == EXCLUDED[k]) return 1;
+	return 0;
+}
+
+void kp_record_command(KpRecorder *r, int64_t frame, uint8_t storm, const uint8_t *cmd, size_t size)
+{
+	if (!r->recording || !r->buf || size == 0 || size >= 0x100 || kp_record_excluded(cmd[0])) return;
 	if (r->used + KP_RECORD_SCRATCH >= r->cap && grow(r, KP_RECORD_SCRATCH) != 0) return;
 	if (r->open && (r->used - r->open) + 1 + size >= 0xff) start_block(r, frame);
 	if (r->open_frame != frame) start_block(r, frame);

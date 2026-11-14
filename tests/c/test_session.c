@@ -42,6 +42,15 @@ static void clock_speed_table(KpT *T)
 	kp_t_eq(T, KP_CLOCK_SPEED_MS[6], 42, NULL);
 	kp_t_eq(T, kp_clock_step_ms(&c), 167, NULL);
 	kp_t_eq(T, kp_clock_set_speed(&c, 8), -1, "unknown game speed");
+	/* a file's 0x56 may give any multiplier: the clock paces at most 16 and never steps under 1 ms */
+	kp_clock_set_multiplier(&c, 0xffffffffll);
+	kp_t_eq(T, kp_clock_step_ms(&c), 167 * KP_CLOCK_MAX_MULTIPLIER, "Slowest at the most");
+	kp_t_eq(T, kp_clock_set_speed(&c, 7), 0, NULL);
+	kp_t_eq(T, kp_clock_step_ms(&c), 42 / KP_CLOCK_MAX_MULTIPLIER, "Fastest at the most");
+	c.multiplier = 1000; /* past the bound, as no setter leaves it: the step still divides */
+	kp_t_eq(T, kp_clock_step_ms(&c), 1, "never under 1 ms");
+	kp_clock_set_multiplier(&c, -5);
+	kp_t_eq(T, kp_clock_step_ms(&c), 42, "below 1 is 1");
 }
 
 static void clock_interpolation_fraction(KpT *T)

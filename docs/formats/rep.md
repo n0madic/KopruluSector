@@ -94,7 +94,7 @@ Koprulu records in `kp_session_step`: the local player's commands with Storm ID 
 - **The end of the replay:** at the header's frame count the playback pauses (`SetReplayPaused` 0x480e00) and shows the victory dialog.
 - **Live commands during playback:** only ids 5, 8, 0x10, 0x11, 0x37–0x3b, 0x55 and 0x56 pass. 0x56 is the replay's speed and pause: u8 paused, u32 speed, u32 multiplier, as set by `SetReplaySpeed` 0x481040.
 
-Out of version 1: a record with the leave command 0x57 or the chat command 0x5c (a network game's) is refused before the playback starts. The record is walked as the feed reads it and each entry as the dispatcher walks it, so a command after another inside one entry counts too: for example a 0x57 after the short name of a 33-byte 0x06 entry (`test_kp_rep.network_commands_refused`). So is a player record with a Storm ID whose slot is no game player (0..7).
+Out of version 1: a record with the leave command 0x57 or the chat command 0x5c (a network game's) is refused before the playback starts. So is a record with any id the recorder never writes (table 0x4ef2fc: 0x05-0x08, 0x10, 0x11, 0x38-0x3b, 0x55), which no file the original wrote holds (the sync 0x37 of the table plays: its entry is 1 byte, the dispatcher's 0x37 7, so it never runs); a crafted file's save 0x06 or load 0x07 would otherwise write over or load the player's saves. The record is walked as the feed reads it and each entry as the dispatcher walks it, so a command after another inside one entry counts too (`test_kp_rep.unrecorded_commands_refused`). So is a player record with a Storm ID whose slot is no game player (0..7).
 
 ## The KPRX tail
 

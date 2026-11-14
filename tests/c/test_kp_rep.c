@@ -240,48 +240,36 @@ static void player_slot_past_the_players_refused(KpT *T)
 	kp_t_eq(T, kp_session_replay_start(&st, rp), 0, "no Storm ID");
 }
 
-/* A network game's command (the leave 0x57, the chat 0x5c) is refused wherever the dispatcher would meet it: alone
- * in an entry, or (the leave, 2 bytes) after the short name of a 0x06 entry (33 recorded bytes, the dispatcher's 0x06
- * ends at the name's NUL and walks on), in any block. */
-static void network_commands_refused(KpT *T)
+/* A network game's command (the leave 0x57, the chat 0x5c) and every id the recorder never writes (a crafted file's
+ * save 0x06 or load 0x07 would reach the player's saves) are refused before the playback starts; a recorded command
+ * plays, and so does the sync 0x37, whose 1-byte entry the dispatcher (7 bytes) never runs. One block of one entry:
+ * the command alone. */
+static void unrecorded_commands_refused(KpT *T)
 {
-	enum { BLOCK = 5, ENTRY = 1 + 33, CHAT = 82 };
+	enum { BLOCK = 5, LONGEST = 82 };
+	static const uint8_t refused[] = { 0x57, 0x5c, 0x05, 0x06, 0x07, 0x08, 0x10, 0x11, 0x38, 0x39, 0x3a, 0x3b, 0x55 };
+	static const uint8_t played[] = { 0x13, 0x37 }; /* a hotkey, recorded; the sync, never run */
 	KpRep *rp = rep_new(T);
 	KpSessionStart st;
-	uint8_t *rec, *tail;
-	int k;
+	uint8_t *rec;
+	size_t k;
 	synthetic(T, rp);
-	rec = (uint8_t *)realloc(rp->record, BLOCK + 1 + CHAT > 2 * (BLOCK + ENTRY) ? BLOCK + 1 + CHAT : 2 * (BLOCK + ENTRY));
+	rec = (uint8_t *)realloc(rp->record, BLOCK + 1 + LONGEST);
 	kp_t_ok(T, rec != NULL, "memory");
 	if (rec == NULL) return;
 	rp->record = rec;
-	rp->record_size = 2 * (BLOCK + ENTRY);
-	for (k = 0; k < 2; k++) { /* two blocks of one 0x06 entry each, at frames 3 and 4 */
-		uint8_t *b = rec + k * (BLOCK + ENTRY);
-		memset(b, 0, BLOCK + ENTRY);
-		b[0] = (uint8_t)(3 + k);
-		b[4] = ENTRY;
-		b[6] = 0x06;
-		b[11] = 'a'; /* the name "a" and its NUL, then zeros: the dispatcher stops at id 0 */
-	}
-	kp_session_start_defaults(&st);
-	kp_t_eq(T, kp_session_replay_start(&st, rp), 0, "names alone play");
-	tail = rec + (BLOCK + ENTRY) + BLOCK + 1 + 7; /* after the second block's 0x06 "a" */
-	tail[0] = 0x57;
-	kp_session_start_defaults(&st);
-	kp_t_eq(T, kp_session_replay_start(&st, rp), -1, "0x57 after a name refused");
-	tail[0] = 0x5c; /* 82 bytes: past the entry, the dispatcher stops before it */
-	kp_session_start_defaults(&st);
-	kp_t_eq(T, kp_session_replay_start(&st, rp), 0, "0x5c cut by its entry plays");
-	for (k = 0; k < 2; k++) { /* one block of one entry: the command alone */
-		size_t len = k ? CHAT : 2;
-		memset(rec, 0, BLOCK + 1 + len);
+	for (k = 0; k < sizeof refused + sizeof played; k++) {
+		uint8_t id = k < sizeof refused ? refused[k] : played[k - sizeof refused];
+		int len = kp_record_command_length(&id, 1);
+		kp_t_ok(T, len > 0 && len <= LONGEST, "0x%02x's length %d", id, len);
+		if (len <= 0 || len > LONGEST) continue;
+		memset(rec, 0, BLOCK + 1 + (size_t)len);
 		rec[0] = 3;
 		rec[4] = (uint8_t)(1 + len);
-		rec[BLOCK + 1] = k ? 0x5c : 0x57;
-		rp->record_size = BLOCK + 1 + len;
+		rec[BLOCK + 1] = id;
+		rp->record_size = BLOCK + 1 + (size_t)len;
 		kp_session_start_defaults(&st);
-		kp_t_eq(T, kp_session_replay_start(&st, rp), -1, "0x%02x alone refused", rec[BLOCK + 1]);
+		kp_t_eq(T, kp_session_replay_start(&st, rp), k < sizeof refused ? -1 : 0, "0x%02x", id);
 	}
 }
 
@@ -535,7 +523,7 @@ static const KpTest TESTS[] = {
 	{ "empty_record_and_tail", empty_record_and_tail, 0 },
 	{ "refusals", refusals, 0 },
 	{ "player_slot_past_the_players_refused", player_slot_past_the_players_refused, 0 },
-	{ "network_commands_refused", network_commands_refused, 0 },
+	{ "unrecorded_commands_refused", unrecorded_commands_refused, 0 },
 	{ "mutations", mutations, 0 },
 	{ "reads_the_originals_file", reads_the_originals_file, 0 },
 	{ "builds_the_originals_header", builds_the_originals_header, 0 },

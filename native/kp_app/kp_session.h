@@ -46,8 +46,10 @@ typedef struct {
 
 void kp_clock_init(KpClock *c, int speed, int max_catchup);
 int32_t kp_clock_step_ms(const KpClock *c);
-/* A replay's multiplier (1..16; anything below 1 is 1). */
-void kp_clock_set_multiplier(KpClock *c, int multiplier);
+/* A replay's multiplier, as the clock paces it: 1..KP_CLOCK_MAX_MULTIPLIER (below 1 is 1, past it the most). The game
+ * keeps any multiplier a file's 0x56 gives (the original's); only the wall clock is bounded. */
+#define KP_CLOCK_MAX_MULTIPLIER 16 /* ReplayButtonFaster 0x480ee0's most */
+void kp_clock_set_multiplier(KpClock *c, int64_t multiplier);
 /* -1 for an unknown speed. */
 int kp_clock_set_speed(KpClock *c, int speed);
 void kp_clock_reset(KpClock *c);

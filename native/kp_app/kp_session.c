@@ -60,15 +60,19 @@ void kp_clock_init(KpClock *c, int speed, int max_catchup)
 	c->max_catchup = max_catchup > 0 ? max_catchup : KP_CLOCK_DEFAULT_MAX_CATCHUP;
 }
 
-/* SetReplaySpeed 0x481040's table: Slowest times the multiplier, the others divided by it (unsigned) */
+/* SetReplaySpeed 0x481040's table: Slowest times the multiplier, the others divided by it (unsigned); never below 1 ms,
+ * the step kp_clock_advance divides by */
 int32_t kp_clock_step_ms(const KpClock *c)
 {
 	int32_t ms = KP_CLOCK_SPEED_MS[c->speed - 1];
-	if (c->multiplier > 1) return c->speed == 1 ? ms * c->multiplier : ms / c->multiplier;
-	return ms;
+	if (c->multiplier > 1) ms = c->speed == 1 ? ms * c->multiplier : ms / c->multiplier;
+	return ms < 1 ? 1 : ms;
 }
 
-void kp_clock_set_multiplier(KpClock *c, int multiplier) { c->multiplier = multiplier < 1 ? 1 : multiplier; }
+void kp_clock_set_multiplier(KpClock *c, int64_t multiplier)
+{
+	c->multiplier = multiplier < 1 ? 1 : multiplier > KP_CLOCK_MAX_MULTIPLIER ? KP_CLOCK_MAX_MULTIPLIER : (int)multiplier;
+}
 
 int kp_clock_set_speed(KpClock *c, int speed)
 {
@@ -421,7 +425,7 @@ int kp_session_step(KpSession *s, double (*clock_ms)(void))
 		if (speed != KP_NIL && game_speed(s->clock.speed) != speed && speed >= 0 && speed < KP_CLOCK_SPEEDS) {
 			kp_clock_set_speed(&s->clock, (int)speed + 1);
 		}
-		if (s->playing) kp_clock_set_multiplier(&s->clock, (int)s->g->replay_multiplier);
+		if (s->playing) kp_clock_set_multiplier(&s->clock, s->g->replay_multiplier);
 	}
 	return 1;
 }
@@ -451,12 +455,14 @@ int kp_session_advance(KpSession *s, double now, double *alpha, double (*clock_m
 
 static int err_msg(KpError *err, const char *msg);
 
-/* The replay's leave 0x57 and chat 0x5c: a network player's, outside V1 (docs/formats/rep.md); kp_record_split's
- * callback over an entry, as the playback walks it (an entry may hold more commands than its first) */
+/* The replay's leave 0x57 and chat 0x5c: a network player's, outside V1 (docs/formats/rep.md); and every id the recorder
+ * never writes (RecordCommand 0x478340's table), which no file the original wrote holds: a crafted file's save 0x06 or
+ * load 0x07 would write over or load the player's saves. kp_record_split's callback over an entry, as the playback
+ * walks it (an entry may hold more commands than its first). */
 static void refused_command(void *ud, const uint8_t *cmd, size_t n)
 {
 	(void)n;
-	if (cmd[0] == 0x57 || cmd[0] == 0x5c) *(int *)ud = 1;
+	if (cmd[0] == 0x57 || cmd[0] == 0x5c || kp_record_excluded(cmd[0])) *(int *)ud = 1;
 }
 
 int kp_session_replay_start(KpSessionStart *st, const KpRep *rep)

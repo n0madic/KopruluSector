@@ -89,6 +89,9 @@ int kp_record_feed(KpRecorder *r, int64_t f, uint32_t frames, const KpRecordEntr
 /* The dispatcher's walk of one buffer (0x475d30): calls fn for each whole command until the buffer ends, an id
  * outside its table stops it or a command does not fit what is left. Returns the commands given. */
 int kp_record_split(const uint8_t *b, size_t size, void (*fn)(void *ud, const uint8_t *cmd, size_t n), void *ud);
+/* 1 for an id the recorder never writes (RecordCommand 0x478340's table 0x4ef2fc: save, load, restart, the playback's
+ * own commands); 0 otherwise. */
+int kp_record_excluded(uint8_t id);
 /* The original's length of command `b` with its id byte (0x4720c0, 0x4ef048), -1 for an id it does not know. */
 int kp_record_command_length(const uint8_t *b, size_t size);
 
