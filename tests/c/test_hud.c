@@ -4059,6 +4059,57 @@ static void glue_wheel_scrolls_the_lists(KpT *T)
 	kp_t_eq(T, kp_ui_list_selection(ui, list), 0, "the wheel selects nothing");
 }
 
+/* A list gives its shown scroll bar the mouse events at a point of the bar (ListBoxProc 0x4c6480): a press on a row,
+ * captured by the list (ListBoxMouseDown 0x4c6ce0), moved onto the bar and released there is the bar's release, so
+ * the list neither selects the row pressed nor lets the mouse go; a release on the rows then does both. */
+static void glue_list_gives_the_bar_its_events(KpT *T)
+{
+	enum { IDS = 20, ROW = 3 };
+	Glue *G;
+	KpUi *ui;
+	const KpUiControl *d, *b;
+	int32_t list, x, y, bx;
+	int k;
+	if (!kp_t_ready(T, "test_hud.glue_list_gives_the_bar_its_events", GLUE_FILES)) return;
+	G = glue(T);
+	ui = G->ui;
+	G->profile->character_count = IDS;
+	for (k = 0; k < IDS; k++) snprintf(G->profile->characters[k].name, sizeof G->profile->characters[k].name, "ID%02d", k);
+	snprintf(G->profile->name, sizeof G->profile->name, "ID00");
+	kp_glue_menus(G->glue, KP_GLUE_MAIN);
+	wait_for(G, "rez\\glumain.bin", 2000);
+	glue_click(G, 3, -1, -1); /* Single Player */
+	wait_for(G, "rez\\glugamemode.bin", 2000);
+	glue_key(G, 'e');
+	wait_for(G, "rez\\glulogin.bin", 2000);
+	list = glue_list(ui);
+	kp_t_ok(T, list >= 0 && ui->controls[list].list->bar >= 0, "the login's list and its bar");
+	if (list < 0 || ui->controls[list].list->bar < 0) return;
+	b = &ui->controls[ui->controls[list].list->bar];
+	d = &ui->controls[b->parent];
+	kp_t_ok(T, (b->flags & KP_UI_VISIBLE) && b->left > ui->controls[list].right, "the bar shown beside the rows");
+	kp_t_eq(T, kp_ui_list_selection(ui, list), 0, "the player's ID selected");
+	glue_list_point(G, list, ROW, 8, &x, &y);
+	bx = G->glue->place_x + d->left + (b->left + b->right) / 2; /* the bar's middle at the row's height */
+	kp_glue_input(G->glue, MOUSE_MOVE, x, y);
+	glue_frame(G);
+	kp_glue_input(G->glue, LEFT_DOWN, x, y);
+	glue_frame(G);
+	kp_t_eq(T, ui->capture[LEFT_UP], list, "the press on a row: the list holds the release");
+	kp_glue_input(G->glue, MOUSE_MOVE, bx, y);
+	glue_frame(G);
+	kp_glue_input(G->glue, LEFT_UP, bx, y);
+	glue_frame(G);
+	kp_t_eq(T, kp_ui_list_selection(ui, list), 0, "released over the bar: the row is not selected");
+	kp_t_eq(T, ui->capture[LEFT_UP], list, "and the list still holds the release");
+	kp_glue_input(G->glue, MOUSE_MOVE, x, y);
+	glue_frame(G);
+	kp_glue_input(G->glue, LEFT_UP, x, y);
+	for (k = 0; k < 10; k++) glue_frame(G);
+	kp_t_eq(T, kp_ui_list_selection(ui, list), ROW, "released on the rows: the row selected");
+	kp_t_eq(T, ui->capture[LEFT_UP], -1, "and the mouse let go");
+}
+
 /* A ready room ended by the phone's Back (Escape) with the game gone after it: the glue goes on to its menus and the
  * game's idle procedure (GameIdleThunk) is nowhere to be found. */
 static void glue_room_cancel_by_back_leaves_no_game_input(KpT *T)
@@ -5079,6 +5130,7 @@ static const KpTest TESTS[] = {
 	{ "one_key_is_one_hotkey", one_key_is_one_hotkey, 0 },
 	{ "glue_text_takes_code_points", glue_text_takes_code_points, 0 },
 	{ "glue_wheel_scrolls_the_lists", glue_wheel_scrolls_the_lists, 0 },
+	{ "glue_list_gives_the_bar_its_events", glue_list_gives_the_bar_its_events, 0 },
 	{ "type_selection_takes_the_units_cloaked_for_free", type_selection_takes_the_units_cloaked_for_free, 0 },
 	{ "double_click_selects_the_kind_on_the_screen", double_click_selects_the_kind_on_the_screen, 0 },
 	{ "a_right_click_in_the_selections_tick_orders", a_right_click_in_the_selections_tick_orders, 0 },

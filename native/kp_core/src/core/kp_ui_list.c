@@ -231,11 +231,21 @@ void kp_ui_list_free(KpUiControl *c)
 
 int kp_ui_list_proc(KpUi *ui, KpUiControl *c, KpUiEvent *e)
 {
-	/* ListBoxProc 0x4c6480
-	 * TODO: the original first gives event types 3-6 to its shown scroll bar when the dialog's point lies inside the bar
-	 * (a captured drag from the rows onto the bar drives the bar) and returns 1; not ported yet. */
+	/* ListBoxProc 0x4c6480 */
 	KpUiList *l = ls(c);
 	int32_t self = self_of(ui, c);
+	if (l != NULL && l->bar >= 0) {
+		/* a mouse event at a point of the shown bar (the dialog's, 0x4c29d0; inclusive, 0x4c2a00) is the bar's: the
+		 * rows' captured press, its moves and its release over the bar go there, and the list does nothing with them */
+		KpUiControl *b = &ui->controls[l->bar];
+		int32_t x, y;
+		rel(ui, b, e, &x, &y);
+		if ((b->flags & KP_UI_VISIBLE) && x >= b->left && x <= b->right && y >= b->top && y <= b->bottom
+			&& e->type >= KP_UI_MOUSE_MOVE && e->type <= KP_UI_LEFT_DOUBLE) {
+			if (b->interact) (void)b->interact(ui, b, e);
+			return 1;
+		}
+	}
 	switch (e->type) {
 	case KP_UI_KEY_DOWN: case KP_UI_KEY_REPEAT:
 		return l != NULL ? key_down(ui, c, e) : 0;
