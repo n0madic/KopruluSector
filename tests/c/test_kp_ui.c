@@ -3035,7 +3035,7 @@ static void text_finds_glyphs_by_code_point(KpT *T)
 }
 
 /* IsInvalidFileName 0x408300 (the new ID's and the save's names): control bytes, network.tbl string 17's characters,
- * an empty name and the DOS device names before the last dot. */
+ * an empty name and the DOS device names before the first dot (strchr 0x4d0610: "nul.a.b" is refused). */
 static void file_names_the_game_refuses(KpT *T)
 {
 	static const struct {
@@ -3043,7 +3043,7 @@ static void file_names_the_game_refuses(KpT *T)
 		int invalid;
 	} CASES[] = {
 		{ "Kop", 0 }, { "my save 1", 0 }, { "console", 0 }, { "com10", 0 }, { "lpt", 0 }, { "con", 1 }, { "CON", 1 },
-		{ "con.txt", 1 }, { "nul.a.b", 0 }, { "clock$", 1 }, { "a*b", 1 }, { "a/b", 1 }, { "a?", 1 }, { "", 1 },
+		{ "con.txt", 1 }, { "nul.a.b", 1 }, { "aux.b.txt", 1 }, { "a.nul", 0 }, { "a.b.con", 0 }, { "clock$", 1 }, { "a*b", 1 }, { "a/b", 1 }, { "a?", 1 }, { "", 1 },
 		{ "a\1b", 1 }, { "c:name", 0 },
 	};
 	KpOracleUi *u;

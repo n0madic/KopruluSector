@@ -1516,7 +1516,7 @@ int kp_ui_delete_save(KpUi *ui, const char *name);
 void kp_ui_saving(KpUi *ui, const char *name);
 /* IsInvalidFileName 0x408300: 1 when name (limit bytes at most) is not a file name the game takes: unterminated, a
  * control byte, a character of network.tbl string 17 (without / and \ when allow_path) after a drive prefix, an
- * empty name, or a DOS device name (0x5025b8) before its last dot. */
+ * empty name, or a DOS device name (0x5025b8) before its first dot. */
 int kp_ui_invalid_file_name(KpUi *ui, const char *name, size_t limit, int allow_path);
 /* MenuButtonActivateProc 0x46c7a0: the activation goes to the parent with the control's ID as the result. */
 int kp_ui_menu_button_activate_proc(KpUi *ui, KpUiControl *c, KpUiEvent *e);

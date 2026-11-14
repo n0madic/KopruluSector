@@ -364,7 +364,7 @@ int kp_ui_invalid_file_name(KpUi *ui, const char *name, size_t limit, int allow_
 		if (slash != NULL) name = slash + 1;
 	}
 	if (name[0] == 0) return 1;
-	dot = strrchr(name, '.');
+	dot = strchr(name, '.'); /* the first dot (0x4d0610 is strchr), so "nul.a.b" is a device name too */
 	len = dot != NULL ? (size_t)(dot - name) : strlen(name);
 	for (k = 0; k < sizeof RESERVED / sizeof RESERVED[0]; k++) {
 		size_t r = strlen(RESERVED[k]), m = len > r ? len : r, i;
