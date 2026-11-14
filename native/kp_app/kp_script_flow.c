@@ -17,7 +17,7 @@ enum {
 	V_CREEP_TILES, V_CREEP_RECEDING, V_TRIGGER_WAITING, V_PORTRAIT_MS, V_TARGETING, V_PLACING, V_GROUPS_HELD, V_PAD_OPEN,
 	V_PAD_COUNT, V_PAD_SHOWN, V_GAMMA, V_PORTRAITS, V_VIDEO_GRAPHICS, V_VIDEO_FOG, V_VIDEO_WATER, V_VIDEO_FONT,
 	V_VIDEO_LIGHTING, V_VIDEO_SERIAL, V_VIDEO_COMMITS, V_TEXT_VECTOR, V_SELECTION_HAS, V_SELECTION_FIRST, V_MOVED,
-	V_GROUP_HELD, V_COUNT
+	V_GROUP_HELD, V_REPLAY_ENDED, V_REPLAY_FRAMES, V_SIM_CRC, V_COUNT
 };
 enum { NEED_UI, NEED_WORLD, NEED_GAME, NEED_CONSOLE }; /* what a value is read from */
 static const struct {
@@ -58,6 +58,9 @@ static const struct {
 	{ "selection.first", KP_SCRIPT_ARG_PICK, NEED_GAME },  /* selection.first:PICK, 1 when the selection's first */
 	{ "moved", KP_SCRIPT_ARG_PICK, NEED_GAME },            /* moved:PICK, the world's pixels from where it was picked */
 	{ "group.held", KP_SCRIPT_ARG_INT, NEED_CONSOLE },     /* group.held:N, 1 when group N (0..9) holds units */
+	{ "replay.ended", KP_SCRIPT_ARG_NONE, NEED_GAME },     /* a replay's playback passed its record */
+	{ "replay.frames", KP_SCRIPT_ARG_NONE, NEED_GAME },    /* the replay's frames (its header's), 0 outside one */
+	{ "sim.crc", KP_SCRIPT_ARG_NONE, NEED_GAME },          /* the state's CRCs folded, the local interface's aside */
 };
 #define GROUPS 10
 #define PLAYERS 12
@@ -65,11 +68,11 @@ static const struct {
 /* --- the conditions --- */
 
 enum { C_GAME, C_DIALOG, C_NODIALOG, C_PAUSED, C_GLUE, C_STILL, C_SCREEN, C_ROOM, C_MOVIE, C_NOMOVIE, C_EPISODE,
-	C_BRIEFING, C_SCORE, C_COUNT };
+	C_BRIEFING, C_SCORE, C_REPLAY, C_COUNT };
 /* episode: a campaign's episode chosen (its text's popup, or its ready room); briefing: the ready room open (its text
- * past); score: the score screen */
+ * past); score: the score screen; replay: the game in play is a replay's playback */
 static const char *const CONDS[C_COUNT] = { "game", "dialog", "nodialog", "paused", "glue", "still", "screen", "room",
-	"movie", "nomovie", "episode", "briefing", "score" };
+	"movie", "nomovie", "episode", "briefing", "score", "replay" };
 
 /* --- the names of the commands' arguments --- */
 
@@ -112,12 +115,12 @@ static const char *const UNITS[UNIT_COUNT] = { "worker", "main", "group" };
 /* The dialogs by their BIN's name without its directory and .bin (any case): the glue's screens and popups, the game's
  * menus, ours (koprulu\); then, their indices from CONSOLE_FIRST, the console's own, which are no dialog to a script's
  * dialog, nodialog and screen (their controls are DIALOG.ID's, `ui` lists them). */
-static const char *const DIALOGS[] = { "abrtmenu", "credits", "gamemenu", "gluCmpgn", "gluExpCmpgn", "gluGameMode",
+static const char *const DIALOGS[] = { "abrtmenu", "allyfltr", "credits", "gamemenu", "gluCmpgn", "gluCustm", "gluExpCmpgn", "gluGameMode",
 	"gluHist", "gluLoad", "gluLogin", "gluMain", "gluPEdit", "gluPOk", "gluPOkCancel", "gluScore", "glurdyp", "glurdyt",
 	"glurdyz", "help", "helpmenu", "language", "lmission", "loadgame", "objctdlg", "ok", "okcancel", "options", "quit",
 	"quit2mnu", "quitrepl", "restart", "savegame", "snd_dlg", "spd_dlg", "tips_dlg", "titledlg", "video", "wait", "wmission" };
-static const char *const CONSOLE_DIALOGS[] = { "minimap", "ptextbox", "ttextbox", "ztextbox", "stat_f10", "statbtnp",
-	"statbtnt", "statbtnz", "statdata", "statlb", "statport", "statres" };
+static const char *const CONSOLE_DIALOGS[] = { "minimap", "ptextbox", "ttextbox", "ztextbox", "stat_f10", "statbtnn",
+	"statbtnp", "statbtnt", "statbtnz", "statdata", "statlb", "statport", "statres" };
 #define CONSOLE_FIRST ((int)(sizeof DIALOGS / sizeof DIALOGS[0]))
 #define DIALOG_COUNT (CONSOLE_FIRST + (int)(sizeof CONSOLE_DIALOGS / sizeof CONSOLE_DIALOGS[0]))
 #define ANY_DIALOG (-1)
@@ -153,8 +156,14 @@ static const struct {
 	{ "glulogin.delete", "gluLogin", 7 },
 	{ "glucmpgn.load", "gluCmpgn", 5 },
 	{ "glucmpgn.player", "gluCmpgn", 9 },
+	{ "glucmpgn.replay", "gluCmpgn", 11 },
 	{ "gluexpcmpgn.load", "gluExpCmpgn", 5 },
 	{ "gluexpcmpgn.player", "gluExpCmpgn", 9 },
+	{ "gluexpcmpgn.replay", "gluExpCmpgn", 11 },
+	/* Load Replay (RunCreateGameScreen 0x455550 in its replay mode, glue state 12) */
+	{ "glucustm.list", "gluCustm", 5 },
+	{ "glucustm.ok", "gluCustm", 12 },
+	{ "glucustm.cancel", "gluCustm", 13 },
 	{ "gluload.ok", "gluLoad", 4 },
 	{ "gluload.cancel", "gluLoad", 5 },
 	{ "gluload.delete", "gluLoad", 7 },
@@ -454,6 +463,20 @@ static int64_t picked(const KpScriptRun *run, KpGame *g, int64_t slot, char *why
 	return n;
 }
 
+/* sim.crc: each category's CRC folded in dump order, but those of the local interface a replay's viewer does not share
+ * with the recorded player: step's result dialog clock (TickResultDialogTimer 0x4be340 does not run in a replay),
+ * the local selection, the sprites and images (its selection circles and the right click's ground marker). */
+static void fold_crc(void *ud, const char *category, uint32_t crc)
+{
+	static const char *const LOCAL[] = { "step", "selection", "sprite", "image" };
+	uint32_t *folded = (uint32_t *)ud;
+	size_t k;
+	for (k = 0; k < sizeof LOCAL / sizeof LOCAL[0]; k++) {
+		if (strcmp(category, LOCAL[k]) == 0) return;
+	}
+	*folded = *folded * 31u + crc;
+}
+
 int kp_script_flow_value(const KpFlow *f, const KpScriptRun *run, const KpScriptRef *ref, int64_t *out, char *why,
 	size_t size)
 {
@@ -530,6 +553,17 @@ int kp_script_flow_value(const KpFlow *f, const KpScriptRun *run, const KpScript
 		}
 		*out = (kp_ui_groups_held(ui) >> ref->arg) & 1;
 		break;
+	case V_REPLAY_ENDED: *out = f->session->replay_ended != 0; break;
+	case V_REPLAY_FRAMES: *out = f->session->playing ? (int64_t)f->session->replay_frames : 0; break;
+	case V_SIM_CRC: {
+		uint32_t folded = 0;
+		if (kp_dump_crcs(g, 0, fold_crc, &folded) != 0) {
+			snprintf(why, size, "no state's CRC (out of memory)");
+			return -1;
+		}
+		*out = folded;
+		break;
+	}
 	default:
 		snprintf(why, size, "no value %d", (int)ref->id);
 		return -1;
@@ -581,6 +615,10 @@ int kp_script_flow_cond(const KpFlow *f, const KpScriptRef *ref, char *why, size
 				: ref->id == C_SCORE ? f->glue.screen == KP_GLUE_SCORE
 				: f->glue.screen == KP_GLUE_ROOM || open_count(f->ui) > 1);
 		if (!holds) glue_why(f, why, size);
+		return holds;
+	case C_REPLAY:
+		holds = in_game(f) && f->playing_replay;
+		if (!holds) snprintf(why, size, "%s", in_game(f) ? "the game is no replay" : "no game in play");
 		return holds;
 	case C_MOVIE:
 	case C_NOMOVIE:
@@ -901,6 +939,8 @@ int kp_script_flow_act(KpFlow *f, KpScriptRun *run, const KpScriptStep *step, ch
 	case KP_SCRIPT_LOAD_FILE:
 		if (!save_name_fits(step->text, why, size) || kp_flow_load_saved(f, step->text, why, size) != 0) return -1;
 		return 0;
+	case KP_SCRIPT_REPLAY:
+		return kp_flow_play_replay(f, step->text, why, size);
 	case KP_SCRIPT_MENU:
 	case KP_SCRIPT_OPTIONS_DIALOG:
 		if (!in_game(f)) break;

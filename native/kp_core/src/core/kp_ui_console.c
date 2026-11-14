@@ -22,6 +22,12 @@ static const char CONSOLE_LETTERS[4] = { 'z', 't', 'p', 'n' };
 
 static void console_pieces(KpUi *ui, char letter);
 
+int kp_ui_local_race(const KpUi *ui)
+{
+	const KpGame *g = ui->game;
+	return g->w->replay ? 1 : (int)g->players.race[g->local_player];
+}
+
 int kp_ui_load_console(KpUi *ui, int race)
 {
 	char path[32];
@@ -37,6 +43,7 @@ int kp_ui_load_console(KpUi *ui, int race)
 	ui->console.w = w;
 	ui->console.h = h;
 	ui->console_file = f;
+	ui->console_whole = race == 3;
 	if (kp_ui_pcx(f->data, f->size, &w, &h, ui->console.pixels, (size_t)w * (size_t)h) != 0) return -1;
 	console_pieces(ui, CONSOLE_LETTERS[race]);
 	return 0;
@@ -168,7 +175,7 @@ void kp_ui_capture_console(KpUi *ui, int32_t control)
 		item[2] = ui->console.w;
 		item[3] = ui->console.h;
 		kp_ui_image_whole(ui, &target, ui->console_file,
-			c->left < KP_UI_CONSOLE_CUT_1 ? 0 : c->left < KP_UI_CONSOLE_CUT_2 ? 1 : 2, item, 0);
+			ui->console_whole || c->left < KP_UI_CONSOLE_CUT_1 ? 0 : c->left < KP_UI_CONSOLE_CUT_2 ? 1 : 2, item, 0);
 	}
 	ui->text.target = saved;
 }

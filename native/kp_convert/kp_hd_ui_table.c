@@ -478,6 +478,7 @@ static int entry(void *ctx, const char *path, size_t len)
 	switch (kind) {
 	case KP_HD_UI_SCR_CONSOLE: return console_entry(t, race);
 	case KP_HD_UI_SCR_KEPT_SD: t->kept++; return 0;
+	case KP_HD_UI_SCR_NEUTRAL: return kp_res_raw_held(t->r, file) ? take(t, file) : 0; /* a replay's console: placed by rule */
 	case KP_HD_UI_SCR_GRP: return kp_res_raw_held(t->r, file) ? grp_entry(t, path, len, file) : 0;
 	case KP_HD_UI_SCR_PCX:
 	case KP_HD_UI_SCR_PICTURE: return kp_res_raw_held(t->r, file) ? pcx_entry(t, path, file, kind == KP_HD_UI_SCR_PICTURE) : 0;

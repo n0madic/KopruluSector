@@ -1852,8 +1852,7 @@ static int load_pcx(KpUi *ui, const char *path, KpUiSurface *s, uint8_t *head, s
 
 int kp_ui_status_create(KpUi *ui)
 {
-	KpGame *g = game(ui);
-	int race = (int)g->players.race[g->local_player];
+	int race = kp_ui_local_race(ui);
 	char path[64];
 	int32_t d;
 	KpUiStatus *s = &ui->status;

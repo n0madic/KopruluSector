@@ -283,6 +283,7 @@ static void flow_setup(KpApp *a)
 	h->mission_files = host_mission_files;
 	h->language_files = host_language_files;
 	f->flags = &a->flags;
+	kp_app_pick_setup(a);
 	f->data = &a->data;
 	f->identity = &a->identity;
 	f->console_art = a->console_art;
@@ -306,11 +307,16 @@ int kp_app_flow_init(KpApp *a, char *err, size_t err_size)
 	return kp_flow_init(&a->flow, err, err_size);
 }
 
-void kp_app_flow_frame(KpApp *a) { kp_flow_frame(&a->flow); }
+void kp_app_flow_frame(KpApp *a)
+{
+	kp_app_pick_frame(a);
+	kp_flow_frame(&a->flow);
+}
 
 void kp_app_flow_free(KpApp *a)
 {
 	kp_flow_free(&a->flow);
+	kp_app_pick_free();
 	kp_vtext_free(&a->vtext);
 	a->vtext_ui = NULL;
 	SDL_free(a->vtext_file);

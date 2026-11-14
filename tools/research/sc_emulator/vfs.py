@@ -173,6 +173,19 @@ class FileSystem:
             return 0
         return ERROR_FILE_NOT_FOUND
 
+    def preload(self, path: str, data: bytes):
+        """Puts a file into the overlay before the guest runs (its directories are created)."""
+        self.mkdirs(norm(path).rsplit("\\", 1)[0])
+        k = self._key(path)
+        self.overlay[k] = bytearray(data)
+        self.overlay_names[k] = norm(path)
+        self.deleted.discard(k)
+
+    def snapshot(self, path: str) -> bytes | None:
+        """The overlay's current contents of a file the guest wrote, or None."""
+        data = self.overlay.get(self._key(path))
+        return None if data is None else bytes(data)
+
     # -- open
     def open(self, path: str, write: bool, disposition: int) -> tuple[OpenFile | None, int]:
         """CreateFile semantics. Returns (file, error) where error is a Win32 code

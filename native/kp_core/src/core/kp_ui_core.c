@@ -219,6 +219,8 @@ KpUi *kp_ui_new_data(const KpUiData *d, char *err, size_t err_size)
 		/* InitDefaultVolumes 0x49dfa0's ApplyVolumeOptions (ResumeMusic's track 0 plays nothing) */
 		ui->music.resumed = ui->sound.device && ui->sound.music != 0;
 	}
+	ui->fluff = kp_ui_data_table(d, "FLUF", &ui->fluff_size);
+	ui->fluff_list = -1;
 	{
 		uint32_t n = 0;
 		const uint8_t *accl = kp_ui_data_table(d, "ACCL", &n);

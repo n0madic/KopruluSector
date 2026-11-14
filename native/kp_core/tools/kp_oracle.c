@@ -201,7 +201,7 @@ int kp_state_lines(KpGame *g, int drawn, KpBuf *out) { return kp_dump(g, drawn, 
 int kp_oracle_chain_opts(KpOracleOpts *opts, KpCarry *carry, KpError *err)
 {
 	const char *path = getenv("KP_CARRY"), *turn = getenv("KP_TURN"), *speech = getenv("KP_SPEECH"),
-		*speech_data = getenv("KP_SPEECH_DATA");
+		*speech_data = getenv("KP_SPEECH_DATA"), *replay = getenv("KP_REPLAY");
 	if (path && path[0]) {
 		size_t size;
 		uint8_t *bytes = kp_read_file(path, &size);
@@ -217,6 +217,7 @@ int kp_oracle_chain_opts(KpOracleOpts *opts, KpCarry *carry, KpError *err)
 	if (turn && turn[0]) opts->host.turn = strtoll(turn, NULL, 10);
 	if (speech && speech[0]) opts->speech = speech;
 	if (speech_data && speech_data[0]) opts->speech_data = speech_data;
+	if (replay && replay[0] == '1') opts->host.replay = 1;
 	return 0;
 }
 
@@ -249,6 +250,7 @@ int kp_golden_run_start(KpGoldenRun *gr, const char *root, const KpJson *g, cons
 	else kp_oracle_opts(&o);
 	if (trace) o.host.trace = 1;
 	o.host.turn = kp_json_field_int(g, "turn", o.host.turn);
+	if (kp_json_field_int(g, "replay", 0)) o.host.replay = 1; /* the original playing a replay (--kind replays) */
 	if (kp_replay_from_golden(&gr->replay, root, g, err) != 0) return -1;
 	o.host.mission_index = gr->replay.mission_index;
 	if (kp_oracle_game_start(&gr->game, root, gr->replay.mission, gr->replay.seed, gr->replay.expansion, &o, err) != 0) {

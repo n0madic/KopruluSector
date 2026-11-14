@@ -79,6 +79,10 @@ void kp_refresh_remembered_terrain(struct KpGame *g);
 /* The original's game screen in tiles (RefreshRememberedTerrainOnscreen 0x40b220). */
 #define KP_SCREEN_TILES_W 21
 #define KP_SCREEN_TILES_H 14
+/* The first screen's top-left tile: a start location's tile less these (HandleStartLocationRecord 0x46a280, half the
+ * original's 20 x 12 tile view). */
+#define KP_START_SCREEN_X 10
+#define KP_START_SCREEN_Y 6
 void kp_refresh_terrain_onscreen(struct KpGame *g, int64_t x0, int64_t y0, int64_t w, int64_t h);
 void kp_reset_tile_visibility(struct KpGame *g);
 /* ApplyVisionCheats 0x46c070: the one-shot tile rewrite of black sheep wall (kp_fog.c). */

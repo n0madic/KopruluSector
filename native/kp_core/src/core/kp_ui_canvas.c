@@ -4,6 +4,7 @@
 #include "kp_ui.h"
 #include "kp_game.h"
 #include "kp_int.h"
+#include "kp_kpf.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -648,6 +649,41 @@ void kp_ui_canvas_console_owned(KpUi *ui, KpUiCanvas *c, int group, int32_t x, i
 	}
 }
 
+/* The rectangle k of the game's fluff list (x, y, w, h); 0 past its end or without the table. */
+static int fluff_rect(const KpUi *ui, int k, int32_t r[4])
+{
+	const uint8_t *t = ui->fluff;
+	size_t at = 1, n = ui->fluff_size;
+	int list, j;
+	if (t == NULL || n < 1 || ui->fluff_list < 0 || ui->fluff_list >= t[0]) return 0;
+	for (list = 0; list < ui->fluff_list; list++) {
+		if (at >= n) return 0;
+		at += 1 + 8 * (size_t)t[at];
+	}
+	if (at >= n || k >= t[at] || at + 1 + 8 * (size_t)(k + 1) > n) return 0;
+	at += 1 + 8 * (size_t)k;
+	for (j = 0; j < 4; j++) r[j] = kp_le_u16(t + at + 2 * (size_t)j);
+	return 1;
+}
+
+void kp_ui_canvas_fluff(KpUi *ui, KpUiCanvas *c, int group, int32_t x, int32_t y, int32_t x0, int32_t x1)
+{
+	const KpUiSurface *s = &ui->console;
+	int32_t r[4], i, j;
+	int k;
+	c->seq++;
+	if (s->pixels == NULL || (group >= 0 && ui->console_owners == NULL)) return;
+	for (k = 0; fluff_rect(ui, k, r); k++) {
+		for (j = r[1]; j < r[1] + r[3] && j < s->h; j++) {
+			for (i = r[0]; i < r[0] + r[2] && i < s->w; i++) {
+				size_t at = (size_t)j * (size_t)s->w + (size_t)i;
+				if (s->pixels[at] == 0) continue; /* the art's holes keep what lies under */
+				if (group < 0 ? (i >= x0 && i < x1) : ui->console_owners[at] == group + 1) put_console(c, x + i, y + j, s->pixels[at]);
+			}
+		}
+	}
+}
+
 void kp_ui_canvas_fill(KpUiCanvas *c, int32_t x, int32_t y, int32_t w, int32_t h, uint8_t index)
 {
 	int32_t i, j;
@@ -937,6 +973,18 @@ void kp_ui_canvas_translucent(KpUi *ui, KpUiCanvas *c, const KpUiSurface *s, int
 }
 
 /* kp_ui_canvas_dialog: the dialog's pixels as composed (NULL without a bitmap) and their owners (*owners, NULL none). */
+/* Whether a console dialog's pixel (i, j) lies where the console bitmap has none: its captured background
+ * (CaptureConsoleBackground 0x4a7c40) is 0 there, and the original shows the game under it, as on the replay's
+ * nconsole.pcx beside the minimap (0..137 x 315..479: 130..137 x 315..323) and zconsole.pcx's 133..137 x 315 (the
+ * emulator's frames of a replay and of a Zerg game). */
+static int console_hole(const KpUi *ui, const KpUiControl *d, int32_t i, int32_t j)
+{
+	int32_t cx = d->left + i, cy = d->top + j;
+	const KpUiSurface *s = &ui->console;
+	return d->console_capture && s->pixels != NULL && cx >= 0 && cy >= 0 && cx < s->w && cy < s->h
+		&& s->pixels[(size_t)cy * (size_t)s->w + (size_t)cx] == 0;
+}
+
 static const uint8_t *compose_dialog(KpUi *ui, KpUiCanvas *c, int32_t dialog, int32_t x, int32_t y,
 	const uint16_t **owners_out)
 {
@@ -965,7 +1013,7 @@ static const uint8_t *compose_dialog(KpUi *ui, KpUiCanvas *c, int32_t dialog, in
 				if (v != 0) put_blended(ui, c, x + i, y + j, v, OPAQUE);
 				continue;
 			}
-			if (keyed && v == 0) continue;
+			if (v == 0 && (keyed || console_hole(ui, d, i, j))) continue;
 			put(c, x + i, y + j, v, OPAQUE);
 		}
 	}

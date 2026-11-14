@@ -375,6 +375,11 @@ void kp_app_save_profile(KpApp *a);
 void kp_app_load_profile(KpApp *a);
 /* The web's files written to IndexedDB (a no-op elsewhere). */
 void kp_app_sync_files(KpApp *a);
+/* kp_app_pick.c: Load Replay's Import and Export over the platform's file picker: the flow's hooks (none in a scripted or
+ * hidden run, nor on iOS), each frame's answer of a picker (imported, or the export written), the state freed */
+void kp_app_pick_setup(KpApp *a);
+void kp_app_pick_frame(KpApp *a);
+void kp_app_pick_free(void);
 
 /* kp_app_audio.c: the mixer of the interface's sound commands */
 int kp_audio_init(KpAudio *au);

@@ -4,6 +4,7 @@
  * the game menus and the console's work over native games. The console's host and the presentation's canvas and layout
  * are tested in test_hud.c, over the interface's C host (native/kp_app/kp_hud.h) and kp_present's canvas and layout. */
 #include "kp_test_ui.h"
+#include "kp_kpf.h"
 #include "kp_text.h"
 
 #include "../../native/kp_core/src/core/kp_ui_text.h"
@@ -2304,6 +2305,87 @@ static void keys_translate_through_the_accelerators(KpT *T)
 	kp_t_eq(T, c.checked, 1, NULL);
 }
 
+/* A replay's card buttons (statbtnn.bin): their states (ReplayButtonSlowerState 0x480ea0, FasterState 0x480f30,
+ * PauseState 0x480f90; 0 outside a replay) and the speed command 0x56 {paused, speed, multiplier} each sends
+ * (ReplayButtonSlower 0x480e50, Faster 0x480ee0, Pause 0x480f70): past Fastest the multiplier doubles up to 16, below
+ * it halves first; while paused Slower and Faster are disabled and send nothing. */
+#define REPLAY_SLOWER_STATE 0x480ea0
+#define REPLAY_FASTER_STATE 0x480f30
+#define REPLAY_PAUSE_STATE 0x480f90
+#define REPLAY_SLOWER 0x480e50
+#define REPLAY_FASTER 0x480ee0
+#define REPLAY_PAUSE 0x480f70
+static void replay_buttons_frame(void *ud, KpHudReplay *r, int64_t frame)
+{
+	static const struct {
+		int64_t speed, multiplier, paused;
+		int slower, faster;                   /* the states */
+		uint32_t button;                      /* pressed */
+		int sent;                             /* a command sent: its paused, speed, multiplier */
+		int64_t s_paused, s_speed, s_multiplier;
+	} CASES[] = {
+		{ 6, 1, 0, 1, 1, REPLAY_FASTER, 1, 0, 6, 2 },   /* Fastest: the multiplier doubles */
+		{ 6, 16, 0, 1, -1, REPLAY_FASTER, 1, 0, 6, 16 }, /* at 16 it stays (the button disabled) */
+		{ 6, 4, 0, 1, 1, REPLAY_SLOWER, 1, 0, 6, 2 },   /* over Fastest Slower halves it first */
+		{ 6, 1, 0, 1, 1, REPLAY_SLOWER, 1, 0, 5, 1 },   /* then the speed goes down */
+		{ 0, 1, 0, -1, 1, REPLAY_FASTER, 1, 0, 1, 1 },  /* Slowest: Slower disabled */
+		{ 4, 1, 1, -1, -1, REPLAY_SLOWER, 0, 0, 0, 0 }, /* paused: nothing */
+		{ 4, 1, 1, -1, -1, REPLAY_PAUSE, 1, 0, 4, 1 },  /* Play resumes */
+		{ 4, 1, 0, 1, 1, REPLAY_PAUSE, 1, 1, 4, 1 },    /* Pause */
+	};
+	Check *c = (Check *)ud;
+	KpT *T = c->T;
+	KpUi *ui = r->ui.ui;
+	KpGame *g = r->game.g;
+	uint8_t first[KP_UI_COMMAND_BYTES];
+	size_t size;
+	int64_t speed = kp_scalar(g, KP_SPEED), multiplier = g->replay_multiplier, paused = g->replay_paused;
+	int replay = g->w->replay, k;
+	(void)frame;
+	kp_t_eq(T, kp_ui_button_condition(ui, REPLAY_PAUSE_STATE, 0, g->local_player, 0), 0, "no replay: hidden");
+	g->w->replay = 1;
+	for (k = 0; k < (int)(sizeof CASES / sizeof CASES[0]); k++) {
+		kp_scalar_set(g, KP_SPEED, CASES[k].speed);
+		g->replay_multiplier = CASES[k].multiplier;
+		g->replay_paused = CASES[k].paused;
+		kp_t_eq(T, kp_ui_button_condition(ui, REPLAY_SLOWER_STATE, 0, g->local_player, 0), CASES[k].slower,
+			"case %d: Slower's state", k);
+		kp_t_eq(T, kp_ui_button_condition(ui, REPLAY_FASTER_STATE, 0, g->local_player, 0), CASES[k].faster,
+			"case %d: Faster's state", k);
+		kp_t_eq(T, kp_ui_button_condition(ui, REPLAY_PAUSE_STATE, 0, g->local_player, 0), 1, "case %d: Pause's", k);
+		kp_t_ui_take_commands(ui, NULL, &size);
+		kp_ui_button_action(ui, CASES[k].button, 0, 0);
+		kp_t_eq(T, kp_t_ui_take_commands(ui, first, &size), CASES[k].sent, "case %d: commands", k);
+		if (!CASES[k].sent) continue;
+		kp_t_eq(T, (int64_t)size, 10, "case %d: 0x56's size", k);
+		kp_t_eq(T, first[0], 0x56, "case %d", k);
+		kp_t_eq(T, first[1], CASES[k].s_paused, "case %d: paused", k);
+		kp_t_eq(T, kp_le_u32(first + 2), CASES[k].s_speed, "case %d: speed", k);
+		kp_t_eq(T, kp_le_u32(first + 6), CASES[k].s_multiplier, "case %d: multiplier", k);
+	}
+	g->w->replay = replay;
+	kp_scalar_set(g, KP_SPEED, speed);
+	g->replay_multiplier = multiplier;
+	g->replay_paused = paused;
+	c->checked = 1;
+}
+
+static void replay_buttons_send_the_speed_command(KpT *T)
+{
+	static const int64_t FRAMES[1] = { 20 };
+	KpHudObservers obs;
+	Check c;
+	if (!kp_t_ready(T, "test_kp_ui.replay_buttons_send_the_speed_command", UI_FILES)) return;
+	if (!kp_t_has(T, "tests/golden/oracle/ui/hud_tooltips.json")) return;
+	memset(&obs, 0, sizeof obs);
+	c.T = T;
+	c.checked = 0;
+	obs.on_frame = replay_buttons_frame;
+	obs.ud = &c;
+	hud_run(T, "tooltips", FRAMES, 1, &obs);
+	kp_t_eq(T, c.checked, 1, NULL);
+}
+
 /* KP_EVENT_SELECTION_SENT's fields of a selection: four 11-bit units a field. */
 static void pack(const int64_t *units, int n, int64_t *f)
 {
@@ -3513,6 +3595,7 @@ static const KpTest TESTS[] = {
 	{ "hud_panels_hold_with_the_glyph_log", hud_panels_hold_with_the_glyph_log, 0 },
 	{ "hud_panels_hold_with_the_image_log", hud_panels_hold_with_the_image_log, 0 },
 	{ "keys_translate_through_the_accelerators", keys_translate_through_the_accelerators, 0 },
+	{ "replay_buttons_send_the_speed_command", replay_buttons_send_the_speed_command, 0 },
 	{ "game_deselections_send_selection_commands", game_deselections_send_selection_commands, 0 },
 	{ "result_dialogs_leave_exit_codes", result_dialogs_leave_exit_codes, 0 },
 	{ "next_game_forgets_the_last_result", next_game_forgets_the_last_result, 0 },

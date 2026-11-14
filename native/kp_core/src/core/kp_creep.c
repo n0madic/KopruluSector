@@ -194,6 +194,15 @@ void kp_creep_recede_tick(KpGame *g)
 	}
 }
 
+/* Whether the viewer sees a tile of flags f (OnCreepTileChanged 0x4b4040, IsTileHiddenFromViewer 0x4b4560): outside
+ * replays the local player's not-visible bit (0x672668) is clear; in a replay a player of the replay's vision
+ * (0x67cc84, the world's local_vision) sees it, or the replay shows everything (0x67cc88). */
+static int viewer_sees(KpGame *g, int64_t f)
+{
+	if (g->w->replay) return kp_band(kp_band(g->w->local_vision, 0xff), kp_bnot(f)) != 0 || g->w->replay_reveal;
+	return kp_band(f, g->local_vision) == 0;
+}
+
 /* OnCreepTileChanged 0x4b4040 (callback 0). */
 static void tile_changed(KpGame *g, int64_t x, int64_t y, int64_t mode, int64_t word)
 {
@@ -204,7 +213,7 @@ static void tile_changed(KpGame *g, int64_t x, int64_t y, int64_t mode, int64_t 
 		return;
 	}
 	f = t->tiles[i];
-	if (kp_band(f, g->local_vision) == 0) {
+	if (viewer_sees(g, f)) {
 		t->megatiles[i] = kp_cv5_megatile(g, word);
 		g->minimap_terrain++; /* RedrawCreepTileRect 0x4b4eb0's MarkMinimapTerrainDirty, for the interface */
 		if (mode == MODE_ADD) f = kp_bor(f, SHOWN);
@@ -279,7 +288,7 @@ static int shows_creep(KpGame *g, int64_t x, int64_t y)
 
 static int hidden_from_viewer(KpGame *g, int64_t x, int64_t y)
 {
-	return kp_band(g->terrain.tiles[tile_index(g, x, y)], g->local_vision) != 0;
+	return !viewer_sees(g, g->terrain.tiles[tile_index(g, x, y)]);
 }
 
 /* ForEachCreepNeighbor 0x4c03f0 with RefreshCreepBorderAt 0x4c0470 (and the neighbour mask of 0x4c0e00):

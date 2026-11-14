@@ -405,6 +405,7 @@ The aggregation was rerun on 2026-10-11 after the H07 no-cheat runs, against the
   - Most of these run at start-up regardless of mode: the CRT's C++ static initializers, crash-reporter set-up and its watchdog thread, and the process-hardening step, whose security calls fail under HLE.
   - The in-game ones run every frame or turn in single player. The atlas says this for `0x4175e0` and `0x470150` and argues they have no offline effect.
   - `0x45e380` SetupModemProvider, listed here by the first aggregation, is no longer `excluded` in the current atlas.
+  - `0x4175e0` GetSpriteVisibilityChecksum is `specified` since the atlas's network second pass (2026-11-14); in single player it still runs every turn and copies zeros, because nothing sets the request flag.
 - **Executed functions without any atlas entry or status:** 0. The first aggregation had found 45; the current atlas has entries for all of them.
 - **Executed code outside every atlas function body.** 83 groups of executed blocks start beyond the Ghidra size of their containing entry.
   - Almost all are continuation blocks of that function: epilogues, fall-through after a call or branch, short-jump targets.
@@ -1205,7 +1206,7 @@ The UI path also works and was used while developing: main menu → Single Playe
   - Every single-player input path has now been exercised at least once (H03, H03b, H04, H05, H06).
   - Ctrl+F2…F4 have no accelerator binding, so there is nothing to exercise. Ctrl+S was first run without a sound device, so `ToggleSfxMute` returned at its device test. H06b repeated it with a device: the effects volume went 50 → 0 → 50 and `StopAllSounds` ran, as specified.
   - Multiplayer-only inputs stay out of scope because the offline single-player game cannot reach them:
-    - `ToggleTextbox` (P39 `0x4b3bd0`) sets message mode 1 offline and sends text with `SendTextboxChat` `0x4b3d60` only when the multiplayer byte `0x672664` ≠ 0. That function is `excluded`, so chat targets and recipient modes never apply.
+    - `ToggleTextbox` (P39 `0x4b3bd0`) sets message mode 1 offline and sends text with `SendTextboxChat` `0x4b3d60` only when the multiplayer byte `0x672664` ≠ 0. That function is specified since the atlas's network second pass (2026-11-14) but never runs offline, so chat targets and recipient modes never apply.
     - The alliance and team helpers (P39) require the same byte; the Single Player path keeps it 0 (shared facts).
   - The 3,000- and 20,000-frame runs give no input after Start.
 - **Mission start.** The mission-warp cheat skips the main-menu/campaign-menu UI and sets cheat bit `0x200` (Ophelia), which only enables warping.

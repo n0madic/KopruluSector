@@ -304,14 +304,22 @@ int kp_ui_button_condition(KpUi *ui, uint32_t address, uint8_t value, int64_t pl
 	int64_t n = status_unit, t;
 	int single = (uint8_t)ui->hud.selection_count == 1; /* the conditions compare the count's byte */
 	if (address == ALWAYS) return 1; /* BtnCondAlways 0x49f410 */
+	if (address == REPLAY_SLOWER || address == REPLAY_FASTER || address == REPLAY_PAUSE) {
+		/* the replay's buttons, with or without a status unit: 0 outside a replay (0x67cc90); a single player is the
+		 * lowest active one (IsLowestActivePlayer 0x477800) */
+		int64_t speed, m;
+		if (g == NULL || !g->w->replay) return 0;
+		if (address == REPLAY_PAUSE) return 1; /* ReplayButtonPauseState 0x480f90 */
+		speed = kp_scalar(g, KP_SPEED);
+		m = g->replay_multiplier;
+		if (g->replay_paused) return -1;
+		if (address == REPLAY_SLOWER) return speed == 0 && m >= 1 ? -1 : 1; /* ReplayButtonSlowerState 0x480ea0 */
+		return speed == 6 && m >= 16 ? -1 : 1;                             /* ReplayButtonFasterState 0x480f30 */
+	}
 	/* the original builds no card without a game and a status unit */
 	if (g == NULL || n == 0) return 0;
 	t = g->u.type[n];
 	switch (address) {
-	case REPLAY_SLOWER: /* ReplayButtonSlowerState 0x480ea0 */
-	case REPLAY_FASTER: /* ReplayButtonFasterState 0x480f30 */
-	case REPLAY_PAUSE:  /* ReplayButtonPauseState 0x480f90 */
-		return 0; /* TODO: a replay's buttons (0 outside a replay, 0x67cc90) */
 	case CAN_TRAIN_UNIT: /* BtnCondCanTrainUnit 0x49f420 */
 		if ((uint8_t)ui->hud.selection_count > 1 && t != KP_TYPE_LARVA && t != KP_TYPE_MUTALISK && t != KP_TYPE_HYDRALISK) {
 			return 0;

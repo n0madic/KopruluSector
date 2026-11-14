@@ -477,7 +477,10 @@ enum {
 	/* The game ended the local cursor modes: a = 1 CancelTargetingUi 0x423120 (the selection emptied: the placement and
 	 * the targeting), 0 the placement's close by EndPlacement 0x47d300 (its builder can no longer place); kp_core closed
 	 * the placement, its cursor, handlers and command card are the interface's (ClosePlacement 0x47d580) */
-	KP_EVENT_CURSOR_MODES = 24
+	KP_EVENT_CURSOR_MODES = 24,
+	/* ExecPauseGame 0x472c70 / ExecResumeGame 0x472be0 (commands 0x10 and 0x11, a replay's game menu): a = 1 paused, 0
+	 * resumed, b = the issuing player; the grey palette and the network line 0x39 / 0x3a are the interface's */
+	KP_EVENT_COMMAND_PAUSE = 25
 };
 /* A sound event's a (KP_EVENT_SOUND, KP_EVENT_SOUND_SCREEN, KP_EVENT_SOUND_UNIT): the sound in bits 0..15, the call's
  * minVolume in 16..23, its enable in 24..31 (KP_SOUND_ON, KP_SOUND_OPTION + k, KP_SOUND_OFF), then the talking
@@ -581,6 +584,12 @@ struct KpGame {
 	/* the whole-map rectangle 0x543228 {left, top, right, bottom} of the nearest searches, which a dropped powerup's
 	 * placement clamps in place (0x4272c0 through 0x47dc30) */
 	int64_t map_rect[4];
+	/* A replay's playback speed (SetReplaySpeed 0x481040, command 0x56): the multiplier 0x508e34 (1 at the start, and
+	 * always outside a replay) and the paused byte 0x67cc7c. Neither is saved: a replay has no saves. */
+	int64_t replay_multiplier, replay_paused;
+	/* The replay header's frame count 0x67cca1 and game speed 0x67ccda (the host sets them at the playback's start; 0
+	 * outside a replay): the progress and the elapsed time of the replay's panel (0x480e20, 0x480d70). */
+	int64_t replay_frames, replay_header_speed;
 
 	int64_t scalar[KP_SCALAR_COUNT];
 	uint8_t scalar_present[KP_SCALAR_COUNT];
@@ -914,6 +923,13 @@ int64_t kp_unit_sprite_packed(KpGame *g, int64_t n);
 /* Makes player p (0..11) the local player of the game and of its images world, with the vision derived from it as
  * the start derives it (a replay's world keeps the replay's vision); fails for another p. */
 void kp_set_local_player(KpGame *g, int64_t p);
+/* ApplyAllianceDialog 0x441cb0 in a replay: the replay's vision 0x67cc84 (and 0x672668) is mask, or every player with
+ * reveal (0x67cc88 then 1, else 0), less the finished players (IsPlayerFinished 0x4bd590), and every unit's sprite
+ * visibility is computed again (RefreshAllUnitVisibility 0x46a370). Nothing outside a replay. */
+void kp_replay_set_vision(KpGame *g, int64_t mask, int reveal);
+/* A replay's "/replay show|hide" (ReplayShowLeaderboard 0x47fd60, ReplayHideLeaderboard 0x47fe10): TrigActLeaderboard
+ * 0x4b67c0 of a zeroed action with type action (0 clears the board) and unit type unit; nothing outside a replay. */
+void kp_replay_leaderboard(KpGame *g, int action, uint16_t unit);
 /* The state lines of tools/native_state.py (kp_dump.c): emit(ud, line, length) per line; drawn leaves
  * out the fields the original's drawing refreshes. -1 when out of memory. */
 typedef void (*KpDumpLine)(void *ud, const char *line, size_t length);

@@ -156,6 +156,17 @@ static int grp_frame(const uint8_t *grp, size_t size, int frame, Bitmap *b, int3
 	return 0;
 }
 
+int kp_ui_dialog_grp_frame(const uint8_t *grp, size_t size, int frame, const uint8_t **pixels, int32_t *w, int32_t *h)
+{
+	Bitmap b;
+	int32_t fx, fy, gw, gh;
+	if (grp_frame(grp, size, frame, &b, &fx, &fy, &gw, &gh) != 0) return -1;
+	*pixels = b.pixels;
+	*w = b.w;
+	*h = b.h;
+	return 0;
+}
+
 /* DrawThemeFrame 0x4c3d60. */
 static void theme_frame(KpUi *ui, int frame, int32_t x, int32_t y, const int16_t clip[4], uint32_t flags)
 {

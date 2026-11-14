@@ -6,6 +6,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "kp_game.h"
+#include "kp_images.h"
+
 #define TILE_GRP "dlgs\\tile.grp"   /* 0x4ef370 */
 #define TILE_FRAMES 3                /* a row of the 9-slice frame: the left, the middle, the right piece */
 #define BORDER_PERCENT 60            /* SetDialogBorderColor 0x47bd40 */
@@ -23,6 +26,8 @@
 #define ID_TEXT (-20)
 #define ID_DISCONNECTED (-21)
 #define ID_DRAW (-23)
+#define GLU_REPLAY_FINISHED 0xb5        /* "The replay has finished." */
+#define GLU_EXIT_REPLAY 0xbc            /* "Exit Replay" */
 #define MENU_BUTTON_WUSER 0x70       /* 0x508ba0[4] (SetChildMinus2UserWord 0x46c840) and 0x508ba8 (MenuButtonProc) */
 #define FLAG_TILED 0x20000000u       /* a button's three-part tiled art (DrawTiledButton 0x4c45a0) */
 #define FLAG_BACKDROP 0x10000000u    /* a dialog composited onto the backdrop with its flags */
@@ -286,8 +291,8 @@ static int victory_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 	int32_t self = (int32_t)(d - ui->controls), c;
 	if (e->type == KP_UI_USER) {
 		switch (e->code) {
-		case KP_UI_CREATE: { /* InitVictoryDialog 0x4bd220 (single player, no replay) */
-			int draw = ui->result_kind == RESULT_DRAW;
+		case KP_UI_CREATE: { /* InitVictoryDialog 0x4bd220 (single player or a replay) */
+			int replay = ui->game != NULL && ui->game->w->replay, draw = !replay && ui->result_kind == RESULT_DRAW;
 			init_frame(ui, self, SFX_VICTORY);
 			if ((c = kp_ui_find_control(ui, self, ID_OPTION)) >= 0) ui->controls[c].interact = kp_ui_menu_button_proc; /* 0x50e0d4 */
 			tiled_ok(ui, self);
@@ -295,6 +300,10 @@ static int victory_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 			set_visible(ui, self, ID_TEXT, !draw);
 			set_visible(ui, self, ID_DISCONNECTED, 0);
 			set_visible(ui, self, ID_DRAW, draw);
+			if (replay) {
+				if ((c = kp_ui_find_control(ui, self, ID_TEXT)) >= 0) kp_ui_set_control_text(ui, c, kp_ui_tbl(ui, KP_UI_GLUALL, GLU_REPLAY_FINISHED));
+				if ((c = kp_ui_find_control(ui, self, ID_OK)) >= 0) kp_ui_set_control_text(ui, c, kp_ui_tbl(ui, KP_UI_GLUALL, GLU_EXIT_REPLAY));
+			}
 			break;
 		}
 		case KP_UI_DESTROY:

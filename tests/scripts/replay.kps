@@ -1,0 +1,43 @@
+# A game recorded and played back (docs/phase-replay.md, stage RP3): terran01's five marines boxed and sent east, the
+# simulation's state CRC (sim.crc) marked at a step; Quit Mission writes LastReplay.rep (EndGame 0x443db0), and `replay` plays it as Load
+# Replay's Ok does. The playback's console is a replay's (statbtnn, the time panel), its game reaches the marked step with
+# the same state, and the end of its record opens the victory dialog's "The replay has finished." with Exit Replay
+# (a mission's run has no glue: the score screen is Load Replay's). tools/ci.sh wants exit code 0 and "0 failures".
+mission terran/terran01
+video originals
+clock fixed
+
+wait game
+wait frames 30
+include determinism_select.kps
+rclick world 700 200
+wait tick >= 160
+pause
+mark played
+log played tick sim.crc
+state played
+resume
+# a later block: the record's last one is never played (FeedReplayCommands 0x4769b0, as 1.17 loses it)
+rclick world 200 400
+wait tick >= 200
+menu quit-mission
+wait dialog quit2mnu
+activate ok
+wait frames 10
+
+replay "LastReplay"
+wait game and replay
+expect replay.frames >= @played.tick
+wait tick >= @played.tick
+pause
+log replayed tick sim.crc
+state replayed
+expect tick == @played.tick
+expect sim.crc == @played.sim.crc
+ui statbtnn
+resume
+wait replay.ended == 1 within 60000
+wait dialog wmission
+ui wmission
+activate ok
+wait frames 10

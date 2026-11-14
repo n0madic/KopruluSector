@@ -154,7 +154,8 @@ On `build/app-script` (`--headless --window 1280x720`):
   - `video.kps`, `touch.kps`, `save.kps` with `save_verify.kps`;
   - `music.kps` (2026-11-12, GitHub issue #3): the music's tracks through the glue: the title's after a ready room's Cancel and a Quit Mission, the game's after the room's Start and a save loaded from the glue;
   - `play_1.kps` to `play_5.kps` with `play_tail.kps`, over the old flag's missions: `scenarios/marine_group`, `bench_200`, `bench_combat`, `terran/terran01` and `scenarios/creep_recede`;
-  - `hd_glue.kps` and `hd_game.kps`, run over terran02, zerg02 and protoss02.
+  - `hd_glue.kps` and `hd_game.kps`, run over terran02, zerg02 and protoss02; `hd_replay.kps` (2026-11-14), a replay's console in HD.
+  - `replay.kps` (2026-11-14, [phase RP](phase-replay.md#rp3-as-built)): terran01 recorded, `LastReplay.rep` written by Quit Mission and played back by the action `replay` to the recording's marked step with the same `sim.crc`; the replay's console and its end's dialog.
 - **`tools/ci.sh`:**
   - a step after `determinism` runs video, touch, save and the five plays;
   - the HD loop runs `hd_glue` (or `hd_game --mission …`) after each old `--hd-check` and wants every `hd check` line clean.

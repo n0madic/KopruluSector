@@ -609,19 +609,21 @@ void kp_sprite_flash(KpImages *w, int32_t s, int32_t color)
 	else kp_sprite_remove_circle(w, s);
 }
 
-/* AreaHiddenFromLocal 0x418eb0: no tile of the rectangle is seen by the local vision. */
+/* AreaHiddenFromLocal 0x418eb0: no tile of the rectangle is seen by the local vision; in a replay, by none of the
+ * players of the replay's vision (0x67cc84's low byte), and none at all with its reveal (0x67cc88). */
 static int hidden_from_local(KpImages *w, int32_t left, int32_t top, int32_t width, int32_t height)
 {
 	int32_t x, y;
-	if (w->replay != 0) kp_images_fail(w, "images: fog ghosts in a replay (0x418eb0)");
+	uint32_t replay_vision = (uint32_t)w->local_vision & 0xff;
 	for (y = top + height - 1; y >= top; y--) {
 		for (x = left + width - 1; x >= left; x--) {
 			uint32_t flags = 0;
 			int32_t index = y * w->map_w + x;
+			if (w->replay != 0 && w->replay_reveal != 0) return 0;
 			if (!w->tile_flags || !w->tile_flags(w, w->tile_ctx, index, &flags)) {
 				kp_images_fail(w, "images: no tile flags at %d", (int)index);
 			}
-			if ((flags & (uint32_t)w->local_vision) == 0) return 0;
+			if (w->replay != 0 ? (~flags & replay_vision) != 0 : (flags & (uint32_t)w->local_vision) == 0) return 0;
 		}
 	}
 	return 1;

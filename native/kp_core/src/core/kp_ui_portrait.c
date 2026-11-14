@@ -549,7 +549,7 @@ static int portrait_control_interact(KpUi *ui, KpUiControl *c, KpUiEvent *e)
 {
 	int32_t self = (int32_t)(c - ui->controls);
 	if (e->type == KP_UI_USER && e->code == KP_UI_CREATE) {
-		int race = (int)ui->game->players.race[ui->game->local_player];
+		int race = kp_ui_local_race(ui);
 		c->user = 0;
 		c->slot.unit = 0;
 		c->draw = draw_portrait;
@@ -589,7 +589,7 @@ static void init_portrait_dialog(KpUi *ui, int32_t dialog)
 	static const KpUiInteract CHILDREN[1] = { portrait_control_interact };
 	KpUiPortrait *p = &ui->portrait;
 	int32_t k = kp_ui_find_control(ui, dialog, 1), hot;
-	int race = (int)ui->game->players.race[ui->game->local_player];
+	int race = kp_ui_local_race(ui);
 	char path[32];
 	if (k >= 0) {
 		kp_ui_surface_free(ui, p->bitmap.pixels);
@@ -600,7 +600,7 @@ static void init_portrait_dialog(KpUi *ui, int32_t dialog)
 	}
 	kp_ui_bind_interacts(ui, dialog, CHILDREN, 1);
 	kp_ui_capture_console(ui, dialog);
-	snprintf(path, sizeof path, "game\\%cconover.pcx", RACE_LETTERS[race >= 0 && race < 3 ? race : 1]);
+	snprintf(path, sizeof path, "game\\%cconover.pcx", ui->game->w->replay ? 'n' : RACE_LETTERS[race >= 0 && race < 3 ? race : 1]);
 	(void)load_pcx(ui, path, &p->overlay);
 	hot = kp_ui_find_control(ui, dialog, C_HOTKEYS);
 	p->hotkeys = hot >= 0 ? ui->controls[hot].text : NULL;

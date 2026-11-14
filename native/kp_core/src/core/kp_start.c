@@ -326,6 +326,14 @@ static void load_units(KpGame *g, const KpBytes *s, Relation *nydus, Relation *a
 			if (owner >= KP_PLAYERS) kp_game_fail(g, "start: a start location of player %lld", (long long)owner);
 			g->players.start_x[owner] = u16_at(s, a + 4);
 			g->players.start_y[owner] = u16_at(s, a + 6);
+			/* and the screen's first top-left tile (0x5264b0, 0x5264b2), which the pre-game objects step's remembered
+			 * terrain refresh leaves out: the local player's start location's tile less (10, 6), or in a replay the
+			 * first start location's while the screen has none (0x67cc90, the sentinel 0xffff) */
+			if (g->w->replay ? kp_scalar(g, KP_SCREEN_X) == KP_NIL : owner == g->local_player) {
+				int64_t tx = (u16_at(s, a + 4) >> 5) - KP_START_SCREEN_X, ty = (u16_at(s, a + 6) >> 5) - KP_START_SCREEN_Y;
+				kp_scalar_set(g, KP_SCREEN_X, tx < 0 ? 0 : tx);
+				kp_scalar_set(g, KP_SCREEN_Y, ty < 0 ? 0 : ty);
+			}
 			continue;
 		}
 		controller = owner <= 7 ? g->players.controller[owner] : 0;
@@ -471,7 +479,10 @@ KpGame *kp_start(const KpStartInput *in, KpError *err)
 	g->map_rect[2] = kp_mod(g->map_w_px, 65536);
 	g->map_rect[3] = kp_mod(g->map_h_px, 65536);
 	g->local_player = local_player;
+	/* the local player's vision while the map loads; a replay's full vision comes at StartGame 0x443f40's step 13,
+	 * after the units and the creep (below) */
 	g->local_vision = (int64_t)1 << local_player;
+	g->replay_multiplier = 1;
 	g->expansion = in->expansion;
 	g->events.off = in->no_events;
 	g->events.trace = in->trace_triggers && !in->no_events;
@@ -488,7 +499,9 @@ KpGame *kp_start(const KpStartInput *in, KpError *err)
 	w->tileset = (int32_t)(m->era % 8); /* the ERA handler 0x468b00 masks with 7 (expansion on) */
 	w->expansion = in->expansion;
 	w->local_player = (int32_t)local_player;
-	w->local_vision = (int32_t)g->local_vision;
+	w->replay = in->replay != 0;
+	w->replay_reveal = 0;
+	w->local_vision = in->replay ? 0 : (int32_t)g->local_vision; /* 0x67cc84 in a replay, none yet */
 	w->has_sound = 1;
 	if (m->width < 1 || m->width > 256 || m->height < 1 || m->height > 256) {
 		snprintf(err->msg, sizeof err->msg, "images: map size %ux%u outside 1..256", m->width, m->height);
@@ -512,6 +525,7 @@ KpGame *kp_start(const KpStartInput *in, KpError *err)
 		goto failed;
 	}
 	start_steps(g, in, effects, nydus, addons);
+	if (in->replay) g->local_vision = w->local_vision = 0xff; /* 0x67cc84 = 0x672668 = 0xff (step 13) */
 	kp_images_end(w, &t);
 	free(effects);
 	free(nydus);

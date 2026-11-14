@@ -10,6 +10,10 @@
 #define RESTART_COMMAND 0x08
 #define FOG_UNIT_REACH 0x60        /* FindUnitOfTypeAtPoint 0x418210's square, in pixels around the point */
 #define SPEED_COMMAND 0x0f
+#define PAUSE_COMMAND 0x10
+#define RESUME_COMMAND 0x11
+#define LATENCY_COMMAND 0x55
+#define REPLAY_SPEED_COMMAND 0x56
 #define SPEEDS 7
 #define EXIT_RESTART 5             /* RequestGameExit 0x444e00's code */
 #define DAT_BUILDING 0x1
@@ -76,11 +80,12 @@
 
 /* The executor's handlers (atlas P25), for the failure's message. The ones without a case below have no sender in a
  * game offline: shared vision 0x0d and alliance 0x0e (ApplyAllianceDialog 0x441cb0, whose dialog offline opens only in
- * a replay's playback, which sends neither), pause 0x10 and resume 0x11 (the game menu's controls 7 and 8, shown by
- * 0x47b4c0 only in multiplayer or a replay), latency 0x55 (the network options, hidden in single player by 0x47be40),
- * replay speed 0x56 and leave game 0x57 (a replay's), chat 0x5c (HandleChatMessage 0x475b40 records a network
- * player's text in the replay; single player has none); 0x1d, 0x38/0x39 and 0x3a/0x3b no code of 1.17 queues
- * (QueueTurnCommand 0x476c80's 63 callers). */
+ * a replay's playback, which sends neither), leave game 0x57 (a replay's: HandlePlayerLeftGame 0x477a60 records it for
+ * a network player), chat 0x5c (HandleChatMessage 0x475b40 records a network player's text in the replay; single
+ * player has none; a replay holding either is refused before its playback, docs/formats/rep.md); 0x1d, 0x38/0x39 and
+ * 0x3a/0x3b no code of 1.17 queues (QueueTurnCommand 0x476c80's 63 callers). Pause 0x10, resume 0x11 (the game menu's
+ * controls 7 and 8, shown by 0x47b4c0 only in multiplayer or a replay) and the replay speed 0x56 are a replay's
+ * playback's; latency 0x55 (the network options, hidden in single player by 0x47be40) changes nothing offline. */
 static const struct {
 	int id;
 	int64_t address;
@@ -709,6 +714,27 @@ void kp_execute_command(KpGame *g, int64_t player, const uint8_t *b, size_t size
 	case SPEED_COMMAND: /* ExecGameSpeed 0x473310 (a single player's) */
 		if (byte_at(g, b, size, 1) < SPEEDS) kp_scalar_set(g, KP_SPEED, byte_at(g, b, size, 1));
 		break;
+	case PAUSE_COMMAND: /* ExecPauseGame 0x472c70: always allowed in single player (0x47cb20) */
+		if (kp_scalar(g, KP_PAUSED) != 0) break;
+		kp_scalar_set(g, KP_PAUSED, 1);
+		kp_event(g, KP_EVENT_COMMAND_PAUSE, 1, player, 0, NULL);
+		break;
+	case RESUME_COMMAND: /* ExecResumeGame 0x472be0 */
+		if (kp_scalar(g, KP_PAUSED) == 0) break;
+		kp_scalar_set(g, KP_PAUSED, 0);
+		kp_event(g, KP_EVENT_COMMAND_PAUSE, 0, player, 0, NULL);
+		break;
+	case LATENCY_COMMAND: break; /* OnLatencyCommand 0x476d10: the network's extra turns 0x672990 */
+	case REPLAY_SPEED_COMMAND: { /* ExecReplaySpeed 0x4732f0 -> SetReplaySpeed 0x481040, in a replay only */
+		int64_t speed = u32(g, b, size, 2), m = u32(g, b, size, 6);
+		/* the original indexes its 7-entry table by any speed and divides by any multiplier: a speed past 6 or a
+		 * multiplier 0 (a division by zero there) is ignored */
+		if (!g->w->replay || speed >= SPEEDS || m == 0) break;
+		g->replay_paused = byte_at(g, b, size, 1);
+		g->replay_multiplier = m;
+		kp_scalar_set(g, KP_SPEED, speed);
+		break;
+	}
 	case STOP_COMMAND: order_selection(g, flag(b, size, 1), 0); break;
 	case CARRIER_STOP_COMMAND: hangar_stop_selection(g, KP_ORD_CARRIER_STOP); break;
 	case REAVER_STOP_COMMAND: hangar_stop_selection(g, KP_ORD_REAVER_STOP); break;

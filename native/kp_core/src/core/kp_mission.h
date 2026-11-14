@@ -63,6 +63,7 @@ extern const char *const KP_TILESET_NAMES[KP_TILESETS];
 typedef struct {
 	uint8_t *blob; /* owned: the scenario and the parts built from it */
 	size_t size;
+	size_t chk_size; /* the scenario's bytes at the blob's start, as read (a replay's map) */
 	uint32_t chk_version, era, width, height, tileset;
 	uint8_t owners[12], races[12];
 	uint8_t force_player[8], force_flags[4];

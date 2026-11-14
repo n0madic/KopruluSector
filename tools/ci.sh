@@ -46,8 +46,9 @@
 #     twins), the video options (video.kps: clicked through, the art following them), a save (save.kps: made during a
 #     transmission, loaded in its game and from its file, the saved view and minimap in the load's frame and its
 #     trigger wait ending), the touch layer (touch.kps: terran01 played by synthetic fingers), the music (music.kps: the
-#     title's after a ready room's Cancel and a quit mission, the game's after the room's Start and a load) and, with KOPRULU_SCR,
-#     the HD art (hd_glue.kps, hd_game.kps on each race: the glue's screens and the game's screens and menus with no SD
+#     title's after a ready room's Cancel and a quit mission, the game's after the room's Start and a load), a replay
+#     (replay.kps: a game's LastReplay.rep played back to the same simulation state, its console and its end) and, with KOPRULU_SCR,
+#     the HD art (hd_glue.kps, hd_game.kps on each race, hd_replay.kps: the glue's screens, the game's screens and menus and a replay's with no SD
 #     pixel where HD art exists, over Remastered's install, the world's packs laid out from its anims and the
 #     interface's frames by the placement table, and over its repack's sets and interface groups; each language's walk
 #     on terran01 too); with KOPRULU_ORIGINAL or KOPRULU_SCR the install's repack
@@ -513,14 +514,15 @@ if [ -n "${KOPRULU_APP:-}" ]; then
   fi
   # the checks' scripts (stages SC5, SC6): a check's line ("SPIKE check ...", "fog check", "palette check") and the
   # run's last line and exit code say how it went
-  step "product checks' scripts: the video options, the touch layer, a save's loads, the music's tracks"
-  for name in video touch save music; do
+  step "product checks' scripts: the video options, the touch layer, a save's loads, the music's tracks, a replay"
+  for name in video touch save music replay; do
     app_script "$name" 0 "$APP"
   done
   [ -s build/script/video/kept.png ]
   [ -s build/script/touch/key_option.png ]
   [ -s build/script/save/from-file.png ]
   [ ! -e "build/script/save/pref/save_-koprulu_20save_20check.kpsave" ] # check save-file took it
+  [ -s build/script/replay/pref/replays/LastReplay.rep ] # the game's record, played back at the same state
   for n in 1 2 3 4 5; do
     step "product play script $n: box selection, right clicks, the terrain, the fog and the palette pass"
     app_script "play_$n" 0 "$APP"
@@ -680,11 +682,15 @@ if [ -n "${KOPRULU_APP:-}" ]; then
       else
         data=build/repack/scr art="the repack's hd2?" ui_art="the repack's ui.kpd"
       fi
-      for mission in glue terran/terran02 zerg/zerg02 protoss/protoss02; do
+      for mission in glue terran/terran02 zerg/zerg02 protoss/protoss02 replay; do
         step "product HD script on $mission from Remastered's $source: the screens and menus with no SD pixel where HD art exists"
         if [ "$mission" = glue ]; then # the glue's screens by clicks: the menus, a briefing, a victory, the score
           run="hd_glue_$source"
           SCRIPT_RUN="$run" app_script hd_glue 0 "$APP" --data "$data"
+        elif [ "$mission" = replay ]; then # a replay's console: Remastered's one neutral picture, every pixel HD
+          run="hd_replay_$source"
+          SCRIPT_RUN="$run" app_script hd_replay 0 "$APP" --data "$data"
+          grep -qE '^SPIKE hd check replay: [0-9]+ HD pixels; .*no HD art: 0 pixels$' "build/script_$run.log"
         else
           run="hd_game_${mission#*/}_$source"
           SCRIPT_RUN="$run" app_script hd_game 0 "$APP" --data "$data" --mission "$mission"
@@ -730,6 +736,13 @@ if [ -n "${KOPRULU_WEB:-}" ]; then
     grep -qE '^SPIKE script hd_game: [0-9]+ steps, 0 failures$' build/web_hd_game.log
     grep -qE "Remastered's hd2 art \(" build/web_hd_game.log
     grep -qE "Remastered's hd2 interface art \(" build/web_hd_game.log
+    # a replay on the web (phase RP): the game's LastReplay.rep written in the profile's replays folder (the script's
+    # own profile; the product's is the IndexedDB mount, synchronised after the write) and played back at the same state
+    web_run replay '^SPIKE script replay: [0-9]+ steps, [0-9]+ failures$' --script generated/scripts/replay.kps \
+      --script-out /tmp/replay
+    grep -E '^SPIKE script replay: [0-9]+ steps, [0-9]+ failures$' build/web_replay.log
+    grep -qE '^SPIKE script replay: [0-9]+ steps, 0 failures$' build/web_replay.log
+    grep -qE '^replay: /tmp/replay/pref/replays/LastReplay\.rep, [0-9]+ frames$' build/web_replay.log
   fi
 fi
 

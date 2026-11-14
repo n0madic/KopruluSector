@@ -8,6 +8,7 @@
 #include <string.h>
 
 #include "kp_kpf.h"
+#include "kp_oracle.h"
 #include "kp_session.h"
 #include "kp_ui.h"
 
@@ -1071,6 +1072,533 @@ static void session_profile_commit_keeps_the_flags_out(KpT *T)
 	kp_t_eq(T, profile.fog, KP_FOG_ORIGINAL, "without the flag the run's fog kept");
 }
 
+
+/* --- replays (kp_record.h, kp_rep.h) --- */
+
+#define REPLAY_STEPS 60
+
+/* A recorded session of the map: the Marines ordered away, a reorder 30 steps later and a last select; the CRCs of
+ * every step in crc[] (*steps of them); the replay's file. */
+static void record_game(KpT *T, KpRep *rep, KpStateCrcs *crc, int *steps)
+{
+	KpSession *s = loaded(T, MAP, &kp_t_data(T)->files);
+	KpSessionStart start;
+	KpError err;
+	int k;
+	static const uint8_t BACK[10] = { 0x14, 0x40, 0x04, 0x40, 0x04, 0, 0, 0xe4, 0, 0 };
+	static const uint8_t NONE[2] = { 0x09, 0 };
+	kp_session_start_defaults(&start);
+	start.seed = SEED;
+	start.mission_index = kp_oracle_mission_index(".", MAP);
+	start.record = 1;
+	if (kp_session_start(s, &start) != 0) kp_t_fail(T, "the game does not start: %s", s->error);
+	kp_t_guard(T, s->g);
+	*steps = 0;
+	for (k = 0; k < REPLAY_STEPS; k++) {
+		if (k == 0) {
+			order(T, s);
+			crcs(T, s, &crc[(*steps)++]);
+		}
+		if (k == 30) kp_session_command(s, BACK, sizeof BACK, -1);
+		if (k == REPLAY_STEPS - 1) kp_session_command(s, NONE, sizeof NONE, -1); /* the last block: never fed */
+		step(T, s, 1);
+		crcs(T, s, &crc[(*steps)++]);
+	}
+	kp_t_ok(T, kp_session_replay_file(s, NULL, rep, &err) == 0, "%s", err.msg);
+}
+
+static void free_rep(void *p)
+{
+	kp_rep_free((KpRep *)p);
+	free(p);
+}
+
+static KpRep *rep_new(KpT *T)
+{
+	KpRep *r = (KpRep *)calloc(1, sizeof *r);
+	if (!r) kp_t_fail(T, "out of memory");
+	kp_t_defer(T, free_rep, r);
+	return r;
+}
+
+/* The replay's playback, through its file, runs the recorded game: the same state at every step (the state CRCs,
+ * full vision aside) until the last block, which the feed never dispatches, then the end. */
+static void session_replay_plays_the_recorded_game(KpT *T)
+{
+	static KpStateCrcs recorded[REPLAY_STEPS + 2], got;
+	KpEvent ev;
+	KpRep *rep, *back;
+	KpSession *p;
+	KpSessionStart start;
+	KpError err;
+	uint8_t *file;
+	size_t size;
+	int steps, k, found, c;
+	if (!ready(T)) return;
+	rep = rep_new(T);
+	back = rep_new(T);
+	record_game(T, rep, recorded, &steps);
+	kp_t_eq(T, kp_rep_campaign(rep), (int)kp_oracle_mission_index(".", MAP), "the campaign row");
+	kp_t_eq(T, kp_rep_seed(rep), SEED, "the seed");
+	kp_t_ok(T, rep->record_size > 0 && rep->chk_size > 0, "the record and the map");
+	kp_t_ok(T, kp_rep_write(rep, &file, &size, &err) == 0, "%s", err.msg);
+	kp_t_ok(T, kp_rep_read(back, file, size, NULL, &err) == 0, "%s", err.msg);
+	free(file);
+	p = loaded(T, MAP, &kp_t_data(T)->files);
+	kp_session_start_defaults(&start);
+	kp_t_eq(T, kp_session_replay_start(&start, back), 0, "a replay V1 plays");
+	if (kp_session_start(p, &start) != 0) kp_t_fail(T, "the playback does not start: %s", p->error);
+	kp_t_guard(T, p->g);
+	kp_t_ok(T, p->playing && p->g->w->replay && p->g->local_vision == 0xff, "a playback with full vision");
+	/* recorded[k] is the state after k + 1 steps (the first the select's) */
+	for (k = 0; k < steps; k++) {
+		step(T, p, 1);
+		if (k == steps - 1) break; /* the step of the last block's command */
+		crcs(T, p, &got);
+		for (c = 0; c < recorded[k].count; c++) {
+			uint32_t v = kp_state_crc(&got, recorded[k].names[c], &found);
+			/* the result dialog's clock (step's clock_result) does not run in a replay (TickResultDialogTimer
+			 * 0x4be340) */
+			if (strcmp(recorded[k].names[c], "step") == 0) continue;
+			kp_t_eq(T, v, recorded[k].crcs[c], "step %d: %s", k, recorded[k].names[c]);
+		}
+	}
+	kp_t_ok(T, !p->replay_ended, "not ended before the header's frames");
+	while (kp_event_take(p->g, &ev)) {}
+	step(T, p, 1);
+	kp_t_ok(T, p->replay_ended && p->g->replay_paused, "the end pauses the playback");
+	{
+		int64_t frame = kp_scalar(p->g, KP_FRAME);
+		int results = 0;
+		step(T, p, 3);
+		kp_t_eq(T, kp_scalar(p->g, KP_FRAME), frame, "no frame after the end");
+		/* FeedReplayCommands 0x4769b0's ShowVictoryDialog 0x4bcff0, once */
+		while (kp_event_take(p->g, &ev)) {
+			if (ev.kind == KP_EVENT_GAME_RESULT) results++, kp_t_eq(T, ev.a, 3, "the victory dialog's result");
+		}
+		kp_t_eq(T, results, 1, "one result at the record's end");
+	}
+	/* the View Players dialog's OK (0x441980..0x4426d0): the vision's players, or all of them revealed */
+	{
+		int64_t human = (int64_t)1 << p->g->local_player;
+		kp_replay_set_vision(p->g, human, 0);
+		kp_t_ok(T, p->g->local_vision == human && p->g->w->local_vision == human && !p->g->w->replay_reveal,
+			"the human's vision");
+		kp_replay_set_vision(p->g, 0, 1);
+		kp_t_ok(T, (p->g->local_vision & human) && p->g->w->replay_reveal, "the map revealed");
+	}
+}
+
+/* The live commands of a playback: the ones outside the replay filter are dropped, the replay speed command sets the
+ * multiplier (10 steps per clock step from 8 on), its paused byte stops the frames. */
+static void session_replay_speed_and_live_commands(KpT *T)
+{
+	static KpStateCrcs recorded[REPLAY_STEPS + 2];
+	static const uint8_t SPEED8[10] = { 0x56, 0, 4, 0, 0, 0, 8, 0, 0, 0 }, PAUSED[10] = { 0x56, 1, 4, 0, 0, 0, 8, 0, 0, 0 };
+	static const uint8_t SELECT_NONE[2] = { 0x09, 0 };
+	KpRep *rep;
+	KpSession *p;
+	KpSessionStart start;
+	int steps;
+	int64_t frame;
+	if (!ready(T)) return;
+	rep = rep_new(T);
+	record_game(T, rep, recorded, &steps);
+	p = loaded(T, MAP, &kp_t_data(T)->files);
+	kp_session_start_defaults(&start);
+	kp_t_eq(T, kp_session_replay_start(&start, rep), 0, NULL);
+	if (kp_session_start(p, &start) != 0) kp_t_fail(T, "the playback does not start: %s", p->error);
+	kp_t_guard(T, p->g);
+	kp_t_eq(T, kp_session_steps_per_tick(p), 1, NULL);
+	kp_session_command(p, SELECT_NONE, sizeof SELECT_NONE, -1);
+	kp_session_command(p, SPEED8, sizeof SPEED8, -1);
+	step(T, p, 1);
+	kp_t_eq(T, p->g->replay_multiplier, 8, "the multiplier");
+	kp_t_eq(T, kp_scalar(p->g, KP_SPEED), 4, "the speed");
+	kp_t_eq(T, p->clock.speed, 5, "the clock's speed");
+	kp_t_eq(T, kp_clock_step_ms(&p->clock), 56 / 8, "the clock's step");
+	kp_t_eq(T, kp_session_steps_per_tick(p), 10, "ten frames a clock step");
+	kp_session_command(p, PAUSED, sizeof PAUSED, -1);
+	step(T, p, 1);
+	frame = kp_scalar(p->g, KP_FRAME);
+	step(T, p, 2);
+	kp_t_eq(T, kp_scalar(p->g, KP_FRAME), frame, "paused: no frames");
+	kp_t_eq(T, p->g->replay_paused, 1, NULL);
+}
+
+/* A save of recorded game s with its REPL's version changed (the section's CRC made right again) is refused, and
+ * leaves the game and its record as they were. */
+static void damaged_record_refused(KpT *T, KpSession *s, const KpSaveIdentity *id)
+{
+	KpKpf c;
+	KpError err;
+	const KpKpfSection *r;
+	uint8_t *bytes, *e;
+	size_t size, before, after;
+	uint32_t table, crc;
+	int k;
+	int64_t frame;
+	kp_t_ok(T, kp_save_encode(s, id, NULL, NULL, &bytes, &size, &err) == 0, "%s", err.msg);
+	kp_t_ok(T, kp_kpf_parse(&c, bytes, size, "save", 1, &err) == 0, "%s", err.msg);
+	r = kp_kpf_find(&c, "REPL");
+	kp_t_ok(T, r != NULL && r->size >= 4, "the save's REPL");
+	if (r == NULL || r->size < 4) {
+		kp_kpf_free(&c);
+		free(bytes);
+		return;
+	}
+	bytes[r->offset] ^= 0xff; /* the version */
+	crc = kp_crc32(bytes + r->offset, r->size);
+	table = kp_le_u32(bytes + 104);
+	for (k = 0; k < c.section_count; k++) {
+		e = bytes + table + (size_t)k * KP_KPF_ENTRY_SIZE;
+		if (memcmp(e, "REPL", 4) != 0) continue;
+		e[20] = (uint8_t)crc;
+		e[21] = (uint8_t)(crc >> 8);
+		e[22] = (uint8_t)(crc >> 16);
+		e[23] = (uint8_t)(crc >> 24);
+	}
+	kp_kpf_free(&c);
+	(void)kp_record_bytes(s->rec, &before);
+	frame = kp_scalar(s->g, KP_FRAME);
+	kp_t_ok(T, kp_save_load(s, bytes, size, id, NULL, NULL, &err) != 0, "a damaged record refused");
+	free(bytes);
+	(void)kp_record_bytes(s->rec, &after);
+	kp_t_eq(T, (int64_t)after, (int64_t)before, "the record as it was");
+	kp_t_eq(T, kp_scalar(s->g, KP_FRAME), frame, "the game as it was");
+	kp_t_ok(T, s->rec_loads == 1 && !s->rec_lost, "no load counted, the replay not lost");
+}
+
+/* A recorded game's save keeps its record (REPL, the open block closed); its load restores it, a damaged one is refused,
+ * a save without one leaves the record empty and the replay lost. */
+static void session_replay_record_in_a_save(KpT *T)
+{
+	KpSession *s, *plain;
+	KpSessionStart start;
+	KpSaveIdentity id;
+	KpError err;
+	uint8_t *bytes, *old;
+	size_t size, old_size, n;
+	const uint8_t *rec;
+	size_t at_save;
+	if (!ready(T)) return;
+	id = identity(T);
+	s = loaded(T, MAP, &kp_t_data(T)->files);
+	kp_session_start_defaults(&start);
+	start.seed = SEED;
+	start.mission_index = kp_oracle_mission_index(".", MAP);
+	start.record = 1;
+	if (kp_session_start(s, &start) != 0) kp_t_fail(T, "the game does not start: %s", s->error);
+	kp_t_guard(T, s->g);
+	order(T, s);
+	step(T, s, 5);
+	kp_t_ok(T, kp_save_encode(s, &id, NULL, NULL, &bytes, &size, &err) == 0, "%s", err.msg);
+	(void)kp_record_bytes(s->rec, &at_save);
+	order(T, s);
+	step(T, s, 5);
+	(void)kp_record_bytes(s->rec, &n);
+	kp_t_ok(T, n > at_save, "more recorded after the save");
+	kp_t_ok(T, kp_save_load(s, bytes, size, &id, NULL, NULL, &err) == 0, "%s", err.msg);
+	free(bytes);
+	rec = kp_record_bytes(s->rec, &n);
+	kp_t_eq(T, (int64_t)n, (int64_t)at_save, "the save's record back");
+	kp_t_ok(T, rec != NULL && s->rec_loads == 1 && !s->rec_lost, "one load, the record kept");
+	damaged_record_refused(T, s, &id);
+	/* a save of a game not recorded: no REPL */
+	plain = session(T, NULL);
+	step(T, plain, 2);
+	kp_t_ok(T, kp_save_encode(plain, &id, NULL, NULL, &old, &old_size, &err) == 0, "%s", err.msg);
+	kp_t_ok(T, kp_save_load(s, old, old_size, &id, NULL, NULL, &err) == 0, "%s", err.msg);
+	free(old);
+	(void)kp_record_bytes(s->rec, &n);
+	kp_t_eq(T, (int64_t)n, 0, "the record lost");
+	kp_t_ok(T, s->rec_lost, "the replay unverified");
+}
+
+
+#define TERRAN01 "missions/terran/terran01"
+/* The original's own replays of the emulator's campaign chains (phase RP, stage RP0; private): each game is one cheat
+ * command at the end, whose block the playback never dispatches. */
+static const struct {
+	const char *file, *mission;
+	int expansion;
+} ORIGINAL_REPLAYS[] = {
+	{ "koprulu-private/emu/rp/rp-terran01/replays/01-m02.rep", TERRAN01, 0 },
+	{ "koprulu-private/emu/rp/rp-zerg01/replays/01-m12.rep", "missions/zerg/zerg01", 0 },
+	{ "koprulu-private/emu/rp/rp-xprotoss01/replays/01-m32.rep", "missions/expprotoss/protoss01", 1 },
+};
+
+/* The original's game recorded by a session: the same start, its recorded commands given at their frames as the
+ * local player's, stepped to its frame count. The header (but the players' names, the flow's: the profile's and
+ * AssignDefaultComputerPlayerNames 0x4074a0's), the command record and the map must equal the original's byte for byte (RP2's acceptance (c)). With KP_REP_OUT the
+ * file is written there as <mission>.rep for the emulator (sc_emulator replay, acceptance (d)). */
+static void original_recorded_again(KpT *T, const char *path, const char *mission, int expansion)
+{
+	KpSession *s;
+	KpSessionStart start;
+	KpRep *orig, *ours;
+	KpError err;
+	uint8_t *file;
+	size_t size, at = 0;
+	int k;
+	orig = rep_new(T);
+	ours = rep_new(T);
+	file = kp_t_read(T, path, &size);
+	kp_t_ok(T, kp_rep_read(orig, file, size, NULL, &err) == 0, "%s: %s", path, err.msg);
+	s = (KpSession *)calloc(1, sizeof *s);
+	if (!s) kp_t_fail(T, "out of memory");
+	kp_t_defer(T, free_session, s);
+	{
+		KpMission m;
+		const KpData *d = kp_t_data(T);
+		if (!kp_oracle_mission(".", mission, &m, &err)) kp_t_fail(T, "%s", err.msg);
+		if (kp_session_load_from(s, &d->shared, &d->dat, &m, mission, &d->files) != 0) kp_t_fail(T, "%s", s->error);
+	}
+	kp_session_start_defaults(&start);
+	kp_t_eq(T, kp_session_replay_start(&start, orig), 0, "%s: a replay V1", path);
+	kp_t_eq(T, start.expansion, expansion, "%s: the Brood War flag", path);
+	start.replay = NULL;
+	start.record = 1;
+	if (kp_session_start(s, &start) != 0) kp_t_fail(T, "%s: the game does not start: %s", path, s->error);
+	kp_t_guard(T, s->g);
+	/* a session has no interface: a transmission's wait the original's sound ended (kp_trigger_release_wait) holds
+	 * the triggers, so the result may come at another frame and pause the game; the steps stop there */
+	while (kp_scalar(s->g, KP_FRAME) < (int64_t)kp_rep_frames(orig) && s->tick < 4 * (int64_t)kp_rep_frames(orig)) {
+		int64_t frame = kp_scalar(s->g, KP_FRAME);
+		KpEvent e;
+		while (at + 5 <= orig->record_size) {
+			const uint8_t *b = orig->record + at;
+			size_t payload = b[4], o = 0;
+			if ((int64_t)(b[0] | b[1] << 8 | b[2] << 16 | (uint32_t)b[3] << 24) != frame) break;
+			while (o < payload) {
+				int len = kp_record_command_length(b + 5 + o + 1, payload - o - 1);
+				kp_t_ok(T, len > 0 && (size_t)len + 1 <= payload - o, "%s: a command the record walk knows", path);
+				kp_t_ok(T, kp_session_command(s, b + 5 + o + 1, (size_t)len, -1) == 0, "%s: %s", path, s->error);
+				o += 1 + (size_t)len;
+			}
+			at += 5 + payload;
+		}
+		if (!kp_session_step(s, NULL)) kp_t_fail(T, "%s: step at frame %lld: %s", path, (long long)frame, s->error);
+		while (kp_event_take(s->g, &e)) {
+		}
+	}
+	kp_t_eq(T, (int64_t)at, (int64_t)orig->record_size, "%s: every recorded command given", path);
+	kp_t_ok(T, kp_session_replay_file(s, NULL, ours, &err) == 0, "%s", err.msg);
+	kp_t_eq(T, (int64_t)ours->chk_size, (int64_t)orig->chk_size, "%s: the map's size", path);
+	kp_t_ok(T, memcmp(ours->chk, orig->chk, orig->chk_size) == 0, "%s: the map's bytes", path);
+	kp_t_eq(T, (int64_t)ours->record_size, (int64_t)orig->record_size, "%s: the record's size", path);
+	kp_t_ok(T, memcmp(ours->record, orig->record, orig->record_size) == 0, "%s: the record's bytes", path);
+	for (k = 0; k < KP_REP_HEADER_SIZE; k++) {
+		int in_names = k >= KP_REP_PLAYER_RECORDS && k < KP_REP_COLORS && (k - KP_REP_PLAYER_RECORDS) % KP_REP_PLAYER_SIZE >= 11;
+		if (k >= KP_REP_GAME_NAME && k < KP_REP_GAME_NAME + KP_REP_GAME_NAME_SIZE) continue; /* the profile's */
+		if (k >= KP_REP_FRAMES && k < KP_REP_FRAMES + 4 && kp_rep_frames(ours) != kp_rep_frames(orig)) continue;
+		if (in_names) continue;
+		kp_t_eq(T, ours->header[k], orig->header[k], "%s: header +0x%x", path, k);
+	}
+	if (getenv("KP_REP_OUT")) {
+		char out[KP_T_PATH];
+		const char *stem = strrchr(mission, '/') ? strrchr(mission, '/') + 1 : mission;
+		uint8_t *bytes;
+		FILE *fp;
+		kp_t_ok(T, kp_rep_write(ours, &bytes, &size, &err) == 0, "%s", err.msg);
+		kp_t_defer(T, free, bytes);
+		snprintf(out, sizeof out, "%s/%s.rep", getenv("KP_REP_OUT"), stem);
+		fp = fopen(out, "wb");
+		kp_t_ok(T, fp && fwrite(bytes, 1, size, fp) == size, "%s: not written", out);
+		fclose(fp);
+		kp_t_log(T, "replay: %s, %u frames", out, (unsigned)kp_rep_frames(ours));
+	}
+}
+
+static void session_replay_records_as_the_original(KpT *T)
+{
+	static const char *const NEED[] = { KP_T_DATA, NULL };
+	size_t k;
+	int done = 0;
+	if (!kp_t_ready(T, "test_session", NEED)) return;
+	for (k = 0; k < sizeof ORIGINAL_REPLAYS / sizeof ORIGINAL_REPLAYS[0]; k++) {
+		int mark = kp_t_mark(T);
+		if (!kp_t_has(T, ORIGINAL_REPLAYS[k].file) || !kp_t_has(T, ORIGINAL_REPLAYS[k].mission)) continue;
+		original_recorded_again(T, ORIGINAL_REPLAYS[k].file, ORIGINAL_REPLAYS[k].mission, ORIGINAL_REPLAYS[k].expansion);
+		kp_t_release(T, mark);
+		done++;
+	}
+	if (!done) kp_t_skip(T, "the original's replays are private files");
+}
+
+/* --- the replays of the golden games (phase RP, stage RP2's acceptance) --- */
+
+#define GOLDEN "tests/golden/oracle/"
+#define CHECK_EVERY_LONG 16 /* the plays' and runs' steps compared (a divergence stays) */
+#define DIAG_STEPS 64      /* the first steps whose categories a mismatch names */
+static KpStateCrcs diag[DIAG_STEPS];
+
+/* One hash of a step's state CRCs. */
+static uint32_t state_hash(KpT *T, KpSession *s)
+{
+	KpStateCrcs c;
+	crcs(T, s, &c);
+	return kp_crc32((const uint8_t *)c.crcs, (size_t)c.count * sizeof c.crcs[0]);
+}
+
+/* A step of a golden's session, its events taken (a session without the interface has nobody to read them). */
+static int golden_step(KpSession *s)
+{
+	KpEvent e;
+	int ok = kp_session_step(s, NULL);
+	while (kp_event_take(s->g, &e)) {
+	}
+	return ok;
+}
+
+static KpSession *golden_session(KpT *T, const KpReplay *r)
+{
+	const KpData *d = kp_t_data(T);
+	KpSession *s = (KpSession *)calloc(1, sizeof *s);
+	KpMission m;
+	KpError err;
+	if (!s) kp_t_fail(T, "out of memory");
+	kp_t_defer(T, free_session, s);
+	if (!kp_oracle_mission(".", r->mission, &m, &err)) kp_t_fail(T, "%s", err.msg);
+	if (kp_session_load_from(s, &d->shared, &d->dat, &m, r->mission, &d->files) != 0) kp_t_fail(T, "%s", s->error);
+	return s;
+}
+
+/* The frame of a record's last block (never fed), -1 for an empty record. */
+static int64_t last_block_frame(const KpRep *rep)
+{
+	size_t at = 0;
+	int64_t frame = -1;
+	while (at + 5 <= rep->record_size) {
+		frame = (int64_t)(rep->record[at] | rep->record[at + 1] << 8 | rep->record[at + 2] << 16 | (uint32_t)rep->record[at + 3] << 24);
+		at += 5 + rep->record[at + 4];
+	}
+	return frame;
+}
+
+/* Golden g's game recorded by a session (its local player's commands at their turns; the interface's events are the
+ * presentation's, which a session has none of), its file played by another: the same state at the steps compared
+ * until the last block's frame, then the end. The mismatches go to bad. */
+static void golden_plays_back(KpT *T, const char *name, const KpJson *g, int every, KpBuf *bad)
+{
+	KpReplay *r = kp_t_replay(T);
+	KpSession *a, *b;
+	KpSessionStart start;
+	KpRep *rep = rep_new(T), *back = rep_new(T);
+	KpError err;
+	uint8_t *file;
+	size_t size;
+	uint32_t *hash;
+	int64_t steps, k, last_frame, unrecorded = -1;
+	int next = 0, local_only = 1;
+	if (kp_replay_from_golden(r, ".", g, &err) != 0) kp_t_fail(T, "%s: %s", name, err.msg);
+	steps = r->last > 2 ? r->last - 2 : 0;
+	hash = (uint32_t *)calloc((size_t)steps + 1, sizeof *hash);
+	if (!hash) kp_t_fail(T, "out of memory");
+	kp_t_defer(T, free, hash);
+	a = golden_session(T, r);
+	kp_session_start_defaults(&start);
+	start.seed = r->seed;
+	start.expansion = r->expansion;
+	start.mission_index = r->mission_index;
+	start.record = 1;
+	if (kp_session_start(a, &start) != 0) kp_t_fail(T, "%s: the game does not start: %s", name, a->error);
+	kp_t_guard(T, a->g);
+	for (k = 0; k < steps; k++) {
+		int64_t turn = kp_scalar(a->g, KP_TURN);
+		while (next < r->command_count && r->commands[next].turn <= turn) {
+			const KpReplayCommand *c = &r->commands[next++];
+			if (c->turn < turn) continue; /* RunGame's first turn's: the session's start runs it without commands */
+			if (c->command.player != a->g->local_player) {
+				local_only = 0;
+				continue;
+			}
+			/* a save's or a load's effects on the game (kp_save_game_effects) are not recorded (0x4ef2fc), in 1.17's
+			 * replays neither: the playback is compared up to it */
+			if (unrecorded < 0 && c->command.size && (c->command.bytes[0] == 0x06 || c->command.bytes[0] == 0x07)) unrecorded = k;
+			kp_session_command(a, c->command.bytes, c->command.size, -1);
+		}
+		if (!golden_step(a)) kp_t_fail(T, "%s: step %lld: %s", name, (long long)k, a->error);
+		if (k % every == 0 || k == steps - 1) hash[k] = state_hash(T, a);
+		if (k < DIAG_STEPS) crcs(T, a, &diag[k]);
+	}
+	kp_t_ok(T, kp_session_replay_file(a, NULL, rep, &err) == 0, "%s: %s", name, err.msg);
+	kp_t_ok(T, kp_rep_write(rep, &file, &size, &err) == 0, "%s", err.msg);
+	kp_t_defer(T, free, file);
+	kp_t_ok(T, kp_rep_read(back, file, size, NULL, &err) == 0, "%s: %s", name, err.msg);
+	last_frame = last_block_frame(back);
+	b = golden_session(T, r);
+	kp_session_start_defaults(&start);
+	kp_t_eq(T, kp_session_replay_start(&start, back), 0, "%s: a replay V1", name);
+	start.replay_as_game = 1;
+	start.objective_count = -1; /* the recorded game's briefing */
+	if (kp_session_start(b, &start) != 0) kp_t_fail(T, "%s: the playback does not start: %s", name, b->error);
+	kp_t_guard(T, b->g);
+	for (k = 0; k < steps; k++) {
+		int64_t frame = kp_scalar(b->g, KP_FRAME);
+		if (!golden_step(b)) kp_t_fail(T, "%s: playback step %lld: %s", name, (long long)k, b->error);
+		if (last_frame >= 0 && frame >= last_frame) break;
+		if (unrecorded >= 0 && k >= unrecorded) break;
+		/* a game paused by a trigger stands at its frame: the playback ends when it reaches the recorded game's last */
+		if (b->replay_ended && frame >= (int64_t)kp_rep_frames(back)) break;
+		if ((k % every == 0 || k == steps - 1) && state_hash(T, b) != hash[k]) {
+			kp_buf_printf(bad, "%s%s at step %lld%s", bad->size ? ", " : "", name, (long long)k,
+				local_only ? "" : " (other players' commands left out)");
+			if (k < DIAG_STEPS) {
+				KpStateCrcs got;
+				int c, found;
+				crcs(T, b, &got);
+				for (c = 0; c < diag[k].count; c++) {
+					if (kp_state_crc(&got, diag[k].names[c], &found) != diag[k].crcs[c]) kp_buf_printf(bad, " %s", diag[k].names[c]);
+				}
+			}
+			return;
+		}
+		if (b->replay_ended) {
+			kp_buf_printf(bad, "%s%s ended at step %lld", bad->size ? ", " : "", name, (long long)k);
+			return;
+		}
+	}
+	if (!b->replay_ended && unrecorded < 0 && (last_frame < 0 || last_frame >= kp_scalar(b->g, KP_FRAME))) {
+		kp_t_ok(T, golden_step(b) && b->replay_ended, "%s: the end after the header's frames", name);
+	}
+}
+
+static void goldens_play_back(KpT *T, const char *index_path, const char *dir, int every)
+{
+	static const char *const NEED[] = { KP_T_DATA, NULL };
+	const KpJson *index;
+	KpBuf *bad;
+	char path[256];
+	int k;
+	if (!kp_t_ready(T, "test_session", NEED)) return;
+	snprintf(path, sizeof path, GOLDEN "%s", index_path);
+	if (!kp_t_has(T, path)) kp_t_skip(T, "no %s", path);
+	index = kp_t_golden(T, path);
+	bad = kp_t_buf(T);
+	for (k = 0; k < kp_json_len(index); k++) {
+		const char *name = kp_json_str(kp_json_at(index, k), "");
+		int mark = kp_t_mark(T);
+		if (!kp_t_mine_sampled(T, k + 1)) continue;
+		snprintf(path, sizeof path, GOLDEN "%s/%s.json", dir, name);
+		golden_plays_back(T, name, kp_t_golden(T, path), every, bad);
+		kp_t_release(T, mark);
+	}
+	kp_t_ok(T, bad->size == 0, "playbacks differ: %s", kp_buf_text(bad));
+}
+
+static void replay_scenarios_play_back(KpT *T) { goldens_play_back(T, "scenarios/index.json", "scenarios", 1); }
+/* KP_REPLAY_EVERY=1: the plays and runs compared at every step too (the acceptance's full run; slower) */
+static int check_every_long(void)
+{
+	const char *v = getenv("KP_REPLAY_EVERY");
+	int n = v ? atoi(v) : 0;
+	return n > 0 ? n : CHECK_EVERY_LONG;
+}
+
+static void replay_plays_play_back(KpT *T) { goldens_play_back(T, "plays/index.json", "plays", check_every_long()); }
+static void replay_runs_play_back(KpT *T) { goldens_play_back(T, "runs/index.json", "runs", check_every_long()); }
+
 static const KpTest TESTS[] = {
 	{ "clock_fastest_steps_at_42ms", clock_fastest_steps_at_42ms, 0 },
 	{ "clock_speed_table", clock_speed_table, 0 },
@@ -1089,6 +1617,13 @@ static const KpTest TESTS[] = {
 	{ "session_a_game_save_keeps_the_queued_commands_and_the_campaign",
 		session_a_game_save_keeps_the_queued_commands_and_the_campaign, 0 },
 	{ "session_a_save_file_is_written_whole", session_a_save_file_is_written_whole, 0 },
+	{ "session_replay_plays_the_recorded_game", session_replay_plays_the_recorded_game, 0 },
+	{ "session_replay_speed_and_live_commands", session_replay_speed_and_live_commands, 0 },
+	{ "session_replay_record_in_a_save", session_replay_record_in_a_save, 0 },
+	{ "session_replay_records_as_the_original", session_replay_records_as_the_original, 0 },
+	{ "replay_scenarios_play_back", replay_scenarios_play_back, 6 },
+	{ "replay_plays_play_back", replay_plays_play_back, 8 },
+	{ "replay_runs_play_back", replay_runs_play_back, 8 },
 	{ "session_profile_round_trip", session_profile_round_trip, 0 },
 	{ "session_profile_language", session_profile_language, 0 },
 	{ "session_profile_names_become_utf8", session_profile_names_become_utf8, 0 },

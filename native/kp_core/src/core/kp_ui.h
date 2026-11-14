@@ -157,6 +157,7 @@ typedef struct {
 	uint8_t lb_state, lb_expanded;   /* 0x6ab274 (0 hidden, 1 values, 2 greed), 0x6ab278 */
 	char lb_values[8][16];           /* 0x6ab280: a row's value (greed: its minerals) */
 	char lb_gas[8][16];              /* 0x6ab300: a greed row's gas */
+	int64_t replay_viewer;           /* 0x50d7d8: the player a replay's resource panel last showed (-1 none) */
 } KpUiHud;
 
 /* A movie as SVid plays it (storm.dll SVidPlayBegin 454, SVidPlayContinueSingle 457, SVidPlayEnd 458 over Smackw32):
@@ -714,6 +715,13 @@ typedef struct {
 	uint16_t costs[8], level;        /* 0x6aab04.., the tooltip's cost line; its upgrade level */
 	const KpUiFile *buttons, *icons; /* unit\cmdbtns\<race>cmdbtns.grp, cmdicons.grp */
 	uint8_t slices[96];              /* 0x6aaa88: unit\cmdbtns\ticon.pcx, six remaps of 16 */
+	/* A replay's panel (UpdateReplayInfoPanel 0x4a5640, UpdateReplayClock 0x480fb0): the speed the card was built
+	 * for (SetReplaySpeed 0x481040 refreshes it), the shown seconds 0x508e38, the pause's blink 0x67cc80 and its
+	 * last toggle 0x67cc8c, and the three texts 0x6ab138, 0x6ab1a0, 0x6ab208. */
+	int64_t replay_speed, replay_multiplier, replay_paused, replay_seconds;
+	int replay_blink;
+	uint32_t replay_blink_at;
+	uint8_t replay_text[3][100];
 } KpUiCard;
 
 /* A theme (CreateTheme 0x4c2ca0): the GRP and its metric words. */
@@ -854,7 +862,36 @@ typedef struct {
 	uint32_t progress[6];            /* +0x28: the highest mission of original Zerg, Terran, Protoss, then expansion */
 } KpUiProfile;
 enum { KP_UI_MENU_NONE, KP_UI_MENU_STATE, KP_UI_MENU_EXIT, KP_UI_MENU_INTRO, KP_UI_MENU_CREDITS, KP_UI_MENU_MISSION,
-	KP_UI_MENU_CINEMATIC, KP_UI_MENU_LOAD_SAVE, KP_UI_MENU_LANGUAGE };
+	KP_UI_MENU_CINEMATIC, KP_UI_MENU_LOAD_SAVE, KP_UI_MENU_LANGUAGE, KP_UI_MENU_REPLAY };
+#define KP_UI_REPLAYS 254
+#define KP_UI_REPLAY_FILE 128   /* a replay's file name, UTF-8 (the original's names below 32 bytes) */
+#define KP_UI_REPLAY_MAP 132    /* the header's map name, UTF-8 (32 bytes of the map's encoding) */
+#define KP_UI_REPLAY_DIR 260    /* the listed folder under the replays folder, '/' between its names ("" the root) */
+/* An entry's kind (entry +0x268: 0x80 a replay, 8 a folder, AddFolderEntry 0x45b080's ".." the folder above) */
+enum { KP_UI_REPLAY_ENTRY_FILE = 0, KP_UI_REPLAY_ENTRY_FOLDER, KP_UI_REPLAY_ENTRY_UP };
+/* Why a replay's playback is unverified (Koprulu's label in Load Replay's information fields, decision 4) */
+enum {
+	KP_UI_REPLAY_VERIFIED = 0,
+	KP_UI_REPLAY_LOADS,     /* the game loaded saves */
+	KP_UI_REPLAY_REVISION,  /* another simulation revision recorded it */
+	KP_UI_REPLAY_DATA       /* other game data (the save identity's source hash) */
+};
+#define KP_UI_REPLAY_TITLE 125  /* Load Replay's information title: 31 characters of UTF-8 (the original's 32 bytes) */
+#define KP_UI_REPLAY_DESCRIPTION 600 /* its description: the original's 300 bytes in UTF-8 */
+#define KP_UI_REPLAY_TITLE_CHARS 31
+/* A file of Load Replay's list as LoadReplayEntryInfo 0x45d250 reads it; the host fills them (ui->list_replays). */
+typedef struct {
+	char file[KP_UI_REPLAY_FILE];    /* the name in the listed folder (a file's: the list's text; "" for the folder above) */
+	uint8_t kind;                    /* KP_UI_REPLAY_ENTRY_*: a folder's other fields are 0 */
+	char label[KP_UI_REPLAY_FILE + 2]; /* entry +0x08: the list's text (the file, "[folder]", "[Up One Level]"), set by
+	                                    * the screen; the list keeps a pointer to it */
+	uint8_t status;                  /* entry +0x25c: 0 read, 1 unreadable, 2 a Brood War replay without Brood War */
+	uint16_t description;            /* an unreadable file's gluAll text (66 missing, 62 its name too long, 60, 63) */
+	char map[KP_UI_REPLAY_MAP];      /* the game header's +0x4d */
+	uint16_t width, height, tileset; /* +0x472, +0x474, +0x476 */
+	uint8_t computers, humans;       /* +0x47a, +0x47b */
+	uint8_t unverified;              /* Koprulu's, from its KPRX tail: KP_UI_REPLAY_VERIFIED or why the playback is unverified */
+} KpUiReplayEntry;
 #define KP_UI_LANGUAGES 16
 #define KP_UI_LANGUAGE_ID 8      /* "ruRU" and its NUL */
 #define KP_UI_LANGUAGE_NAME 64   /* a language's own name, UTF-8 */
@@ -887,6 +924,13 @@ typedef struct {
 	char saves[KP_UI_SAVES][KP_UI_SAVE_NAME]; /* the saved games' names (glue\..\save) */
 	int save_count;
 	int32_t save_choice;             /* 0x66ad98: the save to load */
+	KpUiReplayEntry replays[KP_UI_REPLAYS]; /* Load Replay's files, in the list's order */
+	int replay_count;
+	int32_t replay_choice;           /* the replay Ok started (an index of replays) */
+	char replay_dir[KP_UI_REPLAY_DIR]; /* 0x668a68 under the root 0x668b70 (maps\replays): the listed folder */
+	int32_t replay_preview;          /* 0x66aef4: the entry whose information the 100 ms timer shows (-1 none) */
+	/* 0x669730 (32 bytes), 0x669330 (300), 0x6690a8..: UTF-8 (ADR 0016) */
+	uint8_t replay_title[KP_UI_REPLAY_TITLE], replay_description[KP_UI_REPLAY_DESCRIPTION], replay_lines[5][128];
 	KpUiLanguages languages;         /* the host's (ours) */
 	const uint8_t *campaign;         /* the profile's TABL (the bytes outlive the interface) */
 	size_t campaign_size;
@@ -1076,6 +1120,8 @@ struct KpUi {
 	uint8_t ui_colours[26];       /* 0x6d2368: the UI colours' nearest palette indexes (0x4cccb0) */
 	KpUiSurface console;          /* 0x6ab504: the console art of the game's race (LoadConsoleBitmap 0x4a7e20) */
 	const KpUiFile *console_file; /* its PCX in ui.kpd (the HD interface's console pieces) */
+	int console_whole;            /* its HD art is one picture, every group's frame 0 (a replay's nconsole.pcx), not
+	                               * the races' three pieces, a group's frame each */
 	int console_edges;            /* the minimap and the card in the screen's corners, the pieces' ornaments off it */
 	const uint8_t *console_art;   /* console.kpd's CONW (kp_ui_set_console_art), or NULL */
 	size_t console_art_size;
@@ -1084,6 +1130,10 @@ struct KpUi {
 	uint8_t *console_owners;      /* per console pixel the group it moves with + 1 (0: left out on a screen other than
 	                               * the original's, outside its piece's silhouette), or NULL */
 	int32_t console_owned_top;    /* the first of its rows with an owned pixel */
+	const uint8_t *fluff;         /* FLUF: CreateFluffDialogs 0x4a5a40's lists 0x50d7b0 (u8 lists; per list u8 count, its
+	                               * x, y, w, h as u16), or NULL */
+	uint32_t fluff_size;
+	int fluff_list;               /* 0x6ab26c: the game's list (the local race, 3 in a replay), -1 none */
 	int32_t menu_button;          /* 0x6ab380: the menu button dialog (stat_f10.bin) */
 	int32_t menu_hovered;            /* 0x6ab384: the menu button under the cursor (-1 none) */
 	KpUiTimers timers;
@@ -1145,7 +1195,26 @@ struct KpUi {
 	void (*delete_profile_saves)(void *host, const char *name); /* DeleteCharacterAndSaves 0x4baf70's DeleteProfileSaves
 	                                                * 0x498a70: the host deletes the deleted ID's saved games (NULL
 	                                                * none) */
-	void *host;                      /* delete_save's, delete_profile_saves' */
+	int (*list_replays)(void *host, struct KpUi *ui); /* ListMapDirectory 0x45bc70 over maps\\replays and
+	                                                * menus.replay_dir: the host fills menus.replays, the folder above
+	                                                * first below the root, then the folders, then the files (NULL:
+	                                                * none) */
+	uint16_t (*check_replay)(void *host, int index); /* CreateGameFromEntry 0x45bfc0's reading of a replay at Ok: 0
+	                                                * to start it, else the gluAll text that refuses it */
+	/* Koprulu's Import and Export on Load Replay (defs/ui/koprulu-dialogs.json's extend; each shown only when set): the
+	 * platform's file picker for a .rep to copy into the listed folder (the host answers with kp_ui_replay_imported),
+	 * and for where the listed replay at index is written (a new name) */
+	void (*import_replay)(void *host);
+	void (*export_replay)(void *host, int index);
+	void *host;                      /* delete_save's, delete_profile_saves', list_replays', check_replay's, import_replay's,
+	                                  * export_replay's */
+#define KP_UI_SLOT_NAMES 8
+	uint8_t slot_names[KP_UI_SLOT_NAMES][25]; /* a replay's player records' names (0x6726c8 +0x0b), the host's */
+	struct {
+		int32_t dialog;                  /* the replay's vision dialog, rez\allyfltr.bin (-1 none) */
+		uint16_t vision;                 /* 0x6662b0: the vision mask being edited */
+		int reveal;                      /* control 25's state at the open: 0x67cc88 */
+	} ally;
 	uint8_t addon_anchor;            /* a layout host's (phase 10): an add-on's preview starts beside its parent */
 	void (*menu_handler)(struct KpUi *ui, int32_t dialog); /* 0x675068: the open in-game menu's handler */
 	uint32_t pause_tick;             /* 0x675180: the interface clock at the pause (PauseGame 0x47cbb0) */
@@ -1404,6 +1473,8 @@ int kp_ui_grp_frame_size(const uint8_t *grp, size_t size, int frame, int32_t *w,
  * into the inclusive rectangle, the mode from the flags (0x2000 index 0 transparent, 0x40000 translucent). */
 void kp_ui_three_part_bar(KpUi *ui, int32_t x, int32_t y, int32_t total, int32_t piece, int frame,
 	const int16_t clip[4], uint32_t flags);
+/* GetGrpFrameInfo 0x4cf570 of a dialog GRP (frames stored whole): the frame's pixels and size; -1 for a bad GRP. */
+int kp_ui_dialog_grp_frame(const uint8_t *grp, size_t size, int frame, const uint8_t **pixels, int32_t *w, int32_t *h);
 void kp_ui_blit_clipped(KpUi *ui, const uint8_t *pixels, int32_t w, int32_t h, int32_t sx, int32_t sy,
 	const int16_t rect[4], uint32_t flags);
 /* FillRect 0x4ce9c0 with colour 0x6d0c50 = colour (clipped to the target). */
@@ -1413,6 +1484,9 @@ void kp_ui_fill_rect(KpUi *ui, int32_t x, int32_t y, int32_t w, int32_t h, uint8
 
 /* LoadConsoleBitmap 0x4a7e20: the console art of race 0 Zerg, 1 Terran, 2 Protoss, 3 a replay's. */
 int kp_ui_load_console(KpUi *ui, int race);
+/* The interface's race 0x5264c2 (InitGamePlayers 0x4780b0): the local player's, or Terran (1) in a replay; the art
+ * whose letter a replay turns to 'n' (console, statbtn, conover) asks w->replay itself. */
+int kp_ui_local_race(const KpUi *ui);
 /* console.kpd (kept by the caller): the pieces the console is composed from on other screens; -1 when it is not one
  * (the console stays the original's). */
 int kp_ui_set_console_art(KpUi *ui, const uint8_t *data, size_t size);
@@ -1612,9 +1686,15 @@ void kp_ui_end_game(KpUi *ui);
  * name; elapsed: the seconds from its start to its end, less the paused seconds the interface took off), whether the
  * dialog was answered (OK: ui->result 7) and the release. */
 int32_t kp_ui_score_open(KpUi *ui, const KpUiScoreData *data);
+/* GetReplayElapsedSeconds 0x480d70: the header speed's frame time by the frame, a 32-bit product. */
+uint32_t kp_ui_replay_seconds(const struct KpGame *g);
 void kp_ui_score_data(KpUi *ui, struct KpGame *g, int result, const char *player_name, uint32_t elapsed,
 	KpUiScoreData *out);
 int kp_ui_score_glue_state(const KpUi *ui);
+/* AssignDefaultComputerPlayerNames 0x4074a0's name of slot p (0..7) of the given type and race: the network.tbl
+ * string of the race and colour (the colour table 0x5264fc is the identity in a game of one human) for the types 1,
+ * 3, 4 and 7, NULL for the others and for player 2 in the campaign missions 15 and 17 (its first byte cleared). */
+const char *kp_ui_default_player_name(KpUi *ui, int expansion, int64_t mission, int p, int type, int race);
 /* The glue's loop (kp_ui_menus.c): the screen of a glue state (0 main menu, 5 login, 6 and 22 the campaign menus, 13
  * load; its dialog, or -1 for a state the host runs: the ready rooms, the score); once its modal run ended
  * kp_ui_menus_poll returns 1 with menus.state the next state and menus.action the host's work. */
@@ -1627,6 +1707,9 @@ void kp_ui_set_pending_mission(KpUi *ui, uint16_t mission, int race, int expansi
 void kp_ui_menus_free(KpUi *ui);
 /* Whether the main menu offers its Language: more than one language installed for the text or for the speech. */
 int kp_ui_languages_offered(const KpUi *ui);
+/* The host's answer to import_replay: refusal 0 lists the folder again with file (the copy's name in it) selected;
+ * else the gluAll text that refuses the picked file, in an Ok popup. Nothing when Load Replay is not open. */
+void kp_ui_replay_imported(KpUi *ui, const char *file, uint16_t refusal);
 /* CreateCampaignMissionGame 0x4bb6c0's draws of the glue's generator (FillProgramInfo 0x46f330's key and name): the
  * host's, once a mission history's cinematic row leads to a mission. */
 void kp_ui_menus_mission_draws(KpUi *ui);
@@ -2128,6 +2211,10 @@ void kp_ui_canvas_piece(KpUi *ui, KpUiCanvas *c, const KpUiConsolePiece *p, int3
 /* The original console's pixels of a group (kp_ui_load_console's owners) with its top-left at (x, y), in its columns
  * up to x1 (exclusive). */
 void kp_ui_canvas_console_owned(KpUi *ui, KpUiCanvas *c, int group, int32_t x, int32_t y, int32_t x1);
+/* The fluff dialogs (CreateFluffDialogs 0x4a5a40): the console art in the game's fluff rectangles, its index 0
+ * transparent, drawn over the console's dialogs. group -1: the art's columns [x0, x1) at (x + x0, y) as
+ * kp_ui_canvas_console; else that group's pixels (kp_ui_canvas_console_owned) with its top-left at (x, y). */
+void kp_ui_canvas_fluff(KpUi *ui, KpUiCanvas *c, int group, int32_t x, int32_t y, int32_t x0, int32_t x1);
 /* An opaque rectangle of one index (a fixed screen's margins over the world). */
 void kp_ui_canvas_fill(KpUiCanvas *c, int32_t x, int32_t y, int32_t w, int32_t h, uint8_t index);
 /* A fixed screen's dialog at canvas (x, y) (kp_ui_canvas_dialog) with its margins (a glue screen, plan section 2a: the

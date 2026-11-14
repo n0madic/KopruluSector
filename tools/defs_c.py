@@ -38,7 +38,7 @@ def tables() -> list[tuple[str, bytes]]:
     out = [("COLS", kpd.columns_section(dat.load_layouts(PROFILE)))]
     out += [(t.fourcc, requirements.section(list(t.words))) for t in requirements.load_tables(PROFILE)]
     ui = dict(kpd.ui_table_sections(ui_tables.load(ui_tables.PROFILE)))
-    out += [(k, ui[k]) for k in ("BTNS", "STLY", "MUSI", "VOLT", "ACCL", "ESTB")]
+    out += [(k, ui[k]) for k in ("BTNS", "STLY", "FLUF", "MUSI", "VOLT", "ACCL", "ESTB")]
     m = campaign.load(PROFILE)
     out += [("TABL", campaign.tables_section(m)), ("CHEA", campaign.cheats_section(m))]
     out += [("SLOT", kpd.slots_section(iscript.Table.load(PROFILE).header_animations))]

@@ -16,6 +16,11 @@
 #define ID_HELP_LIST 1
 #define ID_OBSERVER 1                /* quit2mnu's Become Observer (0x4b8e80 returns 0: always hidden) */
 #define ID_NETWORK 4                 /* options.bin's Network button (multiplayer only) */
+#define ID_SAVE 1                    /* gamemenu.bin's Save Game and Load Game */
+#define ID_LOAD 2
+#define ID_RESTART 1                 /* abrtmenu.bin's Restart Mission and Quit Mission */
+#define ID_QUIT 2
+#define ID_EXIT_REPLAY_TEXT (-13)    /* abrtmenu.bin's hidden "Exit Replay" label */
 #define MENU_BUTTONS 8               /* 0x508d70: MenuButtonProc for the controls 1..8 */
 #define FLAG_TILED 0x20000000u
 #define FLAG_LIST_HELP 0x10020000u   /* FillHelpTextList 0x464850 */
@@ -118,7 +123,16 @@ static void init_menu(KpUi *ui, int32_t dialog)
 	kp_ui_bind_interacts(ui, dialog, buttons, MENU_BUTTONS);
 	tiled_child(ui, dialog, ID_OK);
 	tiled_child(ui, dialog, ID_CANCEL);
-	/* TODO: (outside V1) InitAbortMenu 0x47b140 and InitNetworkGameMenu 0x47b4c0 of a multiplayer game or a replay */
+	/* InitAbortMenu 0x47b140 and InitNetworkGameMenu 0x47b4c0 of a replay (TODO: (outside V1) a multiplayer game's) */
+	if (ui->game->w->replay && handler_of(ui) == abort_menu_handler) {
+		int32_t label = kp_ui_find_control(ui, dialog, ID_EXIT_REPLAY_TEXT), quit = kp_ui_find_control(ui, dialog, ID_QUIT);
+		hide(ui, dialog, ID_RESTART);
+		if (label >= 0 && quit >= 0) kp_ui_set_control_text(ui, quit, ui->controls[label].text); /* 0x47b270 */
+	}
+	if (ui->game->w->replay && handler_of(ui) == game_menu_handler) {
+		hide(ui, dialog, ID_LOAD);
+		hide(ui, dialog, ID_SAVE); /* Pause and Resume stay hidden in a replay */
+	}
 	if (handler_of(ui) == quit_mission_handler) hide(ui, dialog, ID_OBSERVER);
 	if (handler_of(ui) == options_menu_handler && !ui->menus.multiplayer) hide(ui, dialog, ID_NETWORK);
 	ui->menu_depth++;
@@ -293,6 +307,26 @@ static void quit_mission_handler(KpUi *ui, int32_t dialog)
 	}
 }
 
+static void quit_replay_handler(KpUi *ui, int32_t dialog)
+{
+	/* QuitReplayMenuHandler 0x47bed0 (rez\\quitrepl.bin): a single player's exit code 4 and the campaign menu next */
+	set_handler(ui, NULL);
+	if (ui->result == ID_OK) {
+		ui->game_exit = EXIT_QUIT_MISSION;
+		ui->menus.state = ui->menus.expansion ? GLUE_EXPANSION_CAMPAIGN : GLUE_CAMPAIGN;
+		end_dialog(ui, dialog);
+	} else {
+		back_to(ui, dialog, open_abort_menu);
+	}
+}
+
+/* OpenQuitMissionMenu 0x47b380 */
+static void open_quit_mission(KpUi *ui)
+{
+	if (ui->game->w->replay) open_menu(ui, "rez\\quitrepl.bin", quit_replay_handler);
+	else open_menu(ui, "rez\\quit2mnu.bin", quit_mission_handler);
+}
+
 static void abort_menu_handler(KpUi *ui, int32_t dialog)
 {
 	/* AbortMenuHandler 0x47b1b0 */
@@ -301,7 +335,7 @@ static void abort_menu_handler(KpUi *ui, int32_t dialog)
 	switch (ui->result) {
 	case ID_CANCEL: back_to(ui, dialog, open_game_menu); break;
 	case 1: open_menu(ui, "rez\\restart.bin", restart_handler); break;
-	case 2: open_menu(ui, "rez\\quit2mnu.bin", quit_mission_handler); break; /* 0x47b380 (a replay's quitrepl) */
+	case 2: open_quit_mission(ui); break;
 	case 3: open_menu(ui, "rez\\quit.bin", quit_handler); break;
 	default: break;
 	}
@@ -342,7 +376,7 @@ void kp_ui_game_menu(KpUi *ui, int which)
 	case KP_UI_GAME_MENU: open_game_menu(ui); break;
 	case KP_UI_GAME_MENU_HELP: open_help_menu(ui); break;
 	case KP_UI_GAME_MENU_OPTIONS: open_options_menu(ui); break;
-	case KP_UI_GAME_MENU_QUIT_MISSION: open_menu(ui, "rez\\quit2mnu.bin", quit_mission_handler); break;
+	case KP_UI_GAME_MENU_QUIT_MISSION: open_quit_mission(ui); break;
 	case KP_UI_GAME_MENU_QUIT: open_menu(ui, "rez\\quit.bin", quit_handler); break;
 	case KP_UI_GAME_MENU_SAVE: kp_ui_save_dialog(ui, 0); break;
 	case KP_UI_GAME_MENU_LOAD: kp_ui_save_dialog(ui, 1); break;

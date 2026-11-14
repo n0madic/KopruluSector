@@ -508,6 +508,7 @@ int kp_mission_from_chk(KpMission *m, const KpFiles *f, uint8_t *chk_bytes, size
 	chk_bytes = NULL;
 	m->blob = blob;
 	m->size = total;
+	m->chk_size = chk_size;
 	at = chk_size;
 #define APPEND(out, bytes, n) \
 	do { \

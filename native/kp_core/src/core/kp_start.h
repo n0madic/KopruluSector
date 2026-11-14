@@ -84,6 +84,8 @@ typedef struct {
 	const KpCarry *carry;  /* the game before's carried globals (kp_carry_take); NULL: the process's first game */
 	int64_t turn;          /* the turn counter 0x672658 before RunGame resets it (kp_start_turns): what the menus
 	                        * left, 0 in the process's first game */
+	int replay;            /* a replay's playback: the replay flag 0x67cc90 and full vision (StartGame 0x443f40 step
+	                        * 13: 0x67cc84 = 0x672668 = 0xff, 0x67cc88 = 0) */
 } KpStartInput;
 
 struct KpGame;

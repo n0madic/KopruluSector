@@ -13,6 +13,7 @@
 
 #include "kp_flow.h"
 #include "kp_ids.h"
+#include "kp_rep.h"
 #include "kp_script_flow.h"
 
 #define FRAME_S 0.016            /* a frame of the host's clock */
@@ -87,6 +88,11 @@ typedef struct {
 	int files_asks;
 	int language_away;       /* with_language's ruRU behind a group not there yet (the web's): this many more asks */
 	int language_asks;
+	int picks;               /* Load Replay's Import: the pickers asked for */
+	int exports;             /* its Export: the last one's name and bytes (malloc'd) */
+	char export_name[64];
+	uint8_t *export_bytes;
+	size_t export_size;
 } Host;
 
 /* --- the host --- */
@@ -120,6 +126,19 @@ static void host_save_profile(void *ctx) { ((Host *)ctx)->profile_saves++; }
 static void host_sync_files(void *ctx) { ((Host *)ctx)->syncs++; }
 
 static void host_quit(void *ctx) { ((Host *)ctx)->quits++; }
+
+static void host_pick_replay(void *ctx) { ((Host *)ctx)->picks++; }
+
+static void host_export_replay(void *ctx, const char *name, const uint8_t *bytes, size_t size)
+{
+	Host *H = (Host *)ctx;
+	H->exports++;
+	snprintf(H->export_name, sizeof H->export_name, "%s", name);
+	free(H->export_bytes);
+	H->export_bytes = (uint8_t *)malloc(size ? size : 1);
+	if (H->export_bytes) memcpy(H->export_bytes, bytes, size);
+	H->export_size = size;
+}
 
 static int host_mission_files(void *ctx, const KpDataMission *m, char *err, size_t err_size)
 {
@@ -295,6 +314,7 @@ static void release_host(void *p)
 {
 	Host *H = (Host *)p;
 	kp_flow_free(&H->f);
+	free(H->export_bytes);
 	if (H->has_tileset) kp_tileset_free(&H->tileset);
 }
 
@@ -331,6 +351,8 @@ static Host *new_host(KpT *T)
 	h->quit = host_quit;
 	h->mission_files = host_mission_files;
 	h->language_files = host_language_files;
+	h->pick_replay = host_pick_replay;
+	h->export_replay = host_export_replay;
 	h->world_build = host_world_build;
 	h->world_free = host_world_free;
 	h->world_frame = host_world_frame;
@@ -723,16 +745,23 @@ static void scrolled_briefing_text_keeps_its_glyphs(KpT *T)
 	kp_ui_set_vector_text(ui, 0, 0, NULL);
 }
 
-/* The ready room's Cancel (Escape) leaves no game behind: the campaign menu of the run's campaign. */
+/* The ready room's Cancel (Escape) leaves no game behind: the campaign menu of the run's campaign, and no LastReplay
+ * (the game never reached its console). */
 static void room_cancel_leaves_no_game(KpT *T)
 {
 	Host *H = glue_host(T, 0);
+	char path[400];
+	FILE *last;
 	int k;
 	start_from_menu(H, EXPANSION_PROTOSS01);
 	wait_for(H, PROTOSS_ROOM_BIN, ROOM_FRAMES);
 	key(H, KEY_ESCAPE);
 	for (k = 0; k < END_FRAMES && H->f.playing; k++) frame(H);
 	in_menus(H, KP_GLUE_EXPANSION_CAMPAIGN, "the room's Cancel");
+	snprintf(path, sizeof path, "%sreplays/LastReplay.rep", H->pref);
+	last = fopen(path, "rb");
+	kp_t_ok(T, last == NULL, "no LastReplay of a game the room cancelled");
+	if (last) fclose(last);
 	kp_t_eq(T, H->frees >= 1, 1, "the world freed");
 	kp_t_ok(T, H->f.ui->game == NULL, "the interface keeps no game");
 	frame(H);
@@ -941,6 +970,211 @@ static void quit_mission_opens_the_campaign_menu(KpT *T)
 	frame(H);
 	in_menus(H, KP_GLUE_CAMPAIGN, "Quit Mission in the original");
 	kp_t_eq(T, H->quits, 0, NULL);
+}
+
+/* Load Replay (glue state 12, RunCreateGameScreen 0x455550): the game that ended left <pref>replays/LastReplay.rep
+ * (EndGame 0x443db0); the list holds the folder's files with their headers' map, a file that is no replay is refused at
+ * Ok (CreateGameFromEntry 0x45bfc0: gluAll 51 or 60, the screen kept), a game that loaded saves, another simulation
+ * revision's or other data's (its KPRX tail) is marked unverified with its reason, and LastReplay's Ok plays its
+ * mission from the file at once, without a ready room, in a replay's mode. */
+enum { TAIL_LOADS, TAIL_REVISION, TAIL_DATA, TAIL_VARIANTS };
+
+/* LastReplay with its tail changed (TAIL_*) as <pref>replays/NAME */
+static void write_tail_variant(KpT *T, Host *H, const uint8_t *last, size_t last_size, int variant, const char *name)
+{
+	KpRep rep;
+	KpRepRefusal why;
+	KpError err;
+	uint8_t *bytes;
+	size_t size = 0;
+	char path[400];
+	kp_t_ok(T, kp_rep_read(&rep, last, last_size, &why, &err) == 0 && rep.tail != NULL, "LastReplay's tail");
+	if (rep.tail == NULL) return;
+	if (variant == TAIL_LOADS) rep.tail->loads = 1;
+	else if (variant == TAIL_REVISION) rep.tail->sim_revision++;
+	else rep.tail->data_hash[0] ^= 0xff;
+	kp_t_ok(T, kp_rep_write(&rep, &bytes, &size, &err) == 0, "%s", err.msg);
+	kp_rep_free(&rep);
+	snprintf(path, sizeof path, "%sreplays/%s", H->pref, name);
+	kp_t_ok(T, kp_write_file_atomic(path, bytes, size, &err) == 0, "%s", err.msg);
+	free(bytes);
+}
+
+static void load_replay_lists_refuses_and_plays_the_last_game(KpT *T)
+{
+	static const struct { const char *name; uint8_t reason; } VARIANTS[TAIL_VARIANTS] = {
+		{ "loaded.rep", KP_UI_REPLAY_LOADS }, { "revision.rep", KP_UI_REPLAY_REVISION }, { "data.rep", KP_UI_REPLAY_DATA } };
+	Host *H = glue_host(T, 0);
+	KpUi *ui;
+	KpUiMenus *m;
+	FILE *junk;
+	uint8_t *bytes;
+	size_t size = 0;
+	char path[400];
+	int k, v, last = -1, broken = -1, variant[TAIL_VARIANTS] = { -1, -1, -1 }, builds;
+	play(H, PROTOSS01);
+	frames(H, 30);
+	game_event(H, KP_EVENT_GAME_EXIT, EXIT_QUIT_MISSION, NULL);
+	frame(H);
+	in_menus(H, KP_GLUE_CAMPAIGN, "Quit Mission");
+	snprintf(path, sizeof path, "%sreplays/LastReplay.rep", H->pref);
+	kp_t_ok(T, (bytes = kp_read_file(path, &size)) != NULL && size > 0, "%s written", path);
+	kp_t_ok(T, H->f.identity != NULL, "the data's identity (the tail's data hash)");
+	for (v = 0; v < TAIL_VARIANTS; v++) write_tail_variant(T, H, bytes, size, v, VARIANTS[v].name);
+	/* a folder with a folder and a replay in it, and an empty folder that sorts before it */
+	snprintf(path, sizeof path, "%sreplays/old", H->pref);
+	kp_t_ok(T, kp_t_mkdir(path) == 0, "%s", path);
+	snprintf(path, sizeof path, "%sreplays/old/deeper", H->pref);
+	kp_t_ok(T, kp_t_mkdir(path) == 0, "%s", path);
+	snprintf(path, sizeof path, "%sreplays/Empty", H->pref);
+	kp_t_ok(T, kp_t_mkdir(path) == 0, "%s", path);
+	snprintf(path, sizeof path, "%sreplays/old/kept.rep", H->pref);
+	{
+		KpError werr;
+		kp_t_ok(T, kp_write_file_atomic(path, bytes, size, &werr) == 0, "%s", werr.msg);
+	}
+	free(bytes);
+	snprintf(path, sizeof path, "%sreplays/broken.rep", H->pref);
+	kp_t_ok(T, (junk = fopen(path, "wb")) != NULL, "%s", path);
+	fputs("no replay", junk);
+	fclose(junk);
+	ui = H->f.ui;
+	m = &ui->menus;
+	kp_t_eq(T, ui->list_replays(ui->host, ui), 2 + 2 + TAIL_VARIANTS, "the folder's two folders and files");
+	kp_t_ok(T, m->replays[0].kind == KP_UI_REPLAY_ENTRY_FOLDER && strcmp(m->replays[0].file, "Empty") == 0
+		&& m->replays[1].kind == KP_UI_REPLAY_ENTRY_FOLDER && strcmp(m->replays[1].file, "old") == 0,
+		"the folders first, by name without case, no folder above at the root");
+	for (k = 2; k < m->replay_count; k++) kp_t_eq(T, m->replays[k].kind, KP_UI_REPLAY_ENTRY_FILE, "then the files");
+	kp_t_eq(T, ui->check_replay(ui->host, 0), 51, "a folder is no replay to start");
+	/* the folder's list: the folder above, its folder, its replay; its replay read and accepted through its path */
+	snprintf(m->replay_dir, sizeof m->replay_dir, "old");
+	kp_t_eq(T, ui->list_replays(ui->host, ui), 3, "old's three entries");
+	kp_t_eq(T, m->replays[0].kind, KP_UI_REPLAY_ENTRY_UP, "the folder above first");
+	kp_t_ok(T, m->replays[1].kind == KP_UI_REPLAY_ENTRY_FOLDER && strcmp(m->replays[1].file, "deeper") == 0, "its folder");
+	kp_t_ok(T, m->replays[2].kind == KP_UI_REPLAY_ENTRY_FILE && strcmp(m->replays[2].file, "kept.rep") == 0
+		&& m->replays[2].status == 0 && m->replays[2].humans == 1, "its replay read");
+	kp_t_eq(T, ui->check_replay(ui->host, 2), 0, "its replay accepted");
+	m->replay_dir[0] = 0;
+	(void)ui->list_replays(ui->host, ui);
+	for (k = 0; k < m->replay_count; k++) {
+		if (strcmp(m->replays[k].file, "LastReplay.rep") == 0) last = k;
+		if (strcmp(m->replays[k].file, "broken.rep") == 0) broken = k;
+		for (v = 0; v < TAIL_VARIANTS; v++) {
+			if (strcmp(m->replays[k].file, VARIANTS[v].name) == 0) variant[v] = k;
+		}
+	}
+	kp_t_ok(T, last >= 0 && broken >= 0, "all listed");
+	kp_t_eq(T, m->replays[last].status, 0, "LastReplay read");
+	kp_t_eq(T, m->replays[last].unverified, KP_UI_REPLAY_VERIFIED, "this build's game without loads verified");
+	for (v = 0; v < TAIL_VARIANTS; v++) {
+		kp_t_ok(T, variant[v] >= 0, "%s listed", VARIANTS[v].name);
+		if (variant[v] < 0) continue;
+		kp_t_eq(T, m->replays[variant[v]].status, 0, "%s read", VARIANTS[v].name);
+		kp_t_eq(T, m->replays[variant[v]].unverified, VARIANTS[v].reason, "%s unverified with its reason", VARIANTS[v].name);
+	}
+	kp_t_ok(T, m->replays[last].map[0] != 0, "its map's name");
+	kp_t_eq(T, m->replays[last].humans, 1, "one human");
+	kp_t_ok(T, m->replays[broken].status != 0, "the other refused");
+	k = ui->check_replay(ui->host, broken);
+	kp_t_ok(T, k == 51 || k == 60, "refused at Ok with gluAll 51 or 60, not %d", k);
+	kp_t_eq(T, ui->check_replay(ui->host, last), 0, "LastReplay accepted");
+	builds = H->builds;
+	m->replay_count = 0; /* the flow lists the folder again (the screen's refresh), as the choice's index is its */
+	(void)ui->list_replays(ui->host, ui);
+	m->replay_choice = last;
+	menus_end(H, KP_UI_MENU_REPLAY, KP_GLUE_CAMPAIGN, 0, 0, 0);
+	kp_t_eq(T, H->builds, builds + 1, "the replay's game");
+	kp_t_eq_str(T, current(H), PROTOSS01, "its mission");
+	kp_t_ok(T, H->f.playing_replay, "played from the file");
+	kp_t_ok(T, H->f.session->g->w->replay, "in a replay's mode");
+	kp_t_ok(T, H->f.hud_on && !kp_flow_glue_active(&H->f), "the console at once, no ready room");
+	kp_t_eq(T, H->quits, 0, NULL);
+}
+
+/* A file's bytes equal to want's. */
+static int file_equals(const char *path, const uint8_t *want, size_t size)
+{
+	size_t n = 0;
+	uint8_t *got = kp_read_file(path, &n);
+	int same = got != NULL && n == size && memcmp(got, want, size) == 0;
+	free(got);
+	return same;
+}
+
+/* Load Replay's Import and Export (Koprulu's, over the platform's file picker): the names a picked file gives its copy,
+ * a replay copied into the listed folder under a free name, a file that is no replay refused, and Export handing the
+ * host the listed replay's bytes under its name. */
+static void load_replay_imports_and_exports(KpT *T)
+{
+	static const struct { const char *source, *name; } NAMES[] = {
+		{ "/home/me/My game.rep", "My game.rep" },
+		{ "C:\\Users\\me\\Games\\zerg.REP", "zerg.rep" },
+		{ "content://com.android.providers.downloads.documents/document/primary%3ADownload%2FMy%20game.rep", "My game.rep" },
+		{ "content://media/external/file/42", "42.rep" },
+		{ "x", "x.rep" },
+		{ "", "Replay.rep" },
+		{ "/tmp/.rep", "Replay.rep" },
+		{ "/tmp/a<b>c|d?.rep", "a_b_c_d_.rep" },
+		{ "/tmp/trailing. .rep", "trailing.rep" },
+		{ "/tmp/A replay name of forty bytes or so.rep", "A replay name of forty byte.rep" },
+	};
+	Host *H = glue_host(T, 0);
+	KpUi *ui;
+	KpUiMenus *m;
+	uint8_t *bytes;
+	size_t size = 0, k;
+	char path[400], name[64];
+	int at = -1, i;
+	for (k = 0; k < sizeof NAMES / sizeof NAMES[0]; k++) {
+		kp_flow_replay_import_name(NAMES[k].source, name, sizeof name);
+		kp_t_eq_str(T, name, NAMES[k].name, "%s", NAMES[k].source);
+	}
+	play(H, PROTOSS01);
+	frames(H, 30);
+	game_event(H, KP_EVENT_GAME_EXIT, EXIT_QUIT_MISSION, NULL);
+	frame(H);
+	in_menus(H, KP_GLUE_CAMPAIGN, "Quit Mission");
+	snprintf(path, sizeof path, "%sreplays/LastReplay.rep", H->pref);
+	kp_t_ok(T, (bytes = kp_read_file(path, &size)) != NULL && size > 0, "%s written", path);
+	if (!bytes) return;
+	ui = H->f.ui;
+	m = &ui->menus;
+	kp_t_ok(T, ui->import_replay != NULL && ui->export_replay != NULL, "the buttons offered with the host's picker");
+	ui->import_replay(ui->host);
+	kp_t_eq(T, H->picks, 1, "Import asks the host's picker");
+	kp_t_eq(T, kp_flow_import_replay(&H->f, NAMES[2].source, bytes, size, name, sizeof name), 0, "a replay imported");
+	kp_t_eq_str(T, name, "My game.rep", "named by the URI's last part");
+	snprintf(path, sizeof path, "%sreplays/My game.rep", H->pref);
+	kp_t_ok(T, file_equals(path, bytes, size), "copied byte for byte");
+	kp_t_eq(T, kp_flow_import_replay(&H->f, NAMES[0].source, bytes, size, name, sizeof name), 0, "again");
+	kp_t_eq_str(T, name, "My game (2).rep", "a taken name gets a copy's number");
+	kp_t_eq(T, kp_flow_import_replay(&H->f, NAMES[9].source, bytes, size, name, sizeof name), 0, "a long name");
+	kp_t_eq(T, kp_flow_import_replay(&H->f, NAMES[9].source, bytes, size, name, sizeof name), 0, "twice");
+	kp_t_eq_str(T, name, "A replay name of forty (2).rep", "the stem cut for the number too (at a word's end, no space left)");
+	kp_t_ok(T, strlen(name) < 32, "below the original's 32 bytes");
+	kp_t_ok(T, kp_flow_import_replay(&H->f, "/tmp/notes.rep", (const uint8_t *)"no replay", 9, name, sizeof name) != 0
+		&& name[0] == 0, "a file that is no replay refused");
+	snprintf(path, sizeof path, "%sreplays/notes.rep", H->pref);
+	kp_t_ok(T, kp_read_file(path, &k) == NULL, "and not copied");
+	snprintf(path, sizeof path, "%sreplays/old", H->pref);
+	kp_t_ok(T, kp_t_mkdir(path) == 0, "%s", path);
+	snprintf(m->replay_dir, sizeof m->replay_dir, "old");
+	kp_t_eq(T, kp_flow_import_replay(&H->f, NAMES[1].source, bytes, size, name, sizeof name), 0, "into a folder");
+	snprintf(path, sizeof path, "%sreplays/old/zerg.rep", H->pref);
+	kp_t_ok(T, file_equals(path, bytes, size), "the listed folder's copy");
+	m->replay_dir[0] = 0;
+	(void)ui->list_replays(ui->host, ui);
+	for (i = 0; i < m->replay_count; i++) {
+		if (strcmp(m->replays[i].file, "My game (2).rep") == 0) at = i;
+	}
+	kp_t_ok(T, at >= 0 && m->replays[at].status == 0, "the copy listed and read");
+	if (at >= 0) ui->export_replay(ui->host, at);
+	kp_t_eq(T, H->exports, 1, "Export hands the host the replay");
+	kp_t_eq_str(T, H->export_name, "My game (2).rep", "under its name");
+	kp_t_ok(T, H->export_size == size && H->export_bytes && memcmp(H->export_bytes, bytes, size) == 0, "its bytes");
+	ui->export_replay(ui->host, 0);
+	kp_t_eq(T, H->exports, 1, "a folder is not exported");
+	free(bytes);
 }
 
 /* The in-game menus' Exit Program ends the program at once, or with exit_to_menu (the web's page) opens the main
@@ -2940,6 +3174,8 @@ static const KpTest TESTS[] = {
 	{ "score_cinematics_play_before_the_next_game", score_cinematics_play_before_the_next_game, 0 },
 	{ "restart_plays_the_mission_again_from_its_room", restart_plays_the_mission_again_from_its_room, 0 },
 	{ "quit_mission_opens_the_campaign_menu", quit_mission_opens_the_campaign_menu, 0 },
+	{ "load_replay_lists_refuses_and_plays_the_last_game", load_replay_lists_refuses_and_plays_the_last_game, 0 },
+	{ "load_replay_imports_and_exports", load_replay_imports_and_exports, 0 },
 	{ "exit_program_ends_the_program_or_opens_the_main_menu", exit_program_ends_the_program_or_opens_the_main_menu, 0 },
 	{ "glue_exit_ends_the_program_or_opens_the_main_menu", glue_exit_ends_the_program_or_opens_the_main_menu, 0 },
 	{ "languages_match_the_systems_names", languages_match_the_systems_names, 0 },

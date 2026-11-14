@@ -355,7 +355,7 @@ void kp_ui_error_buzz(KpUi *ui, int64_t unit, uint32_t string, int64_t player)
 	int64_t race;
 	if (player != g->local_player || g->w->replay) return;
 	error_line(ui, player, string);
-	race = unit ? kp_unit_race(g, unit) : g->players.race[g->local_player];
+	race = unit ? kp_unit_race(g, unit) : kp_ui_local_race(ui);
 	(void)kp_ui_advisor_sound(ui, (uint32_t)(race + 1));
 }
 
@@ -385,9 +385,8 @@ void kp_ui_sound_start_game(KpUi *ui)
 	 * and the race's block (Zerg 755..967, Terran 174..472, Protoss 473..754) */
 	static const uint16_t RACE_FIRST[3] = { 755, 174, 473 }, RACE_LAST[3] = { 967, 472, 754 };
 	KpUiSound *s = sd(ui);
-	KpGame *g = game(ui);
 	uint16_t list[KP_UI_PRELOAD];
-	int n = 0, race = (int)g->players.race[g->local_player];
+	int n = 0, race = kp_ui_local_race(ui);
 	uint32_t k;
 	s->previous = 0;
 	s->select_unit = 0;
@@ -457,7 +456,7 @@ void kp_ui_sound_event(KpUi *ui, int64_t kind, int64_t a, int64_t b, int64_t c)
 			(int16_t)(x + ATTACK_NOTICE_REACH), (int16_t)(y + ATTACK_NOTICE_REACH), found, ATTACK_NOTICE_UNITS);
 		for (k = 0; k < n; k++) g->u.attack_notify_timer[found[k]] = ATTACK_NOTICE_SILENCE;
 		s->cooldown[2] = ATTACK_COOLDOWN;
-		id = (b ? SOUND_ATTACKED_BUILDING : SOUND_ATTACKED) + (uint32_t)g->players.race[g->local_player];
+		id = (b ? SOUND_ATTACKED_BUILDING : SOUND_ATTACKED) + (uint32_t)kp_ui_local_race(ui);
 		(void)sound_at_unit(ui, id, 0, 0, 0, ui->options & OPTION_ADVISOR, 0);
 		kp_ui_voice_talk(ui, unit, id, 1, ATTACK_COLOUR);
 		return;

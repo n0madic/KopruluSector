@@ -423,6 +423,21 @@ void kp_set_local_player(KpGame *g, int64_t p)
 	if (!g->w->replay) g->w->local_vision = (int32_t)g->local_vision;
 }
 
+void kp_replay_set_vision(KpGame *g, int64_t mask, int reveal)
+{
+	int64_t p, n;
+	if (!g->w->replay) return;
+	mask &= 0xff;
+	if (reveal) mask = 0xff;
+	for (p = 0; p < 8; p++) {
+		if (kp_player_finished(g, p)) mask &= ~((int64_t)1 << p);
+	}
+	g->local_vision = mask;
+	g->w->local_vision = (int32_t)mask;
+	g->w->replay_reveal = reveal ? 1 : 0;
+	for (n = g->lists[KP_LIST_ACTIVE].head; n != 0; n = g->u.next[n]) kp_unit_update_sprite_visibility(g, n);
+}
+
 void kp_report_error(KpGame *g, int64_t player, int64_t id)
 {
 	if (player == g->local_player) kp_event(g, KP_EVENT_ERROR, player, id, 0, NULL);

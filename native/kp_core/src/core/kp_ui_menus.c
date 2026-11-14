@@ -2,8 +2,8 @@
  * gluchatslot.cpp..gluconn.cpp and glues.cpp, glujoin.cpp's load screen; atlas P18..P21, P41): a state's screen runs
  * modally (RunModal 0x4c35c0 as a dialog whose destruction runs its continuation), the popups nest in it (a glue dialog
  * composited into the screen's bitmap, flag 0x8000000), and the screen's end leaves the next state and the host's work
- * (a mission or cinematic to start, a saved game to load, the exit). Multiplayer, the Campaign Editor, Play Custom and
- * Load Replay are outside the product's scope: their buttons have no label and answer nothing. */
+ * (a mission or cinematic to start, a saved game to load, a replay to play, the exit). Multiplayer, the Campaign Editor
+ * and Play Custom are outside the product's scope: their buttons have no label and answer nothing. */
 #include "kp_text.h"
 #include "kp_ui.h"
 #include "kp_rng.h"
@@ -22,6 +22,7 @@
 #define STATE_TERRAN_ROOM 7
 #define STATE_ZERG_ROOM 8
 #define STATE_PROTOSS_ROOM 9
+#define STATE_LOAD_REPLAY 12
 #define STATE_LOAD 13
 #define STATE_EXP_CAMPAIGN 22
 #define DIALOG_TRANSLUCENT 0x40000u
@@ -60,7 +61,7 @@
 #define R_SINGLE 3
 #define ID_MAIN_MULTI 4         /* the buttons the remake lacks: Multiplayer, Campaign Editor */
 #define ID_MAIN_EDITOR 5
-#define ID_CAMPAIGN_CUSTOM 10   /* the campaign menus' buttons the remake lacks: Play Custom, Load Replay (results 10 and */
+#define ID_CAMPAIGN_CUSTOM 10   /* the campaign menus' Play Custom (outside the remake) and Load Replay (results 10 and */
 #define ID_CAMPAIGN_REPLAY 11   /* 11, glue states 11 and 12: RunCampaignMenu 0x453f00, 0x458b00) */
 #define R_INTRO 8
 /* The main menu's version label: the original's is "Version 1.17.0" (0x465960 from its executable's product version),
@@ -724,6 +725,7 @@ static int32_t open_screen(KpUi *ui, const char *bin, KpUiInteract proc, KpUiMod
 int32_t kp_ui_login_open(KpUi *ui);
 int32_t kp_ui_campaign_open(KpUi *ui, int expansion);
 int32_t kp_ui_load_open(KpUi *ui);
+int32_t kp_ui_replay_open(KpUi *ui);
 
 static const uint8_t *campaign_table(KpUi *ui, int expansion, int race, int *count);
 static uint16_t row16(const uint8_t *row, int at);
@@ -802,6 +804,7 @@ int32_t kp_ui_menus_enter(KpUi *ui, int state)
 	case STATE_CAMPAIGN: return kp_ui_campaign_open(ui, 0);
 	case STATE_EXP_CAMPAIGN: return kp_ui_campaign_open(ui, 1);
 	case STATE_LOAD: return kp_ui_load_open(ui);
+	case STATE_LOAD_REPLAY: return kp_ui_replay_open(ui);
 	default: return -1;
 	}
 }
@@ -1140,7 +1143,8 @@ static void campaign_done(KpUi *ui, int32_t r)
 	case 7: next = STATE_TERRAN_ROOM; break;
 	case 8: next = STATE_ZERG_ROOM; break;
 	case 9: next = STATE_LOGIN; break;
-	default: next = STATE_MAIN; break; /* Play Custom and Load Replay answer nothing (unsupported_text_button_proc) */
+	case 11: next = STATE_LOAD_REPLAY; break;
+	default: next = STATE_MAIN; break; /* Play Custom answers nothing (unsupported_text_button_proc) */
 	}
 	screen_ended(ui, next, mn(ui)->action == KP_UI_MENU_CINEMATIC ? KP_UI_MENU_CINEMATIC
 		: next == STATE_PROTOSS_ROOM || next == STATE_TERRAN_ROOM || next == STATE_ZERG_ROOM ? KP_UI_MENU_MISSION
@@ -1260,8 +1264,8 @@ static int campaign_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 	if (e->type != KP_UI_USER) return base(ui, d, e);
 	switch (e->code) {
 	case KP_UI_CREATE: {
-		static const int16_t UNSUPPORTED[2] = { ID_CAMPAIGN_CUSTOM, ID_CAMPAIGN_REPLAY };
-		hide_unsupported_labels(ui, self, UNSUPPORTED, 2);
+		static const int16_t UNSUPPORTED[1] = { ID_CAMPAIGN_CUSTOM };
+		hide_unsupported_labels(ui, self, UNSUPPORTED, 1);
 		kp_ui_glue_activate(ui, self, THEME_CAMPAIGN);
 		if (!ui->music.playing) kp_ui_music_play(ui, KP_UI_TITLE_MUSIC);
 		break;
@@ -1287,7 +1291,8 @@ static int campaign_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 		KpUiInteract procs[11];
 		memset(procs, 0, sizeof procs);
 		procs[4] = procs[8] = kp_ui_text_button_proc; /* 0x503d1c, 0x5080d4 */
-		procs[ID_CAMPAIGN_CUSTOM - 1] = procs[ID_CAMPAIGN_REPLAY - 1] = unsupported_text_button_proc;
+		procs[ID_CAMPAIGN_CUSTOM - 1] = unsupported_text_button_proc;
+		procs[ID_CAMPAIGN_REPLAY - 1] = kp_ui_text_button_proc;
 		if (m->expansion) {
 			procs[5] = kp_ui_flc_button_proc;
 			procs[6] = procs[7] = episode_proc;
@@ -1416,4 +1421,405 @@ int32_t kp_ui_load_open(KpUi *ui)
 {
 	load_list = -1;
 	return open_screen(ui, "rez\\gluLoad.bin", load_proc, load_done);
+}
+
+/* --- Load Replay (glue state 12: RunCreateGameScreen 0x455550 with ECX = 1, rez\gluCustm.bin; atlas P18, P19, P20)
+ * --- The original's screen is also Play Custom's: in a replay's mode its game type, subtype and slot controls stay
+ * hidden for a replay's entry (ApplyEntryFixedSettings 0x454e50, RefreshComputerSlots 0x456420), and Koprulu has no
+ * other mode, so they are hidden from the start. The list is the listed folder's (menus.replay_dir under the replays
+ * folder): "[Up One Level]" below the root, its folders as "[name]", then its replays (BuildMapList 0x45ba40,
+ * ScanMapDirectory 0x45c9a0 with flags 0x28, SortedInsertEntry 0x45b3f0); Ok on a folder enters it (OnCreateGameOk
+ * 0x455240's 0x8000000b). */
+
+#define ID_CREATE_LIST 5
+#define ID_CREATE_FOLDER 6
+#define R_CREATE_OK 12
+#define R_CREATE_CANCEL 13
+#define SLIDE_DONE 0x405        /* the dialog's slides ended (kp_ui_glue.c) */
+#define PREVIEW_TIMER 12        /* PreviewMapEntry 0x45b970's SetTimer(12, 100) */
+#define PREVIEW_PERIOD 100
+#define CREATE_GRP "glue\\create\\iCreate.grp"
+#define ICON_FOLDER 2           /* DrawFolderLabel 0x455fe0 */
+#define ICON_FILE 3             /* DrawMapListItem 0x455850: 3 + highlighted */
+#define CREATE_FORMAT 0x11      /* the layout flags 0x6d300e of the list's and the label's text */
+#define STR_UP_ONE_LEVEL 28     /* gluAll: "Up One Level", in brackets (0x66adf0) */
+#define ROOT_LABEL "replays"    /* SetFolderLabel 0x4560d0 of maps\replays: its last name */
+#define STR_INVALID_SCENARIO 61
+#define STR_MISSING 66
+#define STR_MAP_NAME 48
+#define STR_REPLAY 178
+#define STR_COUNT 30            /* "%u" */
+#define STR_DIMENSIONS 32       /* "%ux%u" */
+#define STR_COMPUTER_COUNT 35
+#define STR_HUMAN_COUNT 37
+#define STR_TILESET_FIRST 39    /* Badlands .. Twilight */
+#define TILESETS 8
+
+static int32_t create_dialog = -1, create_list = -1;
+
+/* The information fields and their controls (RegisterMapInfoField 0x45c6a0 from InitMapList 0x455aa0): the title,
+ * the description, then players, size, computers, humans and tileset with SetMapInfoText 0x455d10's labels. */
+enum { FIELD_PLAYERS, FIELD_SIZE, FIELD_COMPUTERS, FIELD_HUMANS, FIELD_TILESET, FIELD_LINES };
+static const struct { int16_t control; uint16_t label; uint8_t shown; } INFO_LINES[FIELD_LINES] = {
+	{ 9, 0x1f, 1 },     /* field 4: shown offline (0x447de0's template is not Use Map Settings) */
+	{ 10, 0x21, 1 },    /* field 5 */
+	{ 0x24, 0x24, 0 },  /* field 6: hidden offline */
+	{ 0x25, 0x26, 0 },  /* field 7 */
+	{ 0xb, 0x22, 1 },   /* field 8 */
+};
+#define ID_INFO_TITLE 7
+#define ID_INFO_DESCRIPTION 8
+#define ID_INFO_UNVERIFIED 39   /* Koprulu's labels (defs/ui/koprulu-dialogs.json's extend), 39 + reason - 1: */
+#define INFO_UNVERIFIED_LABELS 3 /* loads, another revision, other data (KP_UI_REPLAY_LOADS..KP_UI_REPLAY_DATA) */
+#define R_REPLAY_IMPORT 42      /* Koprulu's buttons (the same extend), shown when the host has a file picker */
+#define R_REPLAY_EXPORT 43
+#define CREATE_CONTROLS R_REPLAY_EXPORT
+
+static void info_text(KpUi *ui, int16_t id, const uint8_t *text)
+{
+	int32_t c = kp_ui_find_control(ui, create_dialog, id);
+	if (c >= 0) kp_ui_set_control_text(ui, c, text);
+}
+
+/* PublishMapInfo 0x45dfc0 of entry k (-1: the fields cleared, ClearMapInfo 0x45b5e0). */
+static void publish_replay_info(KpUi *ui, int k)
+{
+	KpUiMenus *m = mn(ui);
+	const KpUiReplayEntry *r = k >= 0 && k < m->replay_count ? &m->replays[k] : NULL;
+	char value[FIELD_LINES][64];
+	int j, u;
+	memset(value, 0, sizeof value);
+	m->replay_title[0] = m->replay_description[0] = 0;
+	if (r != NULL) { /* LoadReplayEntryInfo 0x45d250 */
+		uint16_t title = r->status != 0 && r->description == STR_MISSING ? STR_INVALID_SCENARIO : STR_REPLAY;
+		(void)kp_text_copy_chars((char *)m->replay_title, sizeof m->replay_title,
+			(const char *)kp_ui_tbl(ui, KP_UI_GLUALL, title), KP_UI_REPLAY_TITLE_CHARS);
+		if (r->status != 0) {
+			(void)kp_text_copy((char *)m->replay_description, sizeof m->replay_description,
+				(const char *)kp_ui_tbl(ui, KP_UI_GLUALL, r->description));
+		} else {
+			snprintf((char *)m->replay_description, sizeof m->replay_description,
+				(const char *)kp_ui_tbl(ui, KP_UI_GLUALL, STR_MAP_NAME), r->map);
+			strncat((char *)m->replay_description, "\n\n", sizeof m->replay_description - strlen((char *)m->replay_description) - 1);
+			snprintf(value[FIELD_PLAYERS], sizeof value[0], (const char *)kp_ui_tbl(ui, KP_UI_GLUALL, STR_COUNT), 1u);
+			snprintf(value[FIELD_SIZE], sizeof value[0], (const char *)kp_ui_tbl(ui, KP_UI_GLUALL, STR_DIMENSIONS),
+				(unsigned)r->width, (unsigned)r->height);
+			snprintf(value[FIELD_COMPUTERS], sizeof value[0], (const char *)kp_ui_tbl(ui, KP_UI_GLUALL, STR_COMPUTER_COUNT),
+				(unsigned)r->computers);
+			snprintf(value[FIELD_HUMANS], sizeof value[0], (const char *)kp_ui_tbl(ui, KP_UI_GLUALL, STR_HUMAN_COUNT),
+				(unsigned)r->humans);
+			if (r->tileset < TILESETS) {
+				snprintf(value[FIELD_TILESET], sizeof value[0], "%s",
+					(const char *)kp_ui_tbl(ui, KP_UI_GLUALL, (uint32_t)(STR_TILESET_FIRST + r->tileset)));
+			}
+		}
+	}
+	info_text(ui, ID_INFO_TITLE, m->replay_title);
+	info_text(ui, ID_INFO_DESCRIPTION, m->replay_description);
+	for (u = 0; u < INFO_UNVERIFIED_LABELS; u++) { /* the reason's label alone */
+		j = kp_ui_find_control(ui, create_dialog, (int16_t)(ID_INFO_UNVERIFIED + u));
+		if (j >= 0) kp_ui_set_visible(ui, j, r != NULL && r->status == 0 && r->unverified == KP_UI_REPLAY_LOADS + u);
+	}
+	for (j = 0; j < FIELD_LINES; j++) { /* SetMapInfoText 0x455d10: the label is the format, 0x12 aligns the value */
+		const char *label = (const char *)kp_ui_tbl(ui, KP_UI_GLUALL, INFO_LINES[j].label);
+		int32_t c = kp_ui_find_control(ui, create_dialog, INFO_LINES[j].control);
+		if (strlen(label) + strlen(value[j]) < sizeof m->replay_lines[0]) {
+			snprintf((char *)m->replay_lines[j], sizeof m->replay_lines[j], label, 0x12, value[j]);
+		} /* else the line keeps its old text: 0x455d51 skips SetControlText */
+		if (c < 0) continue;
+		kp_ui_set_control_text(ui, c, m->replay_lines[j]);
+		kp_ui_set_visible(ui, c, INFO_LINES[j].shown);
+	}
+}
+
+/* DeferredPreviewTimer 0x45d1e0: the entry's information 100 ms after its selection. */
+static void preview_tick(KpUi *ui, int32_t owner)
+{
+	KpUiMenus *m = mn(ui);
+	kp_ui_delete_timer(&ui->timers, owner, PREVIEW_TIMER);
+	publish_replay_info(ui, m->replay_preview);
+	m->replay_preview = -1;
+}
+
+/* PreviewMapEntry 0x45b970: the fields cleared, the information 100 ms later. */
+static void preview_replay(KpUi *ui, int k)
+{
+	KpUiMenus *m = mn(ui);
+	kp_ui_delete_timer(&ui->timers, create_dialog, PREVIEW_TIMER);
+	if (k < 0 || k >= m->replay_count) return;
+	publish_replay_info(ui, -1);
+	if (m->replays[k].kind != KP_UI_REPLAY_ENTRY_FILE) return; /* a folder's information is none (0x45dfc0) */
+	m->replay_preview = k;
+	(void)kp_ui_set_timer(&ui->timers, create_dialog, PREVIEW_TIMER, PREVIEW_PERIOD, kp_ui_callback(ui, preview_tick),
+		ui->now);
+}
+
+/* An icon of iCreate.grp at x, centred in the rows top..bottom (DrawMapListItem 0x455850, DrawFolderLabel 0x455fe0);
+ * its width, 0 without the GRP. */
+static int32_t create_icon(KpUi *ui, int frame, int32_t x, int32_t top, int32_t bottom, const int16_t clip[4])
+{
+	const KpUiFile *f = kp_ui_file(ui->grps, ui->grp_count, CREATE_GRP);
+	const uint8_t *px;
+	int32_t w, h;
+	int16_t rect[4];
+	if (f == NULL || kp_ui_dialog_grp_frame(f->data, f->size, frame, &px, &w, &h) != 0) return 0;
+	rect[0] = (int16_t)x;
+	rect[1] = (int16_t)(top + ((bottom - top + 1) / 2 - h / 2));
+	rect[2] = clip[2];
+	rect[3] = clip[3];
+	kp_ui_blit_clipped(ui, px, w, h, 0, 0, rect, KP_UI_TRANSPARENT);
+	return w;
+}
+
+static void replay_item_draw(KpUi *ui, KpUiControl *c, int index, const int16_t row[4], int32_t dx, int32_t dy)
+{
+	/* DrawMapListItem 0x455850: the file's icon, then its name cut to the row */
+	KpUiList *l = c->list;
+	int hot = index == l->hover;
+	int32_t w, x;
+	uint8_t text[KP_UI_REPLAY_FILE];
+	size_t n;
+	uint32_t k;
+	int frame = 0; /* an item without its entry */
+	if (index >= l->count || l->text[index] == NULL) return;
+	k = kp_ui_list_data(ui, (int32_t)(c - ui->controls), index);
+	if (k < (uint32_t)mn(ui)->replay_count) frame = mn(ui)->replays[k].kind != KP_UI_REPLAY_ENTRY_FILE ? hot : ICON_FILE + hot;
+	w = create_icon(ui, frame, row[0] + dx, row[1] + dy, row[3] + dy, row);
+	x = dx + w + 2; /* the text x, from the row's left: past the icon drawn at the x offset */
+	kp_ui_select_color(&ui->text, 3 + hot);
+	ui->text.flags = CREATE_FORMAT;
+	ui->text.clip_left = (int16_t)(row[0] + x);
+	ui->text.clip_top = (int16_t)(row[1] + dy);
+	ui->text.clip_right = (int16_t)(row[2] + x);
+	ui->text.clip_bottom = (int16_t)(row[3] + dy);
+	n = kp_ui_text_fit_length(&ui->text, l->text[index], (row[2] - row[0]) - x + 1);
+	if (n >= sizeof text) n = sizeof text - 1;
+	memcpy(text, l->text[index], n);
+	text[n] = 0;
+	(void)kp_ui_draw_text_told(ui, c, row[0] + x, row[1] + dy, text);
+}
+
+static void folder_label_draw(KpUi *ui, KpUiControl *c, int32_t x, int32_t y, const int16_t clip[4])
+{
+	/* DrawFolderLabel 0x455fe0: the folder's icon, then the folder's name */
+	int32_t w = create_icon(ui, ICON_FOLDER, c->left + x, c->top + y, c->bottom + y, clip);
+	if (c->text != NULL) kp_ui_draw_control_text(ui, c, x + w + 2, y, clip, CREATE_FORMAT);
+}
+
+/* RefreshMapList 0x455f50 (the dialog's code 0x405, its slides ended): the list filled (AddMapListItem 0x455810),
+ * the entry to select previewed, then selected. BuildMapList 0x45ba40 selects the entry named by the last chosen map,
+ * which Load Replay never sets (OnCreateGameOk 0x455240 skips it in state 12), else the first .scx or .scm, which a
+ * replays folder has none of, else the first entry. */
+static void refresh_replays_at(KpUi *ui, const char *select);
+
+static void refresh_replays(KpUi *ui) { refresh_replays_at(ui, NULL); }
+
+/* refresh_replays, with the file named select (Koprulu's import) selected in place of the first entry */
+static void refresh_replays_at(KpUi *ui, const char *select)
+{
+	KpUiMenus *m = mn(ui);
+	int chosen = 0;
+	int32_t folder = create_dialog >= 0 ? kp_ui_find_control(ui, create_dialog, ID_CREATE_FOLDER) : -1;
+	const char *last = strrchr(m->replay_dir, '/');
+	int k;
+	if (create_list < 0) return;
+	if (folder >= 0) { /* SetFolderLabel 0x4560d0: the listed folder's last name */
+		kp_ui_set_control_text(ui, folder, (const uint8_t *)(m->replay_dir[0] == 0 ? ROOT_LABEL : last ? last + 1 : m->replay_dir));
+	}
+	m->replay_count = 0;
+	kp_ui_list_redraw(ui, create_list, 0);
+	kp_ui_list_clear(ui, create_list);
+	if (ui->list_replays != NULL) (void)ui->list_replays(ui->host, ui);
+	for (k = 0; k < m->replay_count; k++) {
+		KpUiReplayEntry *e = &m->replays[k];
+		int at;
+		if (e->kind == KP_UI_REPLAY_ENTRY_UP) {
+			snprintf(e->label, sizeof e->label, "[%s]", (const char *)kp_ui_tbl(ui, KP_UI_GLUALL, STR_UP_ONE_LEVEL));
+		} else if (e->kind == KP_UI_REPLAY_ENTRY_FOLDER) {
+			snprintf(e->label, sizeof e->label, "[%s]", e->file);
+		} else {
+			snprintf(e->label, sizeof e->label, "%s", e->file);
+		}
+		at = kp_ui_list_add(ui, create_list, (const uint8_t *)e->label, 3);
+		if (at != KP_UI_LIST_NONE) kp_ui_list_set_data(ui, create_list, at, (uint32_t)k);
+		if (at != KP_UI_LIST_NONE && select != NULL && e->kind == KP_UI_REPLAY_ENTRY_FILE && strcmp(e->file, select) == 0) {
+			chosen = at;
+		}
+	}
+	kp_ui_list_redraw(ui, create_list, 1);
+	if (m->replay_count == 0) return;
+	preview_replay(ui, (int)kp_ui_list_data(ui, create_list, chosen));
+	kp_ui_list_select(ui, create_list, chosen);
+}
+
+static int replay_list_proc(KpUi *ui, KpUiControl *c, KpUiEvent *e)
+{
+	/* MapListProc 0x4559d0 */
+	int32_t self = (int32_t)(c - ui->controls);
+	int k;
+	if (e->type == KP_UI_USER) {
+		switch (e->code) {
+		case KP_UI_CREATE: /* InitMapList 0x455aa0; the list is filled when the slides end (refresh_replays) */
+			create_list = self;
+			c->list->draw_item = replay_item_draw;
+			break;
+		case KP_UI_DESTROY: kp_ui_list_clear(ui, self); break;
+		case KP_UI_POST_LOAD:
+			c->flags |= 0x30000u;
+			create_list = self;
+			break;
+		case KP_UI_VALUE_CHANGED:
+			(void)kp_ui_list_proc(ui, c, e);
+			k = kp_ui_list_selection(ui, self);
+			if (k != KP_UI_LIST_NONE) preview_replay(ui, (int)kp_ui_list_data(ui, self, k));
+			return 1;
+		default: break;
+		}
+	}
+	return kp_ui_list_proc(ui, c, e);
+}
+
+/* AddFolderEntry 0x45b080's path: ".." the listed folder cut at its last separator, a folder's name appended; a
+ * path past the buffer leaves the folder as it is. */
+static void enter_replay_folder(KpUi *ui, const KpUiReplayEntry *e)
+{
+	KpUiMenus *m = mn(ui);
+	if (e->kind == KP_UI_REPLAY_ENTRY_UP) {
+		char *cut = strrchr(m->replay_dir, '/');
+		if (cut != NULL) *cut = 0;
+		else m->replay_dir[0] = 0;
+	} else if (strlen(m->replay_dir) + 1 + strlen(e->file) < sizeof m->replay_dir) {
+		if (m->replay_dir[0] != 0) strcat(m->replay_dir, "/");
+		strcat(m->replay_dir, e->file);
+	}
+}
+
+static void replay_refused(KpUi *ui, int32_t r) { (void)ui; (void)r; } /* the screen stays (every message case) */
+
+/* OnCreateGameOk 0x455240: 0 keeps the screen open. */
+static int replay_ok(KpUi *ui)
+{
+	KpUiMenus *m = mn(ui);
+	int s = create_list >= 0 ? kp_ui_list_selection(ui, create_list) : KP_UI_LIST_NONE, k;
+	uint16_t refusal;
+	if (s == KP_UI_LIST_NONE) return 0;
+	k = (int)kp_ui_list_data(ui, create_list, s);
+	if (k < 0 || k >= m->replay_count) return 0;
+	if (m->replays[k].kind != KP_UI_REPLAY_ENTRY_FILE) { /* 0x8000000b: the folder entered, the list rebuilt */
+		enter_replay_folder(ui, &m->replays[k]);
+		refresh_replays(ui);
+		return 0;
+	}
+	/* CreateGameFromEntry 0x45bfc0's kind 0x80 (read again; a status 1 is gluAll 51, 2 gluAll 60) */
+	refusal = ui->check_replay != NULL ? ui->check_replay(ui->host, k) : 0;
+	if (refusal != 0) {
+		ok_popup(ui, kp_ui_tbl(ui, KP_UI_GLUALL, refusal), replay_refused);
+		return 0;
+	}
+	m->replay_choice = k;
+	return 1;
+}
+
+/* Koprulu's Import (the host's picker; kp_ui_replay_imported answers) and Export (the selected file's, a folder's
+ * none) */
+static void replay_file_button(KpUi *ui, int32_t r)
+{
+	KpUiMenus *m = mn(ui);
+	int at = create_list >= 0 ? kp_ui_list_selection(ui, create_list) : KP_UI_LIST_NONE;
+	int k = at != KP_UI_LIST_NONE ? (int)kp_ui_list_data(ui, create_list, at) : -1;
+	if (r == R_REPLAY_IMPORT && ui->import_replay != NULL) ui->import_replay(ui->host);
+	else if (r == R_REPLAY_EXPORT && ui->export_replay != NULL && k >= 0 && k < m->replay_count
+		&& m->replays[k].kind == KP_UI_REPLAY_ENTRY_FILE) {
+		ui->export_replay(ui->host, k);
+	}
+}
+
+void kp_ui_replay_imported(KpUi *ui, const char *file, uint16_t refusal)
+{
+	KpUiMenus *m = mn(ui);
+	if (m->state != STATE_LOAD_REPLAY || m->screen < 0 || create_list < 0) return;
+	if (refusal != 0) ok_popup(ui, kp_ui_tbl(ui, KP_UI_GLUALL, refusal), replay_refused);
+	else refresh_replays_at(ui, file);
+}
+
+static void create_done(KpUi *ui, int32_t r)
+{
+	/* RunCreateGameScreen 0x455550: Ok starts the replay's game at once (0x6662b8 = 1), Cancel the campaign menu */
+	KpUiMenus *m = mn(ui);
+	if (r == R_CREATE_OK) screen_ended(ui, m->state, KP_UI_MENU_REPLAY);
+	else if (r == R_CREATE_CANCEL || r == -3) screen_ended(ui, m->expansion ? STATE_EXP_CAMPAIGN : STATE_CAMPAIGN, KP_UI_MENU_STATE);
+	else screen_ended(ui, STATE_MAIN, KP_UI_MENU_STATE);
+}
+
+static int create_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
+{
+	/* CreateGameDialogProc 0x4550e0 */
+	int32_t self = (int32_t)(d - ui->controls);
+	KpUiInteract base = kp_ui_type_interact(0);
+	if (e->type != KP_UI_USER) return base(ui, d, e);
+	switch (e->code) {
+	case KP_UI_CREATE: {
+		static const uint16_t SLIDES[10] = { 1, 0, 2, 2, 3, 3, 4, 2, 19, 0 }; /* 0x503e48 */
+		int32_t folder = kp_ui_find_control(ui, self, ID_CREATE_FOLDER);
+		kp_ui_glue_slide_in(ui, self, SLIDES, 5, 0);
+		if (folder >= 0) {
+			ui->controls[folder].draw = folder_label_draw;
+			kp_ui_set_control_text(ui, folder, (const uint8_t *)ROOT_LABEL); /* InitMapList 0x455aa0: the root */
+		}
+		kp_ui_glue_activate(ui, self, THEME_NONE);
+		break;
+	}
+	case KP_UI_CLOSE:
+		if (ui->result == R_CREATE_OK && !replay_ok(ui)) return 1;
+		if (ui->result == R_REPLAY_IMPORT || ui->result == R_REPLAY_EXPORT) { /* the screen stays */
+			replay_file_button(ui, ui->result);
+			return 1;
+		}
+		kp_ui_delete_timer(&ui->timers, self, PREVIEW_TIMER);
+		kp_ui_glue_slide_out(ui, self);
+		return 1;
+	case SLIDE_DONE:
+		refresh_replays(ui);
+		break;
+	case KP_UI_POST_LOAD: { /* InitCreateGameDialog 0x4551d0 with 0x503db0's procedures */
+		static const int16_t HIDDEN[] = { 14, 16, 17, 18, 38 }; /* Play Custom's: the game type, subtype and speed */
+		KpUiInteract procs[CREATE_CONTROLS];
+		int k;
+		memset(procs, 0, sizeof procs);
+		procs[ID_CREATE_LIST - 1] = replay_list_proc;
+		for (k = 6; k <= 11; k++) procs[k - 1] = kp_ui_type_interact(9);
+		procs[R_CREATE_OK - 1] = procs[R_CREATE_CANCEL - 1] = kp_ui_text_button_proc;
+		procs[14 - 1] = procs[15 - 1] = kp_ui_type_interact(9);
+		for (k = 36; k <= 38; k++) procs[k - 1] = kp_ui_type_interact(9);
+		for (k = 0; k < INFO_UNVERIFIED_LABELS; k++) procs[ID_INFO_UNVERIFIED + k - 1] = kp_ui_type_interact(9);
+		procs[R_REPLAY_IMPORT - 1] = procs[R_REPLAY_EXPORT - 1] = kp_ui_text_button_proc;
+		/* without the host's file picker the screen is the original's */
+		if ((k = kp_ui_find_control(ui, self, R_REPLAY_IMPORT)) >= 0 && ui->import_replay == NULL) kp_ui_drop_control(ui, self, k);
+		if ((k = kp_ui_find_control(ui, self, R_REPLAY_EXPORT)) >= 0 && ui->export_replay == NULL) kp_ui_drop_control(ui, self, k);
+		create_dialog = self;
+		kp_ui_glue_init_dialog(ui, self, procs, CREATE_CONTROLS, THEME_NONE);
+		for (k = 0; k < (int)(sizeof HIDDEN / sizeof HIDDEN[0]); k++) {
+			int32_t c = kp_ui_find_control(ui, self, HIDDEN[k]);
+			if (c >= 0) kp_ui_hide_control(ui, c);
+		}
+		for (k = 20; k <= 35; k++) { /* RefreshComputerSlots 0x456420 of a replay: no slot shown */
+			int32_t c = kp_ui_find_control(ui, self, (int16_t)k);
+			if (c >= 0) kp_ui_hide_control(ui, c);
+		}
+		publish_replay_info(ui, -1);
+		break;
+	}
+	default: break;
+	}
+	return base(ui, d, e);
+}
+
+int32_t kp_ui_replay_open(KpUi *ui)
+{
+	KpUiMenus *m = mn(ui);
+	create_dialog = create_list = -1;
+	m->replay_dir[0] = 0; /* InitMapList 0x455aa0 in a replay's mode: the root each time */
+	m->replay_preview = -1;
+	m->replay_choice = -1;
+	return open_screen(ui, "rez\\gluCustm.bin", create_proc, create_done);
 }

@@ -13,6 +13,8 @@
 #include "kp_host.h"
 #include "kp_ui.h"
 #include "kp_campaign.h"
+#include "kp_record.h"
+#include "kp_rep.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -30,6 +32,7 @@ enum { KP_WINDOW_FOCUS_LOST, KP_WINDOW_FOCUS_GAINED, KP_WINDOW_ICONIFIED, KP_WIN
 
 typedef struct {
 	int speed; /* 1..7 */
+	int multiplier; /* a replay's (SetReplaySpeed 0x481040): Slowest's step times it, the others' divided by it; 1 */
 	int max_catchup;
 	double accumulator_ms;
 	int paused;    /* the game's pause (the player's, or the autopause): resume ends it */
@@ -43,6 +46,8 @@ typedef struct {
 
 void kp_clock_init(KpClock *c, int speed, int max_catchup);
 int32_t kp_clock_step_ms(const KpClock *c);
+/* A replay's multiplier (1..16; anything below 1 is 1). */
+void kp_clock_set_multiplier(KpClock *c, int multiplier);
 /* -1 for an unknown speed. */
 int kp_clock_set_speed(KpClock *c, int speed);
 void kp_clock_reset(KpClock *c);
@@ -79,8 +84,19 @@ typedef struct {
 	int64_t objectives[8];
 	int objective_count;
 	int speed, max_catchup; /* 0: the clock's defaults */
+	int record; /* the game's commands recorded for its replay (kp_session_replay_file) */
+	/* a replay's playback (StartGame 0x443f40 step 13): its commands fed from the record, the live commands filtered,
+	 * full vision; the file is only read during kp_session_start (seed, expansion, speed and mission come from the
+	 * caller, kp_session_replay_start fills them from the header) */
+	const KpRep *replay;
+	/* tests: the playback without the replay's presentation (the replay flag 0x67cc90 and its full vision change the
+	 * shown creep, the minimap's attack blink +0x8a/+0x8b and the images' visibility; with objective_count -1 also
+	 * the briefing's objectives, which Load Replay's start has none of), so that its state equals the recorded game's
+	 * in every field */
+	int replay_as_game;
 } KpSessionStart;
 
+#define KP_SESSION_REPLAY_SLOTS 8 /* the player records the feed matches and the players they play as: 0..7 */
 typedef struct {
 	KpHostGame host;
 	KpGame *g; /* host.g, NULL when the game did not start */
@@ -93,6 +109,19 @@ typedef struct {
 	int64_t start_frame, start_turn;
 	int failed;
 	char error[KP_ERROR_SIZE];
+	/* The replay: the record of a recorded game or of the playback (owned, NULL none) */
+	KpRecorder *rec;
+	int playing;            /* a replay's playback */
+	int replay_ended;       /* the playback passed the header's frame count (0x480e00, the victory dialog) */
+	uint32_t replay_frames; /* the header's frame count */
+	uint32_t replay_storm[KP_SESSION_REPLAY_SLOTS], replay_slot[KP_SESSION_REPLAY_SLOTS]; /* their Storm IDs, players (0x6726c8) */
+	int64_t replay_player;  /* the player the feed's commands run as (0x508d48), kept when a Storm ID has no record */
+	KpCommand *list;        /* owned: a step's commands (the record's, then the queued ones) */
+	int list_cap;
+	/* a recorded game's header as its start left it (kp_session_replay_game; the frame count is written with the
+	 * file) and the saves loaded since (each restored the record a save kept; one without it left the record empty) */
+	uint8_t rec_header[KP_REP_HEADER_SIZE];
+	int rec_loads, rec_lost;
 } KpSession;
 
 void kp_session_start_defaults(KpSessionStart *s);
@@ -122,6 +151,22 @@ void kp_session_pause(KpSession *s);
 void kp_session_resume(KpSession *s);
 void kp_session_set_speed(KpSession *s, int speed);
 void kp_session_release_wait(KpSession *s);
+/* The steps one clock step runs (RunPendingFrames 0x444e30's count 0x50335c): 10 in a replay at a multiplier of 8 or
+ * more and a speed above Slowest, else 1. */
+int kp_session_steps_per_tick(const KpSession *s);
+/* The playback's start fields from a replay's header (seed, expansion, the campaign row, the speed) and from Koprulu's
+ * tail (the carried globals and the cheats at the start); -1 when the record holds a command the playback refuses (a
+ * network player's leave 0x57 or chat 0x5c, outside V1). */
+int kp_session_replay_start(KpSessionStart *st, const KpRep *rep);
+/* What a recorded game's header holds as the game starts (the players' types, races and forces; the human's name
+ * "Anonymous" and the computers' none: the caller with the interface's network.tbl names them, then sets the header
+ * with kp_session_replay_header). kp_session_start with record does both with these names. */
+void kp_session_replay_game(KpSession *s, uint32_t seed, KpRepGame *game);
+void kp_session_replay_header(KpSession *s, const KpRepGame *game);
+/* The recorded game's replay at its current frame: the header kept since the start with the frame count, the record
+ * (closed, SaveRecordedCommands 0x478980), the mission's CHK and the tail (NULL: none). -1 without a record or out
+ * of memory; out is then empty. */
+int kp_session_replay_file(KpSession *s, const KpRepTail *tail, KpRep *out, KpError *err);
 int kp_session_can_skip(KpSession *s);
 void kp_session_skip(KpSession *s);
 
@@ -185,6 +230,14 @@ void kp_save_pres_set(KpSavePresentation *p, const char *name, int64_t value);
  * MOVEFILE_REPLACE_EXISTING on Windows); when that fails, the old file stays and the new save stays in path.tmp. -1 with
  * the reason. */
 int kp_write_file_atomic(const char *path, const uint8_t *data, size_t size, KpError *err);
+
+/* The files of dir whose name ends in ext (compared without case), folders and hidden files left out, sorted without
+ * case (BuildMapList 0x45ba40's order); NULL with count 0 when the folder cannot be read or memory runs out. */
+char **kp_list_files(const char *dir, const char *ext, int *count);
+/* The folders of dir, hidden ones and those starting with '.' left out, sorted as kp_list_files' (freed by
+ * kp_list_files_free). */
+char **kp_list_folders(const char *dir, int *count);
+void kp_list_files_free(char **names, int count);
 
 /* --- the profile: the login's IDs with their campaign progress, the logged-in ID, the saved games, the video options,
  * the options word and the other options the original keeps in its registry (kind PROF) --- */

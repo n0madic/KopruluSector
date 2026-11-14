@@ -821,6 +821,78 @@ static void text_reaches_the_window_as_code_points(KpT *T)
 	kp_t_ok(T, !kp_ui_edit_focused(H->ui), "and the focus is gone with it");
 }
 
+/* A line typed in the message line and sent: Enter, the text, Enter. */
+static void send_line(Hud *H, const char *line)
+{
+	kp_hud_key(H->ui, 1, 0x0d, 0);
+	kp_hud_key(H->ui, 0, 0x0d, 0);
+	kp_hud_text(H->ui, line);
+	kp_hud_key(H->ui, 1, 0x0d, 0);
+	kp_hud_key(H->ui, 0, 0x0d, 0);
+}
+
+/* A replay's message line (HandleReplayChatCommand 0x480be0): "/replay show NAME" sets the board of table 0x4ef6a8
+ * (ReplayShowLeaderboard 0x47fd60: kills is action 20 over unit type 230), an unknown name or word does nothing,
+ * "/replay hide" clears it (0x47fe10); outside a replay the line is a single player's, discarded. */
+static void replay_line_shows_and_hides_the_leaderboard(KpT *T)
+{
+	Hud *H;
+	if (!ready(T, "test_hud.replay_line_shows_and_hides_the_leaderboard", TERRAN01)) return;
+	H = with_hud(T, terran01(T), 1280, 720);
+	frame(H, 1280, 720, 1016, 0, NO_CURSOR, CAMERA(0, 0));
+	send_line(H, "/replay show kills");
+	kp_t_eq(T, H->g->trig.lb_action, 0, "outside a replay: nothing");
+	H->g->w->replay = 1;
+	send_line(H, "/replay show kills");
+	kp_t_ok(T, H->g->trig.lb_action == 20 && H->g->trig.lb_type == 230, "kills: action 20 over the men (%d, %d)",
+		(int)H->g->trig.lb_action, (int)H->g->trig.lb_type);
+	kp_t_eq(T, H->ui->hud.textbox_mode, 0, "the line closed");
+	send_line(H, "/replay show Kills");
+	send_line(H, "/replay showkills");
+	send_line(H, "/replay shout");
+	kp_t_ok(T, H->g->trig.lb_action == 20 && H->g->trig.lb_type == 230, "a name of another case, no space, another word: "
+		"the board stays");
+	send_line(H, "/replay show score buildings");
+	kp_t_ok(T, H->g->trig.lb_action == 21 && H->g->trig.lb_type == 2, "score buildings: action 21, type 2");
+	send_line(H, "/replay hide");
+	kp_t_eq(T, H->g->trig.lb_action, 0, "hide clears the board");
+}
+
+/* A replay's console at 640 x 480 as the emulator's frames show it (terran01.rep, frames 40, 100 and 200): the
+ * minimap dialog's captured background keeps nconsole.pcx's holes beside it (130..137 x 315..323: the game shows),
+ * and the replay's fluff rectangle (138, 367, 358, 22) repeats the console art over the menu button's first row
+ * 388 (416..479), where the races' end at 387. */
+static void replay_console_keeps_its_holes_and_fluff(KpT *T)
+{
+	KpOracleGame *og;
+	Hud *H;
+	const KpCanvas *c;
+	const KpUiSurface *s;
+	int32_t x, holes = 0, art = 0, row = 0;
+	if (!ready(T, "test_hud.replay_console_keeps_its_holes_and_fluff", TERRAN01)) return;
+	og = terran01(T);
+	og->g->w->replay = 1; /* before the console is made: nconsole.pcx and the replay's fluff list */
+	H = with_hud(T, og, 640, 480);
+	frame(H, 640, 480, 1016, 0, NO_CURSOR, CAMERA(0, 0));
+	c = H->hud.canvas;
+	s = &H->ui->console;
+	kp_t_ok(T, s->pixels != NULL && s->w == 640 && s->h == 480, "nconsole.pcx");
+	if (s->pixels == NULL || s->w != 640 || s->h != 480) return;
+	for (x = 130; x <= 137; x++) {
+		if (s->pixels[315 * 640 + x] != 0) continue;
+		art++;
+		holes += alpha_at(c, x, 315) == 0;
+	}
+	kp_t_ok(T, art > 0 && holes == art, "the console's holes in the minimap's box are the game's: %d of %d", holes, art);
+	for (x = 416; x <= 479; x++) {
+		uint8_t v = s->pixels[388 * 640 + x];
+		row += v != 0 && index_at(c, x, 388) == v;
+	}
+	kp_t_eq(T, row, 64, "the menu button's first row is the console's");
+	kp_t_ok(T, H->ui->fluff_list == 3, "the replay's fluff list");
+	kp_t_ok(T, H->ui->console_whole, "nconsole.pcx's HD art is one picture, every group's frame 0");
+}
+
 static int chars_seen;
 static uint16_t char_seen;
 
@@ -3996,8 +4068,9 @@ static void main_menu_buttons_the_remake_lacks_are_inert(KpT *T)
 	kp_t_ok(T, ui->menus.screen >= 0 && ui->menus.action == KP_UI_MENU_NONE, "no hotkey ends the main menu");
 }
 
-/* The campaign menus (the original's and the expansion's) keep Load Saved, Change ID and Previous Menu, but Play Custom
- * and Load Replay (outside V1) have no label and answer no click. */
+/* The campaign menus (the original's and the expansion's) keep Load Saved, Change ID, Load Replay and Previous Menu,
+ * but Play Custom (outside the remake) has no label and answers no click; Load Replay opens its screen (glue state 12,
+ * rez\gluCustm.bin). */
 static void campaign_menu_buttons_the_remake_lacks_are_inert(KpT *T)
 {
 	static const struct { int state; const char *bin; } MENUS[2] = {
@@ -4005,32 +4078,155 @@ static void campaign_menu_buttons_the_remake_lacks_are_inert(KpT *T)
 	enum { ID_LOAD = 5, ID_CHANGE_ID = 9, ID_CUSTOM = 10, ID_REPLAY = 11 };
 	Glue *G;
 	KpUi *ui;
-	int m, k, j;
+	int m, j;
 	if (!kp_t_ready(T, "test_hud.campaign_menu_buttons_the_remake_lacks_are_inert", GLUE_FILES)) return;
-	G = glue(T);
-	ui = G->ui;
-	wait_for(G, "rez\\glumain.bin", 2000);
-	for (m = 0; m < 2; m++) {
-		int32_t dialog;
+	for (m = 0; m < 2; m++) { /* each menu on a glue of its own: a menu entered over an open screen stacks on it */
+		int32_t dialog, c;
 		char name[128];
+		G = glue_bare(T);
+		ui = G->ui;
 		kp_glue_menus(G->glue, MENUS[m].state);
 		wait_for(G, MENUS[m].bin, 2000);
-		for (k = 0; k < 60; k++) glue_frame(G); /* the slide in */
+		for (j = 0; j < 60; j++) glue_frame(G); /* the slide in */
 		dialog = ui->open;
 		kp_t_ok(T, ui->controls[child_of(ui, dialog, ID_LOAD)].text != NULL, "%s: Load Saved keeps its label",
 			MENUS[m].bin);
 		kp_t_ok(T, ui->controls[child_of(ui, dialog, ID_CHANGE_ID)].text != NULL, "Change ID keeps its label");
-		for (k = 0; k < 2; k++) {
-			int id = k == 0 ? ID_CUSTOM : ID_REPLAY;
-			int32_t c = child_of(ui, dialog, id);
-			kp_t_ok(T, c >= 0 && ui->controls[c].text == NULL, "%s: button %d has no label", MENUS[m].bin, id);
-			glue_click(G, id, -1, -1);
-			for (j = 0; j < 60; j++) glue_frame(G);
-			kp_t_ok(T, ui->open == dialog && ui->menus.action == KP_UI_MENU_NONE
-				&& strcmp(kp_t_ui_bin(ui, ui->open, name, sizeof name), MENUS[m].bin) == 0,
-				"%s: a click on button %d ends no screen", MENUS[m].bin, id);
-		}
+		c = child_of(ui, dialog, ID_CUSTOM);
+		kp_t_ok(T, c >= 0 && ui->controls[c].text == NULL, "%s: Play Custom has no label", MENUS[m].bin);
+		glue_click(G, ID_CUSTOM, -1, -1);
+		for (j = 0; j < 60; j++) glue_frame(G);
+		kp_t_ok(T, ui->open == dialog && ui->menus.action == KP_UI_MENU_NONE
+			&& strcmp(kp_t_ui_bin(ui, ui->open, name, sizeof name), MENUS[m].bin) == 0,
+			"%s: a click on Play Custom ends no screen", MENUS[m].bin);
+		c = child_of(ui, dialog, ID_REPLAY);
+		kp_t_ok(T, c >= 0 && ui->controls[c].text != NULL, "%s: Load Replay keeps its label", MENUS[m].bin);
+		glue_click(G, ID_REPLAY, -1, -1);
+		wait_for(G, "rez\\glucustm.bin", 2000);
 	}
+}
+
+/* A replays folder for Load Replay's list: the root holds the folder "sub" and a.rep, sub holds b.rep. */
+static int fake_replays(void *host, KpUi *ui)
+{
+	KpUiMenus *m = &ui->menus;
+	(void)host;
+	memset(m->replays, 0, sizeof m->replays[0] * 2);
+	if (m->replay_dir[0] == 0) {
+		m->replays[0].kind = KP_UI_REPLAY_ENTRY_FOLDER;
+		snprintf(m->replays[0].file, sizeof m->replays[0].file, "sub");
+		snprintf(m->replays[1].file, sizeof m->replays[1].file, "a.rep");
+	} else {
+		m->replays[0].kind = KP_UI_REPLAY_ENTRY_UP;
+		snprintf(m->replays[1].file, sizeof m->replays[1].file, "b.rep");
+	}
+	m->replay_count = 2;
+	return 2;
+}
+
+/* Load Replay's folders (BuildMapList 0x45ba40, OnCreateGameOk 0x455240's 0x8000000b): a folder is listed as
+ * "[name]", Ok on it enters it (the folder label its name, "[Up One Level]" first), and Ok on that goes back to the
+ * root's list and label; the screen stays. */
+static void load_replay_enters_folders_and_goes_up(KpT *T)
+{
+	enum { ID_LIST = 5, ID_FOLDER = 6, ID_OK = 12 };
+	Glue *G;
+	KpUi *ui;
+	int32_t list, folder;
+	char name[128];
+	if (!kp_t_ready(T, "test_hud.load_replay_enters_folders_and_goes_up", GLUE_FILES)) return;
+	G = glue_bare(T);
+	ui = G->ui;
+	ui->list_replays = fake_replays;
+	kp_glue_menus(G->glue, KP_GLUE_LOAD_REPLAY);
+	wait_for(G, "rez\\glucustm.bin", 2000);
+	list = child_of(ui, ui->open, ID_LIST);
+	folder = child_of(ui, ui->open, ID_FOLDER);
+	kp_t_ok(T, list >= 0 && folder >= 0, "the list and the folder label");
+	if (list < 0 || folder < 0) return;
+	kp_t_ok(T, child_of(ui, ui->open, 42) < 0 && child_of(ui, ui->open, 43) < 0,
+		"no Import or Export without the host's file picker: the original's screen");
+	kp_t_eq_str(T, (const char *)ui->controls[list].list->text[0], "[sub]", "a folder in brackets");
+	kp_t_eq_str(T, (const char *)ui->controls[list].list->text[1], "a.rep", "then the replay");
+	kp_t_eq_str(T, (const char *)ui->controls[folder].text, "replays", "the root's label");
+	kp_ui_list_select(ui, list, 0);
+	glue_click(G, ID_OK, -1, -1);
+	for (int k = 0; k < 30; k++) glue_frame(G);
+	kp_t_eq_str(T, ui->menus.replay_dir, "sub", "Ok entered the folder");
+	kp_t_eq_str(T, (const char *)ui->controls[folder].text, "sub", "its label");
+	kp_t_ok(T, strncmp((const char *)ui->controls[list].list->text[0], "[", 1) == 0
+		&& strcmp((const char *)ui->controls[list].list->text[0], "[sub]") != 0, "[Up One Level] first: %s",
+		(const char *)ui->controls[list].list->text[0]);
+	kp_t_eq_str(T, (const char *)ui->controls[list].list->text[1], "b.rep", "the folder's replay");
+	kp_ui_list_select(ui, list, 0);
+	glue_click(G, ID_OK, -1, -1);
+	for (int k = 0; k < 30; k++) glue_frame(G);
+	kp_t_eq_str(T, ui->menus.replay_dir, "", "Ok on [Up One Level] goes back to the root");
+	kp_t_eq_str(T, (const char *)ui->controls[folder].text, "replays", "the root's label again");
+	kp_t_eq_str(T, (const char *)ui->controls[list].list->text[1], "a.rep", "the root's list");
+	kp_t_ok(T, strcmp(top(G, name, sizeof name), "rez\\glucustm.bin") == 0 && ui->menus.action == KP_UI_MENU_NONE,
+		"the screen stays");
+}
+
+static int imports, exported = -1;
+
+static void fake_import(void *host)
+{
+	(void)host;
+	imports++;
+}
+
+static void fake_export(void *host, int index)
+{
+	(void)host;
+	exported = index;
+}
+
+/* Koprulu's Import and Export on Load Replay with the host's file picker: Import asks the host, Export the selected
+ * file's (a folder's nothing), the screen stays; the host's answer selects the copy, or its refusal opens the Ok
+ * popup. */
+static void load_replay_imports_and_exports_through_the_host(KpT *T)
+{
+	enum { ID_LIST = 5, R_IMPORT = 42, R_EXPORT = 43 };
+	Glue *G;
+	KpUi *ui;
+	int32_t list;
+	int k;
+	char name[128];
+	if (!kp_t_ready(T, "test_hud.load_replay_imports_and_exports_through_the_host", GLUE_FILES)) return;
+	G = glue_bare(T);
+	ui = G->ui;
+	ui->list_replays = fake_replays;
+	ui->import_replay = fake_import;
+	ui->export_replay = fake_export;
+	imports = 0;
+	exported = -1;
+	kp_glue_menus(G->glue, KP_GLUE_LOAD_REPLAY);
+	wait_for(G, "rez\\glucustm.bin", 2000);
+	list = child_of(ui, ui->open, ID_LIST);
+	kp_t_ok(T, list >= 0 && child_of(ui, ui->open, R_IMPORT) >= 0 && child_of(ui, ui->open, R_EXPORT) >= 0,
+		"the list, Import and Export");
+	if (list < 0) return;
+	glue_click(G, R_IMPORT, -1, -1);
+	for (k = 0; k < 30; k++) glue_frame(G);
+	kp_t_eq(T, imports, 1, "Import asks the host's picker");
+	kp_t_ok(T, strcmp(top(G, name, sizeof name), "rez\\glucustm.bin") == 0 && ui->menus.action == KP_UI_MENU_NONE,
+		"the screen stays");
+	kp_ui_list_select(ui, list, 0);
+	glue_click(G, R_EXPORT, -1, -1);
+	for (k = 0; k < 30; k++) glue_frame(G);
+	kp_t_eq(T, exported, -1, "a folder is not exported");
+	kp_ui_list_select(ui, list, 1);
+	glue_click(G, R_EXPORT, -1, -1);
+	for (k = 0; k < 30; k++) glue_frame(G);
+	kp_t_eq(T, exported, 1, "Export gives the host the selected replay");
+	kp_ui_list_select(ui, list, 0);
+	kp_ui_replay_imported(ui, "a.rep", 0);
+	kp_t_eq(T, kp_ui_list_selection(ui, list), 1, "the imported copy selected");
+	kp_t_eq(T, ui->controls[list].list->hover, 1, "and highlighted");
+	kp_ui_replay_imported(ui, NULL, 63);
+	for (k = 0; k < 30; k++) glue_frame(G);
+	kp_t_eq_str(T, top(G, name, sizeof name), "rez\\glupok.bin", "a refused file's Ok popup");
 }
 
 /* Show Credits: the remake's makers come first, then the game's credits; Space turns the pages and Escape ends the
@@ -4747,6 +4943,8 @@ static const KpTest TESTS[] = {
 	{ "glue_hands_the_cinematics_to_the_host", glue_hands_the_cinematics_to_the_host, 0 },
 	{ "main_menu_buttons_the_remake_lacks_are_inert", main_menu_buttons_the_remake_lacks_are_inert, 0 },
 	{ "campaign_menu_buttons_the_remake_lacks_are_inert", campaign_menu_buttons_the_remake_lacks_are_inert, 0 },
+	{ "load_replay_enters_folders_and_goes_up", load_replay_enters_folders_and_goes_up, 0 },
+	{ "load_replay_imports_and_exports_through_the_host", load_replay_imports_and_exports_through_the_host, 0 },
 	{ "show_credits_begins_with_the_remake", show_credits_begins_with_the_remake, 0 },
 	{ "campaign_epilog_runs_its_text_then_its_credits", campaign_epilog_runs_its_text_then_its_credits, 0 },
 	{ "held_keys_reach_the_window_at_their_repeats", held_keys_reach_the_window_at_their_repeats, 0 },
@@ -4765,6 +4963,8 @@ static const KpTest TESTS[] = {
 	{ "right_click_on_the_card_ends_the_mode", right_click_on_the_card_ends_the_mode, 0 },
 	{ "status_tooltip_follows_the_panels_layout", status_tooltip_follows_the_panels_layout, 0 },
 	{ "text_reaches_the_window_as_code_points", text_reaches_the_window_as_code_points, 0 },
+	{ "replay_line_shows_and_hides_the_leaderboard", replay_line_shows_and_hides_the_leaderboard, 0 },
+	{ "replay_console_keeps_its_holes_and_fluff", replay_console_keeps_its_holes_and_fluff, 0 },
 	{ "one_key_is_one_hotkey", one_key_is_one_hotkey, 0 },
 	{ "glue_text_takes_code_points", glue_text_takes_code_points, 0 },
 	{ "type_selection_takes_the_units_cloaked_for_free", type_selection_takes_the_units_cloaked_for_free, 0 },

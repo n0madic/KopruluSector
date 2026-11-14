@@ -703,6 +703,20 @@ void kp_ui_score_free(KpUi *ui)
 	free_surface(ui, &s->untab);
 }
 
+/* AssignDefaultComputerPlayerNames 0x4074a0's name of computer slot p by race (zerg 8, protoss 16 further on) */
+static const char *computer_name(KpUi *ui, int expansion, int p, int race)
+{
+	int base = expansion ? EXPANSION_NAMES : ORIGINAL_NAMES, offset = race == 0 ? 8 : race == 2 ? 16 : 0;
+	return (const char *)kp_ui_tbl(ui, KP_UI_NETWORK, (uint8_t)(base + offset + p));
+}
+
+const char *kp_ui_default_player_name(KpUi *ui, int expansion, int64_t mission, int p, int type, int race)
+{
+	if (p < 0 || p >= 8 || !(type == 1 || type == 3 || type == 4 || type == 7)) return NULL;
+	if (p == 2 && (mission == 15 || mission == 17)) return NULL;
+	return computer_name(ui, expansion, p, race);
+}
+
 void kp_ui_score_data(KpUi *ui, struct KpGame *g, int result, const char *player_name, uint32_t elapsed,
 	KpUiScoreData *out)
 {
@@ -716,20 +730,22 @@ void kp_ui_score_data(KpUi *ui, struct KpGame *g, int result, const char *player
 	out->result = result == 3 ? 1 : result == 2 ? 2 : result == 5 ? 3 : 0; /* KP_EVENT_GAME_RESULT's a */
 	out->race = (int)g->players.race[g->local_player];
 	out->local_storm = 0; /* offline: the human is Storm player 0, the computers have none */
-	/* GetElapsedSeconds 0x47a780: the clock's seconds less those UnpauseGame 0x47cc10 took off (0x47a620) */
-	out->elapsed = elapsed > ui->paused_seconds ? elapsed - ui->paused_seconds : 0;
+	out->replay = g->w->replay != 0; /* 0x66b414 */
+	/* GetElapsedSeconds 0x47a780: the clock's seconds less those UnpauseGame 0x47cc10 took off (0x47a620); a replay's
+	 * by its frames (0x480d70) */
+	if (out->replay) out->elapsed = kp_ui_replay_seconds(g);
+	else out->elapsed = elapsed > ui->paused_seconds ? elapsed - ui->paused_seconds : 0;
 	for (p = 0; p < 8; p++) {
 		KpUiRosterEntry *e = &out->roster[p];
 		uint32_t c = (uint32_t)g->players.controller[p];
 		out->player_colours[p] = (uint8_t)p;
 		/* the slot's type as it stands, a player RetirePlayer 0x4bd7a0 defeated (10, 11) listed beside the others */
 		if (is_human(c)) {
-			(void)kp_text_copy_chars(e->name, sizeof e->name, player_name != NULL ? player_name : "", ROSTER_NAME_CHARS);
+			const char *name = out->replay && ui->slot_names[p][0] ? (const char *)ui->slot_names[p] : player_name; /* the header's */
+			(void)kp_text_copy_chars(e->name, sizeof e->name, name != NULL ? name : "", ROSTER_NAME_CHARS);
 		} else if (is_computer(c)) {
-			int base = g->expansion ? EXPANSION_NAMES : ORIGINAL_NAMES;
-			int race = (int)g->players.race[p], offset = race == 0 ? 8 : race == 2 ? 16 : 0;
-			const uint8_t *name = kp_ui_tbl(ui, KP_UI_NETWORK, (uint8_t)(base + offset + p));
-			(void)kp_text_copy_chars(e->name, sizeof e->name, name != NULL ? (const char *)name : "", ROSTER_NAME_CHARS);
+			const char *name = computer_name(ui, (int)g->expansion, p, (int)g->players.race[p]);
+			(void)kp_text_copy_chars(e->name, sizeof e->name, name != NULL ? name : "", ROSTER_NAME_CHARS);
 			if (e->name[0] == 0) continue; /* offline: a computer without a name is not listed */
 		} else {
 			continue;

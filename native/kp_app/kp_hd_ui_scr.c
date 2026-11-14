@@ -35,9 +35,19 @@
 #define SCREEN_H 480
 #define TILE_BLEND 12      /* logical columns a tile's end crossfades into its start */
 #define PLAN_SCALE 2       /* the variant CONW's art comes from (HD2: every install has it) */
+#define NEUTRAL_SD "game/nconsole.pcx"
+#define NEUTRAL_HD "game/consoles/neutral/console.dds"
+#define NEUTRAL_TOP 306    /* a replay's console picture's first row: its gradients agree best with nconsole.pcx's there
+                            * (HD2 against the PCX, 2026-11-14: a row lower than the screen's bottom edge puts it, the
+                            * columns centred on the 640 as the races' pieces are) */
 
 /* The consoles: their PCX stems, races, and the wings' part a tile repeats (logical columns of the left and the right
- * piece: past the junction with the block beside it, as far as the art runs) */
+ * piece: past the junction with the block beside it, as far as the art runs). A replay's nconsole.pcx is no race's:
+ * Remastered's art for it is one picture (game/consoles/neutral/console.dds, no pieces: neutral_asset). The pictures
+ * beside it stay SD: its conover.dds, like the races', is drawn anew over Remastered's own portrait frame (64 x 64 or
+ * 64 x 69 against the SD glass's 60 x 56; their gradients agree at 0.48-0.72 at the best of scattered offsets, below
+ * SAME_PICTURE, 2026-11-14), and its dlg.dds.grp has no 1.17 file (a replay's dialogs are framed by dlgs\terran.grp,
+ * the local race 1.17 gives a replay: kp_ui_local_race). */
 static const struct {
 	const char *stem, *race;
 	int32_t wing[TILES][2];
@@ -269,6 +279,10 @@ int kp_hd_ui_scr_classify(const char *path, size_t len, int variant, char *file,
 	file[0] = 0;
 	if (slashed(path, len, p, sizeof p) != 0) return KP_HD_UI_SCR_NONE; /* too long for ASET */
 	name = base_name(p);
+	if (strcmp(p, NEUTRAL_SD) == 0) {
+		w = snprintf(file, size, "%s%s", kp_hd_scr_variant_prefix(variant), NEUTRAL_HD);
+		return w > 0 && (size_t)w < size ? KP_HD_UI_SCR_NEUTRAL : KP_HD_UI_SCR_NONE;
+	}
 	for (k = 0; k < RACES; k++) {
 		size_t n = strlen(CONSOLES[k].stem);
 		if (strncmp(name, CONSOLES[k].stem, n) == 0 && strlen(name) == n + 4) {
@@ -492,6 +506,22 @@ static int console_asset(Build *b, const char *path, size_t len, int race)
 	return add_asset(b, path, len, first, KP_HD_UI_CONSOLE);
 }
 
+/* A replay's console asset: Remastered's one picture, centred on the 640 columns (as the races' left and right pieces
+ * lie at a WIDE screen's edges) from row NEUTRAL_TOP; a console's (KP_HD_UI_CONSOLE: its own silhouette), its one frame
+ * every group's (kp_canvas.c piece_item). */
+static int neutral_asset(Build *b, const char *path, size_t len, const char *file)
+{
+	int32_t w, h, f, first = b->frame_count, scale = b->s->scale;
+	int format;
+	uint64_t size;
+	if (read_dds(b, file, &w, &h, &format, &size) != 0) return -1;
+	if ((f = file_index(b, file)) < 0
+		|| add_frame(b, 0, (uint32_t)size, w, h, format, -(WIDE - 640) * scale / 2, NEUTRAL_TOP * scale, f, 0, -1, -1) != 0) {
+		return fail(b->err, file, "out of memory");
+	}
+	return add_asset(b, path, len, first, KP_HD_UI_CONSOLE);
+}
+
 /* A GRP's asset: each frame of its *.dds.grp at its usual place (centred on the SD frame; a wireframe's on the GRP's
  * canvas) or where the table moved it. Left out when the frame counts differ. */
 static int grp_asset(Build *b, const char *path, size_t len, const char *file)
@@ -574,6 +604,7 @@ static int add_path(void *ctx, const char *path, size_t len)
 	if (kind == KP_HD_UI_SCR_CONSOLE) return console_asset(b, path, len, race);
 	if (kind == KP_HD_UI_SCR_NONE || kind == KP_HD_UI_SCR_KEPT_SD) return 0;
 	if (!taken(b, file)) return 0; /* not drawn again (a picture of Remastered's own layout), absent, or other bytes */
+	if (kind == KP_HD_UI_SCR_NEUTRAL) return neutral_asset(b, path, len, file);
 	return kind == KP_HD_UI_SCR_GRP ? grp_asset(b, path, len, file) : pcx_asset(b, path, len, file);
 }
 

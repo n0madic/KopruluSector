@@ -7,6 +7,9 @@ dialog is answered with its hotkey (V); a defeat dialog closes itself after 20 s
 The score screen is left with Ok (hotkey O). AdvanceCampaignAfterGame (P41 0x4bb790)
 then chooses the next row: the next ready room, a cinematic (skipped with Escape, the
 player's own skip key), or the end of the campaign (campaign menu, or epilog mode 9).
+With `quit` set, the game is left instead of won: F10, End Mission (E), Quit Mission (Q), the confirmation's default
+button (Enter); the run ends back in the glue, its LastReplay.rep kept (phase RP: which exits write the file, and
+whether the quit records a leave command 0x57).
 
 Observed per mission: frame of the committed result (trigger result byte of the local
 player), the RequestGameExit code, victory/defeat dialog, glue/mode states visited
@@ -31,8 +34,8 @@ from pathlib import Path
 
 from unicorn import x86_const as X
 
-from . import game, process, render
-from .inputs import VK_ESCAPE, VK_RETURN, Input
+from . import game, process, render, vfs
+from .inputs import VK_ESCAPE, VK_F10, VK_RETURN, Input
 from .session import Session, write_json
 
 log = logging.getLogger(__name__)
@@ -47,12 +50,13 @@ HOOK_VICTORY_DIALOG = 0x4BCFF0
 HOOK_DEFEAT_DIALOG = 0x4BCF80
 HOOK_SCORE_SCREEN = 0x461940
 HOOK_NEXT_SCENARIO = 0x4BBA20      # ResolveNextScenarioRow, ECX = file name
+LAST_REPLAY = vfs.DOCUMENTS_DIR + "\\Starcraft\\maps\\replays\\LastReplay.rep"  # WriteReplayFile 0x480080 from EndGame
 
 
 def run_chain(name: str, warp: str, cd: str, frames: int = 300, cheat: str = "there is no cow level",
               max_missions: int = 20, max_wall: float = 7200, inject=None, stop_after_first=False,
               out_root: Path = OUT_ROOT, oracle: Path | None = None, state_steps: int = 1000,
-              glue_ms=0, ready_ms: int = 2000) -> dict:
+              glue_ms=0, ready_ms: int = 2000, quit: bool = False) -> dict:
     out = out_root / name
     out.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
@@ -82,6 +86,21 @@ def run_chain(name: str, warp: str, cd: str, frames: int = 300, cheat: str = "th
         logs["rotate"](d)
         dumps["rotate"](d / "states")
 
+    kept = {"data": None, "count": 0}
+
+    def keep_replay():
+        """Copies LastReplay.rep, which EndGame rewrites after every game, to replays/NN-mMM.rep when it changed."""
+        data = m.services["fs"].snapshot(LAST_REPLAY)
+        if data is None or data == kept["data"]:
+            return
+        kept["data"] = data
+        kept["count"] += 1
+        mission = st["cur"]["mission"] if st["cur"] else 0
+        d = out / "replays"
+        d.mkdir(exist_ok=True)
+        (d / f"{kept['count']:02d}-m{mission:02d}.rep").write_bytes(data)
+        ev("replay_written", size=len(data), file=f"{kept['count']:02d}-m{mission:02d}.rep")
+
     def ev(kind, **kw):
         e = {"t": m.clock_us // 1000, "kind": kind, "frame": m.r32(game.FRAME_COUNTER), **kw}
         events.append(e)
@@ -106,6 +125,7 @@ def run_chain(name: str, warp: str, cd: str, frames: int = 300, cheat: str = "th
             st["need_cheat"] = True
 
     def on_create():
+        keep_replay()
         mission = m.reg(X.UC_X86_REG_ECX) & 0xFFFF
         rec = {"mission": mission, "created_t": m.clock_us // 1000}
         if missions and "next_mission" not in missions[-1]:
@@ -141,6 +161,7 @@ def run_chain(name: str, warp: str, cd: str, frames: int = 300, cheat: str = "th
     advance = simple("advance_campaign", X.UC_X86_REG_ECX)
 
     def on_advance():
+        keep_replay()
         advance()
         if m.reg(X.UC_X86_REG_ECX) == 0 and st["cur"] is not None:  # the lost mission restarts (mode 5)
             st.update(frames=0, cheat_done=False, need_cheat=False, result_frame=None)
@@ -168,6 +189,7 @@ def run_chain(name: str, warp: str, cd: str, frames: int = 300, cheat: str = "th
     score_seen_at = None
     pressed_room = None
     end_dialog_at = None
+    quit_at = None
     finished = None
     try:
         while time.time() - t0 < max_wall:
@@ -191,7 +213,14 @@ def run_chain(name: str, warp: str, cd: str, frames: int = 300, cheat: str = "th
                         inp.key(ord("S"))
                         pressed_room = (dlg, len(missions))
             elif mode == 3:
-                if st["need_cheat"] and not st["cheat_done"]:
+                if quit and st["need_cheat"] and not st["cheat_done"]:
+                    st["cheat_done"] = True
+                    ev("quit_mission")
+                    for k in (VK_F10, ord("E"), ord("Q"), VK_RETURN):
+                        inp.key(k)
+                        inp.wait(700)
+                    quit_at = m.clock_us
+                elif st["need_cheat"] and not st["cheat_done"]:
                     st["cheat_done"] = True
                     ev("cheat", text=cheat)
                     render.save_primary_surface(m, out / f"m{st['cur']['mission']:02d}_before_cheat.png")
@@ -218,6 +247,9 @@ def run_chain(name: str, warp: str, cd: str, frames: int = 300, cheat: str = "th
                 if missions and missions[-1].get("result_frame") is not None:
                     finished = f"campaign end (mode {mode}, glue {glue})"
                     break
+            if quit and quit_at is not None and mode == 4 and not 14 <= glue <= 19 and m.clock_us - quit_at > 3_000_000:
+                finished = f"quit to the glue (glue {glue})"
+                break
             if stop_after_first and mode == 3 and missions and any(
                     e["kind"] == "advance_campaign" and e.get("arg") == 0 for e in missions[-1].get("events", [])):
                 ev("mission_restarted_after_defeat")
@@ -232,6 +264,7 @@ def run_chain(name: str, warp: str, cd: str, frames: int = 300, cheat: str = "th
     except Exception as e:
         log.exception("chain %s failed", name)
         finished = f"fault: {str(e)[:1500]}"
+    keep_replay()
     trace.close()
     result = {"name": name, "warp": warp, "cd": cd, "cheat": cheat, "frames_before_cheat": frames,
               "finished": finished or "wall-time limit", "wall_seconds": round(time.time() - t0, 1),

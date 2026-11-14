@@ -62,6 +62,7 @@ The host runs the script after a frame is drawn and before it is shown.
 | | `camera X Y`, `camera by DX DY`, `camera max` | The view's centre on the world's X Y; moved by DX DY; at the map's bottom-right |
 | | `world on\|off`, `fog on\|off` | The world's images drawn; the fog |
 | | `save "NAME"`, `load "NAME"`, `load-file "NAME"` | The game saved, loaded in the game, loaded from its file (the glue's Load Saved) |
+| | `replay "NAME"` | The replays folder's `NAME.rep` (`.rep` added when the name lacks it) played as Load Replay's Ok plays it: its mission started from the file, in the glue or over the game in play. A file that cannot be played (missing, damaged, outside version 1) aborts the run |
 | | `menu NAME`, `options-dialog NAME` | A game menu, an options dialog opened |
 | | `activate NAME` | The open menu's control activated as its click does |
 | | `select NAME RADIUS` | The camera on the player's unit of the kind, a box of the radius over it; no such unit is the step's failure |
@@ -117,7 +118,7 @@ Names are in any case. A value read where what it is read from is missing has no
 | Units (`select`) | `worker`, `main` (the race's main building), `group` (the player's box-selectable unit whose box of `select`'s radius takes the most such units) |
 | Checks (`check`) | See [the checks](#the-checks) |
 | Conditions | See [the conditions](#the-conditions) |
-| Dialogs | A dialog's BIN file name without its directory and `.bin`. The game's menus and ours: `gamemenu`, `options`, `video`, `snd_dlg`, `spd_dlg`, `objctdlg`, `savegame`, `loadgame`, `quit`, `quitrepl`, `restart`, `abrtmenu`, `help`, `helpmenu`, `tips_dlg`, `ok`, `okcancel`, `wait`, `lmission`, `wmission`, `quit2mnu`, `language`. The glue's: `gluMain`, `gluLogin`, `gluCmpgn`, `gluExpCmpgn`, `gluGameMode`, `gluHist`, `gluLoad`, `gluPEdit`, `gluPOk`, `gluPOkCancel`, `gluScore`, `glurdyp`, `glurdyt`, `glurdyz`, `credits`. The console's, for `DIALOG.ID` and `ui` (never a dialog to `nodialog`; as the NAME of `dialog` or `screen` a parse error): `minimap`, `ptextbox`, `ttextbox`, `ztextbox`, `stat_f10`, `statbtnp`, `statbtnt`, `statbtnz`, `statdata`, `statlb`, `statport`, `statres` |
+| Dialogs | A dialog's BIN file name without its directory and `.bin`. The game's menus and ours: `allyfltr` (a replay's View Players), `gamemenu`, `options`, `video`, `snd_dlg`, `spd_dlg`, `objctdlg`, `savegame`, `loadgame`, `quit`, `quitrepl`, `restart`, `abrtmenu`, `help`, `helpmenu`, `tips_dlg`, `ok`, `okcancel`, `wait`, `lmission`, `wmission`, `quit2mnu`, `language`. The glue's: `gluMain`, `gluLogin`, `gluCmpgn`, `gluCustm` (Load Replay), `gluExpCmpgn`, `gluGameMode`, `gluHist`, `gluLoad`, `gluPEdit`, `gluPOk`, `gluPOkCancel`, `gluScore`, `glurdyp`, `glurdyt`, `glurdyz`, `credits`. The console's, for `DIALOG.ID` and `ui` (never a dialog to `nodialog`; as the NAME of `dialog` or `screen` a parse error): `minimap`, `ptextbox`, `ttextbox`, `ztextbox`, `stat_f10`, `statbtnn` (a replay's), `statbtnp`, `statbtnt`, `statbtnz`, `statdata`, `statlb`, `statport`, `statres` |
 | Controls | See [the controls](#the-controls) |
 
 ### The values
@@ -136,6 +137,8 @@ Names are in any case. A value read where what it is read from is missing has no
 | `targeting`, `placing` | the console | 1 while an order's target is aimed; while a building is placed |
 | `groups.held` | the console | The groups that hold units, a bit each (group 0 the lowest) |
 | `group.held:N` | the console | 1 when group N (0..9) holds units |
+| `replay.ended`, `replay.frames` | the game | 1 once a replay's playback passed its record (the victory dialog's "The replay has finished." opens); the replay's frames (its header's), 0 outside a replay |
+| `sim.crc` | the game | The state's category CRCs (`kp_dump_crcs`, tools/state_check.py's) folded in dump order, but the local interface's a replay's viewer does not share: `step` (the result dialog's clock), `selection`, `sprite`, `image` (the selection circles, the right click's ground marker). A game and its replay have the same at the same step |
 | `selection.has:PICK`, `selection.first:PICK` | the game | 1 when the picked unit is in the local selection; is its first |
 | `moved:PICK` | the game | The world pixels the picked unit moved since its pick (rounded down); no value with no pick, or with its unit gone |
 | `pad.open`, `pad.count`, `pad.shown:N` | the console | The touch pad's groups opened; its buttons shown; 1 when its button N (0..11, `KP_UI_PAD_*`) is; another N is a parse error |
@@ -168,6 +171,7 @@ Names are in any case. A value read where what it is read from is missing has no
 | `episode` | A campaign's episode was chosen: its text's popup is up, or its ready room | as `glue` |
 | `briefing` | The ready room is open, its text past | as `glue` |
 | `score` | The score screen is up | as `glue` |
+| `replay` | `game`, and the game is a replay's playback | `the game is no replay`, `no game in play` |
 
 ### The controls
 
@@ -180,8 +184,9 @@ A control is named in the table or as `DIALOG.ID`: a dialog's name and the contr
 | `glumain.single` | `gluMain` 3 |
 | `glugamemode.original`, `.expansion` | `gluGameMode` 6, 7 |
 | `glulogin.ok`, `.cancel`, `.new`, `.delete` | `gluLogin` 4, 5, 6, 7 |
-| `glucmpgn.load`, `.player` | `gluCmpgn` 5, 9 |
-| `gluexpcmpgn.load`, `.player` | `gluExpCmpgn` 5, 9 |
+| `glucmpgn.load`, `.player`, `.replay` | `gluCmpgn` 5, 9, 11 |
+| `gluexpcmpgn.load`, `.player`, `.replay` | `gluExpCmpgn` 5, 9, 11 |
+| `glucustm.list`, `.ok`, `.cancel` | `gluCustm` 5, 12, 13 (Load Replay) |
 | `gluload.ok`, `.cancel`, `.delete` | `gluLoad` 4, 5, 7 |
 
 A glue popup's controls are placed where the popup is composited into its screen. A control on no dialog open now fails its step (`no video.12 open (open: …)`).

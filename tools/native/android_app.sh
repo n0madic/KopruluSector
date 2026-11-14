@@ -60,7 +60,7 @@ BUILD_TYPE=Release
 export ANDROID_HOME="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
 
 # The template's edition: a project of an earlier one is made again.
-TEMPLATE_EDITION=3
+TEMPLATE_EDITION=5
 if [ ! -d "$OUT/app/jni" ] || [ "$(cat "$OUT/.kp_template" 2>/dev/null)" != "$TEMPLATE_EDITION" ]; then
   rm -rf "$OUT"
   mkdir -p "$OUT"
@@ -85,6 +85,47 @@ new = ("    protected String[] getArguments() {\n"
        "    }")
 assert old in s, "SDLActivity.getArguments changed"
 open(p, "w").write(s.replace(old, new))
+PY
+  # Load Replay's Import and Export (kp_app_pick.c): a picked document's display name (its content:// URI names no
+  # file), and the save dialog's suggested name (SDL drops the default location on Android: EXTRA_TITLE) and type (SDL's
+  # */* for an unknown extension: the downloads provider then numbers a taken name after ".rep")
+  python3 - "$OUT/app/src/main/java/org/libsdl/app/SDLActivity.java" <<'PY'
+import sys
+p = sys.argv[1]
+s = open(p).read()
+old = ("        Intent intent = new Intent(forWrite ? Intent.ACTION_CREATE_DOCUMENT : Intent.ACTION_OPEN_DOCUMENT);\n"
+       "        intent.addCategory(Intent.CATEGORY_OPENABLE);\n")
+new = old + ("        if (forWrite && kpFileDialogName != null) {\n"
+             "            intent.putExtra(Intent.EXTRA_TITLE, kpFileDialogName);\n"
+             "        }\n"
+             "        kpFileDialogName = null;\n")
+assert old in s, "SDLActivity.showFileDialog changed"
+s = s.replace(old, new)
+old = "        try {\n            mSingleton.startActivityForResult(intent, requestCode);"
+assert s.count(old) == 1, "SDLActivity.showFileDialog changed"
+s = s.replace(old, ("        if (forWrite && \"*/*\".equals(intent.getType())) {\n"
+                    "            intent.setType(\"application/octet-stream\"); /* a taken name's number before its extension */\n"
+                    "        }\n") + old)
+old = "    public static boolean showFileDialog("
+helpers = ("    /* Koprulu: the next save dialog's suggested name. */\n"
+           "    static String kpFileDialogName;\n"
+           "    public static void kpSetFileDialogName(String name) {\n"
+           "        kpFileDialogName = name;\n"
+           "    }\n\n"
+           "    /* Koprulu: a content:// URI's display name (OpenableColumns.DISPLAY_NAME), null when it has none. */\n"
+           "    public static String kpDisplayName(String uri) {\n"
+           "        if (mSingleton == null) {\n"
+           "            return null;\n"
+           "        }\n"
+           "        try (android.database.Cursor c = mSingleton.getContentResolver().query(android.net.Uri.parse(uri),\n"
+           "                new String[] { android.provider.OpenableColumns.DISPLAY_NAME }, null, null, null)) {\n"
+           "            return c != null && c.moveToFirst() ? c.getString(0) : null;\n"
+           "        } catch (Exception e) {\n"
+           "            return null;\n"
+           "        }\n"
+           "    }\n\n")
+assert s.count(old) == 1, "SDLActivity.showFileDialog changed"
+open(p, "w").write(s.replace(old, helpers + old))
 PY
   # the safe area (SDL_GetWindowSafeArea) is what the system bars, the display's cutout and the mandatory gesture zones
   # (the home bar's swipes) leave, where a game's panels and buttons lie (ADR 0014 point 6; a fixed 640 x 480 screen is

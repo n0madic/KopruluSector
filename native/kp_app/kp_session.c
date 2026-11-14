@@ -13,6 +13,7 @@
 #define _POSIX_C_SOURCE 200112L /* fileno and fsync (kp_write_file_atomic) under -std=c99 */
 #endif
 #include "kp_session.h"
+#include "kp_ids.h"
 #include "kp_sha256.h"
 #include "kp_text.h"
 
@@ -25,11 +26,14 @@
 #include <io.h>
 #include <windows.h>
 #else
+#include <dirent.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #endif
 
 const int32_t KP_CLOCK_SPEED_MS[KP_CLOCK_SPEEDS] = { 167, 111, 83, 67, 56, 48, 42 };
 
+#define REPL_VERSION 1
 #define CORE_HEADER 12 /* "KPSV", u32 version, u32 the mission name's length */
 #define PROFILE_KIND "PROF"
 #define PROFILE_SCHEMA 8 /* 1: one ID, its progress in PROG; 1 and 2: the saves without their IDs; 1..5: no SOPT; 1..3: no OPTS; 4: OPTS
@@ -52,10 +56,19 @@ void kp_clock_init(KpClock *c, int speed, int max_catchup)
 {
 	memset(c, 0, sizeof *c);
 	c->speed = speed >= 1 && speed <= KP_CLOCK_SPEEDS ? speed : KP_CLOCK_DEFAULT_SPEED;
+	c->multiplier = 1;
 	c->max_catchup = max_catchup > 0 ? max_catchup : KP_CLOCK_DEFAULT_MAX_CATCHUP;
 }
 
-int32_t kp_clock_step_ms(const KpClock *c) { return KP_CLOCK_SPEED_MS[c->speed - 1]; }
+/* SetReplaySpeed 0x481040's table: Slowest times the multiplier, the others divided by it (unsigned) */
+int32_t kp_clock_step_ms(const KpClock *c)
+{
+	int32_t ms = KP_CLOCK_SPEED_MS[c->speed - 1];
+	if (c->multiplier > 1) return c->speed == 1 ? ms * c->multiplier : ms / c->multiplier;
+	return ms;
+}
+
+void kp_clock_set_multiplier(KpClock *c, int multiplier) { c->multiplier = multiplier < 1 ? 1 : multiplier; }
 
 int kp_clock_set_speed(KpClock *c, int speed)
 {
@@ -182,23 +195,62 @@ int kp_session_load_from(KpSession *s, const KpHostShared *sh, const KpDat *dat,
 	return 0;
 }
 
+/* The replay's recorder of a start: the playback's loaded with the file's record, or an empty one recording. */
+static int start_recorder(KpSession *s, const KpSessionStart *start)
+{
+	int k;
+	if (!start->replay && !start->record) return 0;
+	if (!(s->rec = (KpRecorder *)malloc(sizeof *s->rec))) return -1;
+	if (kp_record_init(s->rec) != 0) {
+		free(s->rec);
+		s->rec = NULL;
+		return -1;
+	}
+	if (!start->replay) return 0;
+	if (kp_record_load(s->rec, start->replay->record, start->replay->record_size) != 0) return -1;
+	s->playing = 1;
+	s->replay_frames = kp_rep_frames(start->replay);
+	for (k = 0; k < KP_SESSION_REPLAY_SLOTS; k++) {
+		KpRepPlayer p;
+		kp_rep_player(start->replay, k, &p);
+		s->replay_storm[k] = (uint32_t)p.storm;
+		s->replay_slot[k] = p.slot;
+	}
+	return 0;
+}
+
 int kp_session_start(KpSession *s, const KpSessionStart *start)
 {
 	KpHostOpts o;
 	KpError err;
 	FirstTurn first;
 	kp_clock_init(&s->clock, start->speed, start->max_catchup);
+	if (start_recorder(s, start) != 0) {
+		fail(s, "replay: out of memory");
+		return -1;
+	}
 	kp_host_opts(&o);
 	o.events = 1;
 	o.speed = game_speed(s->clock.speed);
 	o.mission_index = start->mission_index;
 	o.cheats = start->cheats;
 	o.carry = start->has_carry ? &start->carry : NULL;
+	o.replay = start->replay != NULL && !start->replay_as_game;
 	if (kp_host_game_start(&s->host, start->seed, start->expansion, &o, &err) != 0) {
 		fail(s, err.msg);
 		return -1;
 	}
 	s->g = s->host.g;
+	s->replay_player = s->g->local_player;
+	if (s->playing) {
+		s->g->replay_frames = s->replay_frames;
+		s->g->replay_header_speed = kp_rep_speed(start->replay);
+	}
+	if (start->record && !start->replay) {
+		KpRepGame game;
+		kp_session_replay_game(s, start->seed, &game);
+		kp_session_replay_header(s, &game);
+	}
 	first.g = s->g;
 	first.start = start;
 	(void)kp_session_guard(s, first_turn, &first);
@@ -213,6 +265,9 @@ const KpGrpMeta *kp_session_grp(const KpSession *s) { return s->g ? &s->host.sha
 
 void kp_session_free(KpSession *s)
 {
+	if (s->rec) kp_record_free(s->rec);
+	free(s->rec);
+	free(s->list);
 	kp_host_game_free(&s->host);
 	memset(s, 0, sizeof *s);
 }
@@ -240,18 +295,112 @@ static void run_frame(void *ud)
 	kp_run_frame(f->g, f->list, f->count);
 }
 
+/* A step's list with room for n more commands; -1 out of memory. */
+static int list_room(KpSession *s, int count, int n)
+{
+	KpCommand *l;
+	int cap;
+	if (count + n <= s->list_cap) return 0;
+	cap = s->list_cap ? s->list_cap : KP_SESSION_PENDING;
+	while (cap < count + n) cap *= 2;
+	if (!(l = (KpCommand *)realloc(s->list, (size_t)cap * sizeof *l))) return -1;
+	s->list = l;
+	s->list_cap = cap;
+	return 0;
+}
+
+typedef struct {
+	KpSession *s;
+	int count, failed;
+	int64_t player;
+} Split;
+
+static void add_command(void *ud, const uint8_t *cmd, size_t n)
+{
+	Split *sp = (Split *)ud;
+	KpCommand *c;
+	if (sp->failed || list_room(sp->s, sp->count, 1) != 0) {
+		sp->failed = 1;
+		return;
+	}
+	c = &sp->s->list[sp->count++];
+	c->player = sp->player;
+	c->bytes = cmd;
+	c->size = n;
+}
+
+/* FeedReplayCommands 0x4769b0's part of a step: the commands recorded for this frame, each buffer's player the one
+ * whose record has its Storm ID (kept from the buffer before when none has), walked as ExecuteTurnCommands 0x475d30
+ * walks them. At the end of the record the playback pauses (SetReplayPaused 0x480e00) and the victory dialog opens
+ * (the presentation's, on replay_ended). */
+#define KP_REPLAY_RESULT 3 /* the victory dialog's result (KP_EVENT_GAME_RESULT's a) */
+
+static int feed(KpSession *s, Split *sp)
+{
+	const KpRecordEntry *e;
+	int n, k, j;
+	if (kp_record_feed(s->rec, kp_scalar(s->g, KP_FRAME), s->replay_frames, &e, &n)) {
+		if (!s->replay_ended) kp_event(s->g, KP_EVENT_GAME_RESULT, KP_REPLAY_RESULT, 0, 0, NULL); /* 0x4bcff0 */
+		s->replay_ended = 1;
+		s->g->replay_paused = 1;
+		return 0;
+	}
+	for (k = 0; k < n; k++) {
+		for (j = 0; j < KP_SESSION_REPLAY_SLOTS; j++) {
+			if (s->replay_storm[j] == e[k].storm && s->replay_slot[j] < KP_SESSION_REPLAY_SLOTS) { /* checked at the start too */
+				s->replay_player = s->replay_slot[j];
+				break;
+			}
+		}
+		sp->player = s->replay_player;
+		(void)kp_record_split(e[k].bytes, e[k].size, add_command, sp);
+	}
+	return sp->failed ? -1 : 0;
+}
+
+/* The replay filter of ExecuteTurnCommands 0x475d30 for the live commands of a playback (table 0x47636c): the
+ * keep-alive, restart, pause and resume, the sync and the four the network's (0x37-0x3b), latency and the replay
+ * speed. */
+static int live_in_replay(uint8_t id)
+{
+	return id == 0x05 || id == 0x08 || id == 0x10 || id == 0x11 || (id >= 0x37 && id <= 0x3b) || id == 0x55 || id == 0x56;
+}
+
+static void record_command(void *ud, const uint8_t *cmd, size_t n)
+{
+	KpSession *s = (KpSession *)ud;
+	kp_record_command(s->rec, kp_scalar(s->g, KP_FRAME), 0, cmd, n);
+}
+
 int kp_session_step(KpSession *s, double (*clock_ms)(void))
 {
-	KpCommand list[KP_SESSION_PENDING];
+	KpCommand *list;
 	Frame frame;
+	Split sp;
 	double t0, ms;
 	int count, k;
 	if (s->failed || !s->g) return 0;
-	count = s->pending_count;
-	for (k = 0; k < count; k++) {
-		list[k].player = s->pending[k].player;
-		list[k].bytes = s->pending[k].bytes;
-		list[k].size = s->pending[k].size;
+	memset(&sp, 0, sizeof sp);
+	sp.s = s;
+	if (s->playing && feed(s, &sp) != 0) {
+		fail(s, "replay: out of memory");
+		return 0;
+	}
+	count = sp.count;
+	if (list_room(s, count, s->pending_count) != 0) {
+		fail(s, "step: out of memory");
+		return 0;
+	}
+	list = s->list;
+	for (k = 0; k < s->pending_count; k++) {
+		const KpQueuedCommand *q = &s->pending[k];
+		if (s->playing && (q->size == 0 || !live_in_replay(q->bytes[0]))) continue;
+		/* RecordCommand 0x478340 of the dispatched commands, at the frame before the step (the human's Storm ID 0) */
+		if (s->rec && s->rec->recording && q->player == s->g->local_player) kp_record_split(q->bytes, q->size, record_command, s);
+		list[count].player = q->player;
+		list[count].bytes = q->bytes;
+		list[count].size = q->size;
+		count++;
 	}
 	s->tick++;
 	t0 = clock_ms ? clock_ms() : 0;
@@ -265,22 +414,160 @@ int kp_session_step(KpSession *s, double (*clock_ms)(void))
 	s->step_ms += ms;
 	if (ms > s->step_max_ms) s->step_max_ms = ms;
 	if (s->failed) return 0;
-	/* the game's speed command (ExecGameSpeed 0x473310) sets the speed the clock steps at */
+	/* the game's speed command (ExecGameSpeed 0x473310) sets the speed the clock steps at, a replay's speed command
+	 * (SetReplaySpeed 0x481040) the multiplier too */
 	{
 		int64_t speed = kp_scalar(s->g, KP_SPEED);
 		if (speed != KP_NIL && game_speed(s->clock.speed) != speed && speed >= 0 && speed < KP_CLOCK_SPEEDS) {
 			kp_clock_set_speed(&s->clock, (int)speed + 1);
 		}
+		if (s->playing) kp_clock_set_multiplier(&s->clock, (int)s->g->replay_multiplier);
 	}
 	return 1;
 }
 
+int kp_session_steps_per_tick(const KpSession *s)
+{
+	return s->playing && s->g && s->g->replay_multiplier >= 8 && kp_scalar(s->g, KP_SPEED) != 0 ? 10 : 1;
+}
+
 int kp_session_advance(KpSession *s, double now, double *alpha, double (*clock_ms)(void))
 {
-	int due = kp_clock_advance_wall(&s->clock, now, alpha), ran = 0;
-	while (ran < due && kp_session_step(s, clock_ms)) ran++;
+	int due = kp_clock_advance_wall(&s->clock, now, alpha), ran = 0, k;
+	while (ran < due) {
+		/* RunPendingFrames 0x444e30 runs up to 0x50335c frames each time */
+		int per = kp_session_steps_per_tick(s);
+		for (k = 0; k < per && kp_session_step(s, clock_ms); k++) {
+		}
+		if (k == 0) break;
+		ran++;
+		if (k < per) break;
+	}
 	if (s->failed) *alpha = 1;
 	return ran;
+}
+
+/* --- the replay's file --- */
+
+static int err_msg(KpError *err, const char *msg);
+
+/* The replay's leave 0x57 and chat 0x5c: a network player's, outside V1 (docs/formats/rep.md); kp_record_split's
+ * callback over an entry, as the playback walks it (an entry may hold more commands than its first) */
+static void refused_command(void *ud, const uint8_t *cmd, size_t n)
+{
+	(void)n;
+	if (cmd[0] == 0x57 || cmd[0] == 0x5c) *(int *)ud = 1;
+}
+
+int kp_session_replay_start(KpSessionStart *st, const KpRep *rep)
+{
+	size_t at = 0;
+	int k, refused = 0;
+	for (k = 0; k < KP_REP_PLAYERS; k++) { /* a record with a Storm ID plays as its slot: a game's player, 0..7 */
+		KpRepPlayer p;
+		kp_rep_player(rep, k, &p);
+		if (p.storm != -1 && p.slot >= KP_SESSION_REPLAY_SLOTS) return -1;
+	}
+	/* the entries as the feed reads them (ReadRecordedFrame 0x478480, kp_record.c read_frame: an entry's length may run
+	 * past its block's size, the next block's header follows it; an unknown id or an entry past the record ends the
+	 * data), each walked as the dispatcher walks it */
+	while (at + 5 <= rep->record_size) {
+		size_t size = rep->record[at + 4], sum = 0;
+		at += 5;
+		while (sum < size) {
+			int len;
+			if (at + 1 > rep->record_size) break;
+			at++; /* the Storm ID */
+			len = kp_record_command_length(rep->record + at, rep->record_size - at);
+			if (len < 0 || (size_t)len > rep->record_size - at) {
+				at = rep->record_size;
+				break;
+			}
+			(void)kp_record_split(rep->record + at, (size_t)len, refused_command, &refused);
+			if (refused) return -1;
+			at += (size_t)len;
+			sum += (size_t)len + 1;
+		}
+	}
+	st->seed = kp_rep_seed(rep);
+	st->expansion = kp_rep_brood_war(rep);
+	st->mission_index = kp_rep_campaign(rep);
+	st->speed = kp_rep_speed(rep) + 1;
+	st->replay = rep;
+	st->record = 0;
+	st->objective_count = 0; /* Load Replay starts the game with no briefing (CreateGameFromEntry 0x45bfc0) */
+	/* Koprulu's tail: the globals the game before left and the cheats at the start, which the header does not hold
+	 * (the original, which never reads the tail, plays a continued game from none) */
+	if (rep->has_tail && rep->tail && rep->tail->version == KP_REP_TAIL_VERSION) {
+		st->has_carry = rep->tail->has_carry;
+		if (st->has_carry) st->carry = rep->tail->carry;
+		st->cheats = rep->tail->cheats;
+	}
+	return 0;
+}
+
+#define ANONYMOUS "Anonymous" /* network.tbl 72: the name without a login */
+
+void kp_session_replay_game(KpSession *s, uint32_t seed, KpRepGame *game)
+{
+	KpGame *g = s->g;
+	const KpMission *m = &s->host.data.mission;
+	int p;
+	memset(game, 0, sizeof *game);
+	game->brood_war = (int)g->expansion;
+	game->campaign = (int)kp_scalar(g, KP_MISSION_INDEX);
+	game->seed = seed;
+	game->player_name = ANONYMOUS;
+	game->map_w = (int)m->width;
+	game->map_h = (int)m->height;
+	game->tileset = (int)(m->era % 8);
+	game->speed = (int)kp_scalar(g, KP_SPEED);
+	game->map_name = kp_map_string(g, m->name_string);
+	for (p = 0; p < 8; p++) {
+		KpRepPlayer *r = &game->players[p];
+		r->slot = (uint32_t)p;
+		r->type = (uint8_t)g->players.controller[p];
+		r->race = (uint8_t)g->players.race[p];
+		r->force = (uint8_t)g->players.force[p];
+		r->storm = r->type == KP_CTRL_HUMAN ? 0 : -1;
+		if (r->type == KP_CTRL_HUMAN) snprintf(r->name, sizeof r->name, "%s", ANONYMOUS);
+	}
+}
+
+void kp_session_replay_header(KpSession *s, const KpRepGame *game)
+{
+	KpRep r;
+	memset(&r, 0, sizeof r);
+	kp_rep_header(&r, game);
+	memcpy(s->rec_header, r.header, sizeof s->rec_header);
+}
+
+int kp_session_replay_file(KpSession *s, const KpRepTail *tail, KpRep *out, KpError *err)
+{
+	const KpMission *m = &s->host.data.mission;
+	const uint8_t *bytes;
+	size_t size;
+	memset(out, 0, sizeof *out);
+	if (!s->g || !s->rec || !s->rec->recording) return err_msg(err, "replay: the game is not recorded");
+	memcpy(out->header, s->rec_header, sizeof out->header);
+	kp_rep_set_frames(out, (uint32_t)kp_scalar(s->g, KP_FRAME));
+	bytes = kp_record_bytes(s->rec, &size);
+	out->record = (uint8_t *)malloc(size ? size : 1);
+	out->chk = (uint8_t *)malloc(m->chk_size ? m->chk_size : 1);
+	if (tail) out->tail = (KpRepTail *)malloc(sizeof *out->tail);
+	if (!out->record || !out->chk || (tail && !out->tail)) {
+		kp_rep_free(out);
+		return err_msg(err, "replay: out of memory");
+	}
+	memcpy(out->record, bytes, size);
+	out->record_size = size;
+	memcpy(out->chk, m->blob, m->chk_size);
+	out->chk_size = m->chk_size;
+	if (tail) {
+		*out->tail = *tail;
+		out->has_tail = 1;
+	}
+	return 0;
 }
 
 void kp_session_pause(KpSession *s) { kp_clock_pause(&s->clock); }
@@ -428,11 +715,11 @@ void kp_save_pres_set(KpSavePresentation *p, const char *name, int64_t value)
 int kp_save_encode(KpSession *s, const KpSaveIdentity *id, const KpSaveCampaign *camp, const KpSavePresentation *pres,
 	uint8_t **out, size_t *size, KpError *err)
 {
-	Buf cmds, cmp, prs;
-	KpKpfOut sections[4];
+	Buf cmds, cmp, prs, rpl;
+	KpKpfOut sections[5];
 	uint8_t *core = NULL;
 	size_t core_size = 0;
-	int k, rc;
+	int k, rc, nsections = 4;
 	*out = NULL;
 	if (!s->g) return err_msg(err, "mission: no game to save");
 	if (s->failed) {
@@ -443,6 +730,26 @@ int kp_save_encode(KpSession *s, const KpSaveIdentity *id, const KpSaveCampaign 
 	memset(&cmds, 0, sizeof cmds);
 	memset(&cmp, 0, sizeof cmp);
 	memset(&prs, 0, sizeof prs);
+	memset(&rpl, 0, sizeof rpl);
+	/* REPL (a recorded game's): u32 version, the header kept since the start, u32 the loads, u32 whether one lost the
+	 * record, i64 the open block's frame, u32 size and the record, its open block closed (SaveRecordedCommands
+	 * 0x478980: commands of the same frame recorded after it go on without a header) */
+	if (s->rec && s->rec->recording) {
+		size_t n;
+		const uint8_t *bytes = kp_record_bytes(s->rec, &n);
+		put32(&rpl, REPL_VERSION);
+		put(&rpl, s->rec_header, sizeof s->rec_header);
+		put32(&rpl, (uint32_t)s->rec_loads);
+		put32(&rpl, (uint32_t)s->rec_lost);
+		put32(&rpl, (uint32_t)s->rec->open_frame);
+		put32(&rpl, (uint32_t)((uint64_t)s->rec->open_frame >> 32));
+		put32(&rpl, (uint32_t)n);
+		put(&rpl, bytes, n);
+		sections[4].fourcc = "REPL";
+		sections[4].payload = rpl.b;
+		sections[4].size = rpl.n;
+		nsections = 5;
+	}
 	/* CMDS: u32 count, then per command u8 player, u16 size and its bytes */
 	put32(&cmds, (uint32_t)s->pending_count);
 	for (k = 0; k < s->pending_count; k++) {
@@ -496,13 +803,14 @@ int kp_save_encode(KpSession *s, const KpSaveIdentity *id, const KpSaveCampaign 
 	sections[3].fourcc = "PRES";
 	sections[3].payload = prs.b;
 	sections[3].size = prs.n;
-	for (k = 0; k < 4; k++) sections[k].schema_version = 1;
-	rc = cmds.failed || cmp.failed || prs.failed ? -1
-		: kp_kpf_build(KP_SAVE_KIND, KP_SAVE_SCHEMA, 0, id->profile_id, id->source_hash, sections, 4, out, size);
+	for (k = 0; k < nsections; k++) sections[k].schema_version = 1;
+	rc = cmds.failed || cmp.failed || prs.failed || rpl.failed ? -1
+		: kp_kpf_build(KP_SAVE_KIND, KP_SAVE_SCHEMA, 0, id->profile_id, id->source_hash, sections, nsections, out, size);
 	free(core);
 	free(cmds.b);
 	free(cmp.b);
 	free(prs.b);
+	free(rpl.b);
 	if (rc != 0) return err_msg(err, "save: out of memory");
 	return 0;
 }
@@ -594,6 +902,39 @@ int kp_save_mission(const uint8_t *save, size_t size, const KpSaveIdentity *id, 
 	return rc;
 }
 
+#define REPL_FIXED (4 + KP_REP_HEADER_SIZE + 4 + 4 + 8 + 4) /* REPL's fields before the record */
+
+/* A save's REPL as kp_save_encode writes it (NULL: none); -1 damaged. */
+static int check_record(const KpKpfSection *r, KpError *err)
+{
+	if (r && (r->size < REPL_FIXED || kp_le_u32(r->data) != REPL_VERSION
+			|| kp_le_u32(r->data + REPL_FIXED - 4) != r->size - REPL_FIXED)) {
+		return err_msg(err, "save: a damaged replay record");
+	}
+	return 0;
+}
+
+/* LoadRecordedCommands 0x478640 of a recorded game, once the save's game is loaded: the save's record (REPL, checked by
+ * check_record), or an empty one when the save has none (one saved before the replays, or of a game not recorded): the
+ * replay then starts from the load and is unverified. Out of memory the record stays as it was and is marked lost. */
+static void restore_record(KpSession *s, const KpKpfSection *r)
+{
+	int64_t open_frame;
+	s->rec_loads++;
+	if (!r) {
+		s->rec_lost = 1;
+		(void)kp_record_restore(s->rec, NULL, 0, -1);
+		return;
+	}
+	open_frame = (int64_t)((uint64_t)kp_le_u32(r->data + REPL_FIXED - 12) | (uint64_t)kp_le_u32(r->data + REPL_FIXED - 8) << 32);
+	if (kp_record_restore(s->rec, r->data + REPL_FIXED, r->size - REPL_FIXED, open_frame) != 0) {
+		s->rec_lost = 1;
+		return;
+	}
+	memcpy(s->rec_header, r->data + 4, KP_REP_HEADER_SIZE);
+	s->rec_lost |= (int)kp_le_u32(r->data + 4 + KP_REP_HEADER_SIZE + 4);
+}
+
 int kp_save_load(KpSession *s, const uint8_t *save, size_t size, const KpSaveIdentity *id, KpSaveCampaign *camp,
 	KpSavePresentation *pres, KpError *err)
 {
@@ -602,6 +943,8 @@ int kp_save_load(KpSession *s, const uint8_t *save, size_t size, const KpSaveIde
 	uint32_t count, k;
 	size_t at = 4;
 	KpSaveCampaign c;
+	const KpKpfSection *repl = NULL;
+	int recorded = s->rec != NULL && s->rec->recording;
 	if (!s->g) return err_msg(err, "mission: no game to load into");
 	if (decode(&p, save, size, id, err) != 0) return -1;
 	if (decode_campaign(p.camp, &c, err) != 0) goto failed;
@@ -621,7 +964,11 @@ int kp_save_load(KpSession *s, const uint8_t *save, size_t size, const KpSaveIde
 		memcpy(cmds[k].bytes, p.cmds->data + at + 3, n);
 		at += 3 + n;
 	}
+	/* the record follows the game: checked first, restored only once kp_load took the save (a save it refuses, of
+	 * another mission or damaged, leaves the game and its record as they were) */
+	if (recorded && check_record(repl = kp_kpf_find(&p.c, "REPL"), err) != 0) goto failed;
 	if (kp_load(s->g, p.core->data, p.core->size, s->host.name, s->host.identity, err) != 0) goto failed;
+	if (recorded) restore_record(s, repl);
 	s->failed = 0;
 	s->error[0] = 0;
 	memcpy(s->pending, cmds, sizeof cmds[0] * count);
@@ -679,6 +1026,99 @@ int kp_write_file_atomic(const char *path, const uint8_t *data, size_t size, KpE
 	snprintf(err->msg, sizeof err->msg, "%s: rename failed (the new save stays in %s)", path, tmp);
 	return -1;
 }
+
+static int lower_byte(int c) { return c >= 'A' && c <= 'Z' ? c + 32 : c; }
+
+static int compare_nocase(const char *a, const char *b)
+{
+	while (*a && lower_byte((unsigned char)*a) == lower_byte((unsigned char)*b)) {
+		a++;
+		b++;
+	}
+	return lower_byte((unsigned char)*a) - lower_byte((unsigned char)*b);
+}
+
+static int compare_names(const void *a, const void *b)
+{
+	return compare_nocase(*(const char *const *)a, *(const char *const *)b);
+}
+
+static int has_extension(const char *name, const char *ext)
+{
+	size_t n = strlen(name), e = strlen(ext);
+	return n > e && compare_nocase(name + n - e, ext) == 0;
+}
+
+void kp_list_files_free(char **names, int count)
+{
+	int k;
+	for (k = 0; k < count; k++) free(names[k]);
+	free(names);
+}
+
+/* The files of dir ending in ext, or with folders set its folders (ext unused) */
+static char **list_dir(const char *dir, const char *ext, int folders, int *count)
+{
+	char **names = NULL;
+	int cap = 0, failed = 0;
+#ifdef _WIN32
+	char pattern[1100];
+	WIN32_FIND_DATAA found;
+	HANDLE h;
+	*count = 0;
+	snprintf(pattern, sizeof pattern, "%s\\*", dir);
+	if ((h = FindFirstFileA(pattern, &found)) == INVALID_HANDLE_VALUE) return NULL;
+	do {
+		const char *name = found.cFileName;
+		if (found.dwFileAttributes & FILE_ATTRIBUTE_HIDDEN) continue;
+		if (name[0] == '.' || !(found.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != !folders) continue;
+#else
+	DIR *d = opendir(dir);
+	struct dirent *e;
+	*count = 0;
+	if (!d) return NULL;
+	while ((e = readdir(d)) != NULL) {
+		const char *name = e->d_name;
+		char path[1100];
+		struct stat st;
+		if (name[0] == '.') continue; /* hidden, as ScanMapDirectory 0x45c9a0 skips the hidden files */
+		snprintf(path, sizeof path, "%s/%s", dir, name);
+		if (stat(path, &st) != 0 || !S_ISDIR(st.st_mode) != !folders) continue;
+#endif
+		if (!folders && !has_extension(name, ext)) continue;
+		if (*count == cap) {
+			char **grown = (char **)realloc(names, sizeof *names * (size_t)(cap ? 2 * cap : 16));
+			if (!grown) {
+				failed = 1;
+				break;
+			}
+			names = grown;
+			cap = cap ? 2 * cap : 16;
+		}
+		if (!(names[*count] = (char *)malloc(strlen(name) + 1))) {
+			failed = 1;
+			break;
+		}
+		strcpy(names[(*count)++], name);
+#ifdef _WIN32
+	} while (FindNextFileA(h, &found));
+	FindClose(h);
+#else
+	}
+	closedir(d);
+#endif
+	if (failed) {
+		kp_list_files_free(names, *count);
+		*count = 0;
+		return NULL;
+	}
+	if (*count > 0) qsort(names, (size_t)*count, sizeof *names, compare_names);
+	return names;
+}
+
+char **kp_list_files(const char *dir, const char *ext, int *count) { return list_dir(dir, ext, 0, count); }
+
+char **kp_list_folders(const char *dir, int *count) { return list_dir(dir, NULL, 1, count); }
 
 /* --- the profile --- */
 

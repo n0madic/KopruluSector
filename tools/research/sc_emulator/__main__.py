@@ -219,7 +219,8 @@ def cmd_chain(a):
                   max_wall=a.max_wall, inject=inj, stop_after_first=a.single,
                   **({"out_root": out_root} if out_root else {}),
                   oracle=Path(a.oracle) / a.name if a.oracle else None, state_steps=a.state_steps,
-                  glue_ms=tuple(int(x) for x in a.glue_ms.split(",") if x), ready_ms=a.ready_ms)
+                  glue_ms=tuple(int(x) for x in a.glue_ms.split(",") if x), ready_ms=a.ready_ms,
+                  quit=a.quit)
     print(r["finished"], [(x["mission"], x.get("result"), x.get("result_frame"), x.get("next_mission"))
                           for x in r["missions"]], r["wall_seconds"])
 
@@ -228,6 +229,15 @@ def cmd_menus(a):
     from .menus import run_menus
     r = run_menus(Path(a.out), a.cd, settle_ms=a.settle_ms, glue_ms=tuple(int(x) for x in a.glue_ms.split(",") if x))
     print(len(r["steps"]), r["steps"][-1:] if r["steps"] else None, r["wall_seconds"])
+
+
+def cmd_replay(a):
+    from .replay import run_replay
+    r = run_replay(Path(a.out), Path(a.rep).read_bytes(), a.name, a.cd, a.expansion, max_wall=a.max_wall,
+                   oracle=a.oracle, state_steps=a.state_steps,
+                   shots=tuple(int(x) for x in a.shots.split(",") if x),
+                   presses=tuple((int(f), k) for f, k in (x.split(":") for x in a.keys.split(",") if x)))
+    print(r["finished"], "end", r["end_frame"], "victory", r["victory_frame"], "last", r["last_frame"], r["wall_seconds"])
 
 
 def main(argv=None):
@@ -278,6 +288,20 @@ def main(argv=None):
                     "virtual ms after it opens (comma-separated)")
     ch.add_argument("--ready-ms", type=int, default=2000, help="above 2000: press Start once the briefing ended, "
                     "at most this many virtual ms after the ready room opened")
+    ch.add_argument("--quit", action="store_true", help="leave the game by End Mission and Quit Mission instead of the "
+                    "cheat (LastReplay.rep kept)")
+    rp = sub.add_parser("replay", help="play a .rep through the original's Load Replay (replay.py)")
+    rp.add_argument("rep")
+    rp.add_argument("out")
+    rp.add_argument("--name", default="A", help="the file's name in maps\\replays (the list is searched by its "
+                    "first letter)")
+    rp.add_argument("--cd", default="original")
+    rp.add_argument("--expansion", action="store_true", help="a Brood War replay (with --cd expansion)")
+    rp.add_argument("--max-wall", type=float, default=7200)
+    rp.add_argument("--oracle", action="store_true", help="also dump the state of the first --state-steps steps")
+    rp.add_argument("--state-steps", type=int, default=1000)
+    rp.add_argument("--shots", default="", help="frames whose screen to save, as 60,200")
+    rp.add_argument("--keys", default="", help="keys to press at frames, as 80:u,150:p,150:p")
     sc = sub.add_parser("scenario")
     sc.add_argument("spec", help="tests/scenarios/<name>.json")
     sc.add_argument("--out-root", default="", help="output root instead of emu/scenarios")
@@ -309,7 +333,7 @@ def main(argv=None):
     ca.add_argument("--out-root", default="", help="output root instead of the missions directory")
     a = ap.parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if a.verbose else logging.INFO, format="%(levelname)s %(name)s: %(message)s")
-    {"boot": cmd_boot, "boot2": cmd_boot2, "mission": cmd_mission, "campaigns": cmd_campaigns, "apis": cmd_apis, "aggregate": cmd_aggregate, "chain": cmd_chain, "menus": cmd_menus, "scenario": cmd_scenario, "play": cmd_play}[a.cmd](a)
+    {"boot": cmd_boot, "boot2": cmd_boot2, "mission": cmd_mission, "campaigns": cmd_campaigns, "apis": cmd_apis, "aggregate": cmd_aggregate, "chain": cmd_chain, "menus": cmd_menus, "replay": cmd_replay, "scenario": cmd_scenario, "play": cmd_play}[a.cmd](a)
 
 
 if __name__ == "__main__":

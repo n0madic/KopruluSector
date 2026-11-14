@@ -798,6 +798,10 @@ static KpGlueEvent poll(KpGlue *g)
 			g->screen = KP_GLUE_NONE;
 			ev.kind = KP_GLUE_LOAD;
 			ev.save = m->save_choice;
+		} else if (action == KP_UI_MENU_REPLAY) { /* Load Replay's Ok: the replay's game at once (0x6662b8 = 1) */
+			g->screen = KP_GLUE_NONE;
+			ev.kind = KP_GLUE_REPLAY;
+			ev.save = m->replay_choice;
 		} else {
 			/* the next state's screen (View Intro does nothing without a host that plays cinematics) */
 			kp_ui_menus_enter(ui, m->state);

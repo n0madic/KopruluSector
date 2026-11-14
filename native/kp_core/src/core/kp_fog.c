@@ -290,12 +290,13 @@ void kp_reveal_sight(KpGame *g, int64_t x, int64_t y, int air, int64_t mask, int
 #define CREEP_SHOWN 0x40000000
 
 /* The remembered terrain of tile i the viewer sees again: its megatile, the creep shown and the creep borders around
- * it (0x4c0ba0); 1 when it changed. */
+ * it (0x4c0ba0); 1 when it changed. A replay's viewer is the players of 0x67cc84 that see the tile (0x40af30). */
 static int refresh_tile(KpGame *g, int64_t i)
 {
 	KpTerrain *t = &g->terrain;
 	int64_t m;
-	if (kp_band(t->tiles[i], g->local_vision) != 0) return 0;
+	if (g->w->replay ? kp_band(kp_band(g->w->local_vision, 0xff), kp_bnot(t->tiles[i])) == 0 /* 0x67cc84 */
+			: kp_band(t->tiles[i], g->local_vision) != 0) return 0;
 	m = kp_cv5_megatile(g, t->raw_tiles[i]);
 	if (kp_band(t->megatiles[i], 0x7fff) == m) return 0;
 	t->megatiles[i] = m;

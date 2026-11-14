@@ -99,6 +99,30 @@ static void campaign_plays_equal_the_original(KpT *T)
 	kp_t_ok(T, bad->size == 0, "plays differ from the original: %s", kp_buf_text(bad));
 }
 
+/* The original playing replays of its own games (tests/golden/oracle/replays, phase RP): the commands and interface
+ * events it logged while playing, run in a replay's mode (the golden's "replay": the replay flag, full vision, no
+ * result dialog's clock), equal at every step. */
+static void replays_equal_the_original(KpT *T)
+{
+	const KpJson *index;
+	KpBuf *bad;
+	int k;
+	if (!kp_t_ready(T, "test_scenarios", DATA_FILES)) return;
+	if (!kp_t_has(T, DIR "replays/index.json")) return;
+	index = kp_t_golden(T, DIR "replays/index.json");
+	bad = kp_t_buf(T);
+	for (k = 0; k < kp_json_len(index); k++) {
+		const char *name = kp_json_str(kp_json_at(index, k), "");
+		int found, mark = kp_t_mark(T);
+		KpGoldenRun *gr;
+		if (!kp_t_mine_sampled(T, k + 1)) continue;
+		gr = check_run(T, golden(T, "replays", name), name, NULL, bad, &found);
+		kp_t_ok(T, gr->game.g->w->replay && gr->game.g->local_vision == 0xff, "%s: played as a replay", name);
+		kp_t_release(T, mark);
+	}
+	kp_t_ok(T, bad->size == 0, "replays differ from the original: %s", kp_buf_text(bad));
+}
+
 /* A chain's games played by check_run: the runs alive until the chain lets them go (the next game's carry). */
 #define CHAIN_GAMES 32
 typedef struct {
@@ -260,6 +284,7 @@ static const KpTest TESTS[] = {
 	{ "campaign_runs_equal_the_original", campaign_runs_equal_the_original, 4 },
 	{ "campaign_chains_equal_the_original", campaign_chains_equal_the_original, 4 },
 	{ "campaign_plays_equal_the_original", campaign_plays_equal_the_original, 8 },
+	{ "replays_equal_the_original", replays_equal_the_original, 0 },
 	{ "escape_skips_running_triggers_only", escape_skips_running_triggers_only, 0 },
 };
 KP_SUITE(kp_suite_scenarios, "test_scenarios", TESTS);

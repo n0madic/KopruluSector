@@ -25,6 +25,7 @@ typedef struct {
 	int64_t turn;          /* the turn counter the menus left */
 	const KpCarry *carry;  /* what the game before left (kp_carry_take), or NULL */
 	int64_t speed;         /* the game speed byte 0x6d3130; KP_NIL: KP_DEFAULT_SPEED */
+	int replay;            /* a replay's playback (KpStartInput.replay) */
 } KpHostOpts;
 
 void kp_host_opts(KpHostOpts *o);

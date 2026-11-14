@@ -210,7 +210,7 @@ void kp_ui_music_start_game(KpUi *ui)
 	static const uint8_t KEYS[2][RACES] = { { 12, 1, 22 }, { 49, 40, 32 } }; /* 0x50334c, 0x503350 */
 	KpUiMusic *m = mu(ui);
 	KpGame *g = ui->game;
-	int race = (int)g->players.race[g->local_player];
+	int race = kp_ui_local_race(ui);
 	int64_t key = kp_scalar(g, KP_MISSION_INDEX);
 	uint16_t track;
 	kp_ui_music_stop(ui);

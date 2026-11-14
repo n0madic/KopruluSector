@@ -7546,6 +7546,20 @@
     ]
    ]
   },
+  "rez\\statbtnn.bin": {
+   "skeleton": "eNql088KAVEUBvDv3rkYFrJRlhJlMVvxApZ2kyRZKDtbK7G28edBJMmL4EW8Aec0KBzk+KaZW/fefp2+GgA4mZ5ZYIwlJuDsHODjU243OU3hfEVvEg4BSiiicN/PXVcDi99jDVAltf1GtSq1RWqf1Okb1VOpa8MNBPQ0RNWpVGe5gYAakNWYSm1bbiCgBmQ1rlI3lhsIyR2KakKlxj1uIKQGZNVXqR2PGwipAVlNqtStF000QxZzpF/Oj+eUQvXp78zQZCPkMaDJnpMS9r6n6/hbplkrj7O6aDmoZo1SI7Uuqvs/VOAC2SIiJg==",
+   "texts": [
+    [
+     1204,
+     7,
+     [
+      20
+     ],
+     false,
+     "name:StatBtn"
+    ]
+   ]
+  },
   "rez\\statbtnp.bin": {
    "skeleton": "eNqd0DEKwkAQheG3s2tMbmAt2m3vKexCCMFKyBEstU6nB5Hg0TyCb0CtZgXnLSGQDV/xA8AzHMMVZ9xwge4QgRq/9vlT1xn3dz4NEjK22GD9/b56vwME/08CsKM6FFRxqT3VkepUUKNLnYMWyDx7U00uNYkWyCxgqwuXOogWyCxgq5VLfYgWaOmeTHXpUquoBVoWsNXapepGqlNBbdyq7gW90BT1",
    "texts": [

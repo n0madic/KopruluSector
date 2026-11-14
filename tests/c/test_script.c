@@ -65,7 +65,7 @@ static const struct {
 };
 
 static const char *const OP_NAMES[] = { "key", "text", "move", "click", "rclick", "press", "release", "finger", "tap",
-	"touch", "choose", "pause", "resume", "camera", "world", "fog", "save", "load", "load-file", "menu", "options-dialog",
+	"touch", "choose", "pause", "resume", "camera", "world", "fog", "save", "load", "load-file", "replay", "menu", "options-dialog",
 	"activate", "select", "end-placement", "cancel-targeting", "audit", "hang", "wait-frames", "wait-time", "wait",
 	"until", "shot", "state", "ui", "log", "mark", "pick", "expect", "check", "quit" };
 typedef char op_names_cover_the_ops[sizeof OP_NAMES / sizeof OP_NAMES[0] == KP_SCRIPT_OPS ? 1 : -1];

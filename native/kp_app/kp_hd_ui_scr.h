@@ -66,11 +66,11 @@ typedef struct {
 int kp_hd_ui_scr_held(KpRes *r, int variant);
 
 /* What the HD interface makes of an SD path of kp_ui_data_art_paths (hd_ui.py generate's rules): none; a console
- * (*race); a GRP's art, a PCX's (taken when it is the SD picture drawn again), a race's progress bar's (Remastered's
+ * (*race); a replay's console (game\nconsole.pcx: Remastered's one picture, its file in file); a GRP's art, a PCX's (taken when it is the SD picture drawn again), a race's progress bar's (Remastered's
  * console picture: taken as it is), its HD file's CASC name in file (the variant's prefix, lowercase); a strip kept in
  * SD whatever Remastered holds (hd_ui.py SD_ONLY). */
 enum { KP_HD_UI_SCR_NONE, KP_HD_UI_SCR_CONSOLE, KP_HD_UI_SCR_GRP, KP_HD_UI_SCR_PCX, KP_HD_UI_SCR_PICTURE,
-	KP_HD_UI_SCR_KEPT_SD };
+	KP_HD_UI_SCR_KEPT_SD, KP_HD_UI_SCR_NEUTRAL };
 int kp_hd_ui_scr_classify(const char *path, size_t len, int variant, char *file, size_t size, int *race);
 /* A console's file in the install: its SD art (piece -1), its left, centre or right piece (0, 1, 2) of the variant. */
 void kp_hd_ui_scr_console_file(int variant, int race, int piece, char *out, size_t size);

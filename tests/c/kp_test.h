@@ -189,7 +189,7 @@ extern const KpSuite kp_suite_rng, kp_suite_initial_state, kp_suite_scenarios, k
 	kp_suite_fog, kp_suite_campaign, kp_suite_touch, kp_suite_player_reach, kp_suite_gfx, kp_suite_flow,
 	kp_suite_locale, kp_suite_speech, kp_suite_script, kp_suite_res, kp_suite_formats, kp_suite_original,
 	kp_suite_chk, kp_suite_cine, kp_suite_scr, kp_suite_movies, kp_suite_encoders, kp_suite_convert,
-	kp_suite_hd;
+	kp_suite_hd, kp_suite_rep;
 
 #define KP_SUITE(var, label, tests) const KpSuite var = { label, tests, (int)(sizeof tests / sizeof tests[0]) }
 

@@ -220,6 +220,7 @@ int kp_host_game_start(KpHostGame *hg, uint32_t seed, int expansion, const KpHos
 	in.cheats = opts->cheats;
 	in.carry = opts->carry;
 	in.turn = opts->turn;
+	in.replay = opts->replay;
 	if (opts->speed != KP_NIL) in.speed = opts->speed;
 	hg->g = kp_start(&in, err);
 	if (!hg->g) {

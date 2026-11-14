@@ -165,18 +165,20 @@ uint16_t kp_hud_buttons(uint16_t buttons, int event);
 enum { KP_GLUE_NONE, KP_GLUE_MENUS, KP_GLUE_ROOM, KP_GLUE_SCORE, KP_GLUE_CREDITS, KP_GLUE_EPILOG, KP_GLUE_TITLE };
 #define KP_GLUE_MAIN 0
 #define KP_GLUE_CAMPAIGN 6
+#define KP_GLUE_LOAD_REPLAY 12 /* Load Replay (RunCreateGameScreen 0x455550 with ECX = 1) */
 #define KP_GLUE_LOAD_SCREEN 13 /* its Back goes to the campaign menu it came from */
 #define KP_GLUE_EXPANSION_CAMPAIGN 22
 
 /* What a glue screen ended with. */
 enum { KP_GLUE_GOES_ON, KP_GLUE_PROFILE, KP_GLUE_MISSION, KP_GLUE_EXIT, KP_GLUE_LOAD, KP_GLUE_ROOM_START,
-	KP_GLUE_ROOM_CANCEL, KP_GLUE_SCORE_DONE, KP_GLUE_INTRO, KP_GLUE_LANGUAGE };
+	KP_GLUE_ROOM_CANCEL, KP_GLUE_SCORE_DONE, KP_GLUE_INTRO, KP_GLUE_LANGUAGE, KP_GLUE_REPLAY };
 typedef struct {
 	int kind;
 	int profile_changed;
 	int64_t mission;
 	int state, expansion;
-	int32_t save; /* KP_GLUE_LOAD: the load screen's saved game, 0-based in the profile's list */
+	int32_t save; /* KP_GLUE_LOAD: the load screen's saved game, 0-based in the profile's list; KP_GLUE_REPLAY: Load
+	               * Replay's file, an index of the interface's menus.replays */
 	int cinematic; /* KP_GLUE_MISSION: the cinematic the mission history's row plays first (with its prelude), 0 none */
 } KpGlueEvent;
 

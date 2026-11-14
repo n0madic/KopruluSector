@@ -23,6 +23,7 @@
 #define SOUND_ENERGY 0x9c      /* + race */
 #define STRING_SELECT_TARGET 0x3f /* network.tbl */
 #define STRING_SELECT_PLACE 0x40
+#define REPLAY_SPEED_COMMAND 0x56
 
 /* Orders (orders.dat ids, atlas P27). */
 enum {
@@ -50,6 +51,42 @@ static void send2(KpUi *ui, uint8_t id, uint8_t v)
 	b[0] = id;
 	b[1] = v;
 	queue(ui, b, 2);
+}
+
+/* SendReplaySpeedCommand 0x474350: 0x56 {u8 paused, u32 speed, u32 multiplier}. */
+static void replay_speed(KpUi *ui, int64_t speed, int64_t multiplier, int paused)
+{
+	uint8_t b[10];
+	int i;
+	b[0] = REPLAY_SPEED_COMMAND;
+	b[1] = (uint8_t)(paused != 0);
+	for (i = 0; i < 4; i++) {
+		b[2 + i] = (uint8_t)((uint64_t)speed >> (8 * i));
+		b[6 + i] = (uint8_t)((uint64_t)multiplier >> (8 * i));
+	}
+	queue(ui, b, sizeof b);
+}
+
+/* ReplayButtonSlower 0x480e50: nothing while paused; the multiplier halves at Fastest, doubles at Slowest. */
+static void replay_slower(KpUi *ui)
+{
+	KpGame *g = game(ui);
+	int64_t s = kp_scalar(g, KP_SPEED), m = g->replay_multiplier;
+	if (g->replay_paused) return;
+	if (s == 6 && m > 1) replay_speed(ui, 6, (int64_t)((int32_t)m >> 1), 0);
+	else if (s == 0) replay_speed(ui, 0, m < 1 ? 2 * m : m, 0);
+	else replay_speed(ui, s - 1, m, 0);
+}
+
+/* ReplayButtonFaster 0x480ee0: the multiplier halves at Slowest, doubles at Fastest up to 16. */
+static void replay_faster(KpUi *ui)
+{
+	KpGame *g = game(ui);
+	int64_t s = kp_scalar(g, KP_SPEED), m = g->replay_multiplier;
+	if (g->replay_paused) return;
+	if (s == 0 && m > 1) replay_speed(ui, 0, (int64_t)((int32_t)m >> 1), 0);
+	else if (s < 6) replay_speed(ui, s + 1, m, 0);
+	else replay_speed(ui, s, m < 16 ? 2 * m : m, 0);
 }
 
 static void send3(KpUi *ui, uint8_t id, uint16_t v)
@@ -290,6 +327,11 @@ void kp_ui_button_action(KpUi *ui, uint32_t address, uint16_t value, uint8_t shi
 	case 0x4a04c0: kp_ui_end_placement(ui); break;      /* BtnActCancelPlacement: EndPlacement 0x47d300(0, 0, 1) */
 	case 0x4a11e0: kp_ui_card_override(ui, value); break; /* the build menus and their return */
 	case 0x4be950: break;                               /* NoOp */
-	default: break; /* TODO: a replay's buttons (0x480e50, 0x480ee0, 0x480f70) */
+	case 0x480e50: replay_slower(ui); break;
+	case 0x480ee0: replay_faster(ui); break;
+	case 0x480f70: /* ReplayButtonPause */
+		replay_speed(ui, kp_scalar(g, KP_SPEED), g->replay_multiplier, g->replay_paused == 0);
+		break;
+	default: break;
 	}
 }

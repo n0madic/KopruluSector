@@ -136,16 +136,17 @@ static int console_asset(const KpCanvas *c, const KpUi *ui, int32_t *count)
 		&& (flags & KP_HD_UI_CONSOLE);
 }
 
-/* A piece's item: frame k of the console's HD asset, its group's top-left with the console PCX's offsets; 0 without. */
+/* A piece's item: frame k of the console's HD asset (its frame 0 for every group: a replay's console, one picture),
+ * its group's top-left with the console PCX's offsets; 0 without. */
 static uint16_t piece_item(KpCanvas *c, KpUi *ui, const KpLayoutGroup *g, int k)
 {
 	KpUiCanvasItem it;
 	int32_t count;
-	if (!console_asset(c, ui, &count) || k >= count) return 0;
+	if (!console_asset(c, ui, &count) || (ui->console_whole ? k >= KP_LAYOUT_GROUPS : k >= count)) return 0;
 	memset(&it, 0, sizeof it);
 	it.path = ui->console_file->path;
 	it.path_len = ui->console_file->path_len;
-	it.frame = k;
+	it.frame = ui->console_whole ? 0 : k;
 	it.x = g->x;
 	it.y = g->y;
 	it.w = ui->console.w;
@@ -225,11 +226,31 @@ static void compose_pieces(KpCanvas *c, KpUi *ui, const KpArrangement *a, int hd
 	}
 }
 
+/* The fluff dialogs over the panels (CreateFluffDialogs 0x4a5a40): only a replay's list reaches into one, its
+ * (138, 367, 358, 22) over the status panel's and the menu button's first row 388 (the emulator's frames); the races'
+ * end above their panels. Each group's part at its place, as its console. TODO: the HD pieces' layouts (the HD art has
+ * no original pixels to repeat; the row stays the panels'). */
+static void compose_fluff(KpCanvas *c, KpUi *ui, const KpArrangement *a, int original, int hd)
+{
+	int k;
+	if (!original && hd) return;
+	for (k = 0; k < KP_LAYOUT_GROUPS; k++) {
+		const KpLayoutGroup *g = &a->groups[k];
+		if (original) {
+			kp_ui_canvas_item(&c->canvas, piece_item(c, ui, g, k));
+			kp_ui_canvas_fluff(ui, &c->canvas, -1, g->x, g->y, g->x0, g->x1);
+			kp_ui_canvas_item(&c->canvas, 0);
+		} else {
+			kp_ui_canvas_fluff(ui, &c->canvas, k, g->x, g->y, 0, 0);
+		}
+	}
+}
+
 int kp_canvas_compose(KpCanvas *c, KpUi *ui, int32_t w, int32_t h, const KpPanel *panels, int count, int layout)
 {
 	KpArrangement *a = &c->arrangement;
 	int32_t x, y, tx, ty, tw, th, frames;
-	int k, hd, pieces = ui->console_pieces[KP_UI_PIECE_LEFT].cells != NULL;
+	int k, hd, original, pieces = ui->console_pieces[KP_UI_PIECE_LEFT].cells != NULL;
 	if (resize(c, w, h) != 0) return -1;
 	hd = console_asset(c, ui, &frames);
 	kp_layout_arrange(a, w, h, layout < 0 ? kp_layout_choose(w, pieces, ui->console_edges) : layout);
@@ -252,7 +273,9 @@ int kp_canvas_compose(KpCanvas *c, KpUi *ui, int32_t w, int32_t h, const KpPanel
 		}
 	}
 	/* the original's screen in the original's art: its console, pixel for pixel */
-	if (!pieces || a->layout == KP_LAYOUT_CLASSIC || a->layout == KP_LAYOUT_NARROW_ORIGINAL || (w == KP_LAYOUT_MIN_W && !hd)) {
+	original = !pieces || a->layout == KP_LAYOUT_CLASSIC || a->layout == KP_LAYOUT_NARROW_ORIGINAL
+		|| (w == KP_LAYOUT_MIN_W && !hd);
+	if (original) {
 		compose_original(c, ui, a);
 	} else {
 		compose_pieces(c, ui, a, hd);
@@ -264,6 +287,7 @@ int kp_canvas_compose(KpCanvas *c, KpUi *ui, int32_t w, int32_t h, const KpPanel
 			add_place(c, panels[k].dialog, x, y);
 		}
 	}
+	compose_fluff(c, ui, a, original, hd);
 	if (c->overlay != NULL) kp_ui_canvas_translucent(ui, &c->canvas, c->overlay, c->overlay_x, c->overlay_y);
 	/* the tooltip over the panels: moved with the open dialog its anchor (the box's bottom left) lies on */
 	{

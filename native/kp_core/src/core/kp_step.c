@@ -293,7 +293,8 @@ void kp_start_turns(KpGame *g)
 	kp_scalar_set(g, KP_TURN, 0);
 }
 
-/* An iteration of RunPendingFrames 0x444e30: a paused game runs its turn, the flashes and the triggers only. */
+/* An iteration of RunPendingFrames 0x444e30: a paused game runs its turn, the flashes and the triggers only; a
+ * replay paused by its speed command (0x67cc7c) runs its turn and stops before the frame. */
 void kp_run_frame(KpGame *g, const KpCommand *commands, int count)
 {
 	if (kp_scalar(g, KP_PAUSED) == 1) {
@@ -301,6 +302,7 @@ void kp_run_frame(KpGame *g, const KpCommand *commands, int count)
 		return;
 	}
 	kp_run_turn(g, commands, count);
+	if (g->w->replay && g->replay_paused) return;
 	kp_scalar_set(g, KP_FRAME, kp_scalar(g, KP_FRAME) + 1);
 	kp_step_frame(g);
 }

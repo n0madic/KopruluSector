@@ -11,6 +11,13 @@
    "l\u0004L\u0001anguage": "z\u0004\u042f\u0001\u0437\u044b\u043a",
    "Remake based on the original version %s": "Ремейк оригинальной версии %s"
   },
+  "rez\\gluCustm.bin": {
+   "Unverified: saves loaded": "Не проверен: загрузки",
+   "Unverified: other version": "Не проверен: версия",
+   "Unverified: other data": "Не проверен: данные",
+   "i\u0004I\u0001mport": "b\u0004\u0418\u0001\u043c\u043f\u043e\u0440\u0442",
+   "e\u0004E\u0001xport": "r\u042d\u0004\u043a\u0001\u0441\u043f\u043e\u0440\u0442"
+  },
   "koprulu\\language.bin": {
    "o\u0004O\u0001k": "rO\u0004\u041a\u0001",
    "c\u0004C\u0001ancel": "n\u041e\u0004\u0442\u0001\u043c\u0435\u043d\u0430",

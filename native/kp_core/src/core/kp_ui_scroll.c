@@ -87,8 +87,17 @@ void kp_ui_start_screen(KpUi *ui)
 	KpGame *g = ui->game;
 	int32_t tx, ty;
 	if (g == NULL) return;
-	tx = (int32_t)((uint16_t)g->players.start_x[g->local_player] >> 5) - ui->view_w / TILE / 2;
-	ty = (int32_t)((uint16_t)g->players.start_y[g->local_player] >> 5) - ui->view_h / TILE / 2;
+	if (g->w->replay && kp_scalar(g, KP_SCREEN_X) != KP_NIL) {
+		/* a replay's view is the first start location's (the game's first screen, set by the map's load): the tile
+		 * it was taken from, or one as near the map's edge, which the clamp below treats alike */
+		tx = (int32_t)(kp_scalar(g, KP_SCREEN_X) + KP_START_SCREEN_X);
+		ty = (int32_t)(kp_scalar(g, KP_SCREEN_Y) + KP_START_SCREEN_Y);
+	} else {
+		tx = (int32_t)((uint16_t)g->players.start_x[g->local_player] >> 5);
+		ty = (int32_t)((uint16_t)g->players.start_y[g->local_player] >> 5);
+	}
+	tx -= ui->view_w / TILE / 2;
+	ty -= ui->view_h / TILE / 2;
 	kp_ui_set_screen_position(ui, (tx > 0 ? tx : 0) * TILE, (ty > 0 ? ty : 0) * TILE);
 	in(ui)->camera_moved = 1;
 }

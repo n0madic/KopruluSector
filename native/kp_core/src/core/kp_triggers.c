@@ -750,6 +750,17 @@ static void set_leaderboard(KpGame *g, const uint8_t *a)
 	t->lb_label = u32_at(a + KP_ACTION_STRING);
 }
 
+void kp_replay_leaderboard(KpGame *g, int action, uint16_t unit)
+{
+	uint8_t a[KP_TRIG_ACTION_SIZE];
+	if (!g->w->replay) return;
+	memset(a, 0, sizeof a);
+	a[KP_ACTION_TYPE] = (uint8_t)action;
+	a[KP_ACTION_UNIT] = (uint8_t)unit;
+	a[KP_ACTION_UNIT + 1] = (uint8_t)(unit >> 8);
+	set_leaderboard(g, a);
+}
+
 /* TrigActPauseGame 0x4b6020 of a single-player game: PauseGame 0x47cbb0 under a trigger (the accelerators and the
  * cursor layer are the interface's). */
 static void pause_game(KpGame *g)
@@ -1170,6 +1181,7 @@ static int expired(int64_t *c, int64_t period)
 static void tick_result(KpGame *g)
 {
 	int64_t r, local = local_slot(g);
+	if (g->w->replay) return; /* a replay's end is FeedReplayCommands' (0x4769b0) */
 	if (!expired(&g->trig.result, RESULT_STEPS)) return;
 	r = local >= 0 ? g->results[local] : 0;
 	if ((r == RESULT_DEFEAT || r == RESULT_VICTORY || r == RESULT_DRAW) && g->trig.result_dialog == 0) {
@@ -1216,7 +1228,10 @@ static void tick_clocks(KpGame *g, int64_t ms)
 static int64_t frame_ms(KpGame *g)
 {
 	int64_t speed = kp_scalar(g, KP_SPEED);
+	int64_t m = g->replay_multiplier;
 	if (speed < 0 || speed >= SPEEDS) kp_game_fail(g, "triggers: game speed %lld", (long long)speed);
+	/* SetReplaySpeed 0x481040's table of the 7 speeds: speed 0 times the multiplier, the others divided by it */
+	if (m > 1 && speed < SPEEDS - 1) return speed == 0 ? SPEED_MS[0] * m : SPEED_MS[speed] / m;
 	return SPEED_MS[speed];
 }
 

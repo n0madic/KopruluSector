@@ -27,6 +27,20 @@
 #define SET_WORKERS 245
 #define SET_CLOAKERS 246
 #define SET_ZERG_GROUND 247
+#define SET_REPLAY_PAUSED 248      /* 0x509c6c: Play, Slower, Faster */
+#define SET_REPLAY 249             /* 0x509e4c: Pause, Slower, Faster */
+#define REPLAY_ICON_FIRST 0x182    /* the replay's icons 0x182..0x185 and their offsets (0x4a0da8) */
+#define REPLAY_ICONS 4
+#define REPLAY_ICON_DY 3
+#define REPLAY_PROGRESS 10         /* statbtnn.bin: the progress bar, the texts -45..-47 */
+#define REPLAY_TEXT_FIRST (-45)
+#define STRING_REPLAY_PROGRESS 0x609
+#define STRING_PAUSED 0x60a
+#define GLU_ELAPSED 16             /* "Elapsed Time: %s" */
+#define GLU_SPEED 93               /* "Speed:" */
+#define GLU_SPEED_NAMES 0x55       /* + the speed: Slowest..Fastest */
+#define BLINK_MS 600
+#define SPEED_FAST 3               /* from Normal up a multiplier is "x", below "/" */
 #define SLICE_DISABLED 1
 #define SLICE_PRESSED 2
 #define REMAP_BYTES 16
@@ -86,7 +100,9 @@ static void draw_button(KpUi *ui, KpUiControl *c, int32_t x, int32_t y, const in
 	(void)x;
 	(void)y;
 	(void)clip;
-	if (k->buttons && kp_ui_grp_frame_size(k->buttons->data, k->buttons->size, pressed, &fw, &fh) == 0) {
+	/* No background in a replay: statbtnn's buttons sit on the console's own frames. */
+	if (!game(ui)->w->replay && k->buttons
+		&& kp_ui_grp_frame_size(k->buttons->data, k->buttons->size, pressed, &fw, &fh) == 0) {
 		crop[0] = 0;
 		crop[1] = 0;
 		crop[2] = fw < w ? fw : w;
@@ -100,9 +116,14 @@ static void draw_button(KpUi *ui, KpUiControl *c, int32_t x, int32_t y, const in
 		crop[1] = 0;
 		crop[2] = fw;
 		crop[3] = fh;
-		/* TODO: a replay's icons 0x182..0x185 and their offsets (0x4a0da8) */
-		kp_ui_draw_grp_rle(ui, c->left + (w - fw) / 2 + pressed, c->top + (h - fh) / 2 + pressed, k->icons->data,
-			k->icons->size, c->wuser, crop);
+		int32_t dx = 0, dy = 0;
+		if (game(ui)->w->replay && c->wuser >= REPLAY_ICON_FIRST && c->wuser < REPLAY_ICON_FIRST + REPLAY_ICONS) {
+			static const int8_t DX[REPLAY_ICONS] = { -2, -2, -4, -3 }; /* 0x4a0da8 */
+			dx = DX[c->wuser - REPLAY_ICON_FIRST];
+			dy = REPLAY_ICON_DY;
+		}
+		kp_ui_draw_grp_rle(ui, c->left + (w - fw) / 2 + pressed + dx, c->top + (h - fh) / 2 + pressed + dy,
+			k->icons->data, k->icons->size, c->wuser, crop);
 	}
 	for (i = 0; i < REMAP_BYTES; i++) ui->remap[i] = (uint8_t)i;
 }
@@ -222,8 +243,8 @@ void kp_ui_card_modes(KpUi *ui)
 	KpUiCard *k = cc(ui);
 	KpGame *g = game(ui);
 	k->forced = k->set = KP_UI_SET_NONE;
-	/* TODO: a replay's sets 248 and 249 */
-	if (ui->hud.status_unit != 0) {
+	if (g->w->replay) k->forced = g->replay_paused ? SET_REPLAY_PAUSED : SET_REPLAY;
+	else if (ui->hud.status_unit != 0) {
 		if (ui->input.targeting) k->forced = SET_TARGETING;
 		else if (kp_scalar(g, KP_PLACEMENT_ACTIVE) == 1) k->forced = SET_PLACEMENT;
 	}
@@ -307,7 +328,7 @@ static void cost_line(KpUi *ui, int16_t r[4])
 	int i, drawn = 0;
 	for (i = 0; i < COST_SLOTS; i++) {
 		uint16_t v = cc(ui)->costs[i];
-		int frame = ICONS[i] == COST_GAS ? (int)game(ui)->players.race[game(ui)->local_player] + 1 : ICONS[i];
+		int frame = ICONS[i] == COST_GAS ? kp_ui_local_race(ui) + 1 : ICONS[i];
 		const uint8_t *pixels = NULL;
 		char text[16];
 		if (v == 0) continue;
@@ -432,6 +453,86 @@ void kp_ui_card_tooltip(KpUi *ui, int32_t c)
 	show_text(ui, s ? s + 2 : NULL);
 }
 
+/* --- a replay's panel --- */
+
+/* GetReplayElapsedSeconds 0x480d70: the header speed's frame time 0x4ef660 by the frame, a 32-bit product. */
+uint32_t kp_ui_replay_seconds(const KpGame *g)
+{
+	static const uint32_t MS[] = { 167, 111, 83, 67, 56, 48, 42 };
+	int64_t s = g->replay_header_speed;
+	uint32_t ms = s >= 0 && s < (int64_t)(sizeof MS / sizeof MS[0]) ? MS[s] : 0; /* a file's speed is 0..6 */
+	return (uint32_t)(ms * (uint32_t)kp_scalar(g, KP_FRAME)) / 1000u;
+}
+
+static const char *tbl_text(KpUi *ui, int table, uint32_t id)
+{
+	const uint8_t *s = kp_ui_tbl(ui, table, id);
+	return s ? (const char *)s : "";
+}
+
+/* UpdateReplayClock 0x480fb0 (each frame) and SetReplaySpeed 0x481040: a new second, the pause's blink or a new speed
+ * refreshes the card (RefreshStatusUi 0x4a7ed0), whose rebuild redraws the panel. */
+static void replay_clock(KpUi *ui)
+{
+	KpUiCard *k = cc(ui);
+	KpGame *g = game(ui);
+	uint32_t sec = kp_ui_replay_seconds(g);
+	int64_t speed = kp_scalar(g, KP_SPEED);
+	if ((int64_t)sec != k->replay_seconds) {
+		k->replay_seconds = sec;
+		ui->hud.card_refresh = 1;
+	}
+	if (g->replay_paused && (int32_t)(ui->now - k->replay_blink_at) > BLINK_MS) {
+		k->replay_blink_at = ui->now;
+		k->replay_blink ^= 1;
+		ui->hud.card_refresh = 1;
+	}
+	if (speed != k->replay_speed || g->replay_multiplier != k->replay_multiplier || g->replay_paused != k->replay_paused) {
+		k->replay_speed = speed;
+		k->replay_multiplier = g->replay_multiplier;
+		k->replay_paused = g->replay_paused;
+		ui->hud.card_refresh = 1;
+	}
+}
+
+/* UpdateReplayInfoPanel 0x4a5640: the progress bar, "Replay Progress", the elapsed time and the speed or "Paused". */
+static void replay_panel(KpUi *ui)
+{
+	KpUiCard *k = cc(ui);
+	KpGame *g = game(ui);
+	int32_t c = kp_ui_find_control(ui, k->dialog, REPLAY_PROGRESS);
+	uint32_t t = kp_ui_replay_seconds(g), frames = (uint32_t)g->replay_frames;
+	int64_t speed = kp_scalar(g, KP_SPEED), m = g->replay_multiplier;
+	char time[32], suffix[16];
+	int i;
+	if (c >= 0) { /* GetReplayProgressPercent 0x480e20: a 32-bit product (the original faults on 0 frames) */
+		kp_ui_show_control(ui, c);
+		ui->controls[c].wuser = (uint16_t)(frames ? (uint32_t)kp_scalar(g, KP_FRAME) * 100u / frames : 0);
+		kp_ui_mark_dirty(ui, c);
+	}
+	snprintf((char *)k->replay_text[0], sizeof k->replay_text[0], "%s%s", "\x03",
+		tbl_text(ui, KP_UI_STAT_TXT, STRING_REPLAY_PROGRESS));
+	if (t / 3600 > 0) snprintf(time, sizeof time, "%u:%02u:%02u", t / 3600, t / 60 % 60, t % 60);
+	else snprintf(time, sizeof time, "%02u:%02u", t / 60 % 60, t % 60);
+	snprintf((char *)k->replay_text[1], sizeof k->replay_text[1], tbl_text(ui, KP_UI_GLUALL, GLU_ELAPSED), time);
+	if (g->replay_paused) {
+		snprintf((char *)k->replay_text[2], sizeof k->replay_text[2], "%s",
+			k->replay_blink ? tbl_text(ui, KP_UI_STAT_TXT, STRING_PAUSED) : "");
+	} else {
+		suffix[0] = 0;
+		if (m > 1) snprintf(suffix, sizeof suffix, " %s %d", speed >= SPEED_FAST ? "x" : "/", (int)m);
+		snprintf((char *)k->replay_text[2], sizeof k->replay_text[2], "%s %s%s", tbl_text(ui, KP_UI_GLUALL, GLU_SPEED),
+			speed >= 0 && speed <= 6 ? tbl_text(ui, KP_UI_GLUALL, (uint32_t)(GLU_SPEED_NAMES + speed)) : "", suffix);
+	}
+	for (i = 0; i < 3; i++) {
+		c = kp_ui_find_control(ui, k->dialog, (int16_t)(REPLAY_TEXT_FIRST - i));
+		if (c < 0) continue;
+		kp_ui_set_control_text(ui, c, k->replay_text[i]);
+		kp_ui_show_control(ui, c);
+		kp_ui_mark_dirty(ui, c);
+	}
+}
+
 void kp_ui_card_refresh(KpUi *ui)
 {
 	KpUiCard *k = cc(ui);
@@ -439,6 +540,7 @@ void kp_ui_card_refresh(KpUi *ui)
 	int64_t status = ui->hud.status_unit;
 	uint16_t set;
 	if (k->dialog < 0 || g == NULL) return;
+	if (g->w->replay) replay_clock(ui);
 	if (ui->hud.card_refresh && (k->forced == KP_UI_SET_NONE || g->w->replay)) kp_ui_card_modes(ui);
 	if (k->forced != KP_UI_SET_NONE) set = k->forced;
 	else if (k->merged != KP_UI_SET_NONE) set = k->merged;
@@ -456,6 +558,7 @@ void kp_ui_card_refresh(KpUi *ui)
 			status_orders(ui, &k->order, &k->suborder);
 			highlight(ui);
 		}
+		if (g->w->replay) replay_panel(ui);
 		ui->hud.card_refresh = 0;
 	} else if (status) {
 		uint8_t o, so;
@@ -593,7 +696,7 @@ int kp_ui_card_create(KpUi *ui)
 	KpGame *g = game(ui);
 	const KpUiFile *ticon;
 	char path[40];
-	int race = (int)g->players.race[g->local_player];
+	int race = kp_ui_local_race(ui);
 	int32_t w, h;
 	uint8_t pixels[96];
 	if (race < 0 || race >= RACES) race = 1;
@@ -607,8 +710,9 @@ int kp_ui_card_create(KpUi *ui)
 	k->icons = kp_ui_file(ui->grps, ui->grp_count, "unit\\cmdbtns\\cmdicons.grp");
 	ticon = kp_ui_file(ui->pcx, ui->pcx_count, "unit\\cmdbtns\\ticon.pcx");
 	if (ticon && kp_ui_pcx(ticon->data, ticon->size, &w, &h, pixels, sizeof pixels) == 0) memcpy(k->slices, pixels, 96);
-	/* TODO: a replay's card rez\statbtnn.bin */
-	snprintf(path, sizeof path, "rez\\statbtn%c.bin", RACE_LETTERS[race]);
+	k->replay_seconds = -1;
+	k->replay_speed = k->replay_multiplier = k->replay_paused = -1;
+	snprintf(path, sizeof path, "rez\\statbtn%c.bin", g->w->replay ? 'n' : RACE_LETTERS[race]); /* 'n': a replay's */
 	k->dialog = kp_ui_load_dialog(ui, path);
 	if (k->dialog < 0) return -1;
 	kp_ui_init_dialog(ui, k->dialog, card_dialog);

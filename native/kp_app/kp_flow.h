@@ -126,6 +126,11 @@ typedef struct {
 	 * are, or nothing names them; 0 not yet, a group of the data names them (with fetch: on their way, the flow asks
 	 * again each frame); -1 they cannot be had (the reason in err); NULL: always there */
 	int (*language_files)(void *ctx, const char *locale, int fetch, char *err, size_t err_size);
+	/* Load Replay's Import and Export (NULL: no file picker on the platform, the buttons stay hidden): a picker for a
+	 * .rep to read, answered later by kp_flow_import_replay (or not at all when it is cancelled); a picker for where a
+	 * replay's bytes go, under its name (the host copies the bytes) */
+	void (*pick_replay)(void *ctx);
+	void (*export_replay)(void *ctx, const char *name, const uint8_t *bytes, size_t size);
 } KpFlowHost;
 
 typedef struct KpFlow {
@@ -219,6 +224,12 @@ typedef struct KpFlow {
 	struct { int kind; int64_t mission; int state; } cine_then;
 	int step_cinematics[KP_APP_STEP_CINEMATICS], step_cinematic_count; /* the cinematic rows between the finished
 	                                                                      * mission and the next step */
+	/* the recorded game's KPRX tail (owned: what it started from) and whether its LastReplay was written (EndGame
+	 * 0x443db0 writes it once a game that started ends) */
+	KpRepTail *rep_tail;
+	int replay_saved;
+	KpRep *replay_play;  /* Load Replay's file the next game plays (its bytes freed once the session has them) */
+	int playing_replay;  /* the game is a replay's playback (no campaign, no ready room, no LastReplay) */
 } KpFlow;
 
 /* The flow over its host and data (set in f before): the interface and the video options; --mission's game, or the
@@ -234,6 +245,16 @@ void kp_flow_free(KpFlow *f);
 int kp_flow_start_mission(KpFlow *f, int index, char *err, size_t err_size);
 /* A saved game started from its file, as the glue's Load Saved starts it (0, else -1 with why). */
 int kp_flow_load_saved(KpFlow *f, const char *name, char *why, size_t why_size);
+/* Load Replay's Ok on the replays folder's file name (.rep added when it lacks it): its mission played from the file;
+ * -1 with why when it cannot be. */
+int kp_flow_play_replay(KpFlow *f, const char *name, char *why, size_t why_size);
+/* Load Replay's Import, the host's answer to pick_replay: the picked file's name (a path or a URI, whose last part names
+ * the copy) and bytes. A readable replay is copied into the listed folder under a free name of at most 31 bytes (".rep"
+ * kept or added, " (2)" and on for a name taken) and the list shows it selected; else Load Replay's popup refuses it.
+ * The copy's name in out (NULL: not wanted), 0; or -1. */
+int kp_flow_import_replay(KpFlow *f, const char *name, const uint8_t *bytes, size_t size, char *out, size_t out_size);
+/* A picked file's name as an import names its copy (kp_flow_import_replay without the free name's suffix). */
+void kp_flow_replay_import_name(const char *source, char *out, size_t size);
 void kp_flow_clamp_camera(KpFlow *f);
 /* The picture's rectangle (win_x..win_h) for the screen shown: the safe area, or the whole drawable on a fixed screen. */
 void kp_flow_picture(KpFlow *f);

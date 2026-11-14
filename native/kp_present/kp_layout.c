@@ -58,6 +58,7 @@ static const Panel PANELS[] = {
 	{ "rez\\statbtnt.bin", ANCHOR_GROUP, GROUP_RIGHT, 0, 0 },
 	{ "rez\\statbtnz.bin", ANCHOR_GROUP, GROUP_RIGHT, 0, 0 },
 	{ "rez\\statbtnp.bin", ANCHOR_GROUP, GROUP_RIGHT, 0, 0 },
+	{ "rez\\statbtnn.bin", ANCHOR_GROUP, GROUP_RIGHT, 0, 0 }, /* a replay's (InitCommandCard 0x4a0f20) */
 	{ "rez\\statres.bin", ANCHOR_TOP_RIGHT, 0, 0, 0 },
 	{ "rez\\statlb.bin", ANCHOR_TOP_LEFT, 0, 0, 0 },
 	{ "rez\\ttextbox.bin", ANCHOR_BOTTOM_CENTRE, 0, 0, 0 },
@@ -75,7 +76,7 @@ static const char *const CENTRED[] = { "rez\\gamemenu.bin", "rez\\abrtmenu.bin",
 	"rez\\options.bin", "rez\\helpmenu.bin", "rez\\help.bin", "rez\\quit.bin", "rez\\quit2mnu.bin",
 	"rez\\quitrepl.bin", "rez\\restart.bin", "rez\\savegame.bin", "rez\\loadgame.bin", "rez\\snd_dlg.bin",
 	"rez\\spd_dlg.bin", "koprulu\\video.bin", "rez\\ok.bin", "rez\\okcancel.bin", "rez\\wait.bin", "rez\\tips_dlg.bin",
-	"rez\\wmission.bin", "rez\\lmission.bin" };
+	"rez\\wmission.bin", "rez\\lmission.bin", "rez\\allyfltr.bin" };
 
 /* A fixed screen fills the whole drawable: fitted to the safe area, the 640 x 480 lost the gesture zones' height (the
  * Fold7's cover screen in landscape: 931 of 1080 pixels) and left black bands. Its edges reach the zones, where the

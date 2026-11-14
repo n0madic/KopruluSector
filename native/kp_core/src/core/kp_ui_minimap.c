@@ -12,6 +12,7 @@
 #include "kp_game.h"
 #include "kp_ids.h"
 #include "kp_images.h"
+#include "kp_int.h"
 
 #define C_IMAGE 1
 #define IMAGE_SIDE 128
@@ -38,6 +39,24 @@
 #define UI_FRAME_DARK 5               /* 0x6d236d */
 #define UI_BLACK 15                   /* 0x6d2377 */
 #define BUTTON_TERRAIN 2
+#define BUTTON_PLAYERS 4              /* a replay's View Players (Diplomacy in a multiplayer game) */
+#define S_VIEW_PLAYERS 0x604
+/* allyfltr.bin (atlas P14 0x441980..0x4426d0) */
+#define ALLY_OK (-2)
+#define ALLY_CANCEL (-3)
+#define ALLY_BOX_FIRST 1              /* the alliance boxes 1..12, hidden in a replay */
+#define ALLY_VISION_FIRST 13          /* the vision boxes 13..24 */
+#define ALLY_REVEAL 25                /* Allied Victory, a replay's Reveal Entire Map */
+#define ALLY_TITLE 26
+#define ALLY_ALLIES_LABEL 27
+#define ALLY_NAME_FIRST (-10)         /* the rows' names -10..-18 */
+#define ALLY_ROWS 9
+#define ALLY_SQUARE 12
+#define ALLY_TEXT_FORMAT 0x11
+#define ALLY_TILED 0x20000000u
+#define GLU_REPLAY_PLAYERS 0xb6
+#define GLU_REVEAL_MAP 0xb7
+#define KP_UI_CHECKBOX_TYPE 4
 #define KEY_TAB 9
 #define COLOUR_MODES 3
 #define S_SHOW_TERRAIN 0x32a              /* "Show Terrain in Minimap (Tab)" */
@@ -113,6 +132,9 @@ static void compose(KpUi *ui)
 	v.map_h = g->map_h;
 	v.not_visible = (int64_t)1 << g->local_player;
 	v.not_explored = v.not_visible << 8;
+	v.replay = g->w->replay != 0; /* a replay's tiles by its vision 0x67cc84 and reveal-all 0x67cc88 */
+	v.replay_vision = g->w->local_vision;
+	v.replay_reveal = g->w->replay_reveal;
 	if (m->dark != NULL) (void)kp_fog_minimap(&v, m->terrain, m->dark, colour(ui, UI_BLACK), m->image, &w, &h);
 }
 
@@ -203,6 +225,13 @@ int kp_ui_team_rows(KpUi *ui, uint8_t rows[KP_UI_PLAYER_ROWS])
 	return 1;
 }
 
+/* The other players' units' test: a replay's vision 0x67cc84 or its reveal-all 0x67cc88, else the local player's. */
+static int seen(KpGame *g, uint32_t mask)
+{
+	if (g->w->replay) return (mask & (uint32_t)g->w->local_vision) != 0 || g->w->replay_reveal != 0;
+	return (mask & (1u << g->local_player)) != 0;
+}
+
 /* DrawNeutralMinimapUnits 0x46e5b0 (resources == 1) and DrawOtherMinimapUnits 0x46e700. */
 static void other_units(KpUi *ui, int64_t p, int resources)
 {
@@ -212,7 +241,7 @@ static void other_units(KpUi *ui, int64_t p, int resources)
 	for (n = g->player_units[p]; n != 0; n = g->u.player_next[n]) {
 		int64_t t = g->u.type[n];
 		if (skipped(g, t)) continue;
-		if (!(sight_mask(g, n) & (1u << g->local_player))) continue; /* TODO: a replay's vision (0x67cc84) */
+		if (!seen(g, sight_mask(g, n))) continue;
 		box_of(ui, n, resources && (kp_mineral_field(t) || t == KP_TYPE_GEYSER) ? colour(ui, UI_RESOURCE) : c);
 	}
 }
@@ -228,7 +257,7 @@ static void local_units(KpUi *ui)
 		int64_t t = g->u.type[n];
 		uint8_t c = colour(ui, UI_LOCAL);
 		if (skipped(g, t)) continue;
-		if (!(sight_mask(g, n) & (1u << g->local_player))) continue;
+		if (!(sight_mask(g, n) & (1u << g->local_player))) continue; /* outside a replay only (draw_units) */
 		/* the blink counter +0x8a (under attack 20, a talk with a ping 8) counts the draws down: the interface writes
 		 * the unit's byte as the original does, and nothing of the simulation reads it (ADR 0010) */
 		if ((g->u.last_event_timer[n] & 0xff) != 0) {
@@ -240,6 +269,26 @@ static void local_units(KpUi *ui)
 	}
 }
 
+/* TestFogThingyFootprint 0x418520 in mode 1 (0x418e00) as a replay asks it: some tile of the ghost's placement box that
+ * none of the replay's vision players (0x67cc84's low byte) explored, and no reveal-all 0x67cc88. */
+static int ghost_unexplored(KpGame *g, int32_t s, int32_t kind)
+{
+	KpImages *w = g->w;
+	int32_t bw = (int16_t)KP_DAT(g, units, staredit_placement_size, kind * 2);
+	int32_t bh = (int16_t)KP_DAT(g, units, staredit_placement_size, kind * 2 + 1);
+	int32_t left = kp_idiv((int16_t)w->spr.x[s] - kp_idiv(bw, 2), 32), top = kp_idiv((int16_t)w->spr.y[s] - kp_idiv(bh, 2), 32);
+	int64_t x, y, explored = (int64_t)(w->local_vision & 0xff) << 8;
+	if (w->replay_reveal != 0) return 0;
+	for (y = top; y < top + kp_idiv(bh + 31, 32); y++) {
+		for (x = left; x < left + kp_idiv(bw + 31, 32); x++) {
+			if (x < 0 || y < 0 || x >= g->map_w || y >= g->map_h) continue;
+			if ((explored & ~g->terrain.tiles[y * g->map_w + x]) == 0) return 1;
+		}
+	}
+	return 0;
+}
+
+/* In a replay every player's units go through DrawOtherMinimapUnits in that player's colour, and no local walk follows. */
 static void draw_units(KpUi *ui)
 {
 	KpGame *g = ui->game;
@@ -248,13 +297,14 @@ static void draw_units(KpUi *ui)
 	int64_t p;
 	for (p = 11; p >= 0; p--) {
 		if (p >= 8) other_units(ui, p, 1);
-		else if (p != g->local_player) other_units(ui, p, 0);
+		else if (w->replay || p != g->local_player) other_units(ui, p, 0);
 	}
-	local_units(ui);
+	if (!w->replay) local_units(ui);
 	for (t = w->active_fog.head; t >= 0 && t < KP_FOG; t = w->fog.next[t]) { /* the fog ghosts */
 		int32_t s = w->fog.sprite[t], kind = w->fog.kind[t];
 		uint8_t c;
 		if ((uint16_t)(kind - TYPE_FIRST_DOOR) <= TYPE_LAST_TRAP - TYPE_FIRST_DOOR) continue;
+		if (w->replay && ghost_unexplored(g, s, kind)) continue;
 		if (resource_sprite(w->spr.id[s])) c = colour(ui, UI_RESOURCE);
 		else c = player_colour(ui, w->spr.owner[s]);
 		unit_box(ui, (uint32_t)(uint16_t)w->spr.x[s], (uint32_t)(uint16_t)w->spr.y[s], placement(g, kind, 0),
@@ -618,12 +668,163 @@ static int image_interact(KpUi *ui, KpUiControl *c, KpUiEvent *e)
 	}
 }
 
-/* MinimapButtonProc 0x46d0e0 with MinimapButtonInit 0x46d130 (a campaign: only the terrain button). */
+/* --- a replay's vision dialog (OpenAllianceDialog 0x441b70 and the alliance dialog of a replay, atlas P14) --- */
+
+/* DrawPlayerColorListItem 0x441c00: the player's minimap colour in a 12 x 12 square, then the name. */
+static void ally_name_draw(KpUi *ui, KpUiControl *c, int32_t x, int32_t y, const int16_t clip[4])
+{
+	int32_t h = c->bottom - c->top;
+	(void)x;
+	(void)y;
+	(void)clip;
+	kp_ui_fill_rect(ui, c->left, c->top + (h - 11) / 2, ALLY_SQUARE, ALLY_SQUARE, mm(ui)->player_colours[c->user & 0xf]);
+	if (c->text != NULL) kp_ui_draw_control_text(ui, c, h + 9, 0, NULL, ALLY_TEXT_FORMAT);
+}
+
+/* VisionCheckboxInteract 0x4426d0: the bit of the row's player in the mask being edited. */
+static int ally_vision_box(KpUi *ui, KpUiControl *c, KpUiEvent *e)
+{
+	int32_t self = (int32_t)(c - ui->controls);
+	if (e->type == KP_UI_USER && e->code == KP_UI_CREATE && (c->flags & KP_UI_VISIBLE)) {
+		(void)kp_ui_send_user(ui, self, KP_UI_VALUE_CHANGED, (ui->ally.vision >> (c->user & 0xf)) & 1);
+	} else if (e->type == KP_UI_USER && e->code == KP_UI_CLOSE) {
+		(void)kp_ui_type_interact(KP_UI_CHECKBOX_TYPE)(ui, c, e);
+		ui->ally.vision ^= (uint16_t)(1u << (c->user & 0xf));
+		return 1;
+	}
+	return kp_ui_type_interact(KP_UI_CHECKBOX_TYPE)(ui, c, e);
+}
+
+/* AlliedVictoryCheckboxInteract 0x441980 of a replay: "Reveal Entire Map" (gluAll 0xb7), checked by 0x67cc88. */
+static int ally_reveal_box(KpUi *ui, KpUiControl *c, KpUiEvent *e)
+{
+	int32_t self = (int32_t)(c - ui->controls);
+	if (e->type == KP_UI_USER && e->code == KP_UI_CREATE) {
+		(void)kp_ui_send_user(ui, self, KP_UI_VALUE_CHANGED, ui->ally.reveal != 0);
+	} else if (e->type == KP_UI_USER && e->code == KP_UI_POST_LOAD) {
+		kp_ui_set_control_text(ui, self, kp_ui_tbl(ui, KP_UI_GLUALL, GLU_REVEAL_MAP));
+	}
+	return kp_ui_type_interact(KP_UI_CHECKBOX_TYPE)(ui, c, e);
+}
+
+/* ShuffledPlayerSlots 0x441ae0: the slots of the active players in an order the game's seed shuffles (srand reseeds
+ * the CRT's generator, as the original does). */
+static int ally_slots(KpUi *ui, int64_t out[8])
+{
+	KpGame *g = ui->game;
+	int64_t p;
+	int n = 0, k, left;
+	int64_t all[8];
+	for (p = 0; p < 8; p++) {
+		if (kp_trigger_player_active(g, p)) all[n++] = p; /* FirstActivePlayer 0x4b3160's slots */
+	}
+	kp_rng_crt_init(g->crt, g->rng->initial_seed);
+	for (k = 0, left = n; k < n; k++, left--) {
+		int r = (int)(kp_rng_crt_rand(g->crt) % (uint32_t)left);
+		out[k] = all[r];
+		memmove(all + r, all + r + 1, (size_t)(left - r - 1) * sizeof all[0]);
+	}
+	return n;
+}
+
+/* FillAllianceRowsFreeForAll 0x442320 of a replay: per slot, from the shuffle's last, its name and vision box; the
+ * alliance boxes hidden. The rows left over are hidden. */
+static void ally_rows(KpUi *ui, int32_t d)
+{
+	int64_t slots[8];
+	int n = ally_slots(ui, slots), row;
+	for (row = 0; row < ALLY_ROWS; row++) {
+		int32_t name = kp_ui_find_control(ui, d, (int16_t)(ALLY_NAME_FIRST - row));
+		int32_t ally = kp_ui_find_control(ui, d, (int16_t)(ALLY_BOX_FIRST + row));
+		int32_t vision = kp_ui_find_control(ui, d, (int16_t)(ALLY_VISION_FIRST + row));
+		if (ally >= 0) kp_ui_hide_control(ui, ally);
+		if (row >= n) {
+			if (name >= 0) kp_ui_hide_control(ui, name);
+			if (vision >= 0) kp_ui_hide_control(ui, vision);
+			continue;
+		}
+		if (name >= 0) {
+			ui->controls[name].user = (uint32_t)slots[n - 1 - row];
+			ui->controls[name].draw = ally_name_draw;
+			kp_ui_set_control_text(ui, name, ui->slot_names[slots[n - 1 - row]]);
+			kp_ui_show_control(ui, name);
+		}
+		if (vision >= 0) {
+			ui->controls[vision].user = (uint32_t)slots[n - 1 - row];
+			kp_ui_show_control(ui, vision);
+		}
+	}
+}
+
+/* AllianceDialogInteract 0x441dd0. */
+static int ally_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
+{
+	int32_t self = (int32_t)(d - ui->controls);
+	if (e->type == KP_UI_USER) {
+		switch (e->code) {
+		case KP_UI_POST_LOAD: { /* CreateAllianceDialog 0x441e60: the procedures, "Replay Players", no "Allies" */
+			KpUiInteract procs[ALLY_REVEAL];
+			int32_t c;
+			int k;
+			memset(procs, 0, sizeof procs);
+			for (k = ALLY_VISION_FIRST; k < ALLY_VISION_FIRST + 12; k++) procs[k - 1] = ally_vision_box;
+			procs[ALLY_REVEAL - 1] = ally_reveal_box;
+			kp_ui_bind_interacts(ui, self, procs, ALLY_REVEAL);
+			if ((c = kp_ui_find_control(ui, self, ALLY_TITLE)) >= 0) {
+				kp_ui_set_control_text(ui, c, kp_ui_tbl(ui, KP_UI_GLUALL, GLU_REPLAY_PLAYERS));
+			}
+			if ((c = kp_ui_find_control(ui, self, ALLY_ALLIES_LABEL)) >= 0) kp_ui_hide_control(ui, c);
+			break;
+		}
+		case KP_UI_CREATE: { /* InitAllianceDialog 0x441c60 */
+			int32_t c;
+			kp_ui_tile_frame(ui, self);
+			kp_ui_border_colour(ui, self);
+			ally_rows(ui, self);
+			if ((c = kp_ui_find_control(ui, self, ALLY_OK)) >= 0) kp_ui_set_user_word(&ui->controls[c], 3, ALLY_TILED);
+			if ((c = kp_ui_find_control(ui, self, ALLY_CANCEL)) >= 0) kp_ui_set_user_word(&ui->controls[c], 5, ALLY_TILED);
+			break;
+		}
+		case KP_UI_CLOSE: { /* ApplyAllianceDialog 0x441cb0 on OK, then the dialog ends */
+			int32_t c = kp_ui_find_control(ui, self, ALLY_REVEAL);
+			if (ui->result == ALLY_OK && ui->game != NULL) {
+				kp_replay_set_vision(ui->game, ui->ally.vision, c >= 0 && (ui->controls[c].words36[0] & 0xff) != 0);
+				redraw(ui, 0);
+			}
+			kp_ui_destroy_dialog(ui, self);
+			ui->abort = 1;
+			return 1;
+		}
+		case KP_UI_DESTROY:
+			kp_ui_close_modeless(ui, 0);
+			ui->ally.dialog = -1;
+			(void)kp_ui_modeless_default(ui, d, e);
+			return 1;
+		default: break;
+		}
+	}
+	return kp_ui_modeless_default(ui, d, e);
+}
+
+static void open_vision_dialog(KpUi *ui)
+{
+	/* OpenAllianceDialog 0x441b70 of a replay: the vision mask 0x67cc84, allyfltr.bin offline */
+	ui->ally.vision = (uint16_t)(ui->game->w->local_vision & 0xff);
+	ui->ally.reveal = ui->game->w->replay_reveal != 0;
+	ui->ally.dialog = kp_ui_open_modeless(ui, "rez\\allyfltr.bin", ally_proc);
+}
+
+/* MinimapButtonProc 0x46d0e0 with MinimapButtonInit 0x46d130 (a campaign: only the terrain button; a replay: only
+ * View Players). */
 /* ShowMinimapButtonTooltip 0x46e1e0 (with ShowTerrainButtonTooltip 0x46e880's terrain text): at the button's right
- * top. TODO: the multiplayer buttons' texts (messaging 0x32d, diplomacy 0x32c, a replay's 0x604) */
+ * top. TODO: the multiplayer buttons' texts (messaging 0x32d, diplomacy 0x32c) */
 static void button_tooltip(KpUi *ui, const KpUiControl *c)
 {
 	const KpUiControl *d = &ui->controls[c->parent];
+	if (c->id == BUTTON_PLAYERS && ui->game->w->replay) {
+		kp_ui_tooltip_text(ui, d->left + c->right, d->top + c->top, kp_ui_tbl(ui, KP_UI_STAT_TXT, S_VIEW_PLAYERS));
+		return;
+	}
 	if (c->id != BUTTON_TERRAIN) {
 		kp_ui_tooltip_hide(ui);
 		return;
@@ -650,17 +851,21 @@ static int button_interact(KpUi *ui, KpUiControl *c, KpUiEvent *e)
 			mm(ui)->hovered = -1;
 			redraw(ui, 0);
 			button_tooltip(ui, c);
+		} else if (c->id == BUTTON_PLAYERS && ui->game->w->replay) {
+			kp_ui_tooltip_hide(ui);
+			open_vision_dialog(ui);
 		} else {
-			kp_ui_tooltip_hide(ui); /* TODO: the message and alliance dialogs (0x441be0, 0x441b70) */
+			kp_ui_tooltip_hide(ui); /* TODO: the message and alliance dialogs of a multiplayer game (0x441be0, 0x441b70) */
 		}
 		return 1;
 	}
 	if (e->type == KP_UI_USER && e->code == KP_UI_CREATE) {
-		static const uint16_t FRAMES[3] = { 0x0003, 0x0053, 0x0000 }; /* SetControlUserWord's table 0x508ba0[0, 1, 6] */
+		static const uint16_t FRAMES[3] = { 0x0003, 0x0053, 0x008c }; /* SetControlUserWord's table 0x508ba0[0, 1, 7] */
+		int replay = ui->game != NULL && ui->game->w->replay;
 		if (c->id == 2) c->wuser = FRAMES[0];
-		else if (c->id == 4) c->wuser = FRAMES[1];
-		/* TODO: multiplayer and replays (messaging, diplomacy, view players) */
-		kp_ui_set_visible(ui, self, c->id == 2);
+		else if (c->id == 4) c->wuser = replay ? FRAMES[2] : FRAMES[1];
+		/* TODO: multiplayer (messaging, diplomacy) */
+		kp_ui_set_visible(ui, self, replay ? c->id == BUTTON_PLAYERS : c->id == BUTTON_TERRAIN);
 	}
 	return kp_ui_type_interact(c->type)(ui, c, e);
 }

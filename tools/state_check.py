@@ -22,12 +22,13 @@ camera-dependent fields are left out there (Koprulu's presentation refreshes the
 (tests/golden/oracle/initial_state), `scenarios` the scenarios of tests/scenarios (tests/golden/oracle/scenarios)
 or `runs` campaign missions run idle with a dump at every step (tests/golden/oracle/runs, in the scenarios' shape),
 `chains` the games of the campaign chains (tests/golden/oracle/chains; --only takes a chain or a game), `plays` the
-scripted wins of the campaign rows (tests/golden/oracle/plays); --root defaults to the kind's emulator output.
+scripted wins of the campaign rows (tests/golden/oracle/plays), `replays` the original playing its own replays
+(tests/golden/oracle/replays, run in a replay's mode); --root defaults to the kind's emulator output.
 --speech LOC: plays the emulator ran with a language's speech (emu/plays-LOC, tests/golden/oracle/plays-LOC), Koprulu
 takes the TIME of the language's maps in --speech-data (a StarCraft: Remastered install or a repack with the language's
 group; default KOPRULU_SCR).
 
-Usage: python3 tools/state_check.py [--kind initial|scenarios|runs|chains|plays] [--root STATES]
+Usage: python3 tools/state_check.py [--kind initial|scenarios|runs|chains|plays|replays] [--root STATES]
        [--only terran-m02,...] [--step N|A-B|A-B/K|all|all/K] [--write-golden] [--speech LOC [--speech-data DIR]]
 """
 from __future__ import annotations
@@ -76,6 +77,11 @@ CHAIN_GAME = re.compile(r"^\d+-m\d+$")
 # every FULL_EVERY-th step and the last.
 PLAY_ROOT = EMU_ROOT / "plays"
 PLAY_GOLDEN = ROOT / "tests" / "golden" / "oracle" / "plays"
+# The original playing replays of its own games (`replay FILE OUT --oracle`, sc_emulator/replay.py, phase RP): the
+# commands and the interface events it logged while playing, run by Koprulu in a replay's mode (KP_REPLAY: the replay
+# flag 0x67cc90 and full vision); their goldens have the plays' shape.
+REPLAY_ROOT = EMU_ROOT / "replays"
+REPLAY_GOLDEN = ROOT / "tests" / "golden" / "oracle" / "replays"
 FINGERPRINT = "fingerprint"
 SYNC_COMMAND = "37"
 FULL_EVERY = 500
@@ -87,12 +93,13 @@ KINDS = {
     "runs": (RUN_ROOT, RUN_GOLDEN),
     "chains": (CHAIN_ROOT, CHAIN_GOLDEN),
     "plays": (PLAY_ROOT, PLAY_GOLDEN),
+    "replays": (REPLAY_ROOT, REPLAY_GOLDEN),
 }
 # A language's speech (`play ... --speech LOC:MISSION`, sc_emulator/speech.py, localization's stage L5): the plays the
 # emulator ran with the language's TIME go to EMU_ROOT/plays-<loc>, their goldens to tests/golden/oracle/plays-<loc>,
 # and Koprulu takes the TIME of the language's maps (KP_SPEECH, KP_SPEECH_DATA, kp_oracle_chain_opts; ADR 0019).
 SPEECH_KINDS = ("plays",)
-RUN_KINDS = ("runs", "chains", "plays")  # campaign missions: their goldens name the mission's key, missions/<name>
+RUN_KINDS = ("runs", "chains", "plays", "replays")  # campaign missions: their goldens name the mission's key, missions/<name>
 SHOW = 6
 
 
@@ -138,8 +145,8 @@ def mission_key(mission: str) -> str:
 
 
 def plays_golden(golden: Path) -> bool:
-    """The plays' goldens, the base's or a speech's (plays-<loc>)."""
-    return golden.parent == PLAY_GOLDEN.parent and golden.name.split("-")[0] == PLAY_GOLDEN.name
+    """The plays' goldens, the base's or a speech's (plays-<loc>), and the replays' (the same shape)."""
+    return golden.parent == PLAY_GOLDEN.parent and golden.name.split("-")[0] in (PLAY_GOLDEN.name, REPLAY_GOLDEN.name)
 
 
 def chain_env(turn: int, carry: Path | None) -> dict[str, str]:
@@ -468,7 +475,7 @@ def check_mission(d: Path, index: dict, steps: list[int], write: bool, kind: str
                               # a chain's game runs one step more (its result step: the next game's carry), with the
                               # interface events of its last frame; a play runs on to its result past the last compared
                               # step (its transmissions end there), with all its events
-                              None if kind == "plays" else state.header["frame"] + (kind == "chains"),
+                              None if kind in ("plays", "replays") else state.header["frame"] + (kind == "chains"),
                               golden or KINDS[kind][1],
                               ai_trace, extra)
     log.info("%-14s equal at steps %s", name, f"{steps[0]}..{steps[-1]}" if len(steps) > 1 else steps[0])
@@ -526,6 +533,8 @@ def check_runs(a: argparse.Namespace, ap: argparse.ArgumentParser, runs: list[tu
         if not (d / "states").is_dir() or (only and name not in only and d.parent.name not in only):
             continue
         extra, env = None, None
+        if a.kind == "replays":
+            extra, env = {"replay": 1}, {"KP_REPLAY": "1"}
         if a.kind == "chains" and (d / "states" / "s00001.state").exists():
             extra, env, error = chain_context(d, name, before, index, carry_dir)
             if error:

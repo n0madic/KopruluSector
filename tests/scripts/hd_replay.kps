@@ -1,0 +1,26 @@
+# The HD interface over a replay's console (docs/phase-replay.md; with --data and Remastered's HD art): terran01
+# played a moment and quit (Quit Mission writes LastReplay.rep), then played back as Load Replay's Ok does. A replay's
+# console is nconsole.pcx, whose Remastered art is one picture (game/consoles/neutral/console.dds), not a race's three
+# pieces: check hd counts the SD pixels over HD art, and tools/ci.sh wants the replay's screen with "no HD art: 0
+# pixels" besides exit code 0 and "0 failures". The real clock: the HD pages load on threads.
+mission terran/terran01
+options originals
+clock real
+
+audit hd
+wait game
+wait frames 30
+wait seconds 2
+check hd "game"
+shot game
+menu quit-mission
+wait dialog quit2mnu
+activate ok
+wait frames 10
+
+replay "LastReplay"
+wait game and replay
+wait frames 30
+wait seconds 2
+check hd "replay"
+shot replay

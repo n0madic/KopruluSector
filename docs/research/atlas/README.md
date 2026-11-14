@@ -35,7 +35,7 @@ Status values:
 
 - `specified`: the behavior is fully described in the entry.
 - `covered`: an earlier specification fully describes it. The entry links that specification and records anything it lacks.
-- `excluded`: the function cannot affect the offline single-player campaigns or their presentation. Examples are Battle.net, modem/IPX lobbies, ladder and chat. The entry states the reason.
+- `excluded`: the function cannot affect the offline single-player campaigns or their presentation, and a network design without Battle.net, modems and Storm's providers does not need it. Examples are Battle.net's screens, ladder and result reports, the modem provider and Storm's internals. The entry states the reason. The network second pass (2026-11-14, [replay and network notes](../replay-network-notes.md)) specified the formerly excluded lobby, chat, map transfer, sync and start entries; their entries end with a "Second pass" line.
 - `library`: standard C runtime or Windows-glue behavior, identified by name.
 
 No entry may remain undetermined. An entry can lack an executed probe; it cannot lack a behavior statement.

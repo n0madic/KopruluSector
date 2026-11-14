@@ -22,7 +22,11 @@
 #define SUPPLY_OVER_COLOUR 6 /* the maximum below the used supply */
 #define BAR_FRAME_WUSER 10
 #define ICON_MINERALS 0
-#define ICON_GAS 1           /* + the local race */
+#define ICON_GAS 1           /* + the local race (a replay's too, whoever it shows) */
+#define NEUTRAL_PLAYER 11
+#define LAST_RESOURCE_CONTROL 5 /* UpdateResourcePanel 0x4a79c0 hides the controls up to index 5 */
+#define REPLAY_TEXTBOX_UP 24 /* InitTextboxDialog 0x4b3a50 */
+#define CONSOLE_REPLAY 3     /* LoadConsoleBitmap 0x4a7e20: nconsole.pcx */
 #define ICON_SUPPLY 4        /* + the race */
 #define ICON_BAR 11
 #define FONT_SLOT_10 1       /* 0x6d3028 */
@@ -184,10 +188,21 @@ static void update_resources(KpUi *ui, int32_t dialog)
 	KpGame *g = ui->game;
 	int32_t c = kp_ui_find_control(ui, dialog, 1);
 	int64_t viewer;
-	int race;
+	int race, snap = 0;
 	if (g == NULL || c < 0) return;
 	update_countdown(ui, dialog);
-	viewer = g->local_player; /* TODO: a replay's viewer (0x67cc90) is outside V1 */
+	viewer = g->local_player;
+	if (g->w->replay) { /* the selection's owner, or nothing shown without a selection or for a neutral unit */
+		int64_t n = ui->hud.selection_count == 1 ? ui->hud.status_unit : ui->hud.selection[0];
+		if (ui->hud.selection_count == 0 || n == 0 || g->u.owner[n] == NEUTRAL_PLAYER) {
+			ui->hud.replay_viewer = -1;
+			for (; c >= 0 && ui->controls[c].id <= LAST_RESOURCE_CONTROL; c = next_control(ui, c)) kp_ui_hide_control(ui, c);
+			return;
+		}
+		viewer = g->u.owner[n];
+		snap = viewer != ui->hud.replay_viewer;
+		ui->hud.replay_viewer = viewer;
+	}
 	for (race = 0; race < RACES && c >= 0; race++) {
 		uint32_t used = (uint32_t)kp_supply_used(g, race, viewer);
 		uint32_t max = (uint32_t)kp_supply_provided_capped(g, race, viewer);
@@ -197,10 +212,10 @@ static void update_resources(KpUi *ui, int32_t dialog)
 		}
 	}
 	if (c < 0) return; /* a panel with fewer controls than the original's statres.bin */
-	set_animated_text(ui, c, (uint16_t)(g->players.race[g->local_player] + ICON_GAS), &ui->hud.shown_gas,
-		(int32_t)g->players.gas[viewer], 0);
+	set_animated_text(ui, c, (uint16_t)(kp_ui_local_race(ui) + ICON_GAS), &ui->hud.shown_gas,
+		(int32_t)g->players.gas[viewer], snap);
 	if ((c = next_control(ui, c)) < 0) return;
-	set_animated_text(ui, c, ICON_MINERALS, &ui->hud.shown_minerals, (int32_t)g->players.minerals[viewer], 0);
+	set_animated_text(ui, c, ICON_MINERALS, &ui->hud.shown_minerals, (int32_t)g->players.minerals[viewer], snap);
 	for (c = next_control(ui, c); c >= 0 && ui->controls[c].id < RESOURCE_BAR; c = next_control(ui, c)) {
 		kp_ui_hide_control(ui, c);
 	}
@@ -342,7 +357,7 @@ static void lb_init_child(KpUi *ui, int32_t k)
 		c->wuser = ICON_MINERALS;
 	} else if (c->id == LB_GAS_ICON) {
 		c->draw = lb_icon_draw;
-		c->wuser = (uint16_t)(ICON_GAS + ui->game->players.race[ui->game->local_player]);
+		c->wuser = (uint16_t)(ICON_GAS + kp_ui_local_race(ui));
 	} else if (c->type == STATIC_TYPE) {
 		c->draw = lb_text_draw;
 	}
@@ -645,6 +660,41 @@ void kp_ui_set_textbox_prompt(KpUi *ui, const uint8_t *text)
 	kp_ui_mark_dirty(ui, c); /* 0x4c2840 */
 }
 
+/* ReplayShowLeaderboard 0x47fd60: the board named (case-sensitive) of table 0x4ef6a8, its action and parameter;
+ * RefreshLeaderboard 0x4a5e90(0) at once. 1 when the name matched. */
+static int replay_show(KpUi *ui, const char *name)
+{
+	static const struct { const char *name; uint8_t action; uint16_t unit; } BOARDS[] = {
+		{ "kills", 20, 230 }, { "razings", 20, 231 }, { "slaughter", 20, 229 }, { "resources", 40, 2 },
+		{ "minerals", 19, 0 }, { "gas", 19, 1 }, { "score", 21, 0 }, { "score units", 21, 1 },
+		{ "score buildings", 21, 2 }, { "score kills", 21, 4 }, { "score razings", 21, 5 }, { "score user", 21, 7 } };
+	size_t k;
+	for (k = 0; k < sizeof BOARDS / sizeof BOARDS[0]; k++) {
+		if (strcmp(name, BOARDS[k].name) != 0) continue;
+		kp_replay_leaderboard(ui->game, BOARDS[k].action, BOARDS[k].unit);
+		if (ui->hud.leaderboard >= 0) lb_refresh(ui, ui->hud.leaderboard);
+		return 1;
+	}
+	return 0;
+}
+
+/* HandleReplayChatCommand 0x480be0: "/replay " then a word of table 0x4ef688 ("show" 0x47fd60, "hide" 0x47fe10) by a
+ * prefix of the word's length, ended by the text's end or a space (skipped); the handler's result, 0 for other text. */
+static int replay_chat(KpUi *ui, const char *text)
+{
+	static const char PREFIX[] = "/replay ";
+	const char *rest;
+	if (text == NULL || strncmp(text, PREFIX, sizeof PREFIX - 1) != 0) return 0;
+	rest = text + sizeof PREFIX - 1;
+	if (strncmp(rest, "show", 4) == 0 && (rest[4] == 0 || rest[4] == ' ')) return replay_show(ui, rest + 4 + (rest[4] == ' '));
+	if (strncmp(rest, "hide", 4) == 0 && (rest[4] == 0 || rest[4] == ' ')) {
+		kp_replay_leaderboard(ui->game, 0, 0); /* the zeroed action clears the board */
+		if (ui->hud.leaderboard >= 0) lb_refresh(ui, ui->hud.leaderboard); /* RefreshLeaderboard 0x4a5e90(1): hidden */
+		return 1;
+	}
+	return 0;
+}
+
 /* ToggleTextbox 0x4b3bd0. */
 static void textbox_toggle(KpUi *ui, int submit)
 {
@@ -657,14 +707,18 @@ static void textbox_toggle(KpUi *ui, int submit)
 		uint8_t *text = edit >= 0 ? kp_ui_edit_buffer(ui, edit) : NULL;
 		if (submit && text != NULL) {
 			int64_t old = kp_cheats(ui->game), flags = old;
-			if (process_cheat(ui, text, &flags) && flags != old) {
-				uint8_t cmd[5];
-				cmd[0] = CMD_CHEAT;
-				cmd[1] = (uint8_t)flags;
-				cmd[2] = (uint8_t)(flags >> 8);
-				cmd[3] = (uint8_t)(flags >> 16);
-				cmd[4] = (uint8_t)(flags >> 24);
-				kp_ui_queue_command(ui, cmd, sizeof cmd); /* SendCheatCommand 0x473d40 */
+			if (process_cheat(ui, text, &flags)) {
+				if (flags != old) {
+					uint8_t cmd[5];
+					cmd[0] = CMD_CHEAT;
+					cmd[1] = (uint8_t)flags;
+					cmd[2] = (uint8_t)(flags >> 8);
+					cmd[3] = (uint8_t)(flags >> 16);
+					cmd[4] = (uint8_t)(flags >> 24);
+					kp_ui_queue_command(ui, cmd, sizeof cmd); /* SendCheatCommand 0x473d40 */
+				}
+			} else if (ui->game->w->replay) {
+				(void)replay_chat(ui, (const char *)text); /* a replay's command first; the rest is a network game's */
 			}
 			/* a single player's other lines are discarded */
 		}
@@ -704,7 +758,10 @@ static void textbox_init(KpUi *ui, int32_t d)
 	ui->text.font = NULL;
 	c = kp_ui_find_control(ui, d, TB_EDIT);
 	if (c >= 0) ui->controls[c].interact = textbox_edit;
-	/* TODO: a replay moves the dialog 24 pixels up */
+	if (ui->game != NULL && ui->game->w->replay) { /* a replay's text box sits higher, over the time panel's row */
+		ui->controls[d].top = (int16_t)(ui->controls[d].top - REPLAY_TEXTBOX_UP);
+		ui->controls[d].bottom = (int16_t)(ui->controls[d].bottom - REPLAY_TEXTBOX_UP);
+	}
 }
 
 /* TextboxDialogProc 0x4b3960: a paused single-player game's input stops here (IsSinglePlayerPaused 0x47cb70), where
@@ -748,7 +805,7 @@ static int textbox_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 static int create_textbox(KpUi *ui)
 {
 	char path[24];
-	int race = (int)ui->game->players.race[ui->game->local_player];
+	int race = kp_ui_local_race(ui);
 	static const char LETTERS[RACES] = { 'z', 't', 'p' };
 	int32_t d;
 	snprintf(path, sizeof path, "rez\\%ctextbox.bin", LETTERS[race >= 0 && race < RACES ? race : 1]);
@@ -812,6 +869,8 @@ static int create_console(KpUi *ui, KpGame *g, const uint32_t *create_ticks)
 	memset(&ui->hud, 0, sizeof ui->hud);
 	if (create_ticks != NULL) memcpy(ui->hud.create_tick, create_ticks, sizeof ui->hud.create_tick);
 	ui->hud.resources = -1;
+	ui->hud.replay_viewer = -1;
+	ui->ally.dialog = -1; /* a replay's vision dialog: none open */
 	ui->hud.leaderboard = -1;
 	ui->hud.textbox = -1;
 	ui->status.panel = -1;
@@ -842,8 +901,10 @@ static int create_console(KpUi *ui, KpGame *g, const uint32_t *create_ticks)
 	kp_ui_install_game_input(ui);
 	kp_ui_tooltip_init(ui); /* the game's interface setup 0x465aa0 */
 	kp_ui_sound_start_game(ui); /* InitGameWorld 0x443680 */
-	if (kp_ui_load_console(ui, (int)g->players.race[g->local_player]) != 0) return -1;
-	/* the fluff dialogs only repeat the console art (docs/phase9.md) */
+	if (kp_ui_load_console(ui, g->w->replay ? CONSOLE_REPLAY : kp_ui_local_race(ui)) != 0) return -1;
+	/* CreateFluffDialogs 0x4a5a40: the fluff dialogs repeat the console art in their rectangles over the other dialogs
+	 * (the canvas draws them, kp_ui_canvas_fluff); their list is the local race's, a replay's its own */
+	ui->fluff_list = g->w->replay ? CONSOLE_REPLAY : kp_ui_local_race(ui);
 	at_tick(ui, KP_UI_HUD_PORTRAIT);
 	if (ui->portrait_files != NULL && kp_ui_portrait_create(ui) != 0) return -1;
 	at_tick(ui, KP_UI_HUD_LEADERBOARD);
