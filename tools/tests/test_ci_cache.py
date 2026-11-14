@@ -75,6 +75,20 @@ class CacheKeyTest(unittest.TestCase):
             a.unlink()
             assert ci_cache.digest([], [a]) != ci_cache.digest([a])
 
+    def test_the_reports_are_no_input(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data = Path(tmp) / "generated"
+            (data / "reports").mkdir(parents=True)
+            (data / "a").write_bytes(b"one")
+            skip = (data / "reports",)
+            base = ci_cache.digest([], [data], skip=skip)
+            (data / "reports" / "widths-ruRU.json").write_text("{}")
+            assert ci_cache.digest([], [data], skip=skip) == base, "a report written by a check"
+            assert ci_cache.digest([], [data], skip=()) != base, "a folder left out only when asked"
+            (data / "b").write_bytes(b"")
+            assert ci_cache.digest([], [data], skip=skip) != base, "the data beside them"
+        assert ROOT / "generated" / "reports" in ci_cache.NOT_INPUTS, "the checks' reports, by default"
+
     def test_a_dangling_link_is_an_input_too(self):
         with tempfile.TemporaryDirectory() as tmp:
             folder = Path(tmp) / "dir"

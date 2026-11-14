@@ -283,6 +283,7 @@ static void the_speech_sound_records_replace_the_bases(KpT *T)
 static void campaign_plays_with_the_speech_equal_the_original(KpT *T)
 {
 	const KpJson *index, *base;
+	const unsigned char *mine;
 	KpBuf *bad;
 	KpOracleOpts o;
 	const char *speech_data;
@@ -292,6 +293,7 @@ static void campaign_plays_with_the_speech_equal_the_original(KpT *T)
 	speech_data = scr(T);
 	index = kp_t_golden(T, PLAYS_SPEECH "index.json");
 	base = kp_t_golden(T, PLAYS "index.json");
+	mine = kp_t_mine_goldens(T, index, PLAYS_SPEECH "%s.json");
 	bad = kp_t_buf(T);
 	kp_oracle_opts(&o);
 	o.speech = SPEECH;
@@ -312,7 +314,7 @@ static void campaign_plays_with_the_speech_equal_the_original(KpT *T)
 		mission = kp_json_field_str(g, "mission", "");
 		for (m = 0; m < missions && strcmp(seen[m], mission) != 0; m++) continue;
 		if (m == missions && missions < CAMPAIGN_MISSIONS) snprintf(seen[missions++], sizeof seen[0], "%s", mission);
-		if (!kp_t_mine_sampled(T, k + 1)) {
+		if (!mine[k]) {
 			kp_t_release(T, mark);
 			continue;
 		}
@@ -408,7 +410,7 @@ static const KpTest TESTS[] = {
 	{ "the_speech_equals_the_converters", the_speech_equals_the_converters, 0 },
 	{ "the_speech_merges_the_maps_time", the_speech_merges_the_maps_time, 0 },
 	{ "the_speech_sound_records_replace_the_bases", the_speech_sound_records_replace_the_bases, 0 },
-	{ "campaign_plays_with_the_speech_equal_the_original", campaign_plays_with_the_speech_equal_the_original, 8 },
+	{ "campaign_plays_with_the_speech_equal_the_original", campaign_plays_with_the_speech_equal_the_original, 12 },
 	{ "a_save_keeps_its_speech", a_save_keeps_its_speech, 0 },
 };
 

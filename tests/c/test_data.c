@@ -572,6 +572,51 @@ static void mission_packs(KpT *T)
 	kp_t_ok(T, m->packs[1].size == 6 && memcmp(m->packs[1].data, "terran", 6) == 0, "the second pack is terran");
 }
 
+/* Whether a part of a copy holds the original's bytes from inside the copy's own blob. */
+static int same_part(const KpMission *copy, KpBytes c, KpBytes m)
+{
+	if (c.size != m.size) return 0;
+	if (!c.data || !m.data) return c.data == m.data;
+	return c.data >= copy->blob && c.data + c.size <= copy->blob + copy->size && memcmp(c.data, m.data, c.size) == 0;
+}
+
+/* A copy (the oracle's kept missions) owns its parts: they hold a fresh load's bytes from inside its own blob, and
+ * outlive the mission copied. */
+static void mission_copy(KpT *T)
+{
+	KpMission *m, *fresh, *copy;
+	int k, same = 1;
+	if (!ready(T, "test_data")) return;
+	m = load_mission(T);
+	fresh = load_mission(T);
+	copy = (KpMission *)calloc(1, sizeof *copy);
+	kp_t_ok(T, copy != NULL && kp_mission_copy(copy, m) == 0, "the copy");
+	kp_t_defer(T, free_mission, copy);
+	kp_t_ok(T, copy->blob != m->blob && copy->rules != m->rules && copy->sounds != m->sounds, "its own blob, rules and sounds");
+	kp_mission_free(m); /* the copy's parts must not point into it */
+	kp_t_ok(T, copy->size == fresh->size && memcmp(copy->blob, fresh->blob, fresh->size) == 0, "the blob");
+	kp_t_ok(T, copy->chk_size == fresh->chk_size && copy->tileset == fresh->tileset && copy->width == fresh->width
+		&& copy->height == fresh->height && copy->has_colors == fresh->has_colors, "the scalars");
+	same &= same_part(copy, copy->tiles, fresh->tiles) && same_part(copy, copy->mask, fresh->mask);
+	same &= same_part(copy, copy->sprites, fresh->sprites) && same_part(copy, copy->units, fresh->units);
+	same &= same_part(copy, copy->locations, fresh->locations) && same_part(copy, copy->strings, fresh->strings);
+	same &= same_part(copy, copy->triggers, fresh->triggers) && same_part(copy, copy->briefing, fresh->briefing);
+	same &= same_part(copy, copy->properties, fresh->properties) && same_part(copy, copy->walk, fresh->walk);
+	same &= same_part(copy, copy->regions.data, fresh->regions.data);
+	same &= same_part(copy, copy->contours.data, fresh->contours.data);
+	kp_t_ok(T, same, "the raw and derived parts");
+	kp_t_eq(T, copy->rule_count, fresh->rule_count, "rules");
+	for (k = 0; k < fresh->rule_count && k < copy->rule_count; k++) {
+		kp_t_ok(T, strcmp(copy->rules[k].tag, fresh->rules[k].tag) == 0
+			&& same_part(copy, copy->rules[k].data, fresh->rules[k].data), "rule %d", k);
+	}
+	kp_t_eq(T, copy->sound_count, fresh->sound_count, "sounds");
+	kp_t_ok(T, memcmp(copy->sounds, fresh->sounds, (size_t)fresh->sound_count * sizeof *fresh->sounds) == 0, "the sounds");
+	kp_t_eq(T, copy->pack_count, fresh->pack_count, "packs");
+	for (k = 0; k < fresh->pack_count && k < copy->pack_count; k++)
+		kp_t_ok(T, same_part(copy, copy->packs[k], fresh->packs[k]), "pack %d", k);
+}
+
 /* --- grpmeta (the hits are the Python twin of 0x40fd50 on the raw GRP bytes) --- */
 
 static void free_grp(void *p)
@@ -1167,6 +1212,7 @@ static const KpTest TESTS[] = {
 	{ "mission_map_strings", mission_map_strings, 0 },
 	{ "mission_derived_sections", mission_derived_sections, 0 },
 	{ "mission_packs", mission_packs, 0 },
+	{ "mission_copy", mission_copy, 0 },
 	{ "grpmeta_entries_and_atlases", grpmeta_entries_and_atlases, 0 },
 	{ "grpmeta_frames", grpmeta_frames, 0 },
 	{ "grpmeta_pixel_opaque_matches_python_twin", grpmeta_pixel_opaque_matches_python_twin, 0 },

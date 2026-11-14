@@ -7,13 +7,31 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* ARMv8's CRC32 instructions compute this CRC-32 (IEEE, reflected 0xedb88320) where the compiler targets them (Apple
+ * silicon; -march=armv8-a+crc elsewhere): a little-endian load of 8 bytes is the 8 bytes in order. */
+#if defined(__ARM_FEATURE_CRC32) && defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+#include <arm_acle.h>
+#define KP_CRC32_ARM 1
+#endif
+
 #define REGENERATE "regenerate the data with the converter"
 
 uint32_t kp_crc32(const uint8_t *data, size_t size) { return kp_crc32_update(0, data, size); }
 
-/* CRC-32 (IEEE) by slicing-by-8 over the constant tables of kp_crc32_table.h. */
+/* CRC-32 (IEEE) by the CPU's instructions (KP_CRC32_ARM), else by slicing-by-8 over the constant tables of
+ * kp_crc32_table.h; the same values either way. */
 uint32_t kp_crc32_update(uint32_t crc, const uint8_t *data, size_t size)
 {
+#ifdef KP_CRC32_ARM
+	uint32_t c = crc ^ 0xffffffffu;
+	for (; size >= 8; data += 8, size -= 8) {
+		uint64_t v;
+		memcpy(&v, data, 8);
+		c = __crc32d(c, v);
+	}
+	while (size-- > 0) c = __crc32b(c, *data++);
+	return c ^ 0xffffffffu;
+#else
 	const uint32_t(*t)[256] = KP_CRC32_TABLE;
 	uint32_t c = crc ^ 0xffffffffu;
 	while (size >= 8) {
@@ -25,6 +43,7 @@ uint32_t kp_crc32_update(uint32_t crc, const uint8_t *data, size_t size)
 	}
 	while (size-- > 0) c = t[0][(c ^ *data++) & 0xffu] ^ (c >> 8);
 	return c ^ 0xffffffffu;
+#endif
 }
 
 static int fail(KpError *err, const char *name, const char *fmt, ...)

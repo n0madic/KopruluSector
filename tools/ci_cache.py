@@ -6,7 +6,9 @@
 --content hashes the bytes of the files under each path, --meta only their names, sizes and modification times (the
 converted data's 4 GB: touching a file only reruns the step, the safe side), --text the versions and settings that
 are no files. A path that does not exist counts as such, so its later appearance changes the key, and so does a file
-gone since the walk found it (another session's temporary file, a dangling link).
+gone since the walk found it (another session's temporary file, a dangling link). The checks' reports under the
+converted data (generated/reports: kp_convert locale-check's and test_locale's) are no step's input and are left out:
+the C suites rewrite them as they run, so a key that held them changed during every C step and every Python run.
 """
 from __future__ import annotations
 
@@ -19,13 +21,16 @@ from pathlib import Path
 
 READ_SIZE = 1 << 20
 GONE = "gone"  # what a digest holds for a file that went away while it was being read
+ROOT = Path(__file__).resolve().parents[1]
+NOT_INPUTS = (ROOT / "generated" / "reports",)  # the folders a walk leaves out (above)
 
 
-def _files(path: Path) -> Iterator[Path]:
-    """The files under a path in a fixed order; its symbolic links to directories are not followed."""
+def _files(path: Path, skip: tuple[Path, ...] = ()) -> Iterator[Path]:
+    """The files under a path in a fixed order, but those under the folders of skip (resolved paths); its symbolic
+    links to directories are not followed."""
     if path.is_dir():
         for folder, dirs, names in os.walk(path):
-            dirs.sort()
+            dirs[:] = sorted(d for d in dirs if not skip or (Path(folder) / d).resolve() not in skip)
             for name in sorted(names):
                 yield Path(folder) / name
     elif path.exists():
@@ -37,12 +42,15 @@ def _feed(h: "hashlib._Hash", *fields: object) -> None:
         h.update(f"{field}\0".encode("utf-8", "surrogateescape"))
 
 
-def digest(content: Iterable[Path] = (), meta: Iterable[Path] = (), text: Iterable[str] = ()) -> str:
-    """The hexadecimal SHA-256 of the given inputs. The three kinds never collide: each is labelled in the digest."""
+def digest(content: Iterable[Path] = (), meta: Iterable[Path] = (), text: Iterable[str] = (),
+           skip: Iterable[Path] = NOT_INPUTS) -> str:
+    """The hexadecimal SHA-256 of the given inputs, the folders of skip left out. The three kinds never collide: each
+    is labelled in the digest."""
+    skipped = tuple(p.resolve() for p in skip)
     h = hashlib.sha256()
     for path in content:
         _feed(h, "content", path, path.exists())
-        for file in _files(path):
+        for file in _files(path, skipped):
             _feed(h, file)
             try:
                 with file.open("rb") as f:
@@ -52,7 +60,7 @@ def digest(content: Iterable[Path] = (), meta: Iterable[Path] = (), text: Iterab
                 _feed(h, GONE)
     for path in meta:
         _feed(h, "meta", path, path.exists())
-        for file in _files(path):
+        for file in _files(path, skipped):
             try:
                 stat = file.lstat()
             except FileNotFoundError:

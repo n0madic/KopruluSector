@@ -1442,12 +1442,13 @@ static void session_replay_records_as_the_original(KpT *T)
 #define DIAG_STEPS 64      /* the first steps whose categories a mismatch names */
 static KpStateCrcs diag[DIAG_STEPS];
 
-/* One hash of a step's state CRCs. */
-static uint32_t state_hash(KpT *T, KpSession *s)
+/* One hash of a step's state lines (kp_dump_hash: the recording and its playback are both Koprulu's, in this process;
+ * the category CRCs of diag name a mismatch's lines). */
+static uint64_t state_hash(KpT *T, KpSession *s)
 {
-	KpStateCrcs c;
-	crcs(T, s, &c);
-	return kp_crc32((const uint8_t *)c.crcs, (size_t)c.count * sizeof c.crcs[0]);
+	uint64_t h;
+	kp_t_ok(T, kp_dump_hash(s->g, 0, &h) == 0, "state hash");
+	return h;
 }
 
 /* A step of a golden's session, its events taken (a session without the interface has nobody to read them). */
@@ -1497,12 +1498,12 @@ static void golden_plays_back(KpT *T, const char *name, const KpJson *g, int eve
 	KpError err;
 	uint8_t *file;
 	size_t size;
-	uint32_t *hash;
+	uint64_t *hash;
 	int64_t steps, k, last_frame, unrecorded = -1;
 	int next = 0, local_only = 1;
 	if (kp_replay_from_golden(r, ".", g, &err) != 0) kp_t_fail(T, "%s: %s", name, err.msg);
 	steps = r->last > 2 ? r->last - 2 : 0;
-	hash = (uint32_t *)calloc((size_t)steps + 1, sizeof *hash);
+	hash = (uint64_t *)calloc((size_t)steps + 1, sizeof *hash);
 	if (!hash) kp_t_fail(T, "out of memory");
 	kp_t_defer(T, free, hash);
 	a = golden_session(T, r);
@@ -1577,6 +1578,7 @@ static void goldens_play_back(KpT *T, const char *index_path, const char *dir, i
 {
 	static const char *const NEED[] = { KP_T_DATA, NULL };
 	const KpJson *index;
+	const unsigned char *mine;
 	KpBuf *bad;
 	char path[256];
 	int k;
@@ -1584,11 +1586,13 @@ static void goldens_play_back(KpT *T, const char *index_path, const char *dir, i
 	snprintf(path, sizeof path, GOLDEN "%s", index_path);
 	if (!kp_t_has(T, path)) kp_t_skip(T, "no %s", path);
 	index = kp_t_golden(T, path);
+	snprintf(path, sizeof path, GOLDEN "%s/%%s.json", dir);
+	mine = kp_t_mine_goldens(T, index, path);
 	bad = kp_t_buf(T);
 	for (k = 0; k < kp_json_len(index); k++) {
 		const char *name = kp_json_str(kp_json_at(index, k), "");
 		int mark = kp_t_mark(T);
-		if (!kp_t_mine_sampled(T, k + 1)) continue;
+		if (!mine[k]) continue;
 		snprintf(path, sizeof path, GOLDEN "%s/%s.json", dir, name);
 		golden_plays_back(T, name, kp_t_golden(T, path), every, bad);
 		kp_t_release(T, mark);
@@ -1631,7 +1635,7 @@ static const KpTest TESTS[] = {
 	{ "session_replay_record_in_a_save", session_replay_record_in_a_save, 0 },
 	{ "session_replay_records_as_the_original", session_replay_records_as_the_original, 0 },
 	{ "replay_scenarios_play_back", replay_scenarios_play_back, 6 },
-	{ "replay_plays_play_back", replay_plays_play_back, 8 },
+	{ "replay_plays_play_back", replay_plays_play_back, 12 },
 	{ "replay_runs_play_back", replay_runs_play_back, 8 },
 	{ "session_profile_round_trip", session_profile_round_trip, 0 },
 	{ "session_profile_language", session_profile_language, 0 },

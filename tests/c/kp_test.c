@@ -34,6 +34,11 @@ static const KpSuite *const SUITES[] = {
 #define SUITE_COUNT ((int)(sizeof SUITES / sizeof SUITES[0]))
 #define DEFAULT_LOGS "build/c-tests"
 #define MAX_JOBS 4096
+/* A parallel run's jobs: each started with this flag, which has it print its time on ELAPSED_LINE; the times kept in
+ * TIMES_FILE beside the logs, by which the next run starts the longest jobs first. */
+#define TIMED_FLAG "--timed"
+#define ELAPSED_LINE "kp_test: elapsed "
+#define TIMES_FILE "times"
 
 /* The runtime of the run: the compiler, wasm and the sanitizers. */
 static void backend(char *out, size_t size)
@@ -63,11 +68,11 @@ static void backend(char *out, size_t size)
 
 int kp_t_mine(const KpT *T, int k) { return (k - 1) % (T->shards > 0 ? T->shards : 1) == (T->shard > 0 ? T->shard : 1) - 1; }
 
-int kp_t_mine_sampled(const KpT *T, int k)
+/* Whether item k is in the sample of a sampled run (kp_t_mine_sampled). */
+static int sampled(const KpT *T, int k)
 {
 	uint32_t hash = 2166136261u ^ T->seed; /* FNV-1a */
 	const char *c;
-	if (!kp_t_mine(T, k)) return 0;
 	if (T->sample <= 1) return 1;
 	for (c = T->test; *c; c++) hash = (hash ^ (uint8_t)*c) * 16777619u;
 	hash = (hash ^ (uint32_t)k) * 16777619u;
@@ -80,6 +85,82 @@ int kp_t_mine_sampled(const KpT *T, int k)
 	hash *= 0xc2b2ae35u;
 	hash ^= hash >> 16;
 	return hash % (uint32_t)T->sample == 0;
+}
+
+int kp_t_mine_sampled(const KpT *T, int k) { return kp_t_mine(T, k) && sampled(T, k); }
+
+typedef struct {
+	double weight;
+	int item;
+} Weighted;
+
+static int heaviest_first(const void *a, const void *b)
+{
+	const Weighted *x = (const Weighted *)a, *y = (const Weighted *)b;
+	if (x->weight != y->weight) return x->weight > y->weight ? -1 : 1;
+	return x->item - y->item;
+}
+
+int kp_t_mine_weighted(const KpT *T, int count, const double *weights, unsigned char *mine)
+{
+	int shards = T->shards > 0 ? T->shards : 1, shard = (T->shard > 0 ? T->shard : 1) - 1, k, n = 0;
+	Weighted *order = (Weighted *)malloc((count > 0 ? (size_t)count : 1) * sizeof *order);
+	double *load = (double *)calloc((size_t)shards, sizeof *load);
+	if (!order || !load) {
+		free(order);
+		free(load);
+		return -1;
+	}
+	for (k = 0; k < count; k++) {
+		mine[k] = 0;
+		if (!sampled(T, k + 1)) continue;
+		order[n].weight = weights[k];
+		order[n++].item = k;
+	}
+	qsort(order, (size_t)n, sizeof *order, heaviest_first);
+	for (k = 0; k < n; k++) {
+		int s, least = 0;
+		for (s = 1; s < shards; s++) {
+			if (load[s] < load[least]) least = s;
+		}
+		load[least] += order[k].weight;
+		if (least == shard) mine[order[k].item] = 1;
+	}
+	free(order);
+	free(load);
+	return 0;
+}
+
+const unsigned char *kp_t_mine_goldens(KpT *T, const KpJson *index, const char *path)
+{
+	int count = kp_json_len(index), k, rc;
+	double *weights = (double *)malloc((count > 0 ? (size_t)count : 1) * sizeof *weights);
+	unsigned char *mine = (unsigned char *)malloc(count > 0 ? (size_t)count : 1);
+	if (!weights || !mine) {
+		free(weights);
+		free(mine);
+		kp_t_fail(T, "out of memory");
+	}
+	kp_t_defer(T, free, mine);
+	for (k = 0; k < count; k++) {
+		char name[512];
+		const KpJson *steps;
+		int mark = kp_t_mark(T), i;
+		snprintf(name, sizeof name, path, kp_json_str(kp_json_at(index, k), ""));
+		weights[k] = 0;
+		if (!sampled(T, k + 1)) continue; /* out of the sample: no shard deals it, its weight is never read */
+		if (kp_t_has(T, name) && (steps = kp_json_get(kp_t_golden(T, name), "steps")) != NULL) {
+			for (i = 0; i < kp_json_len(steps); i++) {
+				double step = strtod(steps->keys[i], NULL);
+				if (step > weights[k]) weights[k] = step;
+			}
+		}
+		kp_t_release(T, mark); /* a missing golden weighs nothing: the test reports it */
+	}
+	rc = kp_t_mine_weighted(T, count, weights, mine);
+	free(weights);
+	if (rc != 0) kp_t_fail(T, "out of memory");
+	return mine;
 }
 
 void kp_t_fail(KpT *T, const char *fmt, ...)
@@ -634,6 +715,7 @@ static int run_entry(const char *entry, int *passed, int *failed)
 typedef struct {
 	char entry[300];
 	char test[300]; /* "" for a whole suite's job, else SUITE.TEST of a sharded test */
+	double seconds; /* its time in an earlier run, or < 0 */
 } Job;
 
 static int by_shard_first(const void *a, const void *b)
@@ -644,8 +726,97 @@ static int by_shard_first(const void *a, const void *b)
 	return strcmp(x->entry, y->entry);
 }
 
-/* The jobs of a parallel run: each suite in a process of its own; a suite with sharded tests one job a test, each
- * sharded test one job per shard. The shards go first: they are the long ones. */
+/* The order a parallel run starts its jobs in (xargs takes them in turn as processes end): the jobs no earlier run
+ * timed first, the shards before the whole suites, then the others the longest first, so that the run ends with short
+ * jobs instead of one long job alone. */
+static int by_time(const void *a, const void *b)
+{
+	const Job *x = (const Job *)a, *y = (const Job *)b;
+	if ((x->seconds < 0) != (y->seconds < 0)) return x->seconds < 0 ? -1 : 1;
+	if (x->seconds < 0 || x->seconds == y->seconds) return by_shard_first(a, b);
+	return x->seconds > y->seconds ? -1 : 1;
+}
+
+/* A job's key in TIMES_FILE: its entry without the sample's seed (a sampled shard takes about as long whatever the
+ * seed; its sample stays, a sampled shard being shorter than the whole one). */
+static void time_key(const char *entry, char *out, size_t size)
+{
+	const char *at = strchr(entry, '@'), *c;
+	size_t n = strlen(entry);
+	int slashes = 0;
+	if (at) {
+		for (c = at; *c; c++) slashes += *c == '/';
+		if (slashes == 3) n = (size_t)(strrchr(entry, '/') - entry);
+	}
+	if (n >= size) n = size - 1;
+	memcpy(out, entry, n);
+	out[n] = '\0';
+}
+
+typedef struct {
+	char key[300];
+	double seconds;
+	int current; /* a job of this run's */
+} JobTime;
+
+typedef struct {
+	JobTime *list;
+	int count, cap;
+} JobTimes;
+
+static JobTime *job_time(JobTimes *t, const char *key, int add)
+{
+	int k;
+	for (k = 0; k < t->count; k++) {
+		if (strcmp(t->list[k].key, key) == 0) return &t->list[k];
+	}
+	if (!add) return NULL;
+	if (t->count == t->cap) {
+		int cap = t->cap ? 2 * t->cap : 256;
+		JobTime *list = (JobTime *)realloc(t->list, (size_t)cap * sizeof *list);
+		if (!list) return NULL;
+		t->list = list;
+		t->cap = cap;
+	}
+	snprintf(t->list[t->count].key, sizeof t->list[0].key, "%s", key);
+	t->list[t->count].seconds = -1;
+	t->list[t->count].current = 0;
+	return &t->list[t->count++];
+}
+
+/* TIMES_FILE's lines "KEY SECONDS" (none: an empty table). */
+static void read_times(const char *dir, JobTimes *t)
+{
+	char path[1024], key[300], *text, *line;
+	size_t size;
+	double seconds;
+	JobTime *slot;
+	snprintf(path, sizeof path, "%s/" TIMES_FILE, dir);
+	if (!(text = (char *)kp_read_file(path, &size))) return;
+	for (line = strtok(text, "\n"); line; line = strtok(NULL, "\n")) {
+		if (sscanf(line, "%299s %lf", key, &seconds) == 2 && seconds >= 0 && (slot = job_time(t, key, 1))) slot->seconds = seconds;
+	}
+	free(text);
+}
+
+/* The times of this run's jobs (a parallel run has every job, so another key is a job no more: a test's shards before
+ * their count changed), written whole (a stopped run leaves the earlier file). */
+static void write_times(const char *dir, const JobTimes *t)
+{
+	char path[1024], tmp[1100];
+	FILE *f;
+	int k;
+	snprintf(path, sizeof path, "%s/" TIMES_FILE, dir);
+	snprintf(tmp, sizeof tmp, "%s.tmp", path);
+	if (!(f = fopen(tmp, "w"))) return;
+	for (k = 0; k < t->count; k++) {
+		if (t->list[k].current && t->list[k].seconds >= 0) fprintf(f, "%s %.3f\n", t->list[k].key, t->list[k].seconds);
+	}
+	if (fclose(f) != 0 || rename(tmp, path) != 0) remove(tmp);
+}
+
+/* The jobs of a parallel run: each suite in a process of its own; a suite with sharded tests or split (KP_SUITE_SPLIT)
+ * one job a test, each sharded test one job per shard. The shards go first: they are the long ones. */
 static int list_jobs(Job *jobs, int max, int sample, unsigned seed)
 {
 	int k, count = 0;
@@ -654,9 +825,10 @@ static int list_jobs(Job *jobs, int max, int sample, unsigned seed)
 		const KpTest *tests[512];
 		int n = sorted_tests(s, tests), i, sharded = 0;
 		for (i = 0; i < n; i++) sharded |= tests[i]->shards > 1;
-		if (!sharded) {
+		if (!sharded && !s->split) {
 			if (count < max) {
 				snprintf(jobs[count].entry, sizeof jobs[count].entry, "%s", s->name);
+				jobs[count].seconds = -1;
 				jobs[count++].test[0] = '\0';
 			}
 			continue;
@@ -665,6 +837,7 @@ static int list_jobs(Job *jobs, int max, int sample, unsigned seed)
 			int shards = tests[i]->shards > 1 ? tests[i]->shards : 1, j;
 			for (j = 1; j <= shards && count < max; j++) {
 				Job *job = &jobs[count++];
+				job->seconds = -1;
 				if (shards > 1) {
 					if (sample > 1) snprintf(job->entry, sizeof job->entry, "%s:%s@%d/%d/%d/%u", s->name, tests[i]->name, j, shards, sample, seed);
 					else snprintf(job->entry, sizeof job->entry, "%s:%s@%d/%d", s->name, tests[i]->name, j, shards);
@@ -724,14 +897,25 @@ static int run_parallel(const char *self, int jobs_wanted)
 	const char *exec_env = getenv("KP_TEST_EXEC");
 	Job *jobs = (Job *)calloc(MAX_JOBS, sizeof *jobs);
 	const char *sample_env = getenv("KP_TEST_SAMPLE"), *seed_env = getenv("KP_TEST_SEED");
-	char path[1024], command[4096], exec[1200], job[2048], quoted[2400], label[160], sampled[64] = "";
+	char path[1024], key[300], command[4096], exec[1200], job[2048], quoted[2400], label[160], sampled[64] = "";
 	int count, k, passed = 0, failed = 0, sample = sample_env ? atoi(sample_env) : 0;
 	unsigned seed = seed_env ? (unsigned)strtoul(seed_env, NULL, 10) : 0;
 	FILE *list;
 	ShardOk *shard_ok;
+	JobTimes times = { NULL, 0, 0 };
 	int shard_count = 0;
 	if (!jobs) return 1;
 	count = list_jobs(jobs, MAX_JOBS, sample, seed);
+	read_times(dir, &times);
+	for (k = 0; k < count; k++) {
+		JobTime *known;
+		time_key(jobs[k].entry, key, sizeof key);
+		if ((known = job_time(&times, key, 1)) != NULL) {
+			jobs[k].seconds = known->seconds; /* -1 when no earlier run timed it */
+			known->current = 1;
+		}
+	}
+	qsort(jobs, (size_t)count, sizeof *jobs, by_time);
 	shard_ok = (ShardOk *)calloc((size_t)count + 1, sizeof *shard_ok);
 	if (!shard_ok) return 1;
 	/* a job that never runs must not leave an earlier run's log behind: it would be read as this run's; and a sampled
@@ -756,8 +940,8 @@ static int run_parallel(const char *self, int jobs_wanted)
 	/* each job: the program with the job's entry ($0), its output in its log, then its exit status: a sanitizer reports
 	 * at exit, after the summary line (LeakSanitizer), and ends the process with a status of its own */
 	snprintf(job, sizeof job,
-		"L=\"%s/$(printf %%s \"$0\" | tr \":@/\" ___).log\"; %s \"$0\" > \"$L\" 2>&1; s=$?; echo >> \"$L\"; echo \"%s$s\" >> \"$L\"", dir, exec,
-		EXIT_STATUS_LINE);
+		"L=\"%s/$(printf %%s \"$0\" | tr \":@/\" ___).log\"; %s " TIMED_FLAG " \"$0\" > \"$L\" 2>&1; s=$?; echo >> \"$L\"; echo \"%s$s\" >> \"$L\"",
+		dir, exec, EXIT_STATUS_LINE);
 	quote(job, quoted, sizeof quoted);
 	snprintf(command, sizeof command, "xargs -P %d -n 1 sh -c %s < '%s/jobs'", jobs_wanted, quoted, dir);
 	if (system(command) == -1) {
@@ -768,6 +952,7 @@ static int run_parallel(const char *self, int jobs_wanted)
 		size_t size;
 		char *text, *line, summary[200] = "";
 		int p = -1, q = -1, status = 0;
+		double elapsed = -1;
 		log_of(dir, jobs[k].entry, path, sizeof path);
 		text = (char *)kp_read_file(path, &size);
 		for (line = text; line && *line;) {
@@ -778,6 +963,7 @@ static int run_parallel(const char *self, int jobs_wanted)
 					strchr(jobs[k].entry, '@') ? "]" : "");
 			}
 			if (strncmp(line, EXIT_STATUS_LINE, sizeof EXIT_STATUS_LINE - 1) == 0) status = atoi(line + sizeof EXIT_STATUS_LINE - 1);
+			if (strncmp(line, ELAPSED_LINE, sizeof ELAPSED_LINE - 1) == 0) elapsed = atof(line + sizeof ELAPSED_LINE - 1);
 			if (!summary[0] && strncmp(line, "SUMMARY: ", 9) == 0) snprintf(summary, sizeof summary, "%s", line); /* a sanitizer's */
 			{
 				const char *at = strstr(line, ": ");
@@ -794,6 +980,11 @@ static int run_parallel(const char *self, int jobs_wanted)
 			line = end + 1;
 		}
 		free(text);
+		if (elapsed >= 0) {
+			JobTime *slot;
+			time_key(jobs[k].entry, key, sizeof key);
+			if ((slot = job_time(&times, key, 0)) != NULL) slot->seconds = elapsed;
+		}
 		if (p < 0) {
 			printf("FAIL %s: no summary (see %s)\n", jobs[k].entry, path);
 			p = 0;
@@ -822,6 +1013,8 @@ static int run_parallel(const char *self, int jobs_wanted)
 		if (shard_ok[k].ok) passed++;
 		else failed++;
 	}
+	write_times(dir, &times);
+	free(times.list);
 	backend(label, sizeof label);
 	if (sample > 1) snprintf(sampled, sizeof sampled, ", the long loops' 1 in %d, seed %u", sample, seed);
 	printf("%s%s%s: %d passed, %d failed (%d jobs in parallel%s)\n", label, exec_env && exec_env[0] ? " via " : "",
@@ -831,9 +1024,22 @@ static int run_parallel(const char *self, int jobs_wanted)
 	return failed == 0 ? 0 : 1;
 }
 
+/* The time since an arbitrary start, in seconds. */
+static double seconds_now(void)
+{
+#ifdef _WIN32
+	return (double)clock() / CLOCKS_PER_SEC; /* the CRT's: wall time since the process started */
+#else
+	struct timespec t;
+	clock_gettime(CLOCK_MONOTONIC, &t);
+	return (double)t.tv_sec + (double)t.tv_nsec * 1e-9;
+#endif
+}
+
 int main(int argc, char **argv)
 {
-	int passed = 0, failed = 0, k;
+	int passed = 0, failed = 0, k, timed = 0;
+	double start = seconds_now();
 	char label[160];
 	setvbuf(stdout, NULL, _IOLBF, 0);
 	kp_smk_set_video(&kp_webm_smk_video); /* the KPW1 movies, as the app has them */
@@ -852,6 +1058,11 @@ int main(int argc, char **argv)
 		}
 		return run_parallel(argv[0], n);
 	}
+	if (argc > 1 && strcmp(argv[1], TIMED_FLAG) == 0) { /* a parallel run's job */
+		timed = 1;
+		argv++;
+		argc--;
+	}
 	if (argc > 1) {
 		for (k = 1; k < argc; k++) {
 			if (run_entry(argv[k], &passed, &failed) != 0) failed++;
@@ -859,6 +1070,7 @@ int main(int argc, char **argv)
 	} else {
 		for (k = 0; k < SUITE_COUNT; k++) run_entry(SUITES[k]->name, &passed, &failed);
 	}
+	if (timed) printf(ELAPSED_LINE "%.3f\n", seconds_now() - start);
 	backend(label, sizeof label);
 	printf("%s: %d passed, %d failed\n", label, passed, failed);
 	return failed == 0 ? 0 : 1;

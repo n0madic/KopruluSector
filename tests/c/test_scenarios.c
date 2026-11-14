@@ -13,8 +13,6 @@
 #include <string.h>
 
 #define DIR "tests/golden/oracle/"
-#define RESULT_VICTORY 3
-#define RESULT_STEPS 100 /* a play's dumps (every 20th step) end when the result dialog pauses the game */
 
 static const char *const DATA_FILES[] = { KP_T_DATA, NULL };
 
@@ -38,14 +36,17 @@ static KpGoldenRun *check_run(KpT *T, const KpJson *g, const char *name, const K
 static void check_runs(KpT *T, const char *kind, KpBuf *bad)
 {
 	const KpJson *index;
+	const unsigned char *mine;
 	char path[512];
 	int k;
 	snprintf(path, sizeof path, DIR "%s/index.json", kind);
 	index = kp_t_golden(T, path);
+	snprintf(path, sizeof path, DIR "%s/%%s.json", kind);
+	mine = kp_t_mine_goldens(T, index, path);
 	for (k = 0; k < kp_json_len(index); k++) {
 		const char *name = kp_json_str(kp_json_at(index, k), "");
 		int found, mark = kp_t_mark(T);
-		if (!kp_t_mine_sampled(T, k + 1)) continue;
+		if (!mine[k]) continue;
 		check_run(T, golden(T, kind, name), name, NULL, bad, &found);
 		kp_t_release(T, mark); /* the run's game and golden go now, not at the test's end */
 	}
@@ -70,52 +71,25 @@ static void campaign_runs_equal_the_original(KpT *T)
 	kp_t_ok(T, bad->size == 0, "categories differ from the original: %s", kp_buf_text(bad));
 }
 
-/* The scripted wins of the campaign rows (tests/golden/oracle/plays, plan phase 8): the emulator's plays at every 20th
- * step by the state's fingerprint and every 500th by its categories, and each play's result is the local player's
- * victory. */
-static void campaign_plays_equal_the_original(KpT *T)
-{
-	const KpJson *index;
-	KpBuf *bad;
-	int k;
-	if (!kp_t_ready(T, "test_scenarios", DATA_FILES)) return;
-	if (!kp_t_has(T, DIR "plays/index.json")) return;
-	index = kp_t_golden(T, DIR "plays/index.json");
-	bad = kp_t_buf(T);
-	for (k = 0; k < kp_json_len(index); k++) {
-		const char *name = kp_json_str(kp_json_at(index, k), "");
-		int found, mark = kp_t_mark(T);
-		KpGoldenRun *gr;
-		if (!kp_t_mine_sampled(T, k + 1)) continue;
-		gr = check_run(T, golden(T, "plays", name), name, NULL, bad, &found);
-		if (found == 0) { /* the result comes within the compared stride after the last dumped step */
-			KpGame *g = gr->game.g;
-			int64_t step = gr->replay.last;
-			while (g->results[g->local_player] == 0 && step < gr->replay.last + RESULT_STEPS) kp_runner_to(&gr->run, ++step);
-			if (g->results[g->local_player] != RESULT_VICTORY) kp_buf_printf(bad, "%s%s no victory", bad->size ? ", " : "", name);
-		}
-		kp_t_release(T, mark);
-	}
-	kp_t_ok(T, bad->size == 0, "plays differ from the original: %s", kp_buf_text(bad));
-}
-
 /* The original playing replays of its own games (tests/golden/oracle/replays, phase RP): the commands and interface
  * events it logged while playing, run in a replay's mode (the golden's "replay": the replay flag, full vision, no
  * result dialog's clock), equal at every step. */
 static void replays_equal_the_original(KpT *T)
 {
 	const KpJson *index;
+	const unsigned char *mine;
 	KpBuf *bad;
 	int k;
 	if (!kp_t_ready(T, "test_scenarios", DATA_FILES)) return;
 	if (!kp_t_has(T, DIR "replays/index.json")) return;
 	index = kp_t_golden(T, DIR "replays/index.json");
+	mine = kp_t_mine_goldens(T, index, DIR "replays/%s.json");
 	bad = kp_t_buf(T);
 	for (k = 0; k < kp_json_len(index); k++) {
 		const char *name = kp_json_str(kp_json_at(index, k), "");
 		int found, mark = kp_t_mark(T);
 		KpGoldenRun *gr;
-		if (!kp_t_mine_sampled(T, k + 1)) continue;
+		if (!mine[k]) continue;
 		gr = check_run(T, golden(T, "replays", name), name, NULL, bad, &found);
 		kp_t_ok(T, gr->game.g->w->replay && gr->game.g->local_vision == 0xff, "%s: played as a replay", name);
 		kp_t_release(T, mark);
@@ -283,8 +257,7 @@ static const KpTest TESTS[] = {
 	{ "scenarios_equal_the_original", scenarios_equal_the_original, 6 },
 	{ "campaign_runs_equal_the_original", campaign_runs_equal_the_original, 4 },
 	{ "campaign_chains_equal_the_original", campaign_chains_equal_the_original, 4 },
-	{ "campaign_plays_equal_the_original", campaign_plays_equal_the_original, 8 },
-	{ "replays_equal_the_original", replays_equal_the_original, 0 },
+	{ "replays_equal_the_original", replays_equal_the_original, 4 },
 	{ "escape_skips_running_triggers_only", escape_skips_running_triggers_only, 0 },
 };
 KP_SUITE(kp_suite_scenarios, "test_scenarios", TESTS);

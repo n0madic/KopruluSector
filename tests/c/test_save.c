@@ -124,10 +124,12 @@ static void saved_scenarios_continue_as_the_original(KpT *T)
 {
 	static const int64_t INTOS[2] = { 1, INTO_LAST };
 	const KpJson *index;
+	const unsigned char *mine;
 	KpBuf *bad;
 	int k;
 	if (!kp_t_ready(T, "test_save", FILES)) return;
 	index = load_golden(T, "scenarios/index");
+	mine = kp_t_mine_goldens(T, index, DIR "scenarios/%s.json");
 	bad = kp_t_buf(T);
 	for (k = 0; k < kp_json_len(index); k++) {
 		const char *name = kp_json_str(kp_json_at(index, k), "");
@@ -136,7 +138,7 @@ static void saved_scenarios_continue_as_the_original(KpT *T)
 		int mark = kp_t_mark(T);
 		int64_t last = 0;
 		int i;
-		if (!kp_t_mine_sampled(T, k + 1)) continue;
+		if (!mine[k]) continue;
 		snprintf(path, sizeof path, "scenarios/%s", name);
 		g = load_golden(T, path);
 		for (i = 0; i < kp_json_len(kp_json_get(g, "steps")); i++) {
@@ -161,10 +163,14 @@ static void saved_wasteland_continues_as_the_original(KpT *T)
 	kp_t_ok(T, bad->size == 0, "continuations after a load differ: %s", kp_buf_text(bad));
 }
 
-/* The scripted wins of the campaign rows (plan phase 8 item 4): each saved at every PLAY_SAVE_EVERY-th step and loaded
- * into a fresh game, which continues as the original did up to the next save step; the first save continues to the
- * play's end. One game per play runs on from save to save. */
+/* The scripted wins of the campaign rows (tests/golden/oracle/plays, plan phase 8): each play's game equal to the
+ * emulator's at every 20th step by the state's fingerprint and every 500th by its categories, its trigger and AI
+ * traces equal, and its result the local player's victory; and (plan phase 8 item 4) saved at every PLAY_SAVE_EVERY-th
+ * step and loaded into a fresh game, which continues as the original did up to the next save step, the first save to
+ * the play's end. The play's game runs on from save to save. */
 #define PLAY_SAVE_EVERY 2000
+#define RESULT_VICTORY 3
+#define RESULT_STEPS 100 /* a play's dumps (every 20th step) end when the result dialog pauses the game */
 #define STATUS_COMPLETED 0x1
 #define STATUS_IN_TRANSPORT 0x40
 #define NO_UNIT 228 /* an empty queue entry */
@@ -202,37 +208,45 @@ static void interrupted(KpGame *g, int *found)
 	}
 }
 
-static void saved_plays_continue_as_the_original(KpT *T)
+static void campaign_plays_and_saves_equal_the_original(KpT *T)
 {
 	static const int64_t INTOS[1] = { 1 };
 	const KpJson *index;
+	const unsigned char *mine;
 	KpBuf *bad;
 	int k;
 	if (!kp_t_ready(T, "test_save", FILES) || !kp_t_has(T, DIR "plays/index.json")) return;
 	index = load_golden(T, "plays/index");
+	mine = kp_t_mine_goldens(T, index, DIR "plays/%s.json");
 	bad = kp_t_buf(T);
 	for (k = 0; k < kp_json_len(index); k++) {
 		const char *name = kp_json_str(kp_json_at(index, k), "");
 		char path[256];
 		const KpJson *g;
 		const KpReplay *r;
-		KpRunner run;
-		KpOracleGame *og;
-		int64_t mid;
-		int mark = kp_t_mark(T);
-		if (!kp_t_mine_sampled(T, k + 1)) continue;
+		KpGoldenRun *gr;
+		KpGame *game;
+		int64_t mid, step;
+		int mark = kp_t_mark(T), found = 0;
+		if (!mine[k]) continue;
 		snprintf(path, sizeof path, "plays/%s", name);
 		g = load_golden(T, path);
-		r = replay_of(T, g);
-		og = game_at(T, r, 1, &run);
-		for (mid = PLAY_SAVE_EVERY; mid <= r->last - 1; mid += PLAY_SAVE_EVERY) {
-			kp_runner_to(&run, mid);
-			continue_from(T, name, g, r, og->g, &run, mid, INTOS, 1, bad,
-				mid == PLAY_SAVE_EVERY ? r->last : mid + PLAY_SAVE_EVERY);
+		gr = kp_t_golden_run(T, g, NULL, kp_json_get(g, "trace") != NULL || kp_json_get(g, "ai_trace") != NULL);
+		r = &gr->replay;
+		game = gr->game.g;
+		for (mid = PLAY_SAVE_EVERY; mid <= r->last - 1 && !found; mid += PLAY_SAVE_EVERY) {
+			if ((found = kp_golden_run_check_to(gr, mid, name, bad)) == 0) {
+				continue_from(T, name, g, r, game, &gr->run, mid, INTOS, 1, bad,
+					mid == PLAY_SAVE_EVERY ? r->last : mid + PLAY_SAVE_EVERY);
+			}
+		}
+		if (!found && kp_golden_run_check(gr, g, name, bad) == 0) { /* the result comes within the stride after the last dump */
+			for (step = r->last; game->results[game->local_player] == 0 && step < r->last + RESULT_STEPS;) kp_runner_to(&gr->run, ++step);
+			if (game->results[game->local_player] != RESULT_VICTORY) kp_buf_printf(bad, "%s%s no victory", bad->size ? ", " : "", name);
 		}
 		kp_t_release(T, mark);
 	}
-	kp_t_ok(T, bad->size == 0, "continuations after a load differ: %s", kp_buf_text(bad));
+	kp_t_ok(T, bad->size == 0, "plays or their continuations after a load differ from the original: %s", kp_buf_text(bad));
 }
 
 /* The play saves between them catch every kind of unfinished process of INTERRUPTED (plan phase 8 item 4); a shard of
@@ -408,7 +422,7 @@ static void loads_show_the_loaded_countdown(KpT *T)
 static const KpTest TESTS[] = {
 	{ "saved_scenarios_continue_as_the_original", saved_scenarios_continue_as_the_original, 6 },
 	{ "saved_wasteland_continues_as_the_original", saved_wasteland_continues_as_the_original, 0 },
-	{ "saved_plays_continue_as_the_original", saved_plays_continue_as_the_original, 8 },
+	{ "campaign_plays_and_saves_equal_the_original", campaign_plays_and_saves_equal_the_original, 12 },
 	{ "saved_plays_catch_every_interrupted_process", saved_plays_catch_every_interrupted_process, 0 },
 	{ "saved_ai_runs_continue_as_the_original", saved_ai_runs_continue_as_the_original, 0 },
 	{ "initial_states_survive_a_save", initial_states_survive_a_save, 0 },

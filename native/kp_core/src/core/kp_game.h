@@ -938,6 +938,10 @@ int kp_dump(KpGame *g, int drawn, KpDumpLine emit, void *ud);
  * crc) in dump order. -1 when out of memory or when a category's lines are not in one run. */
 typedef void (*KpCategoryCrc)(void *ud, const char *category, uint32_t crc);
 int kp_dump_crcs(KpGame *g, int drawn, KpCategoryCrc each, void *ud);
+/* A 64-bit hash of the same state lines without their text, for comparing two of Koprulu's games in one process (a
+ * recording and its playback): it changes when any line would, but it is no CRC of the original's, so it is never
+ * compared with a golden. -1 when out of memory. */
+int kp_dump_hash(KpGame *g, int drawn, uint64_t *out);
 /* Saves (kp_save.c, version 1): the game's mutable state with the mission's name and the data's identity, both
  * checked by kp_load, which restores into a game of the same mission and data (fresh or at any later step) and
  * leaves the game unchanged when it refuses the save. *out is malloc'd. */

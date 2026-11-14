@@ -439,6 +439,93 @@ static void core_failures_leave_the_game_usable(KpT *T)
 	kp_t_ok(T, kp_scalar(gr->game.g, KP_FRAME) > 0, "the game runs on");
 }
 
+static uint64_t dump_hash(KpT *T, KpGame *g, int drawn)
+{
+	uint64_t h;
+	kp_t_ok(T, kp_dump_hash(g, drawn, &h) == 0, "out of memory");
+	return h;
+}
+
+/* Whether the state lines (drawn or not) differ from before's. */
+static int lines_differ(KpT *T, KpGame *g, int drawn, KpBuf *before)
+{
+	KpBuf *now = kp_t_buf(T);
+	kp_t_ok(T, kp_state_lines(g, drawn, now) == 0, "out of memory");
+	return now->size != before->size || memcmp(kp_buf_text(now), kp_buf_text(before), now->size) != 0;
+}
+
+/* A change of *value by delta and back: the hash (drawn or not) changes when the lines do and only then, and comes
+ * back with the value. */
+static void hash_follows(KpT *T, KpGame *g, int64_t *value, int64_t delta, const char *what)
+{
+	int drawn;
+	for (drawn = 0; drawn <= 1; drawn++) {
+		KpBuf *before = kp_t_buf(T);
+		uint64_t h = dump_hash(T, g, drawn);
+		int differ;
+		kp_t_ok(T, kp_state_lines(g, drawn, before) == 0, "out of memory");
+		*value += delta;
+		differ = lines_differ(T, g, drawn, before);
+		kp_t_eq(T, dump_hash(T, g, drawn) != h, differ, "%s (drawn %d): the hash changes with the lines", what, drawn);
+		*value -= delta;
+		kp_t_ok(T, dump_hash(T, g, drawn) == h, "%s (drawn %d): the hash comes back", what, drawn);
+	}
+}
+
+/* kp_dump_hash, which test_session's playbacks compare: the same state hashes the same in two games of it, and a value
+ * of each kind of line (a unit's field, a list's item, a control group, a terrain row, a trigger record's byte) changes
+ * it as it changes the text, the fields a drawn dump leaves out (an image's position, a unit's minimap notice) only the
+ * hash of the dump that has them. */
+static void dump_hash_follows_the_lines(KpT *T)
+{
+	KpGoldenRun *a, *b;
+	KpReplay empty;
+	KpRunner run;
+	KpGame *g;
+	int64_t n;
+	int32_t image;
+	int p;
+	if (!kp_t_has(T, DATA)) return;
+	kp_replay_init(&empty);
+	a = kp_t_golden_run(T, scenario(T, "trigger_basics"), NULL, 0);
+	b = kp_t_golden_run(T, scenario(T, "trigger_basics"), NULL, 0);
+	kp_runner_init(&run, a->game.g, &empty);
+	kp_runner_to(&run, 40);
+	kp_runner_init(&run, b->game.g, &empty);
+	kp_runner_to(&run, 40);
+	g = a->game.g;
+	kp_t_ok(T, dump_hash(T, g, 0) == dump_hash(T, b->game.g, 0) && dump_hash(T, g, 1) == dump_hash(T, b->game.g, 1),
+		"two games of the same state hash the same");
+	kp_t_ok(T, dump_hash(T, g, 0) != dump_hash(T, g, 1), "the drawn dump is another dump");
+	n = g->lists[KP_LIST_ACTIVE].head;
+	kp_t_ok(T, n > 0, "a unit");
+	hash_follows(T, g, &g->u.hp[n], 1, "a unit's hit points");
+	hash_follows(T, g, &g->u.last_event_timer[n], 1, "a unit's minimap notice");
+	image = g->w->spr.images[g->u.sprite[n]].head;
+	{
+		uint64_t not_drawn = dump_hash(T, g, 0), drawn = dump_hash(T, g, 1);
+		g->w->img.x[image]++;
+		kp_t_ok(T, dump_hash(T, g, 0) != not_drawn && dump_hash(T, g, 1) == drawn,
+			"an image's position: in the dump, not in the drawn one");
+		g->w->img.x[image]--;
+	}
+	hash_follows(T, g, &g->terrain.raw_tiles[0], 1, "a terrain tile");
+	hash_follows(T, g, &g->groups[0][3][0], n, "a control group");
+	hash_follows(T, g, &g->groups[0][3][11], n, "a control group's last slot");
+	hash_follows(T, g, &g->players.minerals[0], 8, "a player's minerals");
+	for (p = 0; p < KP_TRIGGER_PLAYERS && g->trig.head[p] < 0; p++) {
+	}
+	kp_t_ok(T, p < KP_TRIGGER_PLAYERS, "a trigger");
+	{
+		uint8_t *rec = g->trig.records + (size_t)g->trig.head[p] * KP_TRIGGER_RECORD + KP_TRIGGER_RECORD / 2;
+		uint64_t h = dump_hash(T, g, 0);
+		*rec ^= 0x40;
+		kp_t_ok(T, dump_hash(T, g, 0) != h, "a trigger record's byte changes the hash");
+		*rec ^= 0x40;
+		kp_t_ok(T, dump_hash(T, g, 0) == h, "and back");
+	}
+}
+
 #define SCV 7
 #define REFINERY 110
 #define COMMAND_CENTER 106
@@ -650,7 +737,7 @@ static void runner_samples_long_loops(KpT *T)
 	for (k = 1; k <= ITEMS; k++) differ += kp_t_mine_sampled(t, k) != taken[0][k];
 	kp_t_ok(T, differ > ITEMS / 5, "a seed's high bit takes other items: %d differ", differ);
 	/* a loop as short as the plays': its items spread over the shards, whose processes run at the same time */
-	t->test = "campaign_plays_equal_the_original";
+	t->test = "campaign_plays_and_saves_equal_the_original";
 	for (seed = 0; seed < (int)(sizeof SPREAD_SEEDS / sizeof SPREAD_SEEDS[0]); seed++) {
 		int used = 0;
 		t->seed = SPREAD_SEEDS[seed];
@@ -665,8 +752,62 @@ static void runner_samples_long_loops(KpT *T)
 	}
 }
 
+/* The runner's dealing of a weighed loop to the shards: each item of the sample in one shard, the same items as
+ * kp_t_mine_sampled's, and the shards' weights within the heaviest item of each other (round robin leaves a shard of
+ * this loop twice another's). */
+static void runner_deals_weighed_loops(KpT *T)
+{
+	enum { ITEMS = 71, SHARDS = 8 };
+	KpT *t = (KpT *)calloc(1, sizeof *t);
+	double weights[ITEMS], load[SHARDS], round_robin[SHARDS], heaviest = 0;
+	int sample, k, shard;
+	kp_t_ok(T, t != NULL, "out of memory");
+	kp_t_defer(T, free, t);
+	t->test = "a_weighed_test";
+	t->seed = 123456789;
+	for (k = 0; k < ITEMS; k++) { /* a few heavy items among light ones, the heavy ones all in round robin's shard 1 */
+		weights[k] = k % SHARDS == 0 && k < 5 * SHARDS ? 30 + k : 1 + k % 7;
+		if (weights[k] > heaviest) heaviest = weights[k];
+	}
+	for (sample = 1; sample <= 4; sample += 3) {
+		double most = 0, least = 1e18, rr_most = 0, rr_least = 1e18;
+		t->sample = sample;
+		t->shards = SHARDS;
+		for (shard = 0; shard < SHARDS; shard++) load[shard] = round_robin[shard] = 0;
+		for (k = 1; k <= ITEMS; k++) {
+			int runs = 0, sampled;
+			for (shard = 1; shard <= SHARDS; shard++) {
+				unsigned char mine[ITEMS], again[ITEMS];
+				t->shard = shard;
+				kp_t_ok(T, kp_t_mine_weighted(t, ITEMS, weights, mine) == 0 && kp_t_mine_weighted(t, ITEMS, weights, again) == 0,
+					"dealt");
+				kp_t_ok(T, memcmp(mine, again, ITEMS) == 0, "the same dealing twice");
+				if (mine[k - 1]) {
+					runs++;
+					load[shard - 1] += weights[k - 1];
+				}
+				if (kp_t_mine_sampled(t, k)) round_robin[shard - 1] += weights[k - 1];
+			}
+			t->shards = 0;
+			t->shard = 0;
+			sampled = kp_t_mine_sampled(t, k);
+			t->shards = SHARDS;
+			kp_t_eq(T, runs, sampled, "sample %d: item %d runs once if the sample takes it", sample, k);
+		}
+		for (shard = 0; shard < SHARDS; shard++) {
+			if (load[shard] > most) most = load[shard];
+			if (load[shard] < least) least = load[shard];
+			if (round_robin[shard] > rr_most) rr_most = round_robin[shard];
+			if (round_robin[shard] < rr_least) rr_least = round_robin[shard];
+		}
+		kp_t_ok(T, most - least <= heaviest, "sample %d: the shards' weights %.0f to %.0f, within %.0f", sample, least, most, heaviest);
+		if (sample == 1) kp_t_ok(T, rr_most > 2 * rr_least, "round robin's %.0f to %.0f (the loop is unbalanced)", rr_least, rr_most);
+	}
+}
+
 static const KpTest TESTS[] = {
 	{ "runner_samples_long_loops", runner_samples_long_loops, 0 },
+	{ "runner_deals_weighed_loops", runner_deals_weighed_loops, 0 },
 	{ "utf8_decodes_strictly", utf8_decodes_strictly, 0 },
 	{ "int_wrap", int_wrap, 0 },
 	{ "int_mul_boundaries", int_mul_boundaries, 0 },
@@ -682,5 +823,6 @@ static const KpTest TESTS[] = {
 	{ "core_failures_leave_the_game_usable", core_failures_leave_the_game_usable, 0 },
 	{ "creep_tiles_count_the_map", creep_tiles_count_the_map, 0 },
 	{ "placement_ghosts", placement_ghosts, 0 },
+	{ "dump_hash_follows_the_lines", dump_hash_follows_the_lines, 0 },
 };
 KP_SUITE(kp_suite_kp_core, "test_kp_core", TESTS);

@@ -362,6 +362,29 @@ void kp_oracle_opts(KpOracleOpts *o)
 	o->host.mission_index = KP_NIL;
 }
 
+/* What a root keeps of the files its games read after the data is built (each game's tileset, read by its mission's
+ * terrain and by the game; whatever else a test reads twice): the copy of a file up to CACHE_FILE_MAX bytes while the
+ * kept ones stay under CACHE_TOTAL_MAX, so that a file's digest check and its archive's inflate run once per process.
+ * A file is read whole from the source the first time, checked as always; a failed read is not kept. */
+#define CACHE_FILE_MAX ((size_t)4 << 20)
+#define CACHE_TOTAL_MAX ((size_t)64 << 20)
+/* The missions a root keeps built (its terrain derived), the most recent ones: the probes start game after game on
+ * one map. */
+#define MISSIONS_KEPT 4
+
+typedef struct CachedFile {
+	struct CachedFile *next;
+	char *name;
+	uint8_t *data;
+	size_t size;
+} CachedFile;
+
+typedef struct {
+	char key[sizeof ((KpDataMission *)0)->key];
+	uint64_t used; /* the root's clock when last taken: the oldest is replaced */
+	KpMission mission;
+} KeptMission;
+
 /* The original data under a root (kp_data_dir: the root itself when it is a source, else its repack), opened and
  * built once per root and kept for the process: its games point into it. */
 typedef struct DataRoot {
@@ -370,9 +393,63 @@ typedef struct DataRoot {
 	KpRes *res;
 	KpData data;
 	uint8_t *fonts[KP_DATA_VECTOR_FONTS];
+	KpFiles source; /* the reader data.files reads through (kp_res's) */
+	CachedFile *cached;
+	size_t cached_bytes;
+	KeptMission missions[MISSIONS_KEPT];
+	uint64_t clock;
 } DataRoot;
 
 static DataRoot *roots; /* the roots opened, kept for the process */
+
+static DataRoot *root_of(const char *root)
+{
+	DataRoot *r;
+	for (r = roots; r && strcmp(r->root, root) != 0; r = r->next) {
+	}
+	return r;
+}
+
+static uint8_t *copy_bytes(const uint8_t *data, size_t size)
+{
+	uint8_t *out = (uint8_t *)malloc(size + 1);
+	if (!out) return NULL;
+	memcpy(out, data, size);
+	out[size] = '\0';
+	return out;
+}
+
+static uint8_t *cached_read(void *ctx, const char *name, size_t *size, char *err, size_t err_size)
+{
+	DataRoot *r = (DataRoot *)ctx;
+	CachedFile *c;
+	uint8_t *data;
+	for (c = r->cached; c; c = c->next) {
+		if (strcmp(c->name, name) == 0) {
+			if (!(data = copy_bytes(c->data, c->size))) kp_out_of_memory();
+			*size = c->size;
+			return data;
+		}
+	}
+	data = r->source.read(r->source.ctx, name, size, err, err_size);
+	if (!data || *size > CACHE_FILE_MAX || r->cached_bytes + *size > CACHE_TOTAL_MAX) return data;
+	if (!(c = (CachedFile *)calloc(1, sizeof *c)) || !(c->name = (char *)copy_bytes((const uint8_t *)name, strlen(name)))
+		|| !(c->data = copy_bytes(data, *size))) {
+		kp_out_of_memory();
+	}
+	c->size = *size;
+	c->next = r->cached;
+	r->cached = c;
+	r->cached_bytes += *size;
+	return data;
+}
+
+static uint8_t *source_head(void *ctx, const char *name, size_t want, size_t *got, uint64_t *total, char *err,
+	size_t err_size)
+{
+	const KpFiles *source = &((DataRoot *)ctx)->source;
+	return source->head(source->ctx, name, want, got, total, err, err_size);
+}
 
 static int data_root_open(DataRoot *r, const char *root, KpError *err)
 {
@@ -401,16 +478,20 @@ static int data_root_open(DataRoot *r, const char *root, KpError *err)
 	scenarios = kp_read_under(root, KP_DATA_SCENARIOS "index.txt", &scenarios_size, err);
 	rc = kp_data_build(&r->data, r->res, fonts, count, (const char *)scenarios, scenarios ? scenarios_size : 0, err);
 	free(scenarios);
+	if (rc == 0) { /* the later reads through the cache (the build's are each read once) */
+		r->source = r->data.files;
+		r->data.files.read = cached_read;
+		r->data.files.head = r->source.head ? source_head : NULL;
+		r->data.files.ctx = r;
+	}
 	return rc;
 }
 
 const KpData *kp_oracle_data(const char *root, KpError *err)
 {
-	DataRoot *r;
+	DataRoot *r = root_of(root);
 	int k;
-	for (r = roots; r; r = r->next) {
-		if (strcmp(r->root, root) == 0) return &r->data;
-	}
+	if (r) return &r->data;
 	if (!(r = (DataRoot *)calloc(1, sizeof *r))) kp_out_of_memory();
 	snprintf(r->root, sizeof r->root, "%s", root);
 	if (data_root_open(r, root, err) != 0) {
@@ -427,11 +508,8 @@ const KpData *kp_oracle_data(const char *root, KpError *err)
 KpResSourceKind kp_oracle_data_origin(const char *root)
 {
 	KpError err;
-	DataRoot *r;
 	if (!kp_oracle_data(root, &err)) return KP_RES_SOURCE_NONE;
-	for (r = roots; strcmp(r->root, root) != 0; r = r->next) {
-	}
-	return kp_res_origin(r->res);
+	return kp_res_origin(root_of(root)->res);
 }
 
 int64_t kp_oracle_mission_index(const char *root, const char *key)
@@ -499,20 +577,39 @@ const KpDataMission *kp_oracle_mission(const char *root, const char *key, KpMiss
 {
 	const KpData *d;
 	const KpDataMission *entry;
+	DataRoot *r;
+	KeptMission *kept;
 	uint8_t *chk = NULL;
 	size_t chk_size = 0;
+	int k;
 	memset(m, 0, sizeof *m);
 	if (!(d = kp_oracle_data(root, err))) return NULL;
 	if (!(entry = kp_data_find(d, key))) {
 		kp_error_set(err, "oracle: no mission %s in the catalog", key);
 		return NULL;
 	}
+	r = root_of(root);
+	kept = &r->missions[0];
+	for (k = 0; k < MISSIONS_KEPT; k++) {
+		KeptMission *km = &r->missions[k];
+		if (km->key[0] && strcmp(km->key, entry->key) == 0) {
+			km->used = ++r->clock;
+			if (kp_mission_copy(m, &km->mission) != 0) kp_out_of_memory();
+			return entry;
+		}
+		if (km->used < kept->used) kept = km;
+	}
 	if (!entry->directory[0]) {
 		char path[256];
 		snprintf(path, sizeof path, KP_DATA_SCENARIOS "%s.chk", key + sizeof "scenarios/" - 1);
 		if (!(chk = kp_read_under(root, path, &chk_size, err))) return NULL;
 	}
-	return kp_data_mission(d, entry, chk, chk_size, m, err) == 0 ? entry : NULL; /* the CHK taken */
+	if (kp_data_mission(d, entry, chk, chk_size, m, err) != 0) return NULL; /* the CHK taken */
+	kp_mission_free(&kept->mission);
+	if (kp_mission_copy(&kept->mission, m) != 0) kp_out_of_memory();
+	snprintf(kept->key, sizeof kept->key, "%s", entry->key);
+	kept->used = ++r->clock;
+	return entry;
 }
 
 int kp_oracle_game_start(KpOracleGame *og, const char *root, const char *key, uint32_t seed, int expansion,

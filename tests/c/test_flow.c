@@ -3220,4 +3220,4 @@ static const KpTest TESTS[] = {
 	{ "script_acts_over_a_game", script_acts_over_a_game, 0 },
 };
 
-KP_SUITE(kp_suite_flow, "test_flow", TESTS);
+KP_SUITE_SPLIT(kp_suite_flow, "test_flow", TESTS);

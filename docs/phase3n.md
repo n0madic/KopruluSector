@@ -227,7 +227,9 @@ replays it on a native game and compares the dump CRCs at every recorded step, e
 step-sorted CRCs (or prints the dump lines at STEP; turns take up to `KP_TURN_COMMANDS` commands, as the binding's;
 a category of the original that the dump no longer prints counts as a difference, and a replay without steps or CRCs
 is refused);
-`kp_bench ROOT REPLAY [RUNS]` times the object steps. `tools/native/build.sh` builds both for the desktop,
+`kp_bench ROOT REPLAY [RUNS]` times the object steps (`kp_bench --dump ROOT GOLDEN [EVERY]`, since 2026-11-14, times
+the state's dump, its CRCs and its hash every EVERY-th step of a golden's run, with the bytes of each category).
+`tools/native/build.sh` builds both for the desktop,
 `tools/ci.sh` replays every scenario, and `tools/native/android_bench.sh [SCENARIO [RUNS]]` builds them with the
 Android NDK and runs them on the phone through adb (`--glyphs LOCALE [RUNS]` times a language's glyphs since phase C).
 

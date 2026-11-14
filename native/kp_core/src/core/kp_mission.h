@@ -108,6 +108,9 @@ int kp_mission_sound_path(const KpMission *m, const char *directory, uint32_t st
 /* Whether the game looks a STR row up by its text (the language's kept rows, kp_locale_mission), so a language keeps the base's: a sound's
  * (m's WAV strings) or Set Next Scenario's map name (TRIG's action 41). */
 int kp_mission_string_looked_up(const KpMission *m, uint32_t string_id);
+/* A copy of m that owns its own blob, rules and sounds (its parts point into the copy's blob): 0, or -1 out of memory
+ * with out zeroed. */
+int kp_mission_copy(KpMission *out, const KpMission *m);
 void kp_mission_free(KpMission *m);
 
 #ifdef __cplusplus

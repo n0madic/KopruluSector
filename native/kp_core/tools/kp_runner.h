@@ -142,13 +142,14 @@ typedef KpHostGame KpOracleGame;
 
 /* The original data under root (kp_data_dir: root itself when it is a source, else its repack) with the root's test
  * scenarios (generated/scenarios/) and the source tree's vector fonts (third_party/fonts/), built once per root and
- * kept for the process; NULL with the error. */
+ * kept for the process; NULL with the error. Its files reader keeps what is read after the build (up to 64 MiB of
+ * files of at most 4 MiB), each file read and checked once per process. */
 const KpData *kp_oracle_data(const char *root, KpError *err);
 /* Which install the root's original data are the files of (kp_res_origin), NONE without them. */
 KpResSourceKind kp_oracle_data_origin(const char *root);
 /* The mission of a key ("missions/<campaign>/<name>", "scenarios/<name>": kp_data_find in the root's data) built
  * from its files (kp_data_mission, a scenario's CHK under root): its catalog entry, or NULL with the error (m
- * released). */
+ * released). The root keeps its last 4 missions built and gives a copy of a kept one (kp_mission_copy). */
 const KpDataMission *kp_oracle_mission(const char *root, const char *key, KpMission *m, KpError *err);
 /* Starts the mission of a key (kp_oracle_mission) with the seed and expansion; -1 with the error in err (og
  * released). */

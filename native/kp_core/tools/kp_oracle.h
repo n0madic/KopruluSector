@@ -83,6 +83,7 @@ typedef struct {
 	int tracing;
 	KpBuf trace, ai_trace; /* the trace lines joined by "\n" */
 	int64_t trace_count, ai_count;
+	int64_t compared; /* the last step kp_golden_run_check_to has reached */
 	/* An event observer of the caller's (after the traces have taken theirs). */
 	void (*on_event)(void *ud, const KpEvent *e);
 	void *ud;
@@ -93,10 +94,14 @@ int kp_golden_run_start(KpGoldenRun *gr, const char *root, const KpJson *g, cons
 	KpError *err);
 void kp_golden_run_free(KpGoldenRun *gr);
 
-/* Runs golden g to its last compared step (test_scenarios check_run, under the caller's failure handler), comparing
+/* Runs golden g on to its last compared step (test_scenarios check_run, under the caller's failure handler), comparing
  * each compared step's state; appends "<name> step <n> <category>" for each difference at the first differing step,
  * then "<name> trigger trace" and "<name> AI trace" when the traces differ. Returns the differences. */
 int kp_golden_run_check(KpGoldenRun *gr, const KpJson *g, const char *name, KpBuf *bad);
+/* The same in parts: the run on to step `to` (at most the golden's last), its compared steps checked as above and the
+ * first differing one ending it (test_save runs a play from save to save); then, at the last step, the traces. */
+int kp_golden_run_check_to(KpGoldenRun *gr, int64_t to, const char *name, KpBuf *bad);
+int kp_golden_run_check_traces(KpGoldenRun *gr, const KpJson *g, const char *name, KpBuf *bad);
 
 /* --- campaign chains --- */
 

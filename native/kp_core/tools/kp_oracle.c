@@ -282,14 +282,15 @@ static void joined(const KpJson *list, KpBuf *out)
 	}
 }
 
-int kp_golden_run_check(KpGoldenRun *gr, const KpJson *g, const char *name, KpBuf *bad)
+int kp_golden_run_check_to(KpGoldenRun *gr, int64_t to, const char *name, KpBuf *bad)
 {
 	int64_t step;
 	int found = 0;
-	const KpJson *trace = kp_json_get(g, "trace"), *ai = kp_json_get(g, "ai_trace");
-	for (step = 1; step <= gr->replay.last; step++) {
+	if (to > gr->replay.last) to = gr->replay.last;
+	for (step = gr->compared + 1; step <= to; step++) {
 		int count, at;
 		kp_runner_to(&gr->run, step);
+		gr->compared = step;
 		at = kp_replay_step_crcs(&gr->replay, step, &count);
 		if (at >= 0) {
 			KpStateCrcs crcs;
@@ -314,6 +315,13 @@ int kp_golden_run_check(KpGoldenRun *gr, const KpJson *g, const char *name, KpBu
 			if (found) return found;
 		}
 	}
+	return 0;
+}
+
+int kp_golden_run_check_traces(KpGoldenRun *gr, const KpJson *g, const char *name, KpBuf *bad)
+{
+	const KpJson *trace = kp_json_get(g, "trace"), *ai = kp_json_get(g, "ai_trace");
+	int found = 0;
 	if (trace) {
 		KpBuf want;
 		kp_buf_init(&want);
@@ -332,6 +340,12 @@ int kp_golden_run_check(KpGoldenRun *gr, const KpJson *g, const char *name, KpBu
 		}
 	}
 	return found;
+}
+
+int kp_golden_run_check(KpGoldenRun *gr, const KpJson *g, const char *name, KpBuf *bad)
+{
+	int found = kp_golden_run_check_to(gr, gr->replay.last, name, bad);
+	return found ? found : kp_golden_run_check_traces(gr, g, name, bad);
 }
 
 /* --- campaign chains --- */

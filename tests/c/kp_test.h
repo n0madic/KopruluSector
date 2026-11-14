@@ -8,11 +8,14 @@
  *   kp_test SUITE[:TEST[@I/N[/S/SEED]]]  one suite, one test, or shard I of N of a test; S and SEED sample its long
  *                                   loops as in the failed job's line (kp_t_mine_sampled)
  *   kp_test -j N                    the suites in N parallel processes, the sharded tests split into their shards
+ *                                   and a split suite's (KP_SUITE_SPLIT) tests one per process
  *   kp_test --list                  the jobs of a parallel run, one per line
  * Run from the repository root (the generated data and the goldens are read from there). A parallel run starts each
  * job with KP_TEST_EXEC (default: this program; "node build/cmake-wasm/kp_test.js" runs the jobs under node) and
- * writes their logs to KP_TEST_LOGS (default build/c-tests). KP_TEST_SAMPLE=S with KP_TEST_SEED=N has the sharded
- * tests' long loops run about one item in S (the jobs carry them in their entries: wasm under node sees no environment).
+ * writes their logs to KP_TEST_LOGS (default build/c-tests), and each job's time to the file "times" there, by which
+ * the next run starts its longest jobs first (a job no run has timed before them). KP_TEST_SAMPLE=S with
+ * KP_TEST_SEED=N has the sharded tests' long loops run about one item in S (the jobs carry them in their entries: wasm
+ * under node sees no environment).
  */
 #ifndef KP_TEST_H
 #define KP_TEST_H
@@ -44,6 +47,7 @@ typedef struct {
 	const char *name;
 	const KpTest *tests;
 	int count;
+	int split; /* 1: each test a job of its own in a parallel run (a long suite of many short tests, KP_SUITE_SPLIT) */
 } KpSuite;
 
 #define KP_T_CLEANUPS 256
@@ -75,6 +79,18 @@ int kp_t_mine(const KpT *T, int k);
  * out the items whose hash of the test's name, the seed and k does not fall on 0 modulo `sample`. Which items a seed
  * takes does not depend on the shards. */
 int kp_t_mine_sampled(const KpT *T, int k);
+
+/* kp_t_mine_sampled for a loop over `count` items of known weights (the time each takes, about): the sampled items dealt
+ * to the shards by weight instead of in turn, the heaviest first, each to the shard with the least weight so far (LPT),
+ * so that the shards end together. weights[k - 1] is item k's; every shard's process deals the same. Sets mine[k - 1]
+ * for item k; -1 out of memory. */
+int kp_t_mine_weighted(const KpT *T, int count, const double *weights, unsigned char *mine);
+/* kp_t_mine_weighted over the goldens of an index of names, each weighing its golden's last compared step (path:
+ * printf's format of the golden's path with one %s for the name; an item out of the sample is not read): the flags,
+ * released with the test. A play's time
+ * follows its steps better than its golden's size, but by far not wholly: a step of the expansion's later missions
+ * costs ten times one of the first missions'. */
+const unsigned char *kp_t_mine_goldens(KpT *T, const KpJson *index, const char *path);
 
 #if defined(__GNUC__) || defined(__clang__)
 #define KP_T_NORETURN __attribute__((noreturn))
@@ -191,7 +207,9 @@ extern const KpSuite kp_suite_rng, kp_suite_initial_state, kp_suite_scenarios, k
 	kp_suite_chk, kp_suite_cine, kp_suite_scr, kp_suite_movies, kp_suite_encoders, kp_suite_convert,
 	kp_suite_hd, kp_suite_rep;
 
-#define KP_SUITE(var, label, tests) const KpSuite var = { label, tests, (int)(sizeof tests / sizeof tests[0]) }
+#define KP_SUITE(var, label, tests) const KpSuite var = { label, tests, (int)(sizeof tests / sizeof tests[0]), 0 }
+/* A suite whose tests a parallel run gives a job each: one process for the whole would be the run's longest job. */
+#define KP_SUITE_SPLIT(var, label, tests) const KpSuite var = { label, tests, (int)(sizeof tests / sizeof tests[0]), 1 }
 
 #ifdef __cplusplus
 }

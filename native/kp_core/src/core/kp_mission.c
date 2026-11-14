@@ -606,6 +606,46 @@ int kp_mission_string_looked_up(const KpMission *m, uint32_t string_id)
 	return 0;
 }
 
+/* A part of `from`'s blob moved to the same place in `to`. */
+static void rebase(KpBytes *b, const uint8_t *from, uint8_t *to)
+{
+	if (b->data) b->data = to + (b->data - from);
+}
+
+int kp_mission_copy(KpMission *out, const KpMission *m)
+{
+	const uint8_t *from = m->blob;
+	uint8_t *to;
+	int k;
+	*out = *m;
+	out->blob = (uint8_t *)malloc(m->size ? m->size : 1);
+	out->rules = (KpMissionRule *)malloc((m->rule_count ? (size_t)m->rule_count : 1) * sizeof *m->rules);
+	out->sounds = (KpMissionSound *)malloc((m->sound_count ? (size_t)m->sound_count : 1) * sizeof *m->sounds);
+	if (!out->blob || !out->rules || !out->sounds) {
+		kp_mission_free(out);
+		return -1;
+	}
+	to = out->blob;
+	if (m->size) memcpy(to, from, m->size);
+	if (m->rule_count) memcpy(out->rules, m->rules, (size_t)m->rule_count * sizeof *m->rules);
+	if (m->sound_count) memcpy(out->sounds, m->sounds, (size_t)m->sound_count * sizeof *m->sounds);
+	rebase(&out->tiles, from, to);
+	rebase(&out->mask, from, to);
+	rebase(&out->sprites, from, to);
+	rebase(&out->units, from, to);
+	rebase(&out->locations, from, to);
+	rebase(&out->strings, from, to);
+	rebase(&out->triggers, from, to);
+	rebase(&out->briefing, from, to);
+	rebase(&out->properties, from, to);
+	rebase(&out->walk, from, to);
+	rebase(&out->regions.data, from, to);
+	rebase(&out->contours.data, from, to);
+	for (k = 0; k < out->rule_count; k++) rebase(&out->rules[k].data, from, to);
+	for (k = 0; k < out->pack_count; k++) rebase(&out->packs[k], from, to);
+	return 0;
+}
+
 void kp_mission_free(KpMission *m)
 {
 	free(m->rules);
