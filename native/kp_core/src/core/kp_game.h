@@ -682,8 +682,15 @@ void kp_game_fail(KpGame *g, const char *fmt, ...);
 /* DAT reads: KP_DAT(g, units, hit_points, t). */
 #define KP_DAT(g, table, column, i) kp_dat_read((g), KP_COL_##table##_##column, (int64_t)(i))
 /* DAT value i of a column of the game's own DAT; KP_NIL where the column has none (unequal to every
- * DAT value). */
-int64_t kp_dat_read(KpGame *g, int col, int64_t i);
+ * DAT value). This accessor and the record checks below are inline: the simulation calls them in its inner loops,
+ * where the calls were a tenth of a campaign play's time. */
+static inline int64_t kp_dat_read(KpGame *g, int col, int64_t i)
+{
+	const KpDatColumn *c = g->col[col];
+	if (!c) kp_game_fail(g, "game: no DAT");
+	if (i < 0 || i > (int64_t)UINT32_MAX || !kp_dat_has(c, (uint32_t)i)) return KP_NIL;
+	return (int64_t)kp_dat_value(c, (uint32_t)i);
+}
 /* Writes value i of a column of the game's own DAT (a value the original changes while it runs). */
 void kp_dat_write(KpGame *g, int col, int64_t i, int64_t v);
 /* The same for a column named at run time (looked up on every call). */
@@ -694,9 +701,17 @@ int64_t kp_dat_requirement(KpGame *g, const char *domain, int64_t k);
 int kp_game_use_dat(KpGame *g, const KpDat *dat, KpError *err);
 
 /* Unit record checks (a record outside 1..KP_UNITS fails). */
-int64_t kp_game_unit(KpGame *g, int64_t n);
+static inline int64_t kp_game_unit(KpGame *g, int64_t n)
+{
+	if (n < 1 || n > KP_UNITS) kp_game_fail(g, "unit: record %lld out of range", (long long)n);
+	return n;
+}
 /* A flingy record (a unit's or a bullet's; a record outside 1..KP_FLINGIES fails). */
-int64_t kp_game_flingy(KpGame *g, int64_t n);
+static inline int64_t kp_game_flingy(KpGame *g, int64_t n)
+{
+	if (n < 1 || n > KP_FLINGIES) kp_game_fail(g, "flingy: record %lld out of range", (long long)n);
+	return n;
+}
 
 /* The images world's unit and flingy contexts, saved by kp_ctx_unit (which sets the unit) and
  * restored by kp_ctx_restore. */
@@ -709,8 +724,14 @@ void kp_ctx_restore(KpGame *g, KpCtx c);
 
 /* kp_units.c */
 int kp_rally_producer(int64_t t);
-int32_t kp_unit_sprite(KpGame *g, int64_t n);
-int32_t kp_flingy_sprite(KpGame *g, int64_t n);
+static inline int32_t kp_unit_sprite(KpGame *g, int64_t n)
+{
+	return kp_check_sprite(g->w, (int32_t)g->u.sprite[kp_game_unit(g, n)]);
+}
+static inline int32_t kp_flingy_sprite(KpGame *g, int64_t n)
+{
+	return kp_check_sprite(g->w, (int32_t)g->u.sprite[kp_game_flingy(g, n)]);
+}
 void kp_units_init(KpGame *g);
 int64_t *kp_queue_entry(KpGame *g, int64_t n, int64_t slot);
 int64_t *kp_queue_head(KpGame *g, int64_t n);

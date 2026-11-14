@@ -60,17 +60,7 @@ int kp_rally_producer(int64_t t)
 static int64_t flags(KpGame *g, int64_t t) { return KP_DAT(g, units, special_ability_flags, t); }
 
 /* The sprite record of unit n, checked (a missing sprite fails). */
-int32_t kp_unit_sprite(KpGame *g, int64_t n)
-{
-	return kp_check_sprite(g->w, (int32_t)g->u.sprite[kp_game_unit(g, n)]);
-}
-
 /* The same for flingy record n, a unit's or a bullet's (the flingy layer serves both). */
-int32_t kp_flingy_sprite(KpGame *g, int64_t n)
-{
-	return kp_check_sprite(g->w, (int32_t)g->u.sprite[kp_game_flingy(g, n)]);
-}
-
 /* The images world's unit context (0x543300), saved and set; KpCtx restores it. */
 KpCtx kp_ctx_unit(KpGame *g, int64_t n)
 {

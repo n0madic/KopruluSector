@@ -213,19 +213,22 @@ int kp_spatial_query(KpGame *g, int64_t left, int64_t top, int64_t right, int64_
 		if (narrow_x && kp_s16v(g->w->spr.x[kp_unit_sprite(g, n)]) - kp_s16v(ext(g, u->type[n], 0)) > right) sp->mark[n] = 0;
 		else sp->mark[n] = 1;
 	}
+	/* The marks' tests without branches, as in kp_units_in_rect (the sprite still read only for a narrow rectangle) */
 	for (k = y0; k <= y1 - 1; k++) {
 		int64_t n = sp->y_unit[k];
-		if (!(narrow_y && kp_s16v(g->w->spr.y[kp_unit_sprite(g, n)]) - kp_s16v(ext(g, u->type[n], 1)) > bottom)) {
-			if (sp->mark[n] == 1) sp->mark[n] = 3;
-		}
+		int rows = !(narrow_y && kp_s16v(g->w->spr.y[kp_unit_sprite(g, n)]) - kp_s16v(ext(g, u->type[n], 1)) > bottom);
+		sp->mark[n] = (rows & (sp->mark[n] == 1)) ? 3 : sp->mark[n];
 	}
 	for (k = x0; k <= x1 - 1; k++) {
 		int64_t n = sp->x_unit[k];
-		if (sp->mark[n] == 3) {
-			if (count >= max) kp_game_fail(g, "spatial: more than %d units in a query", max);
-			out[count++] = n;
-		}
+		int take = sp->mark[n] == 3;
 		sp->mark[n] = 0;
+		if (count < max) {
+			out[count] = n;
+			count += take;
+		} else if (take) {
+			kp_game_fail(g, "spatial: more than %d units in a query", max);
+		}
 	}
 	return count;
 }
@@ -278,14 +281,19 @@ int kp_units_in_rect(KpGame *g, int64_t left, int64_t top, int64_t right, int64_
 	y1 = search(sp->y_at, count, bottom, 1);
 	if (y1 <= y0) return 0;
 	x = search(sp->x_at, count, left, 1);
+	/* Without branches on the entry: whether its unit was seen (each unit has two entries) and whether its rows meet
+	 * the rectangle go either way unpredictably (measured over the campaign plays: one unit found in 8 entries walked,
+	 * the branches' misses most of the query's time). Every entry is stamped, as the seen ones already are, and its unit
+	 * written past the results while there is room; a unit taken with none fails as before. */
 	while (x < count && sp->x_at[x] < right) {
 		int64_t n = sp->x_unit[x];
-		if (sp->seen[n] != stamp) {
-			sp->seen[n] = stamp;
-			if (y0 <= u->bound_bottom[n] && u->bound_top[n] < y1) {
-				if (k >= max) kp_game_fail(g, "spatial: more than %d units in a rectangle", max);
-				out[k++] = n;
-			}
+		int take = (sp->seen[n] != stamp) & (y0 <= u->bound_bottom[n]) & (u->bound_top[n] < y1);
+		sp->seen[n] = stamp;
+		if (k < max) {
+			out[k] = n;
+			k += take;
+		} else if (take) {
+			kp_game_fail(g, "spatial: more than %d units in a rectangle", max);
 		}
 		x++;
 	}

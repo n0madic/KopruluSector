@@ -238,6 +238,19 @@ step on the phone (also `marine_group`, `rescue_fog`); `kp_bench` over 10 runs: 
 0.48 ms, max 2.8 ms (one outlier; the other runs' maxima stay near 1 ms). The Lua core measured a mean of 3.9 ms and a
 maximum of 10.1 ms on the same check; §10 (4 ms per step, none above 8 ms) holds with a wide margin.
 
+**2026-11-14, the spatial walks and the accessors.** A profile of the campaign plays put 11 % of their time in
+`kp_units_in_rect` (UpdateRegionStrength 0x4adbd0's 512-pixel square around a region for the campaign AI, half of
+the calls; target acquisition the rest): 8.9 million queries in one shard walked 1.06 billion index entries for 128
+million units found, and the walk's branches on each entry (its unit seen already, its rows in the rectangle) went
+either way unpredictably. The walk now takes every entry without a branch (the stamp written on each, the unit
+written past the results while there is room), and so do `kp_spatial_query`'s marks; the units found, their order
+and the index's state are the same. The DAT read and the record checks the inner loops call (`kp_dat_read`,
+`kp_game_unit`, `kp_game_flingy`, `kp_check_sprite`, `kp_unit_sprite`, `kp_flingy_sprite`, another 11 % as calls
+into other files) are inline in `kp_game.h` and `kp_images.h`. On the Mac (M4 Max, `/usr/bin/time -l`): the CPU
+cycles of `test_save`'s heaviest shard 143.8 G → 124.1 G, of `test_session.replay_plays_play_back`'s 113.2 G →
+96.7 G; `kp_bench` over 20 runs, `bench_200` mean 0.105 → 0.096 ms (median 0.067 → 0.056 ms), `bench_combat` 0.095
+→ 0.085 ms. Not measured on the Fold7.
+
 ### Step 6: the mission manager
 
 `game/simulation/manager.lua` is the one owner of a mission's native game (plan D7, D8; ADR 0008 §6): it starts and

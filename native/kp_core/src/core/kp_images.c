@@ -48,12 +48,6 @@ int32_t kp_check_image(KpImages *w, int32_t i)
 	return i;
 }
 
-int32_t kp_check_sprite(KpImages *w, int32_t s)
-{
-	if (s < 0 || s >= KP_SPRITES) kp_images_fail(w, "images: sprite record %d out of range", (int)s);
-	return s;
-}
-
 uint32_t kp_images_dat(KpImages *w, const KpDatColumn *c, int32_t i)
 {
 	if (!c) kp_images_fail(w, "images: the DAT lacks a column the world reads");

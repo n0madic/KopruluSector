@@ -86,6 +86,18 @@
 #     replays through the interface (tools/input_check.py --kind plays, the cheat word from KOPRULU_PLAYS's first
 #     state dumps).
 set -euo pipefail
+# The folders named above, made absolute against the caller's folder before the cd below: the Python tests and the
+# product's runs start in other folders, where a relative path names nothing (a run then failed only at its end).
+for var in KOPRULU_ORIGINAL KOPRULU_SCR KOPRULU_CAPTURES KOPRULU_HUD KOPRULU_INPUT KOPRULU_SCENARIOS KOPRULU_PLAYS \
+  KOPRULU_PLAYS_UI; do
+  dir="${!var:-}"
+  [ -n "$dir" ] || continue
+  if [ ! -d "$dir" ]; then
+    echo "ci: $var=$dir is no folder" >&2
+    exit 2
+  fi
+  export "$var=$(CDPATH='' cd -- "$dir" && pwd)"
+done
 cd "$(dirname "$0")/.."
 
 # The public mode: tests/golden/ is not in the repository (it is recorded from the original game and not published,
@@ -143,9 +155,15 @@ step() {
   printf '\n== %s (%ss so far)\n' "$*" "$SECONDS"
 }
 # The background runs ended with the run. The Python tests' cleanup is awaited: a run started right after a stopped one
-# must not find it still removing their temporary files; the data's checks' current command goes with its shell.
+# must not find it still removing their temporary files; the data's checks go with their whole tree (their shell, its
+# units' shells and their commands).
+kill_tree() {
+  local child
+  for child in $(pgrep -P "$1" 2>/dev/null); do kill_tree "$child"; done
+  kill "$1" 2>/dev/null || true
+}
 trap 'if [ -n "$PYTHON_TESTS" ]; then kill "$PYTHON_TESTS" 2>/dev/null || true; wait "$PYTHON_TESTS" 2>/dev/null || true; fi
-  if [ -n "$EARLY_CHECKS" ]; then pkill -P "$EARLY_CHECKS" 2>/dev/null || true; kill "$EARLY_CHECKS" 2>/dev/null || true; fi' EXIT
+  if [ -n "$EARLY_CHECKS" ]; then kill_tree "$EARLY_CHECKS"; fi' EXIT
 # The product's development checks under a time limit: a run that hangs (a driver, a stopped display link) fails the
 # check instead of blocking CI (perl's alarm: macOS has no timeout(1)).
 APP_TIMEOUT="${APP_TIMEOUT:-600}"
@@ -161,6 +179,35 @@ logged() {
     tail -n 40 "$log" >&2
     return "$status"
   fi
+}
+# Units run LIMIT at a time: each (a function and its arguments, queued) in the background, its output in DIR/N.log,
+# printed in the order queued once all have ended; a unit that fails fails the batch after the others end. LIMIT counts
+# the calling shell's running jobs, so the main shell's background runs must have joined (a background shell's own
+# batch sees only its children).
+#   queue FUNCTION ARGS...; batch DIR LIMIT
+BATCH_QUEUE=()
+queue() { BATCH_QUEUE+=("$(printf '%q ' "$@")"); }
+unit_title() { printf -- '-- %s\n' "$*"; }
+batch() {
+  local dir="$1" limit="$2" k status=0 pids=()
+  rm -rf "$dir"
+  mkdir -p "$dir"
+  for k in "${!BATCH_QUEUE[@]}"; do
+    while [ "$(jobs -rp | wc -l)" -ge "$limit" ]; do sleep 0.2; done
+    (eval "${BATCH_QUEUE[$k]}") >"$dir/$k.log" 2>&1 &
+    pids+=("$!")
+  done
+  for k in "${!pids[@]}"; do
+    if wait "${pids[$k]}"; then
+      cat "$dir/$k.log"
+    else
+      cat "$dir/$k.log" >&2
+      echo "ci: ${BATCH_QUEUE[$k]}failed ($dir/$k.log)" >&2
+      status=1
+    fi
+  done
+  BATCH_QUEUE=()
+  return "$status"
 }
 # An app's development check under the time limit, in a hidden window of a set size (a shown one is fitted to the
 # display, so its view would depend on the machine): its output in build/NAME.log (grepped by the step), its errors in
@@ -284,50 +331,76 @@ fi
 step "the phones' HD transcoding (kp_hd_transcode.c): small packs through etc2 and astc, opened and read back"
 build/cmake/kp_hd_phone --selftest | tail -1
 # The checks of the data and the installs that need only the native build: run in the background beside the C suites
-# (they write nothing the suites read: generated/reports is no input of theirs), one after another, each under its own
-# title in build/early-checks.log, which joins as the Python tests do. A step here never calls step() or the joins:
-# their wait is the main shell's.
+# (they write nothing the suites read: generated/reports is no input of theirs), each unit at the same time as the
+# others (batch: they read their own files, each about one core; one after another they took 76 s, together as long as
+# the longest), printed under their titles in build/early-checks.log, which joins as the Python tests do. A step here
+# never calls step() or the joins: their wait is the main shell's.
 early_step() { printf '\n== %s\n' "$*"; }
+early_languages() {
+  # a string refused fails the step (its first ones printed); the product's runs below play the languages it lists
+  early_step "the languages: every string of each language the install holds (kp_convert locale-check; ADR 0019, stage C3)"
+  logged build/locale_check.log 8 build/cmake/kp_convert locale-check "$KOPRULU_SCR" --out generated
+}
+early_hd_ui_table() {
+  # the HD interface's placement table made again from the install is the committed one (ADR 0019, stage C6: a
+  # Remastered update that changes its interface art fails here; the new table is kp_convert hd-ui-table's)
+  early_step "the HD interface's placement table is the install's (kp_convert hd-ui-table; ADR 0019, stage C6)"
+  build/cmake/kp_convert hd-ui-table "$KOPRULU_SCR" --out build/hd-ui-table.json | tail -3
+  cmp build/hd-ui-table.json "$(ls defs/scr/hd-ui-*.json)"
+}
+early_verify() {
+  early_step "data readers (ADR 0018): every file of the input manifest read from the 1.17 install through kp_res, checked"
+  build/cmake/kp_convert verify "$KOPRULU_ORIGINAL" 2>/dev/null | tail -4
+}
+early_manifest() {
+  # the input manifest is what the runtime's own loaders read from the install (kp_res recording them, ADR 0019): a
+  # loader that starts or stops reading a file fails here until `kp_convert manifest DIR` writes it again
+  early_step "the input manifest is the install's reads through the runtime's loaders (kp_convert manifest --check)"
+  build/cmake/kp_convert manifest "$KOPRULU_ORIGINAL" --check 2>&1 | tail -2
+}
+early_smk_decodes() {
+  # stage D7: test_movies decodes the install's Smacker movies (palette records, sound) as FFmpeg does
+  early_step "the 1.17 cinematics' FFmpeg decodes are current (tools/oracle/export_smk_ffmpeg.py)"
+  logged build/smk_ffmpeg_check.log 0 "$PYTHON" tools/oracle/export_smk_ffmpeg.py --data "$KOPRULU_ORIGINAL" --check
+}
+early_scr_digests() {
+  early_step "data readers (ADR 0018): the input manifest's files read from Remastered's CASC through kp_res"
+  build/cmake/kp_convert digests "$KOPRULU_SCR" --out build/scr-digests-c.tsv 2>/dev/null | tail -4
+}
+early_scr_digests_twin() {
+  # the twin (stage D6): each file's status and bytes as scdata/casc/source.py makes them, the rebuilds included
+  early_step "the same files read by the research's twin (tools/research/scr_digests.py)"
+  "$PYTHON" tools/research/scr_digests.py --scr "$KOPRULU_SCR" --out build/scr-digests-py.tsv 2>&1 | tail -1
+}
+early_replays() {
+  early_step "kp_replay: every scenario against the original's CRCs (the native tools)"
+  mkdir -p build/replays
+  for golden in tests/golden/oracle/scenarios/*.json; do
+    name="$(basename "$golden" .json)"
+    [ "$name" = index ] || echo "$name"
+  done | logged build/replays.log 3 xargs -P "$JOBS" -n 1 sh -c \
+    'build/cmake/kp_oracle export_replay "$0" "build/replays/$0.kprp" && build/cmake/kp_replay . "build/replays/$0.kprp"'
+}
 early_checks() {
   if [ -n "${KOPRULU_SCR:-}" ]; then
-    # a string refused fails the step (its first ones printed); the product's runs below play the languages it lists
-    early_step "the languages: every string of each language the install holds (kp_convert locale-check; ADR 0019, stage C3)"
-    logged build/locale_check.log 8 build/cmake/kp_convert locale-check "$KOPRULU_SCR" --out generated
-    # the HD interface's placement table made again from the install is the committed one (ADR 0019, stage C6: a
-    # Remastered update that changes its interface art fails here; the new table is kp_convert hd-ui-table's)
-    early_step "the HD interface's placement table is the install's (kp_convert hd-ui-table; ADR 0019, stage C6)"
-    build/cmake/kp_convert hd-ui-table "$KOPRULU_SCR" --out build/hd-ui-table.json | tail -3
-    cmp build/hd-ui-table.json "$(ls defs/scr/hd-ui-*.json)"
+    queue early_languages
+    queue early_hd_ui_table
   fi
   if [ -n "${KOPRULU_ORIGINAL:-}" ]; then
-    early_step "data readers (ADR 0018): every file of the input manifest read from the 1.17 install through kp_res, checked"
-    build/cmake/kp_convert verify "$KOPRULU_ORIGINAL" 2>/dev/null | tail -4
-    # the input manifest is what the runtime's own loaders read from the install (kp_res recording them, ADR 0019): a
-    # loader that starts or stops reading a file fails here until `kp_convert manifest DIR` writes it again
-    early_step "the input manifest is the install's reads through the runtime's loaders (kp_convert manifest --check)"
-    build/cmake/kp_convert manifest "$KOPRULU_ORIGINAL" --check 2>&1 | tail -2
-    if [ -z "$PUBLIC" ] && command -v ffmpeg >/dev/null; then
-      # stage D7: test_movies decodes the install's Smacker movies (palette records, sound) as FFmpeg does
-      early_step "the 1.17 cinematics' FFmpeg decodes are current (tools/oracle/export_smk_ffmpeg.py)"
-      logged build/smk_ffmpeg_check.log 0 "$PYTHON" tools/oracle/export_smk_ffmpeg.py --data "$KOPRULU_ORIGINAL" --check
-    fi
+    queue early_verify
+    queue early_manifest
+    if [ -z "$PUBLIC" ] && command -v ffmpeg >/dev/null; then queue early_smk_decodes; fi
   fi
   if [ -n "${KOPRULU_SCR:-}" ]; then
-    early_step "data readers (ADR 0018): the input manifest's files read from Remastered's CASC through kp_res"
-    build/cmake/kp_convert digests "$KOPRULU_SCR" --out build/scr-digests-c.tsv 2>/dev/null | tail -4
-    # the twin (stage D6): each file's status and bytes as scdata/casc/source.py makes them, the rebuilds included
-    early_step "the same files read by the research's twin (tools/research/scr_digests.py): each status and SHA-256 equal to kp_res's"
-    "$PYTHON" tools/research/scr_digests.py --scr "$KOPRULU_SCR" --out build/scr-digests-py.tsv 2>&1 | tail -1
-    diff build/scr-digests-py.tsv build/scr-digests-c.tsv | head -20 # pipefail: a difference fails the checks
+    queue early_scr_digests
+    queue early_scr_digests_twin
   fi
-  if [ -z "$PUBLIC" ]; then
-    early_step "kp_replay: every scenario against the original's CRCs (the native tools)"
-    mkdir -p build/replays
-    for golden in tests/golden/oracle/scenarios/*.json; do
-      name="$(basename "$golden" .json)"
-      [ "$name" = index ] || echo "$name"
-    done | logged build/replays.log 3 xargs -P "$JOBS" -n 1 sh -c \
-      'build/cmake/kp_oracle export_replay "$0" "build/replays/$0.kprp" && build/cmake/kp_replay . "build/replays/$0.kprp"'
+  [ -n "$PUBLIC" ] || queue early_replays
+  batch build/early-checks "$JOBS"
+  if [ -n "${KOPRULU_SCR:-}" ]; then
+    early_step "the twin's digests: each file's status and SHA-256 equal to kp_res's"
+    diff build/scr-digests-py.tsv build/scr-digests-c.tsv | head -20 # pipefail: a difference fails the checks
+    echo "$(wc -l <build/scr-digests-c.tsv | tr -d ' ') files equal"
   fi
 }
 step "the data's checks start in the background (build/early-checks.log: the languages, the readers, kp_replay)"
@@ -459,9 +532,8 @@ if [ -n "${KOPRULU_APP:-}" ]; then
   step "product (macOS, debug)"
   KOPRULU_CINEMATICS="$CINEMATICS" tools/product.sh macos debug >/dev/null
   APP=dist/product/macos/KopruluSector.app/Contents/MacOS/koprulu
-  # The product's checks run APP_JOBS at a time (app_batch): each unit (a function and its arguments: its runs and the
-  # checks of their files) in the background, its output in build/app-jobs/N.log, printed in the order queued once the
-  # batch has ended; a unit that fails fails the batch after the others end. The scripts on the fixed clock (ADR 0017,
+  # The product's checks run APP_JOBS at a time (batch; a unit is a function and its arguments: its runs and the checks
+  # of their files, its output in build/app-jobs/N.log). The scripts on the fixed clock (ADR 0017,
   # stage SC4: a frame a step whatever the machine), the autotest and the cine checks (every megatile, every frame)
   # write the same files whatever the load; the scripts on the real clock (`clock real`: the HD art's pages load on
   # threads, the menus' music and animations) answer their checks under it, their frames taken a little later or
@@ -469,30 +541,6 @@ if [ -n "${KOPRULU_APP:-}" ]; then
   # every check of the second passed). Those run in the second batch, beside no repack's threads; the checks that
   # wait on the wall clock (a wait's timeout, the watchdog, the live run's half second) run alone before both.
   APP_JOBS="${APP_JOBS:-4}"
-  APP_QUEUE=()
-  app_queue() { APP_QUEUE+=("$(printf '%q ' "$@")"); }
-  unit_title() { printf -- '-- %s\n' "$*"; }
-  app_batch() {
-    local dir=build/app-jobs k status=0 pids=()
-    rm -rf "$dir"
-    mkdir -p "$dir"
-    for k in "${!APP_QUEUE[@]}"; do
-      while [ "$(jobs -rp | wc -l)" -ge "$APP_JOBS" ]; do sleep 0.2; done
-      (eval "${APP_QUEUE[$k]}") >"$dir/$k.log" 2>&1 &
-      pids+=("$!")
-    done
-    for k in "${!pids[@]}"; do
-      if wait "${pids[$k]}"; then
-        cat "$dir/$k.log"
-      else
-        cat "$dir/$k.log" >&2
-        echo "ci: ${APP_QUEUE[$k]}failed (build/app-jobs/$k.log)" >&2
-        status=1
-      fi
-    done
-    APP_QUEUE=()
-    return "$status"
-  }
 
   step "product scripts on the wall clock, alone: a wait that times out, a hung frame's watchdog"
   app_script smoke_timeout 1 "$APP"
@@ -626,14 +674,14 @@ if [ -n "${KOPRULU_APP:-}" ]; then
     unit_title "Remastered's repack (one koprulu.mpq)"
     logged build/repack_scr.log 1 build/cmake/kp_convert repack "$KOPRULU_SCR" --single --out build/repack/scr
   }
-  [ -z "${KOPRULU_SCR:-}" ] || app_queue unit_repack_scr
-  [ -z "${KOPRULU_ORIGINAL:-}" ] || app_queue unit_repack_original
-  app_queue unit_autotest
-  app_queue unit_determinism
-  for name in touch save replay; do app_queue unit_check "$name"; done
-  for n in 1 2 3 4 5; do app_queue unit_play "$n"; done
+  [ -z "${KOPRULU_SCR:-}" ] || queue unit_repack_scr
+  [ -z "${KOPRULU_ORIGINAL:-}" ] || queue unit_repack_original
+  queue unit_autotest
+  queue unit_determinism
+  for name in touch save replay; do queue unit_check "$name"; done
+  for n in 1 2 3 4 5; do queue unit_play "$n"; done
   step "product checks on the fixed clock, $APP_JOBS at a time, and the repacks: the autotest, the fixed clock's runs, the checks' and play scripts"
-  app_batch
+  batch build/app-jobs "$APP_JOBS"
 
   # --- the second batch: the installs and their repacks against the bundle's runs, the languages, the movies, the HD art ---
   # the original data (ADR 0018, stages D5, D8b): the game's data, the tileset, the packs packed from the GRPs, the
@@ -808,38 +856,38 @@ if [ -n "${KOPRULU_APP:-}" ]; then
     grep -qE "Remastered's hd2? interface art \($ui_art\)" "build/script_$run.err"
     grep -E "^SPIKE hd check" "build/script_$run.log" | grep -vE ": [0-9]+ HD pixels; SD over HD art: 0 lost, 0 outside, 0 through, 0 waiting, 0 unreadable; 0 drawn outside the log; 0 log drops;" || true
   }
-  app_queue unit_smoke
-  for name in video music; do app_queue unit_check "$name"; done
+  queue unit_smoke
+  for name in video music; do queue unit_check "$name"; done
   if [ -n "${KOPRULU_SCR:-}" ]; then
     for loc in $(sed -n 's/^\([a-z][a-z][A-Z][A-Z]\): [0-9]* tables, .*/\1/p' build/locale_check.log); do
-      app_queue unit_language "$loc"
+      queue unit_language "$loc"
     done
     for source in install repack; do
-      for mission in glue terran/terran02 zerg/zerg02 protoss/protoss02 replay; do app_queue unit_hd "$source" "$mission"; done
+      for mission in glue terran/terran02 zerg/zerg02 protoss/protoss02 replay; do queue unit_hd "$source" "$mission"; done
     done
     for variant in sd hd2; do
       [ "$variant" = sd ] || case "$CINEMATICS" in both | hd2) ;; *) continue ;; esac
-      app_queue unit_cine_scr "$variant"
-      app_queue unit_cine_scr_repack "$variant"
+      queue unit_cine_scr "$variant"
+      queue unit_cine_scr_repack "$variant"
     done
-    app_queue unit_scr_repack
-    app_queue unit_hd_repack_suites
-    app_queue unit_language_suites
+    queue unit_scr_repack
+    queue unit_hd_repack_suites
+    queue unit_language_suites
   fi
   if [ -n "${KOPRULU_ORIGINAL:-}" ]; then
-    app_queue unit_cine_original
-    app_queue unit_cine_original_repack
-    app_queue unit_original
-    app_queue unit_original_repack
-    app_queue unit_no_group
+    queue unit_cine_original
+    queue unit_cine_original_repack
+    queue unit_original
+    queue unit_original_repack
+    queue unit_no_group
   fi
   if [ "$CINEMATICS" != none ]; then
     for variant in sd hd2; do
-      case "$CINEMATICS" in both | "$variant") app_queue unit_bundle_cine "$variant" ;; esac
+      case "$CINEMATICS" in both | "$variant") queue unit_bundle_cine "$variant" ;; esac
     done
   fi
   step "product checks, $APP_JOBS at a time: the real clock's scripts, the installs and their repacks against the bundle, the languages, the movies, the HD art"
-  app_batch
+  batch build/app-jobs "$APP_JOBS"
 fi
 
 if [ -n "${KOPRULU_WEB:-}" ]; then

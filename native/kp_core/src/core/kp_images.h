@@ -210,6 +210,13 @@ static inline void kp_images_end(KpImages *w, KpTry *t) { w->try_ = t->outer; }
 __attribute__((noreturn, format(printf, 2, 3)))
 #endif
 void kp_images_fail(KpImages *w, const char *fmt, ...);
+/* A sprite record read from a field that may hold KP_NONE; out of range fails (inline: the simulation's inner loops
+ * check one a unit). */
+static inline int32_t kp_check_sprite(KpImages *w, int32_t s)
+{
+	if (s < 0 || s >= KP_SPRITES) kp_images_fail(w, "images: sprite record %d out of range", (int)s);
+	return s;
+}
 /* Fails with the message already in w->error. */
 #if defined(__GNUC__) || defined(__clang__)
 __attribute__((noreturn))

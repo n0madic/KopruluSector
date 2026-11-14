@@ -74,18 +74,6 @@ void kp_game_fail(KpGame *g, const char *fmt, ...)
 	kp_images_rethrow(g->w);
 }
 
-int64_t kp_game_unit(KpGame *g, int64_t n)
-{
-	if (n < 1 || n > KP_UNITS) kp_game_fail(g, "unit: record %lld out of range", (long long)n);
-	return n;
-}
-
-int64_t kp_game_flingy(KpGame *g, int64_t n)
-{
-	if (n < 1 || n > KP_FLINGIES) kp_game_fail(g, "flingy: record %lld out of range", (long long)n);
-	return n;
-}
-
 int64_t kp_idiv64(KpGame *g, int64_t a, int64_t b)
 {
 	if (b == 0) kp_game_fail(g, "integer division by zero");
@@ -286,15 +274,6 @@ int kp_game_use_dat(KpGame *g, const KpDat *dat, KpError *err)
 	}
 	g->cdat = dat;
 	return 0;
-}
-
-int64_t kp_dat_read(KpGame *g, int col, int64_t i)
-{
-	const KpDatColumn *c = g->col[col];
-	if (!c) kp_game_fail(g, "game: no DAT");
-	/* A missing value is KP_NIL, which compares unequal to every DAT value. */
-	if (i < 0 || i > (int64_t)UINT32_MAX || !kp_dat_has(c, (uint32_t)i)) return KP_NIL;
-	return (int64_t)kp_dat_value(c, (uint32_t)i);
 }
 
 void kp_dat_write(KpGame *g, int col, int64_t i, int64_t v)
