@@ -187,7 +187,9 @@ little-endian fields (the scalars, units, lists, counters, orders, selections, t
 the spatial index, the prepared step, the path pool and the search contexts with the region graph's run-time slots,
 the air density, the tile arrays and the receding creep, the players, guards, trigger clock, results, both
 generators, then the world's records, lists and contexts), headed by the magic `KPSV`, the version (1: the format starts over, no saves have shipped), the mission's
-name (by default the game's `options.name`) and the data's identity, and closed by an FNV-1a fingerprint.
+name (by default the game's `options.name`) and the data's identity, and closed by an FNV-1a fingerprint. (Since phase W,
+[ADR 0021](adr/0021-state-walk-and-saves.md): version 2, closed by a table of the sections' hashes, and the same walk
+gives the state hash, the in-process snapshot and the coverage test.)
 `g:load(bytes[, mission[, data]])` checks all of them
 and restores the fields into a game of the same mission and data, fresh from its start or at any later step (a dry
 walk first checks the whole save, so a refused save changes nothing); the static data the start rebuilds,
@@ -228,7 +230,9 @@ step-sorted CRCs (or prints the dump lines at STEP; turns take up to `KP_TURN_CO
 a category of the original that the dump no longer prints counts as a difference, and a replay without steps or CRCs
 is refused);
 `kp_bench ROOT REPLAY [RUNS]` times the object steps (`kp_bench --dump ROOT GOLDEN [EVERY]`, since 2026-11-14, times
-the state's dump, its CRCs and its hash every EVERY-th step of a golden's run, with the bytes of each category).
+the state's dump, its CRCs and its hash every EVERY-th step of a golden's run, with the bytes of each category;
+`kp_bench --state ROOT REPLAY [RUNS]`, since phase W, times the save, the load, the state hash, the snapshot, the
+restore and the save's zlib stream at the replay's end, with each form's bytes: [phase W](phase-state.md#measurements)).
 `tools/native/build.sh` builds both for the desktop,
 `tools/ci.sh` replays every scenario, and `tools/native/android_bench.sh [SCENARIO [RUNS]]` builds them with the
 Android NDK and runs them on the phone through adb (`--glyphs LOCALE [RUNS]` times a language's glyphs since phase C).

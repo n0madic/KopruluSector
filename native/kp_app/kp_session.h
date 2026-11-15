@@ -172,10 +172,11 @@ int kp_session_replay_file(KpSession *s, const KpRepTail *tail, KpRep *out, KpEr
 int kp_session_can_skip(KpSession *s);
 void kp_session_skip(KpSession *s);
 
-/* --- the save file: KPF kind SAVE with CORE, CMDS, CAMP and PRES --- */
+/* --- the save file: KPF kind SAVE with CORE (the native save, kp_save, compressed), CMDS, CAMP and PRES --- */
 
 #define KP_SAVE_KIND "SAVE"
-#define KP_SAVE_SCHEMA 1
+#define KP_SAVE_SCHEMA 2 /* 2: CORE is u32 the native save's size and its zlib stream (ADR 0021) */
+#define KP_SAVE_CORE_MAX (64u << 20) /* the largest native save a load inflates */
 #define KP_PRES_VALUES 8
 
 /* Runs fn(ud) under the game's failure handler (a C failure of the game returns here): -1 when it failed, the message
@@ -219,6 +220,15 @@ int kp_save_encode(KpSession *s, const KpSaveIdentity *id, const KpSaveCampaign 
  * data. */
 int kp_save_mission(const uint8_t *save, size_t size, const KpSaveIdentity *id, char *mission, size_t mission_size,
 	KpSaveCampaign *camp, KpError *err);
+/* Why a save cannot be loaded, as the player is told: the original's statuses of ValidateSaveFile 0x499750 (1
+ * unreadable: gluAll 66, 2 another version: gluAll 67). A save of another build or of other game data is
+ * KP_SAVE_OTHER_BUILD (saves do not migrate, ADR 0021); a container, stream or native save that does not read is
+ * KP_SAVE_DAMAGED. */
+enum { KP_SAVE_LOADABLE, KP_SAVE_DAMAGED, KP_SAVE_OTHER_BUILD };
+/* Whether a save loads in this build, without a game: its container, data set and native save's head and version;
+ * KP_SAVE_LOADABLE or the refusal with err's message. One that passes can still be refused by kp_save_load (its state
+ * does not fit the mission's game): that is KP_SAVE_DAMAGED. */
+int kp_save_check(const uint8_t *save, size_t size, const KpSaveIdentity *id, KpError *err);
 /* Restores a save into the session's game (Manager:load: the queued commands, the tick, the player's speed, loads
  * counted); the campaign and presentation it carried. -1 with err and the game unchanged. */
 int kp_save_load(KpSession *s, const uint8_t *save, size_t size, const KpSaveIdentity *id, KpSaveCampaign *camp,

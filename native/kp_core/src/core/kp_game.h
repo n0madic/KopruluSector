@@ -963,13 +963,47 @@ int kp_dump_crcs(KpGame *g, int drawn, KpCategoryCrc each, void *ud);
  * recording and its playback): it changes when any line would, but it is no CRC of the original's, so it is never
  * compared with a golden. -1 when out of memory. */
 int kp_dump_hash(KpGame *g, int drawn, uint64_t *out);
-/* Saves (kp_save.c, version 1): the game's mutable state with the mission's name and the data's identity, both
+/* Saves (kp_save.c, version 2): the game's mutable state with the mission's name and the data's identity, both
  * checked by kp_load, which restores into a game of the same mission and data (fresh or at any later step) and
- * leaves the game unchanged when it refuses the save. *out is malloc'd. */
-#define KP_SAVE_VERSION 1
+ * leaves the game unchanged when it refuses the save. *out is malloc'd. A save loads only in a build of its version:
+ * a change of the walk raises it (tests/c/test_save.c's save_schema_matches_its_version), and there are no
+ * migrations (ADR 0021). */
+#define KP_SAVE_VERSION 2
 #define KP_SAVE_NAME 256
 int kp_save(KpGame *g, const char *mission, const char *data, uint8_t **out, size_t *size, KpError *err);
 int kp_load(KpGame *g, const uint8_t *bytes, size_t size, const char *mission, const char *data, KpError *err);
+/* The fingerprint of the save's walk: its sections, the kinds and the counts of what it visits (a zeroed game's, the
+ * same on every platform); 0 out of memory. It does not see two visits of the same kind and count swapped within a
+ * section: such a change must raise KP_SAVE_VERSION by hand. */
+uint64_t kp_save_schema(void);
+/* The state hash (kp_save.c): per section of the save, the hash of its bytes in a save (without its tag; 64-bit
+ * little-endian words, the tail zero-padded, the length mixed in, the tag as the seed), computed without encoding
+ * them: each(ud, tag, hash, bytes) per section in the save's order (NULL: none), *total (NULL: none) their fold, which
+ * a save's hash table also holds. At a step boundary of a game that has not stopped, as kp_save. -1 out of memory. */
+#define KP_HASH_VERSION 1
+typedef void (*KpSectionHash)(void *ud, const char *tag, uint64_t hash, size_t bytes);
+int kp_state_hash(KpGame *g, KpSectionHash each, void *ud, uint64_t *total);
+/* In-process snapshots of the state the save walks (the arrays as they are; never written to a file nor taken to
+ * another build): the size of the game's snapshot, the snapshot into the caller's buffer of size bytes, and the
+ * restore of one into a game of the same mission, which checks the snapshot's header and size against the game before
+ * its first change (a refusal of those leaves the game as it was) and derives the rest as kp_load does. -1 with err; a
+ * snapshot damaged past its header (a section's tag) is refused with the game partly restored. */
+size_t kp_snapshot_size(KpGame *g);
+int kp_snapshot(KpGame *g, uint8_t *buf, size_t size, KpError *err);
+int kp_restore(KpGame *g, const uint8_t *buf, size_t size, KpError *err);
+/* The coverage of the walk (kp_save.c): the byte ranges of the game (KP_STATE_GAME), its images world and its
+ * generator it visits (KP_STATE_SAVED, named by their section's tag) and the ones it leaves out on purpose (the
+ * exclusion table's, named by their field, and the padding before a member whose struct is aligned past its first
+ * field, KP_STATE_PADDING), each with its offset in its base and its element's alignment. *out is malloc'd; -1 out of
+ * memory. */
+enum { KP_STATE_GAME, KP_STATE_WORLD, KP_STATE_RNG, KP_STATE_BASES };
+enum { KP_STATE_SAVED, KP_STATE_DERIVED, KP_STATE_STATIC, KP_STATE_VIEW, KP_STATE_HOST, KP_STATE_PADDING };
+typedef struct {
+	int base, klass;
+	size_t offset, bytes, align;
+	const char *name;
+} KpStateRange;
+int kp_state_ranges(KpGame *g, KpStateRange **out, size_t *count);
 /* The hooks of the images world into a native game (kp_hooks.c), a KpHookCall with the game as context. */
 int kp_game_hook(KpImages *w, void *ctx, KpHook hook, int op, const int64_t *args, int argc, int64_t *out);
 /* The players' state (kp_game.c): a player outside 0..11 fails. */

@@ -244,7 +244,8 @@ the settings for one run:
 | `--console edges\|ornaments` | the console's shape on wide screens |
 | `--no-vsync` | turns vertical sync off |
 
-Your profile, saves and settings are kept in the system's per-user application folder.
+Your profile, saves and settings are kept in the system's per-user application folder. Saves do not carry over between
+builds whose saved state differs: the load screen says that such a save is of another version.
 
 ## Status
 

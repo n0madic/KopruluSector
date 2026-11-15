@@ -85,7 +85,7 @@ static void file_round_trip(KpT *T)
 	uint8_t *file;
 	synthetic(T, rp);
 	file = written(T, rp, &size);
-	kp_t_ok(T, size < rp->chk_size, "the map's text imploded: %zu bytes", size);
+	kp_t_ok(T, size < rp->chk_size, "the map's text imploded: %lu bytes", (unsigned long)size);
 	kp_t_ok(T, kp_rep_read(bp, file, size, &why, &err) == 0, "read: %s", err.msg);
 	kp_t_eq(T, why, KP_REP_OK, "no refusal");
 	kp_t_ok(T, memcmp(bp->header, rp->header, KP_REP_HEADER_SIZE) == 0, "the header");
@@ -122,7 +122,7 @@ static void chunk_bytes_depend_on_the_input_alone(KpT *T)
 		size_t n;
 		memset(work, (0x00aa55 >> (8 * pass)) & 0xff, kp_rep_work_size()); /* 0x55, 0xaa, 0x00 */
 		n = kp_rep_chunk(rp->header, KP_REP_HEADER_SIZE, scratch, work, &out);
-		kp_t_ok(T, out == scratch && n < KP_REP_HEADER_SIZE, "pass %d: imploded, %zu bytes", pass, n);
+		kp_t_ok(T, out == scratch && n < KP_REP_HEADER_SIZE, "pass %d: imploded, %lu bytes", pass, (unsigned long)n);
 		if (pass == 0) {
 			memcpy(first, out, n);
 			first_n = n;
@@ -189,7 +189,7 @@ static void refusals(KpT *T)
 	file = written(T, rp, &size);
 	for (cut = 0; cut < size; cut++) {
 		why = KP_REP_OK;
-		kp_t_ok(T, kp_rep_read(bp, file, cut, &why, &err) != 0, "a file cut at %zu", cut);
+		kp_t_ok(T, kp_rep_read(bp, file, cut, &why, &err) != 0, "a file cut at %lu", (unsigned long)cut);
 		kp_t_eq(T, why, KP_REP_DAMAGED, "the cut's reason");
 	}
 	bad = (uint8_t *)malloc(size);
@@ -335,7 +335,7 @@ static void reads_the_originals_file(KpT *T)
 	again = written(T, rp, &wsize);
 	kp_t_ok(T, kp_rep_read(bp, again, wsize, NULL, &err) == 0, "our file: %s", err.msg);
 	kp_t_ok(T, bp->chk_size == rp->chk_size && memcmp(bp->chk, rp->chk, rp->chk_size) == 0, "our file's map");
-	kp_t_log(T, "the original's file %zu bytes, ours %zu, %s", size, wsize,
+	kp_t_log(T, "the original's file %lu bytes, ours %lu, %s", (unsigned long)size, (unsigned long)wsize,
 		size == wsize && memcmp(file, again, size) == 0 ? "equal" : "different");
 }
 

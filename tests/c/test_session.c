@@ -11,6 +11,7 @@
 #include "kp_oracle.h"
 #include "kp_session.h"
 #include "kp_ui.h"
+#include "zlib.h"
 
 #define MAP "scenarios/marine_group"
 #define SEED 0x12345678u
@@ -442,6 +443,93 @@ static void session_a_game_save_keeps_the_queued_commands_and_the_campaign(KpT *
 	kp_t_ok(T, kp_save_load(other, bytes, size, &wrong, NULL, NULL, &err) != 0, "a save of another data set is refused");
 	memcpy(bytes + size - 8, "damaged!", 8);
 	kp_t_ok(T, kp_save_load(other, bytes, size, &id, NULL, NULL, &err) != 0, "a damaged save is refused");
+	crcs(T, other, &after);
+	same_crcs(T, &before, &after, "unchanged");
+}
+
+/* A save's CORE section (in its container's bytes). */
+static const uint8_t *core_of(KpT *T, const uint8_t *save, size_t size, size_t *core_size, uint32_t *schema)
+{
+	KpKpf c;
+	KpError err;
+	const KpKpfSection *core;
+	const uint8_t *data = NULL;
+	kp_t_ok(T, kp_kpf_parse(&c, save, size, "save", 1, &err) == 0, "%s", err.msg);
+	if ((core = kp_kpf_find(&c, "CORE")) != NULL) {
+		data = core->data;
+		*core_size = core->size;
+		*schema = core->schema_version;
+	}
+	kp_kpf_free(&c);
+	kp_t_ok(T, data != NULL, "the save has CORE");
+	return data;
+}
+
+/* A save's CORE is the native save compressed (u32 its size, a zlib stream: ADR 0021); a save of another build, of
+ * other data, a native save of another version and a damaged one are refused as the player is told (kp_save_check:
+ * gluAll 67 or 66) and by the load, before the game changes. */
+static void session_saves_are_compressed_and_refuse_other_builds(KpT *T)
+{
+	KpSession *m, *other;
+	KpSaveIdentity id, wrong;
+	KpStateCrcs before, after;
+	KpError err;
+	uint8_t *bytes, *native, *v1, *bad;
+	const uint8_t *core;
+	size_t size, core_size, bad_size, v1_size;
+	uLongf native_size, v1_z;
+	uint32_t schema = 0;
+	if (!ready(T)) return;
+	id = identity(T);
+	m = session(T, NULL);
+	step(T, m, 20);
+	kp_t_ok(T, kp_save_encode(m, &id, NULL, NULL, &bytes, &size, &err) == 0, "%s", err.msg);
+	kp_t_defer(T, free, bytes);
+	core = core_of(T, bytes, size, &core_size, &schema);
+	native_size = kp_le_u32(core);
+	kp_t_eq(T, schema, 2, "CORE's section schema");
+	kp_t_ok(T, core_size * 10 < (size_t)native_size, "CORE is compressed: %lu bytes of %lu", (unsigned long)core_size,
+		(unsigned long)native_size);
+	kp_t_eq(T, kp_save_check(bytes, size, &id, &err), KP_SAVE_LOADABLE, "a save of this build: %s", err.msg);
+	/* the native save inflated, and one of version 1 compressed again */
+	native = (uint8_t *)malloc((size_t)native_size);
+	kp_t_ok(T, native != NULL, "out of memory");
+	kp_t_defer(T, free, native);
+	kp_t_ok(T, uncompress(native, &native_size, core + 4, (uLong)(core_size - 4)) == Z_OK && native_size == kp_le_u32(core),
+		"CORE inflates to its size");
+	kp_t_ok(T, memcmp(native, "KPSV", 4) == 0 && kp_le_u32(native + 4) == KP_SAVE_VERSION, "the native save of this version");
+	native[4] = 1;
+	v1_z = compressBound(native_size);
+	v1 = (uint8_t *)malloc(4 + (size_t)v1_z);
+	kp_t_ok(T, v1 != NULL, "out of memory");
+	kp_t_defer(T, free, v1);
+	kp_t_ok(T, compress2(v1 + 4, &v1_z, native, native_size, 1) == Z_OK, "deflate");
+	kp_le_put32(v1, (uint32_t)native_size);
+	v1_size = 4 + (size_t)v1_z;
+	other = session(T, NULL);
+	step(T, other, 9);
+	crcs(T, other, &before);
+	bad = kp_t_save_rebuilt(T, bytes, size, 1, NULL, 0, &bad_size);
+	kp_t_eq(T, kp_save_check(bad, bad_size, &id, &err), KP_SAVE_OTHER_BUILD, "a save of schema 1: %s", err.msg);
+	kp_t_ok(T, strstr(err.msg, "another build") != NULL, "%s", err.msg);
+	kp_t_ok(T, kp_save_load(other, bad, bad_size, &id, NULL, NULL, &err) != 0, "a save of schema 1 does not load");
+	wrong = id;
+	memset(wrong.source_hash, 'x', sizeof wrong.source_hash);
+	kp_t_eq(T, kp_save_check(bytes, size, &wrong, &err), KP_SAVE_OTHER_BUILD, "a save of other data: %s", err.msg);
+	bad = kp_t_save_rebuilt(T, bytes, size, KP_SAVE_SCHEMA, v1, v1_size, &bad_size);
+	kp_t_eq(T, kp_save_check(bad, bad_size, &id, &err), KP_SAVE_OTHER_BUILD, "a native save of version 1: %s", err.msg);
+	kp_t_ok(T, kp_save_load(other, bad, bad_size, &id, NULL, NULL, &err) != 0, "a native save of version 1 does not load");
+	kp_t_eq(T, kp_save_check(bytes, 100, &id, &err), KP_SAVE_DAMAGED, "a cut file: %s", err.msg);
+	kp_le_put32(v1, (uint32_t)native_size + 1); /* the size prefix wrong */
+	bad = kp_t_save_rebuilt(T, bytes, size, KP_SAVE_SCHEMA, v1, v1_size, &bad_size);
+	kp_t_ok(T, kp_save_load(other, bad, bad_size, &id, NULL, NULL, &err) != 0 && strstr(err.msg, "damaged") != NULL,
+		"a wrong size is refused: %s", err.msg);
+	kp_le_put32(v1, KP_SAVE_CORE_MAX + 1);
+	bad = kp_t_save_rebuilt(T, bytes, size, KP_SAVE_SCHEMA, v1, v1_size, &bad_size);
+	kp_t_eq(T, kp_save_check(bad, bad_size, &id, &err), KP_SAVE_DAMAGED, "a size past the limit: %s", err.msg);
+	bad = kp_t_save_rebuilt(T, bytes, size, KP_SAVE_SCHEMA, core, core_size / 2, &bad_size); /* the stream cut */
+	kp_t_ok(T, kp_save_load(other, bad, bad_size, &id, NULL, NULL, &err) != 0 && strstr(err.msg, "damaged") != NULL,
+		"a cut stream is refused: %s", err.msg);
 	crcs(T, other, &after);
 	same_crcs(T, &before, &after, "unchanged");
 }
@@ -1622,6 +1710,7 @@ static const KpTest TESTS[] = {
 	{ "clock_window_events", clock_window_events, 0 },
 	{ "clock_negative_dt_ignored", clock_negative_dt_ignored, 0 },
 	{ "session_speed_and_commands", session_speed_and_commands, 0 },
+	{ "session_saves_are_compressed_and_refuse_other_builds", session_saves_are_compressed_and_refuse_other_builds, 0 },
 	{ "session_guard_stops_the_game", session_guard_stops_the_game, 0 },
 	{ "session_a_mission_without_its_files_does_not_load", session_a_mission_without_its_files_does_not_load, 0 },
 	{ "session_a_start_without_its_tileset_fails", session_a_start_without_its_tileset_fails, 0 },

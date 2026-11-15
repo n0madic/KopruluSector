@@ -122,7 +122,15 @@ A recorded game's save has a `REPL` section beside CORE/CMDS/CAMP/PRES:
 u32 version (1), header[633], u32 loads, u32 lost, i64 open block's frame, u32 size, the record
 ```
 
-A load restores the record and its open block. A save without `REPL` (from before replays) starts an empty record and marks it lost. A damaged `REPL` (wrong version or size) refuses the whole load. The section is checked before the game is loaded and restored only after, so a refused load leaves the game and its record as they were (`test_session.session_replay_record_in_a_save`). `KP_SAVE_VERSION` did not change.
+A load restores the record and its open block. A save without `REPL` (from before replays) starts an empty record and marks it lost. A damaged `REPL` (wrong version or size) refuses the whole load. The section is checked before the game is loaded and restored only after, so a refused load leaves the game and its record as they were (`test_session.session_replay_record_in_a_save`). `KP_SAVE_VERSION` did not change for replays.
+
+Since phase W ([ADR 0021](../adr/0021-state-walk-and-saves.md), 2026-11-15) the container's schema is 2 and CORE is compressed:
+
+```
+u32 the native save's size, the native save's zlib stream (level 1)
+```
+
+The native save is version 2: `KPSV`, u32 version, the mission's and the data's names, the sections, `END `, then the table of the sections' hashes (u32 count, per section its tag and u64 hash, u64 total). Saves do not migrate: a container of another schema, other data or a native save of another version is refused as another build (gluAll 67 at the load screens), a damaged one as unreadable (gluAll 66); `kp_save_check` gives which.
 
 ## Refusals
 

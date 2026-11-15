@@ -16,6 +16,7 @@
 #include "kp_ids.h"
 #include "kp_sha256.h"
 #include "kp_text.h"
+#include "zlib.h"
 
 #include <setjmp.h>
 #include <stdio.h>
@@ -35,6 +36,9 @@ const int32_t KP_CLOCK_SPEED_MS[KP_CLOCK_SPEEDS] = { 167, 111, 83, 67, 56, 48, 4
 
 #define REPL_VERSION 1
 #define CORE_HEADER 12 /* "KPSV", u32 version, u32 the mission name's length */
+#define CORE_PREFIX 4  /* CORE: u32 the native save's size, then the save as one zlib stream */
+#define CORE_LEVEL 1   /* zlib's level of CORE (ADR 0021: 8 MB in about 10 ms to 1/47) */
+#define CORE_SCHEMA 2  /* CORE's section schema: the compressed form */
 #define PROFILE_KIND "PROF"
 #define PROFILE_SCHEMA 8 /* 1: one ID, its progress in PROG; 1 and 2: the saves without their IDs; 1..5: no SOPT; 1..3: no OPTS; 4: OPTS
                           * with the intro's bit only; 1..6: the names in windows-1252, not UTF-8; 1..7: no LANG */
@@ -718,13 +722,29 @@ void kp_save_pres_set(KpSavePresentation *p, const char *name, int64_t value)
 	p->values[k] = value;
 }
 
+/* CORE: u32 the native save's size, then the save as one zlib stream at level CORE_LEVEL; *out malloc'd. */
+static int deflate_core(const uint8_t *core, size_t size, uint8_t **out, size_t *out_size)
+{
+	uLongf n = compressBound((uLong)size);
+	uint8_t *z = (uint8_t *)malloc(CORE_PREFIX + (size_t)n);
+	if (!z) return -1;
+	if (compress2(z + CORE_PREFIX, &n, core, (uLong)size, CORE_LEVEL) != Z_OK) {
+		free(z);
+		return -1;
+	}
+	kp_le_put32(z, (uint32_t)size);
+	*out = z;
+	*out_size = CORE_PREFIX + (size_t)n;
+	return 0;
+}
+
 int kp_save_encode(KpSession *s, const KpSaveIdentity *id, const KpSaveCampaign *camp, const KpSavePresentation *pres,
 	uint8_t **out, size_t *size, KpError *err)
 {
 	Buf cmds, cmp, prs, rpl;
 	KpKpfOut sections[5];
-	uint8_t *core = NULL;
-	size_t core_size = 0;
+	uint8_t *core = NULL, *zcore = NULL;
+	size_t core_size = 0, zcore_size = 0;
 	int k, rc, nsections = 4;
 	*out = NULL;
 	if (!s->g) return err_msg(err, "mission: no game to save");
@@ -733,6 +753,15 @@ int kp_save_encode(KpSession *s, const KpSaveIdentity *id, const KpSaveCampaign 
 		return -1;
 	}
 	if (kp_save(s->g, s->host.name, s->host.identity, &core, &core_size, err) != 0) return -1;
+	if (core_size > KP_SAVE_CORE_MAX) { /* decode refuses it: no save this build cannot load */
+		free(core);
+		snprintf(err->msg, sizeof err->msg, "save: a native save of %lu bytes, a load takes %u at most", (unsigned long)core_size,
+			KP_SAVE_CORE_MAX);
+		return -1;
+	}
+	rc = deflate_core(core, core_size, &zcore, &zcore_size);
+	free(core);
+	if (rc != 0) return err_msg(err, "save: out of memory");
 	memset(&cmds, 0, sizeof cmds);
 	memset(&cmp, 0, sizeof cmp);
 	memset(&prs, 0, sizeof prs);
@@ -798,8 +827,8 @@ int kp_save_encode(KpSession *s, const KpSaveIdentity *id, const KpSaveCampaign 
 		}
 	}
 	sections[0].fourcc = "CORE";
-	sections[0].payload = core;
-	sections[0].size = core_size;
+	sections[0].payload = zcore;
+	sections[0].size = zcore_size;
 	sections[1].fourcc = "CMDS";
 	sections[1].payload = cmds.b;
 	sections[1].size = cmds.n;
@@ -810,9 +839,10 @@ int kp_save_encode(KpSession *s, const KpSaveIdentity *id, const KpSaveCampaign 
 	sections[3].payload = prs.b;
 	sections[3].size = prs.n;
 	for (k = 0; k < nsections; k++) sections[k].schema_version = 1;
+	sections[0].schema_version = CORE_SCHEMA;
 	rc = cmds.failed || cmp.failed || prs.failed || rpl.failed ? -1
 		: kp_kpf_build(KP_SAVE_KIND, KP_SAVE_SCHEMA, 0, id->profile_id, id->source_hash, sections, nsections, out, size);
-	free(core);
+	free(zcore);
 	free(cmds.b);
 	free(cmp.b);
 	free(prs.b);
@@ -821,16 +851,33 @@ int kp_save_encode(KpSession *s, const KpSaveIdentity *id, const KpSaveCampaign 
 	return 0;
 }
 
-/* The parts of a save after checking its container and data set. */
+/* The parts of a save after checking its container and data set: the sections, the native save's size. */
 typedef struct {
 	KpKpf c;
 	const KpKpfSection *core, *cmds, *camp, *pres;
+	uint32_t core_size;
 } SaveParts;
 
-static int decode(SaveParts *p, const uint8_t *save, size_t size, const KpSaveIdentity *id, KpError *err)
+/* The container checked (its CRCs), the save's schema and data set (a refusal as another build's) and its sections
+ * (a refusal as damaged): *refusal the kind (KP_SAVE_LOADABLE when it passes). */
+static int decode(SaveParts *p, const uint8_t *save, size_t size, const KpSaveIdentity *id, int *refusal, KpError *err)
 {
 	KpKpfExpect e;
+	int is_save;
+	*refusal = KP_SAVE_DAMAGED;
 	if (kp_kpf_parse(&p->c, save, size, "save", 1, err) != 0) return -1;
+	is_save = memcmp(p->c.kind, KP_SAVE_KIND, 4) == 0;
+	if (is_save && p->c.schema_version != KP_SAVE_SCHEMA) {
+		snprintf(err->msg, sizeof err->msg, "save: a save of another build (save schema %u, this build reads %d)",
+			(unsigned)p->c.schema_version, KP_SAVE_SCHEMA);
+		*refusal = KP_SAVE_OTHER_BUILD;
+		goto failed;
+	}
+	if (is_save && (strcmp(p->c.profile_id, id->profile_id) != 0 || memcmp(p->c.source_hash, id->source_hash, 32) != 0)) {
+		err_msg(err, "save: made with other game data");
+		*refusal = KP_SAVE_OTHER_BUILD;
+		goto failed;
+	}
 	memset(&e, 0, sizeof e);
 	e.kind = KP_SAVE_KIND;
 	e.schema_version = KP_SAVE_SCHEMA;
@@ -839,10 +886,86 @@ static int decode(SaveParts *p, const uint8_t *save, size_t size, const KpSaveId
 	if (kp_kpf_check(&p->c, &e, err) != 0 || !(p->core = kp_kpf_require(&p->c, "CORE", err))
 		|| !(p->cmds = kp_kpf_require(&p->c, "CMDS", err)) || !(p->camp = kp_kpf_require(&p->c, "CAMP", err))
 		|| !(p->pres = kp_kpf_require(&p->c, "PRES", err))) {
-		kp_kpf_free(&p->c);
-		return -1;
+		goto failed;
 	}
+	if (p->core->schema_version != CORE_SCHEMA) {
+		snprintf(err->msg, sizeof err->msg, "save: CORE of section schema %u, this build reads %d", (unsigned)p->core->schema_version,
+			CORE_SCHEMA);
+		goto failed;
+	}
+	if (p->core->size < CORE_PREFIX || (p->core_size = kp_le_u32(p->core->data)) < CORE_HEADER || p->core_size > KP_SAVE_CORE_MAX) {
+		err_msg(err, "save: no native save");
+		goto failed;
+	}
+	*refusal = KP_SAVE_LOADABLE;
 	return 0;
+failed:
+	kp_kpf_free(&p->c);
+	return -1;
+}
+
+/* The first `want` bytes of the native save (its whole size: all of it) inflated from CORE into *out (malloc'd). */
+static int inflate_core(const SaveParts *p, size_t want, uint8_t **out, KpError *err)
+{
+	z_stream z;
+	uint8_t *buf = (uint8_t *)malloc(want);
+	int rc, whole = want == p->core_size;
+	if (!buf) return err_msg(err, "save: out of memory");
+	memset(&z, 0, sizeof z);
+	if (inflateInit(&z) != Z_OK) {
+		free(buf);
+		return err_msg(err, "save: out of memory");
+	}
+	z.next_in = (Bytef *)(p->core->data + CORE_PREFIX);
+	z.avail_in = (uInt)(p->core->size - CORE_PREFIX);
+	z.next_out = buf;
+	z.avail_out = (uInt)want;
+	rc = inflate(&z, whole ? Z_FINISH : Z_NO_FLUSH);
+	(void)inflateEnd(&z);
+	if (whole ? rc != Z_STREAM_END || z.total_out != want : z.avail_out != 0 || (rc != Z_OK && rc != Z_STREAM_END)) {
+		free(buf);
+		return err_msg(err, "save: a damaged native save");
+	}
+	*out = buf;
+	return 0;
+}
+
+/* The native save's head: its version (a refusal as another build's) and the mission's name. */
+static int core_head(const SaveParts *p, char *mission, size_t mission_size, int *refusal, KpError *err)
+{
+	size_t want = p->core_size < CORE_HEADER + KP_SAVE_NAME ? p->core_size : CORE_HEADER + KP_SAVE_NAME;
+	uint8_t *head;
+	uint32_t version, n;
+	int rc = -1;
+	*refusal = KP_SAVE_DAMAGED;
+	if (inflate_core(p, want, &head, err) != 0) return -1;
+	if (memcmp(head, "KPSV", 4) != 0) {
+		err_msg(err, "save: no native save");
+	} else if ((version = kp_le_u32(head + 4)) != KP_SAVE_VERSION) {
+		snprintf(err->msg, sizeof err->msg, "save: a save of another build (version %u, this build reads %d)", (unsigned)version,
+			KP_SAVE_VERSION);
+		*refusal = KP_SAVE_OTHER_BUILD;
+	} else if (want < CORE_HEADER + (size_t)(n = kp_le_u32(head + 8)) || n >= mission_size) {
+		err_msg(err, "save: truncated mission name");
+	} else {
+		memcpy(mission, head + CORE_HEADER, n);
+		mission[n] = 0;
+		*refusal = KP_SAVE_LOADABLE;
+		rc = 0;
+	}
+	free(head);
+	return rc;
+}
+
+int kp_save_check(const uint8_t *save, size_t size, const KpSaveIdentity *id, KpError *err)
+{
+	SaveParts p;
+	char mission[KP_SAVE_NAME];
+	int refusal;
+	if (decode(&p, save, size, id, &refusal, err) != 0) return refusal;
+	(void)core_head(&p, mission, sizeof mission, &refusal, err);
+	kp_kpf_free(&p.c);
+	return refusal;
 }
 
 static int decode_campaign(const KpKpfSection *s, KpSaveCampaign *camp, KpError *err)
@@ -892,18 +1015,10 @@ int kp_save_mission(const uint8_t *save, size_t size, const KpSaveIdentity *id, 
 	KpSaveCampaign *camp, KpError *err)
 {
 	SaveParts p;
-	uint32_t n;
-	int rc = 0;
-	if (decode(&p, save, size, id, err) != 0) return -1;
-	if (p.core->size < CORE_HEADER || memcmp(p.core->data, "KPSV", 4) != 0) {
-		rc = err_msg(err, "save: no native save");
-	} else if (p.core->size < CORE_HEADER + (n = kp_le_u32(p.core->data + 8)) || n >= mission_size) {
-		rc = err_msg(err, "save: truncated mission name");
-	} else {
-		memcpy(mission, p.core->data + CORE_HEADER, n);
-		mission[n] = 0;
-		if (camp) rc = decode_campaign(p.camp, camp, err);
-	}
+	int rc, refusal;
+	if (decode(&p, save, size, id, &refusal, err) != 0) return -1;
+	rc = core_head(&p, mission, mission_size, &refusal, err);
+	if (rc == 0 && camp) rc = decode_campaign(p.camp, camp, err);
 	kp_kpf_free(&p.c);
 	return rc;
 }
@@ -950,9 +1065,10 @@ int kp_save_load(KpSession *s, const uint8_t *save, size_t size, const KpSaveIde
 	size_t at = 4;
 	KpSaveCampaign c;
 	const KpKpfSection *repl = NULL;
-	int recorded = s->rec != NULL && s->rec->recording;
+	uint8_t *core = NULL;
+	int recorded = s->rec != NULL && s->rec->recording, refusal;
 	if (!s->g) return err_msg(err, "mission: no game to load into");
-	if (decode(&p, save, size, id, err) != 0) return -1;
+	if (decode(&p, save, size, id, &refusal, err) != 0) return -1;
 	if (decode_campaign(p.camp, &c, err) != 0) goto failed;
 	if (p.cmds->size < 4 || (count = kp_le_u32(p.cmds->data)) > KP_SESSION_PENDING) {
 		err_msg(err, "save: bad commands");
@@ -973,7 +1089,12 @@ int kp_save_load(KpSession *s, const uint8_t *save, size_t size, const KpSaveIde
 	/* the record follows the game: checked first, restored only once kp_load took the save (a save it refuses, of
 	 * another mission or damaged, leaves the game and its record as they were) */
 	if (recorded && check_record(repl = kp_kpf_find(&p.c, "REPL"), err) != 0) goto failed;
-	if (kp_load(s->g, p.core->data, p.core->size, s->host.name, s->host.identity, err) != 0) goto failed;
+	if (inflate_core(&p, p.core_size, &core, err) != 0
+		|| kp_load(s->g, core, p.core_size, s->host.name, s->host.identity, err) != 0) {
+		goto failed;
+	}
+	free(core);
+	core = NULL;
 	if (recorded) restore_record(s, repl);
 	s->failed = 0;
 	s->error[0] = 0;
@@ -993,6 +1114,7 @@ int kp_save_load(KpSession *s, const uint8_t *save, size_t size, const KpSaveIde
 	kp_kpf_free(&p.c);
 	return 0;
 failed:
+	free(core);
 	kp_kpf_free(&p.c);
 	return -1;
 }

@@ -11,7 +11,7 @@ Replays and network play were outside the first version of the remake and are no
 | The original's sync check ([P27](atlas/p27.md)) | `QueueSyncCommand` 0x47a300, `ComputeSyncValue` 0x47a360, `CheckSyncCommand` 0x47a510, `CheckSyncVisibilityHash` 0x47a570, `ResolveDesync` 0x47a630 |
 | Compressed blocks of the `.rep` ([P05](atlas/p05.md)) | `WriteCompressedBlock` 0x4137d0, `ReadCompressedBlock` 0x413ae0 |
 
-`kp_core` already has the command executor of 0x475d30 (`kp_commands.c`), the random generator, saves (`kp_save.c`) and per-step dumps with CRC categories (`kp_dump.c`). What is missing is the replay reader and writer, the turn manager, the network provider and a runtime state hash.
+`kp_core` already has the command executor of 0x475d30 (`kp_commands.c`), the random generator, saves (`kp_save.c`) and per-step dumps with CRC categories (`kp_dump.c`). What is missing is the turn manager and the network provider; the replay reader and writer came with phase RP ([ADR 0020](../adr/0020-campaign-replays.md)), the runtime state hash and the in-process snapshot with phase W ([ADR 0021](../adr/0021-state-walk-and-saves.md)).
 
 **The atlas's network second pass (2026-11-14).** Of the 593 entries with relevance `network`, 499 were `excluded` while the remake had no network play. A second pass specified from the disassembly the 277 a network design needs, in four groups, and each entry was then checked against the disassembly by an independent reviewer:
 - the sync check, game start, multiplayer saves, latency and leaving (40), among them `GetSpriteVisibilityChecksum` 0x4175e0 and the checksum 0x417540–0x417610 ([P05](atlas/p05.md)), `RestoreMultiplayerSaveSlots` 0x4790b0 ([P27](atlas/p27.md)) and the leave and drop path;
@@ -52,9 +52,13 @@ For replays and the network the remake needs a runtime hash of the simulation, n
 - Hash pointers as what they point at and records by their fields, never by memory layout, so a change of `KpGame`'s layout does not change the hash. The categories of `kp_dump.c` are the natural domains.
 - Compute it at the end of the frame, after the update and the triggers; version the hash, and treat a file with another hash version as playable but unchecked.
 
+**What exists (phase W, 2026-11-15).** `kp_state_hash` hashes the save's walk per section (the save's sections are its domains: scalars, units, lists, orders, AI, triggers, both generators, the images world) and folds them into a total. A section's hash is that of its bytes in the save, so it follows fields, never memory layout; pointers are saved as indices. `KP_HASH_VERSION` is in the seed. It takes 1.4 ms on the development Mac for the 8 MB state of `bench_combat`. Still open for the network: where in the frame a seat computes it (the natural place is after the triggers, at the step boundary where the save is taken), and a hash equal across seats whose views differ (the walk saves the local player's selection too).
+
 ### Snapshots and seeking
 
 `KpGame` is fixed-capacity records with no allocation in the step, so a snapshot is close to one memory copy of the struct, and a rewind or a seek to a frame is cheap: put back the latest snapshot at or before the frame and run the recorded commands. A self-test should replay every frame after a rewind and require the same hash, and every snapshot frame byte-equal. Anything outside the simulation (the interface, camera, audio) stays out of a snapshot. Any range table of what a snapshot copies must be generated from the structs, not written once.
+
+**What exists (phase W, 2026-11-15).** A snapshot is not one copy of the struct: `KpGame` holds the host's pointers, the static data the start builds (DAT, regions, contours, the tileset's tables) and heap blocks (trigger records, the region graph's slots). `kp_snapshot` therefore walks the save's fields and copies each array as it is (8 MB in 0.17 ms on the development Mac; the restore 0.15 ms with the derived state rebuilt). The range table is the walk itself, and `test_save.walk_covers_the_state` checks it against the whole of `KpGame`, `KpImages` and `KpRngGame`. `test_save.snapshots_rewind_as_the_original` rewinds every scenario to its middle and requires the same hash and the original's CRCs at every recorded step after it. The rewinding of a replay in the session and its interface is not built.
 
 ### Later evidence (phase RP, 2026-11-13)
 

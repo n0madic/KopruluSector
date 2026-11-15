@@ -1,28 +1,194 @@
-/* Saves of a game at a step boundary, version 1 (kp_game.h; plan D17, ADR 0008 "What changes in formats"): an
- * explicit little-endian encoding of every mutable field of the game and of its images world, in sections, with
- * an FNV-1a fingerprint. The static data that the start of a mission rebuilds (DAT, regions, contours, tileset,
- * vision templates, GRP metadata, IScript, the hooks) and the derived state (the remembered-terrain set, the
- * event ring, scratch lists) stay out; a load restores the fields into a game of the same mission and data, fresh
- * from its start or at any later step, after checking the whole save, so a refused save leaves the game as it was.
- * One walk over the state serves both directions, so the two orders cannot drift apart. */
+/* The walk over a game's state (kp_game.h; plan D17, ADR 0008 "What changes in formats", ADR 0021): every mutable
+ * field of the game and of its images world, in sections, visited by one walk that serves every use, so they cannot
+ * drift apart:
+ * - saves at a step boundary, version 2: an explicit little-endian encoding of the fields with a table of the
+ *   sections' hashes; a load restores them into a game of the same mission and data, fresh from its start or at any
+ *   later step, after checking the whole save, so a refused save leaves the game as it was;
+ * - the state hash (kp_state_hash): the same bytes' hash per section, without encoding them;
+ * - the in-process snapshot (kp_snapshot, kp_restore): the arrays as they are, into the caller's buffer;
+ * - the coverage (kp_state_ranges): the fields the walk visits and the ones it leaves out on purpose (the exclusion
+ *   table below), which tests/c/test_save.c checks against the whole of KpGame, KpImages and KpRngGame.
+ * The static data that the start of a mission rebuilds (DAT, regions, contours, tileset, vision templates, GRP
+ * metadata, IScript, the hooks) and the derived state (the remembered-terrain set, the event ring, scratch lists) stay
+ * out; restored() derives what a restored game needs of the latter. */
 #include "kp_game_internal.h"
 
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #define MAGIC "KPSV"
-#define FNV_OFFSET 0xcbf29ce484222325ULL
-#define FNV_PRIME 0x100000001b3ULL
+#define SECTIONS_MAX 64
+/* The hash: 64-bit words through a multiply-xorshift, a section's seeded with its tag and closed with its length
+ * (murmur3's finaliser); "kphash" and the hash's version as the seed. */
+#define HASH_SEED (0x6b70686173680000ULL | (uint64_t)KP_HASH_VERSION)
+#define HASH_K 0x9e3779b97f4a7c15ULL
+/* The snapshot's header: magic "KPSN", sizeof KpGame, sizeof KpImages, the region graph's, the AI's regions and the
+ * trigger copies' counts, whether the game has the CRT generator, the map's width and height (u32 each), then the
+ * whole size (u64). */
+#define SNAP_MAGIC 0x4e53504bu
+#define SNAP_FIELDS 9
+#define SNAP_HEADER (SNAP_FIELDS * 4 + 8)
+
+enum { MODE_BYTES, MODE_HASH, MODE_RAW, MODE_COVER };
+/* The primitives' kinds (the coverage's alignment, the schema's fingerprint). */
+enum { KIND_U8 = 1, KIND_U32, KIND_U64, KIND_I32, KIND_I64, KIND_INT, KIND_LIST };
 
 typedef struct {
+	const char *tag;
+	int kind;
+	const void *at;
+	size_t count, elem;
+} Call;
+
+typedef struct {
+	int mode;
 	int reading;
 	int dry; /* reading: check the save without writing into the game */
-	uint8_t *buf; /* writing: growable; reading: the save */
+	uint8_t *buf; /* BYTES writing: growable; RAW writing: the caller's (NULL: only counted); reading: the save */
 	size_t size, cap, at;
-	int failed; /* writing: out of memory; reading: past the end or a wrong section */
+	int failed; /* writing: out of memory or past the caller's buffer; reading: past the end or a wrong section */
 	char error[KP_ERROR_SIZE];
+	/* BYTES and HASH: the sections walked; BYTES also where each one's bytes start (after its tag) */
+	int sections;
+	uint32_t section_tag[SECTIONS_MAX];
+	size_t section_start[SECTIONS_MAX];
+	/* HASH: the open section's state, partial word (fill bytes) and length; the sections' fold */
+	uint64_t h, word, total;
+	unsigned fill;
+	size_t length;
+	const char *tag; /* HASH and COVER: the open section's tag */
+	KpSectionHash each;
+	void *ud;
+	/* COVER: the calls */
+	Call *calls;
+	size_t ncalls, ncap;
 } Codec;
+
+static void fail(Codec *c, const char *msg)
+{
+	if (c->failed) return;
+	c->failed = 1;
+	snprintf(c->error, sizeof c->error, "%s", msg);
+}
+
+/* --- the hash --- */
+
+static uint64_t mix(uint64_t h, uint64_t w)
+{
+	h = (h ^ w) * HASH_K;
+	return h ^ (h >> 32);
+}
+
+static uint64_t finish(uint64_t h, uint64_t n)
+{
+	h = mix(h, n);
+	h ^= h >> 33;
+	h *= 0xff51afd7ed558ccdULL;
+	h ^= h >> 33;
+	h *= 0xc4ceb9fe1a85ec53ULL;
+	return h ^ (h >> 33);
+}
+
+static uint32_t tag_word(const char *tag)
+{
+	const uint8_t *t = (const uint8_t *)tag;
+	return (uint32_t)t[0] | (uint32_t)t[1] << 8 | (uint32_t)t[2] << 16 | (uint32_t)t[3] << 24;
+}
+
+static uint64_t le64(const uint8_t *p)
+{
+	uint64_t x = 0;
+	int k;
+	for (k = 7; k >= 0; k--) x = x << 8 | p[k];
+	return x;
+}
+
+/* A section's hash from its bytes in a save (kp_save's table, kp_load's check): the definition kp_state_hash
+ * computes without the bytes. */
+static uint64_t hash_bytes(uint32_t tag, const uint8_t *p, size_t n)
+{
+	uint64_t h = mix(HASH_SEED, tag), w = 0;
+	size_t k, j;
+	for (k = 0; k + 8 <= n; k += 8) h = mix(h, le64(p + k));
+	if (k < n) {
+		for (j = 0; k + j < n; j++) w |= (uint64_t)p[k + j] << (8 * j);
+		h = mix(h, w);
+	}
+	return finish(h, (uint64_t)n);
+}
+
+/* The low `bytes` (1, 4 or 8) bytes of v as the save writes them, into the open section's words. */
+static void hash_put(Codec *c, uint64_t v, unsigned bytes)
+{
+	c->length += bytes;
+	c->word |= v << (8 * c->fill);
+	if (c->fill + bytes < 8) {
+		c->fill += bytes;
+		return;
+	}
+	c->h = mix(c->h, c->word);
+	c->fill = c->fill + bytes - 8;
+	c->word = c->fill ? v >> (8 * (bytes - c->fill)) : 0;
+}
+
+static void hash_run(Codec *c, const uint8_t *p, size_t n)
+{
+	size_t k = 0;
+	while (k < n && c->fill != 0) hash_put(c, p[k++], 1);
+	for (; k + 8 <= n; k += 8) {
+		c->h = mix(c->h, le64(p + k));
+		c->length += 8;
+	}
+	while (k < n) hash_put(c, p[k++], 1);
+}
+
+static void hash_close(Codec *c)
+{
+	uint64_t h;
+	if (!c->tag) return;
+	if (c->fill) c->h = mix(c->h, c->word);
+	h = finish(c->h, (uint64_t)c->length);
+	c->total = mix(c->total, h);
+	c->sections++;
+	if (c->each) c->each(c->ud, c->tag, h, c->length);
+	c->tag = NULL;
+}
+
+static void hash_open(Codec *c, const char *tag)
+{
+	hash_close(c);
+	c->tag = tag;
+	c->h = mix(HASH_SEED, tag_word(tag));
+	c->word = 0;
+	c->fill = 0;
+	c->length = 0;
+}
+
+/* --- the other modes' leaves --- */
+
+static void cover(Codec *c, int kind, const void *at, size_t count, size_t elem)
+{
+	Call *k;
+	if (c->failed) return;
+	if (c->ncalls == c->ncap) {
+		size_t cap = c->ncap ? c->ncap * 2 : 1024;
+		Call *calls = (Call *)realloc(c->calls, cap * sizeof *calls);
+		if (!calls) {
+			fail(c, "state: out of memory");
+			return;
+		}
+		c->calls = calls;
+		c->ncap = cap;
+	}
+	k = &c->calls[c->ncalls++];
+	k->tag = c->tag;
+	k->kind = kind;
+	k->at = at;
+	k->count = count;
+	k->elem = elem;
+}
 
 static void put_bytes(Codec *c, const void *p, size_t n)
 {
@@ -33,8 +199,7 @@ static void put_bytes(Codec *c, const void *p, size_t n)
 		while (c->size + n > cap) cap *= 2;
 		b = (uint8_t *)realloc(c->buf, cap);
 		if (!b) {
-			c->failed = 1;
-			snprintf(c->error, sizeof c->error, "save: out of memory");
+			fail(c, "save: out of memory");
 			return;
 		}
 		c->buf = b;
@@ -48,9 +213,8 @@ static const uint8_t *take(Codec *c, size_t n)
 {
 	const uint8_t *p;
 	if (c->failed) return NULL;
-	if (c->at + n > c->size) {
-		c->failed = 1;
-		snprintf(c->error, sizeof c->error, "save: truncated");
+	if (n > c->size - c->at) { /* not at + n: a save's length can wrap a 32-bit size_t (wasm) */
+		fail(c, "save: truncated");
 		return NULL;
 	}
 	p = c->buf + c->at;
@@ -58,10 +222,33 @@ static const uint8_t *take(Codec *c, size_t n)
 	return p;
 }
 
+/* RAW: n bytes of the state as they are, into the caller's buffer (or counted) or back. */
+static void raw(Codec *c, void *v, size_t n)
+{
+	if (c->failed) return;
+	if (c->reading) {
+		const uint8_t *p = take(c, n);
+		if (p) memcpy(v, p, n);
+	} else if (c->buf && c->size + n > c->cap) {
+		fail(c, "snapshot: the buffer is too small");
+	} else {
+		if (c->buf) memcpy(c->buf + c->size, v, n);
+		c->size += n;
+	}
+}
+
+/* --- the primitives --- */
+
 static void u64(Codec *c, uint64_t *v)
 {
 	uint8_t b[8];
 	int k;
+	switch (c->mode) {
+	case MODE_COVER: cover(c, KIND_U64, v, 1, 8); return;
+	case MODE_HASH: hash_put(c, *v, 8); return;
+	case MODE_RAW: raw(c, v, 8); return;
+	default: break;
+	}
 	if (c->reading) {
 		const uint8_t *p = take(c, 8);
 		uint64_t x = 0;
@@ -78,6 +265,12 @@ static void u32(Codec *c, uint32_t *v)
 {
 	uint8_t b[4];
 	int k;
+	switch (c->mode) {
+	case MODE_COVER: cover(c, KIND_U32, v, 1, 4); return;
+	case MODE_HASH: hash_put(c, *v, 4); return;
+	case MODE_RAW: raw(c, v, 4); return;
+	default: break;
+	}
 	if (c->reading) {
 		const uint8_t *p = take(c, 4);
 		if (!p) return;
@@ -91,6 +284,14 @@ static void u32(Codec *c, uint32_t *v)
 static void i64s(Codec *c, int64_t *v, size_t n)
 {
 	size_t k;
+	switch (c->mode) {
+	case MODE_COVER: cover(c, KIND_I64, v, n, 8); return;
+	case MODE_HASH:
+		for (k = 0; k < n; k++) hash_put(c, (uint64_t)v[k], 8);
+		return;
+	case MODE_RAW: raw(c, v, n * sizeof *v); return;
+	default: break;
+	}
 	for (k = 0; k < n; k++) {
 		uint64_t x = (uint64_t)v[k];
 		u64(c, &x);
@@ -101,6 +302,14 @@ static void i64s(Codec *c, int64_t *v, size_t n)
 static void i32s(Codec *c, int32_t *v, size_t n)
 {
 	size_t k;
+	switch (c->mode) {
+	case MODE_COVER: cover(c, KIND_I32, v, n, 4); return;
+	case MODE_HASH:
+		for (k = 0; k < n; k++) hash_put(c, (uint32_t)v[k], 4);
+		return;
+	case MODE_RAW: raw(c, v, n * sizeof *v); return;
+	default: break;
+	}
 	for (k = 0; k < n; k++) {
 		uint32_t x = (uint32_t)v[k];
 		u32(c, &x);
@@ -111,11 +320,22 @@ static void i32s(Codec *c, int32_t *v, size_t n)
 static void u32s(Codec *c, uint32_t *v, size_t n)
 {
 	size_t k;
+	switch (c->mode) {
+	case MODE_COVER: cover(c, KIND_U32, v, n, 4); return;
+	case MODE_RAW: raw(c, v, n * sizeof *v); return;
+	default: break;
+	}
 	for (k = 0; k < n; k++) u32(c, &v[k]);
 }
 
 static void u8s(Codec *c, uint8_t *v, size_t n)
 {
+	switch (c->mode) {
+	case MODE_COVER: cover(c, KIND_U8, v, n, 1); return;
+	case MODE_HASH: hash_run(c, v, n); return;
+	case MODE_RAW: raw(c, v, n); return;
+	default: break;
+	}
 	if (c->reading) {
 		const uint8_t *p = take(c, n);
 		if (p && !c->dry) memcpy(v, p, n);
@@ -127,6 +347,14 @@ static void u8s(Codec *c, uint8_t *v, size_t n)
 static void ints(Codec *c, int *v, size_t n)
 {
 	size_t k;
+	switch (c->mode) {
+	case MODE_COVER: cover(c, KIND_INT, v, n, sizeof *v); return;
+	case MODE_HASH:
+		for (k = 0; k < n; k++) hash_put(c, (uint32_t)(int32_t)v[k], 4);
+		return;
+	case MODE_RAW: raw(c, v, n * sizeof *v); return;
+	default: break;
+	}
 	for (k = 0; k < n; k++) {
 		int32_t x = (int32_t)v[k];
 		i32s(c, &x, 1);
@@ -137,12 +365,24 @@ static void ints(Codec *c, int *v, size_t n)
 static void lists(Codec *c, KpList *l, size_t n)
 {
 	size_t k;
+	switch (c->mode) {
+	case MODE_COVER: cover(c, KIND_LIST, l, n, sizeof *l); return;
+	case MODE_HASH:
+		for (k = 0; k < n; k++) {
+			hash_put(c, (uint32_t)l[k].head, 4);
+			hash_put(c, (uint32_t)l[k].tail, 4);
+		}
+		return;
+	case MODE_RAW: raw(c, l, n * sizeof *l); return;
+	default: break;
+	}
 	for (k = 0; k < n; k++) {
 		i32s(c, &l[k].head, 1);
 		i32s(c, &l[k].tail, 1);
 	}
 }
 
+/* A name of the save's header (BYTES only). */
 static void str(Codec *c, char *s, size_t cap)
 {
 	uint32_t n = (uint32_t)strlen(s);
@@ -162,17 +402,32 @@ static void str(Codec *c, char *s, size_t cap)
 	}
 }
 
-/* A section tag: written, or checked when reading. */
+/* A section tag: written, or checked when reading; the hash's and the coverage's domain. */
 static void section(Codec *c, const char *tag)
 {
+	switch (c->mode) {
+	case MODE_COVER: c->tag = tag; return;
+	case MODE_HASH: hash_open(c, tag); return;
+	default: break;
+	}
 	if (c->reading) {
 		const uint8_t *p = take(c, 4);
 		if (p && memcmp(p, tag, 4) != 0) {
 			c->failed = 1;
 			snprintf(c->error, sizeof c->error, "save: section %s expected", tag);
 		}
+	} else if (c->mode == MODE_RAW) {
+		raw(c, (void *)tag, 4);
 	} else {
 		put_bytes(c, tag, 4);
+	}
+	if (c->mode == MODE_BYTES && !c->failed) {
+		if (c->sections == SECTIONS_MAX) {
+			fail(c, "save: too many sections");
+			return;
+		}
+		c->section_tag[c->sections] = tag_word(tag);
+		c->section_start[c->sections++] = c->reading ? c->at : c->size;
 	}
 }
 
@@ -375,7 +630,10 @@ static void walk(Codec *c, KpGame *g)
 	{
 		/* The DAT values the game writes while it runs: the forward offsets of attkshiftproj (0x411023). */
 		int64_t offsets[KP_WEAPON_IDS];
-		for (k = 0; k < KP_WEAPON_IDS; k++) offsets[k] = kp_dat_read(g, KP_COL_weapons_forward_offset, (int64_t)k);
+		memset(offsets, 0, sizeof offsets); /* the coverage's walk reads no DAT (the schema's game has none) */
+		if (c->mode != MODE_COVER) {
+			for (k = 0; k < KP_WEAPON_IDS; k++) offsets[k] = kp_dat_read(g, KP_COL_weapons_forward_offset, (int64_t)k);
+		}
 		I64S(offsets);
 		if (c->reading && !c->dry) {
 			for (k = 0; k < KP_WEAPON_IDS; k++) kp_dat_write(g, KP_COL_weapons_forward_offset, (int64_t)k, offsets[k]);
@@ -425,8 +683,9 @@ static void walk(Codec *c, KpGame *g)
 	I64(g->power.fields_shown);
 	section(c, "AIRG");
 	{
-		/* The AI region records within the map's region count (at most KP_AI_REGIONS, kp_ai_regions_init). */
-		size_t count = (size_t)g->regions.count;
+		/* The AI region records within the map's region count (at most KP_AI_REGIONS, kp_ai_regions_init); the
+		 * coverage counts the whole rows (past the map's regions they are no state). */
+		size_t count = c->mode == MODE_COVER ? (size_t)KP_AI_REGIONS : (size_t)g->regions.count;
 		for (k = 0; k < KP_AI_PLAYERS; k++) {
 #define AI_REGION(name) i64s(c, g->air.name[k], count);
 			KP_AI_REGION_FIELDS(AI_REGION)
@@ -650,25 +909,28 @@ static void walk(Codec *c, KpGame *g)
 	section(c, "END ");
 }
 
-static uint64_t fnv(const uint8_t *p, size_t n)
+/* What a restored game derives (kp_load, kp_restore): the remembered-terrain set is rebuilt at its next refresh; the
+ * game's pending events are dropped; the countdown's text follows the countdown; the interface takes the game anew. */
+static void restored(KpGame *g)
 {
-	uint64_t h = FNV_OFFSET;
-	size_t k;
-	for (k = 0; k < n; k++) {
-		h ^= p[k];
-		h *= FNV_PRIME;
-	}
-	return h;
+	g->terrain.has_terrain_changed = 0;
+	g->events.first = g->events.count = g->events.texts_waiting = 0;
+	/* the countdown's text (not saved) as the restored countdown shows it, not the game's before */
+	g->trig.countdown_text = g->trig.countdown != 0 ? g->trig.countdown : -1;
+	/* for the interface: another selection, another console and terrain (kp_ui_hud_frame) */
+	g->local_selection_serial++;
+	g->interface_refresh++;
+	g->minimap_terrain++;
+	g->load_serial++;
 }
+
+/* --- saves --- */
 
 static void header(Codec *c, uint32_t *version, char *mission, char *data)
 {
 	if (c->reading) {
 		const uint8_t *p = take(c, 4);
-		if (p && memcmp(p, MAGIC, 4) != 0) {
-			c->failed = 1;
-			snprintf(c->error, sizeof c->error, "save: not a save");
-		}
+		if (p && memcmp(p, MAGIC, 4) != 0) fail(c, "save: not a save");
 	} else {
 		put_bytes(c, MAGIC, 4);
 	}
@@ -677,12 +939,72 @@ static void header(Codec *c, uint32_t *version, char *mission, char *data)
 	str(c, data, KP_SAVE_NAME);
 }
 
+/* Section k's bytes (after its tag, up to the next tag or, for the last, to end) hashed. */
+static uint64_t section_hash(const Codec *c, const uint8_t *bytes, int k, size_t end)
+{
+	size_t start = c->section_start[k];
+	size_t stop = k + 1 < c->sections ? c->section_start[k + 1] - 4 : end;
+	return hash_bytes(c->section_tag[k], bytes + start, stop - start);
+}
+
+/* The hash table after the sections: u32 their count, per section its tag and u64 hash, then u64 the total (the
+ * sections' hashes folded as kp_state_hash folds them). */
+static void put_table(Codec *c)
+{
+	size_t end = c->size;
+	uint32_t n = (uint32_t)c->sections;
+	uint64_t total = HASH_SEED;
+	int k;
+	if (c->failed) return;
+	u32(c, &n);
+	for (k = 0; k < c->sections && !c->failed; k++) {
+		uint32_t tag = c->section_tag[k];
+		uint64_t h = section_hash(c, c->buf, k, end);
+		total = mix(total, h);
+		u32(c, &tag);
+		u64(c, &h);
+	}
+	total = finish(total, n);
+	u64(c, &total);
+}
+
+static int check_table(Codec *c, const uint8_t *bytes)
+{
+	size_t end = c->at;
+	uint32_t n = 0;
+	uint64_t want = 0, total = HASH_SEED;
+	int k;
+	checked_u32(c, &n);
+	if (!c->failed && n != (uint32_t)c->sections) {
+		c->failed = 1;
+		snprintf(c->error, sizeof c->error, "save: a hash table of %u sections, the save has %d", n, c->sections);
+	}
+	for (k = 0; k < c->sections && !c->failed; k++) {
+		uint32_t tag = 0;
+		uint64_t h;
+		checked_u32(c, &tag);
+		checked_u64(c, &want);
+		if (c->failed) break;
+		h = section_hash(c, bytes, k, end);
+		if (tag != c->section_tag[k] || h != want) {
+			uint32_t t = c->section_tag[k];
+			c->failed = 1;
+			snprintf(c->error, sizeof c->error, "save: section %c%c%c%c damaged", (char)(t & 0xff), (char)(t >> 8 & 0xff),
+				(char)(t >> 16 & 0xff), (char)(t >> 24));
+			break;
+		}
+		total = mix(total, h);
+	}
+	checked_u64(c, &want);
+	if (!c->failed && finish(total, n) != want) fail(c, "save: damaged (hash table)");
+	return c->failed ? -1 : 0;
+}
+
 int kp_save(KpGame *g, const char *mission, const char *data, uint8_t **out, size_t *size, KpError *err)
 {
 	Codec c;
 	char m[KP_SAVE_NAME], d[KP_SAVE_NAME];
 	uint32_t version = KP_SAVE_VERSION;
-	uint64_t h;
 	memset(&c, 0, sizeof c);
 	if (strlen(mission) >= sizeof m || strlen(data) >= sizeof d) {
 		snprintf(err->msg, sizeof err->msg, "save: a mission or data name of %d bytes or more", KP_SAVE_NAME);
@@ -692,8 +1014,7 @@ int kp_save(KpGame *g, const char *mission, const char *data, uint8_t **out, siz
 	snprintf(d, sizeof d, "%s", data);
 	header(&c, &version, m, d);
 	walk(&c, g);
-	h = fnv(c.buf, c.size);
-	u64(&c, &h);
+	put_table(&c);
 	if (c.failed) {
 		free(c.buf);
 		snprintf(err->msg, sizeof err->msg, "%s", c.error);
@@ -709,14 +1030,14 @@ int kp_load(KpGame *g, const uint8_t *bytes, size_t size, const char *mission, c
 	Codec c;
 	char m[KP_SAVE_NAME] = "", d[KP_SAVE_NAME] = "";
 	uint32_t version = 0;
-	uint64_t want = 0, h;
+	size_t start;
 	memset(&c, 0, sizeof c);
 	c.reading = 1;
 	c.buf = (uint8_t *)bytes;
 	c.size = size;
 	header(&c, &version, m, d);
 	if (!c.failed && version != KP_SAVE_VERSION) {
-		snprintf(err->msg, sizeof err->msg, "save: version %u, expected %d", version, KP_SAVE_VERSION);
+		snprintf(err->msg, sizeof err->msg, "save: version %u, this build reads %d", version, KP_SAVE_VERSION);
 		return -1;
 	}
 	if (!c.failed && strcmp(m, mission) != 0) {
@@ -727,54 +1048,396 @@ int kp_load(KpGame *g, const uint8_t *bytes, size_t size, const char *mission, c
 		snprintf(err->msg, sizeof err->msg, "save: made with other game data");
 		return -1;
 	}
-	if (c.failed || size < 8) {
-		snprintf(err->msg, sizeof err->msg, "%s", c.failed ? c.error : "save: truncated");
+	/* A dry walk checks every section, the region count, the generators, the length and the hashes of the sections'
+	 * bytes first, so a refused save leaves the game as it was; the second walk writes. */
+	start = c.at;
+	c.dry = 1;
+	if (!c.failed) walk(&c, g);
+	if (!c.failed) (void)check_table(&c, bytes);
+	if (!c.failed && c.at != c.size) {
+		c.failed = 1;
+		snprintf(c.error, sizeof c.error, "save: %u bytes past the state", (unsigned)(c.size - c.at));
+	}
+	if (!c.failed) {
+		c.dry = 0;
+		c.at = start;
+		c.sections = 0;
+		walk(&c, g);
+	}
+	if (c.failed) {
+		snprintf(err->msg, sizeof err->msg, "%s", c.error);
 		return -1;
 	}
-	{
-		Codec f;
-		memset(&f, 0, sizeof f);
-		f.reading = 1;
-		f.buf = (uint8_t *)bytes;
-		f.size = size;
-		f.at = size - 8;
-		u64(&f, &want);
-		h = fnv(bytes, size - 8);
-		if (h != want) {
-			snprintf(err->msg, sizeof err->msg, "save: damaged (fingerprint)");
+	restored(g);
+	return 0;
+}
+
+/* --- the state hash and the schema --- */
+
+int kp_state_hash(KpGame *g, KpSectionHash each, void *ud, uint64_t *total)
+{
+	Codec c;
+	memset(&c, 0, sizeof c);
+	c.mode = MODE_HASH;
+	c.each = each;
+	c.ud = ud;
+	c.total = HASH_SEED;
+	walk(&c, g);
+	hash_close(&c);
+	if (total) *total = finish(c.total, (uint64_t)c.sections);
+	return c.failed ? -1 : 0;
+}
+
+uint64_t kp_save_schema(void)
+{
+	/* The walk over a zeroed game: the map's counts are zero there (the AI regions' rows are KP_AI_REGIONS in the
+	 * coverage's walk), so only the code decides the calls. */
+	KpGame *g = (KpGame *)calloc(1, sizeof *g);
+	KpImages *w = (KpImages *)calloc(1, sizeof *w);
+	KpRngGame *rng = (KpRngGame *)calloc(1, sizeof *rng);
+	uint64_t h = 0;
+	if (g && w && rng) {
+		Codec c;
+		size_t k;
+		g->w = w;
+		g->rng = rng;
+		memset(&c, 0, sizeof c);
+		c.mode = MODE_COVER;
+		walk(&c, g);
+		h = HASH_SEED;
+		for (k = 0; k < c.ncalls; k++) {
+			h = mix(h, tag_word(c.calls[k].tag));
+			h = mix(h, (uint64_t)c.calls[k].kind);
+			h = mix(h, (uint64_t)c.calls[k].count);
+		}
+		h = c.failed ? 0 : finish(h, (uint64_t)c.ncalls);
+		free(c.calls);
+	}
+	free(g);
+	free(w);
+	free(rng);
+	return h;
+}
+
+/* --- snapshots --- */
+
+static void snap_fields(KpGame *g, uint32_t f[SNAP_FIELDS])
+{
+	f[0] = SNAP_MAGIC;
+	f[1] = (uint32_t)sizeof(KpGame);
+	f[2] = (uint32_t)sizeof(KpImages);
+	f[3] = (uint32_t)g->pathing.rg.count;
+	f[4] = (uint32_t)g->regions.count;
+	f[5] = (uint32_t)g->trig.count;
+	f[6] = g->crt != NULL;
+	f[7] = (uint32_t)g->map_w;
+	f[8] = (uint32_t)g->map_h;
+}
+
+size_t kp_snapshot_size(KpGame *g)
+{
+	Codec c;
+	memset(&c, 0, sizeof c);
+	c.mode = MODE_RAW;
+	walk(&c, g);
+	return SNAP_HEADER + c.size;
+}
+
+int kp_snapshot(KpGame *g, uint8_t *buf, size_t size, KpError *err)
+{
+	Codec c;
+	uint32_t f[SNAP_FIELDS];
+	uint64_t total;
+	int k;
+	if (size < SNAP_HEADER) {
+		snprintf(err->msg, sizeof err->msg, "snapshot: a buffer of %lu bytes", (unsigned long)size);
+		return -1;
+	}
+	memset(&c, 0, sizeof c);
+	c.mode = MODE_RAW;
+	c.buf = buf + SNAP_HEADER;
+	c.cap = size - SNAP_HEADER;
+	walk(&c, g);
+	if (c.failed) {
+		snprintf(err->msg, sizeof err->msg, "%s", c.error);
+		return -1;
+	}
+	snap_fields(g, f);
+	for (k = 0; k < SNAP_FIELDS; k++) memcpy(buf + 4 * k, &f[k], 4);
+	total = (uint64_t)(SNAP_HEADER + c.size);
+	memcpy(buf + 4 * SNAP_FIELDS, &total, 8);
+	return 0;
+}
+
+int kp_restore(KpGame *g, const uint8_t *buf, size_t size, KpError *err)
+{
+	static const char *const NAMES[SNAP_FIELDS] = { "magic", "game size", "world size", "region graph count",
+		"AI region count", "trigger copies", "CRT generator", "map width", "map height" };
+	uint32_t want[SNAP_FIELDS], have;
+	uint64_t total;
+	size_t expected;
+	Codec c;
+	int k;
+	if (size < SNAP_HEADER) {
+		snprintf(err->msg, sizeof err->msg, "snapshot: truncated");
+		return -1;
+	}
+	/* the whole header before the first change: after it the walk reads what kp_snapshot wrote of this game */
+	snap_fields(g, want);
+	for (k = 0; k < SNAP_FIELDS; k++) {
+		memcpy(&have, buf + 4 * k, 4);
+		if (have != want[k]) {
+			snprintf(err->msg, sizeof err->msg, "snapshot: %s %u, the game's %u", NAMES[k], have, want[k]);
 			return -1;
 		}
 	}
-	/* A dry walk checks every section, the region count, the generators and the length first, so a refused save
-	 * leaves the game as it was; the second walk writes. */
-	c.size = size - 8;
-	{
-		size_t start = c.at;
-		int pass;
-		for (pass = 0; pass < 2; pass++) {
-			c.dry = pass == 0;
-			c.at = start;
-			walk(&c, g);
-			if (!c.failed && c.at != c.size) {
-				c.failed = 1;
-				snprintf(c.error, sizeof c.error, "save: %u bytes past the state", (unsigned)(c.size - c.at));
-			}
-			if (c.failed) {
-				snprintf(err->msg, sizeof err->msg, "%s", c.error);
-				return -1;
-			}
+	memcpy(&total, buf + 4 * SNAP_FIELDS, 8);
+	expected = kp_snapshot_size(g);
+	if (total > size || total != (uint64_t)expected) {
+		snprintf(err->msg, sizeof err->msg, "snapshot: %llu bytes in a buffer of %lu, the game's %lu", (unsigned long long)total,
+			(unsigned long)size, (unsigned long)expected);
+		return -1;
+	}
+	memset(&c, 0, sizeof c);
+	c.mode = MODE_RAW;
+	c.reading = 1;
+	c.buf = (uint8_t *)buf + SNAP_HEADER;
+	c.size = (size_t)total - SNAP_HEADER;
+	walk(&c, g);
+	if (c.failed) { /* a section tag of a damaged buffer: the game is then partly restored */
+		snprintf(err->msg, sizeof err->msg, "%s", c.error);
+		return -1;
+	}
+	restored(g);
+	return 0;
+}
+
+/* --- the coverage --- */
+
+typedef struct {
+	KpStateRange *r;
+	size_t n, cap;
+	int failed;
+} Ranges;
+
+static int base_of(KpGame *g, const void *at, size_t bytes, size_t *offset)
+{
+	uintptr_t a = (uintptr_t)at, b[KP_STATE_BASES];
+	size_t size[KP_STATE_BASES];
+	int k;
+	b[KP_STATE_GAME] = (uintptr_t)g;
+	size[KP_STATE_GAME] = sizeof *g;
+	b[KP_STATE_WORLD] = (uintptr_t)g->w;
+	size[KP_STATE_WORLD] = sizeof *g->w;
+	b[KP_STATE_RNG] = (uintptr_t)g->rng;
+	size[KP_STATE_RNG] = sizeof *g->rng;
+	for (k = 0; k < KP_STATE_BASES; k++) {
+		if (a >= b[k] && a - b[k] + bytes <= size[k]) {
+			*offset = (size_t)(a - b[k]);
+			return k;
 		}
 	}
-	/* Derived state: the remembered-terrain set is rebuilt at its next refresh; the game's pending events are
-	 * dropped; the countdown's text follows the countdown. */
-	g->terrain.has_terrain_changed = 0;
-	g->events.first = g->events.count = g->events.texts_waiting = 0;
-	/* the countdown's text (not saved) as the loaded countdown shows it, not the game's before the load */
-	g->trig.countdown_text = g->trig.countdown != 0 ? g->trig.countdown : -1;
-	/* for the interface: another selection, another console and terrain (kp_ui_hud_frame) */
-	g->local_selection_serial++;
-	g->interface_refresh++;
-	g->minimap_terrain++;
-	g->load_serial++;
+	return -1;
+}
+
+static void add_range(Ranges *rs, KpGame *g, int klass, const void *at, size_t bytes, size_t align, const char *name)
+{
+	size_t offset;
+	int base;
+	KpStateRange *r;
+	if (rs->failed || bytes == 0 || (base = base_of(g, at, bytes, &offset)) < 0) return; /* heap and locals: not here */
+	if (rs->n == rs->cap) {
+		size_t cap = rs->cap ? rs->cap * 2 : 1024;
+		KpStateRange *more = (KpStateRange *)realloc(rs->r, cap * sizeof *more);
+		if (!more) {
+			rs->failed = 1;
+			return;
+		}
+		rs->r = more;
+		rs->cap = cap;
+	}
+	r = &rs->r[rs->n++];
+	r->base = base;
+	r->klass = klass;
+	r->offset = offset;
+	r->bytes = bytes;
+	r->align = align;
+	r->name = name;
+}
+
+/* The largest power of two up to 8 dividing n: an element's alignment from its size. */
+static size_t align_of_size(size_t n)
+{
+	size_t a = 1;
+	while (a < 8 && n % (a * 2) == 0) a *= 2;
+	return a;
+}
+
+static size_t kind_align(int kind)
+{
+	switch (kind) {
+	case KIND_U8: return 1;
+	case KIND_U64:
+	case KIND_I64: return 8;
+	default: return 4;
+	}
+}
+
+#define EXCLUDE(field, klass) add_range(rs, g, KP_STATE_##klass, &(field), sizeof(field), align_of_size(sizeof(field)), #field)
+#define EXCLUDE_ARRAY(field, klass) \
+	add_range(rs, g, KP_STATE_##klass, (field), sizeof(field), align_of_size(sizeof((field)[0])), #field)
+/* The padding between the end of a member and the next one, measured on this platform (0 bytes, so no range, where
+ * there is none): for a next member whose struct is aligned past its first walked field, so the coverage cannot tell
+ * the padding by that field's alignment. */
+#define EXCLUDE_PADDING(end, next) \
+	add_range(rs, g, KP_STATE_PADDING, (end), (size_t)((const char *)&(next) - (const char *)(end)), 1, "padding before " #next)
+
+/* The fields the walk leaves out, each with its class:
+ * - DERIVED: rebuilt from the saved state or from the mission (restored() and the start), or scratch of one step;
+ * - STATIC: the mission's and the data's, which the start of the same mission builds the same;
+ * - VIEW: the interface's and the presentation's, no state of the simulation;
+ * - HOST: the host's objects and settings, and the tests' overrides;
+ * - PADDING: a platform's padding the coverage cannot tell by the next field's alignment. */
+static void exclusions(Ranges *rs, KpGame *g)
+{
+	KpImages *w = g->w;
+	/* KpGame: the host's objects, the game's DAT and hooks */
+	EXCLUDE(g->w, HOST);
+	EXCLUDE(g->rng, HOST);
+	EXCLUDE(g->own_world, HOST);
+	EXCLUDE(g->crt, HOST); /* its holdrand is saved (RNGS) */
+	EXCLUDE(g->cdat, STATIC);
+	EXCLUDE_ARRAY(g->col, STATIC);
+	EXCLUDE(g->ctx, HOST);
+	EXCLUDE(g->probe_hook, HOST);
+	EXCLUDE(g->probe_hook_ctx, HOST);
+	/* the settings fixed at the start; who watches is the host's */
+	EXCLUDE(g->map_w, STATIC);
+	EXCLUDE(g->map_h, STATIC);
+	EXCLUDE(g->map_w_px, STATIC);
+	EXCLUDE(g->map_h_px, STATIC);
+	EXCLUDE(g->local_player, HOST);
+	EXCLUDE(g->local_vision, HOST);
+	EXCLUDE(g->expansion, STATIC);
+	/* a replay's playback (a replay has no saves) */
+	EXCLUDE(g->replay_multiplier, HOST);
+	EXCLUDE(g->replay_paused, HOST);
+	EXCLUDE(g->replay_frames, HOST);
+	EXCLUDE(g->replay_header_speed, HOST);
+	/* the interface's refreshes (restored() raises them) */
+	EXCLUDE(g->local_selection_serial, VIEW);
+	EXCLUDE(g->interface_refresh, VIEW);
+	EXCLUDE(g->minimap_terrain, VIEW);
+	EXCLUDE(g->load_serial, VIEW);
+	/* the tests' overrides */
+	EXCLUDE_ARRAY(g->req_program, HOST);
+	EXCLUDE(g->req_program_words, HOST);
+	EXCLUDE(g->req_program_set, HOST);
+	/* locks set only within one call */
+	EXCLUDE(g->ai.migrating, DERIVED);
+	EXCLUDE(g->ai.placement_builder, DERIVED);
+	/* the Psi field's mask, built at the start from its graphic */
+	EXCLUDE(g->power.half_w, STATIC);
+	EXCLUDE(g->power.half_h, STATIC);
+	EXCLUDE_ARRAY(g->power.mask, STATIC);
+	/* the nested queries' result stack, empty between steps */
+	EXCLUDE_ARRAY(g->spatial.frames, DERIVED);
+	EXCLUDE(g->spatial.frame_top, DERIVED);
+	/* the mission's regions and contours, the region graph (its run-time slots are saved, PATH) */
+	EXCLUDE(g->regions, STATIC);
+	EXCLUDE_ARRAY(g->contours, STATIC);
+	/* KpPathing is aligned to 8 but walked from its bytes: where pointers are 4 bytes (wasm) the contours end 4 bytes
+	 * before it */
+	EXCLUDE_PADDING(g->contours + ARRAY_N(g->contours), g->pathing);
+	EXCLUDE(g->pathing.rg, STATIC);
+	/* the collision's scratch */
+	EXCLUDE_ARRAY(g->collision.swept, DERIVED);
+	EXCLUDE_ARRAY(g->collision.adjacent, DERIVED);
+	EXCLUDE_ARRAY(g->collision.query, DERIVED);
+	/* the remembered-terrain set (rebuilt at its next refresh), the tileset and the vision templates */
+	EXCLUDE(g->terrain.has_terrain_changed, DERIVED);
+	EXCLUDE_ARRAY(g->terrain.terrain_changed, DERIVED);
+	EXCLUDE(g->terrain.cv5, STATIC);
+	EXCLUDE(g->terrain.vf4, STATIC);
+	EXCLUDE(g->terrain.cv5_size, STATIC);
+	EXCLUDE(g->terrain.vf4_size, STATIC);
+	EXCLUDE(g->terrain.mflags, STATIC);
+	EXCLUDE(g->terrain.mflags_count, STATIC);
+	EXCLUDE(g->terrain.has_templates, STATIC);
+	EXCLUDE_ARRAY(g->terrain.templates, STATIC);
+	EXCLUDE_ARRAY(g->players.force_name, STATIC);
+	/* the game's notifications to the host (a restore drops the waiting ones) */
+	EXCLUDE(g->events, VIEW);
+	/* the AI scripts' binaries, the tests' synthetic ones, the AI's scratch */
+	EXCLUDE(g->ai_bins, STATIC);
+	EXCLUDE(g->ai_game_bins, STATIC);
+	EXCLUDE(g->ai_program, HOST);
+	EXCLUDE(g->ai_scratch, DERIVED);
+	/* the trigger copies the start makes (their records and links are saved, TRIG), the briefing's lead, the mission's
+	 * texts; the countdown's text follows the countdown (restored()) */
+	EXCLUDE(g->trig.records, STATIC);
+	EXCLUDE(g->trig.next, STATIC);
+	EXCLUDE(g->trig.place, STATIC);
+	EXCLUDE(g->trig.count, STATIC);
+	EXCLUDE(g->trig.lead_objectives, STATIC);
+	EXCLUDE(g->trig.countdown_text, DERIVED);
+	EXCLUDE_ARRAY(g->trig.properties, STATIC);
+	EXCLUDE(g->trig.strings, STATIC);
+	EXCLUDE(g->trig.strings_size, STATIC);
+	EXCLUDE(g->trig.briefing, STATIC);
+	EXCLUDE(g->trig.briefing_count, STATIC);
+	/* KpImages: the data, the hooks, the settings fixed at the start and the host's */
+	EXCLUDE(w->dat, STATIC);
+	EXCLUDE(w->grp, STATIC);
+	EXCLUDE(w->script, STATIC);
+	EXCLUDE(w->rng, HOST);
+	EXCLUDE(w->col, STATIC);
+	EXCLUDE(w->hook, HOST);
+	EXCLUDE(w->tile_flags, HOST);
+	EXCLUDE(w->tile_ctx, HOST);
+	EXCLUDE(w->ctx, HOST);
+	EXCLUDE(w->map_w, STATIC);
+	EXCLUDE(w->map_h, STATIC);
+	EXCLUDE(w->map_w_px, STATIC);
+	EXCLUDE(w->map_h_px, STATIC);
+	EXCLUDE(w->tileset, STATIC);
+	EXCLUDE(w->expansion, STATIC);
+	EXCLUDE(w->local_player, HOST);
+	EXCLUDE(w->replay, HOST);
+	EXCLUDE(w->replay_reveal, HOST);
+	EXCLUDE(w->local_vision, HOST);
+	EXCLUDE(w->step_limit, HOST);
+	EXCLUDE(w->has_sound, HOST);
+	EXCLUDE(w->has_play_probe, HOST);
+	/* the draw list's sort keys, the overlay slots' cache, the failure handler */
+	EXCLUDE_ARRAY(w->draw_keys, DERIVED);
+	EXCLUDE_ARRAY(w->overlay_slots, DERIVED);
+	EXCLUDE(w->try_, HOST);
+	EXCLUDE_ARRAY(w->error, HOST);
+}
+
+int kp_state_ranges(KpGame *g, KpStateRange **out, size_t *count)
+{
+	Codec c;
+	Ranges rs;
+	size_t k;
+	*out = NULL;
+	*count = 0;
+	memset(&c, 0, sizeof c);
+	c.mode = MODE_COVER;
+	walk(&c, g);
+	memset(&rs, 0, sizeof rs);
+	for (k = 0; k < c.ncalls; k++) {
+		const Call *a = &c.calls[k];
+		add_range(&rs, g, KP_STATE_SAVED, a->at, a->count * a->elem, kind_align(a->kind), a->tag);
+	}
+	free(c.calls);
+	exclusions(&rs, g);
+	if (c.failed || rs.failed) {
+		free(rs.r);
+		return -1;
+	}
+	*out = rs.r;
+	*count = rs.n;
 	return 0;
 }

@@ -2195,6 +2195,8 @@ static void load_that_fails_keeps_the_game_or_opens_the_campaign_menu(KpT *T)
 	request(H, KP_EVENT_LOAD_GAME, "flownone");
 	kp_t_ok(T, H->f.playing && H->f.hud_on, "the game goes on");
 	kp_t_ok(T, strstr(H->last_log, "load failed: no save") != NULL, "%s", H->last_log);
+	kp_t_ok(T, H->f.ui->box.open, "the player told (kp_ui_load_failed)");
+	kp_t_eq_str(T, H->f.ui->box.text, (const char *)kp_ui_tbl(H->f.ui, KP_UI_GLUALL, 66), "gluAll 66");
 	game_event(H, KP_EVENT_GAME_EXIT, EXIT_QUIT_MISSION, NULL);
 	frame(H);
 	play(H, EXPANSION_PROTOSS01);
@@ -2212,10 +2214,62 @@ static void glue_load_that_fails_opens_the_load_screen_again(KpT *T)
 	kp_glue_saves(H->f.ui, &H->profile);
 	H->f.ui->menus.save_choice = 0;
 	menus_end(H, KP_UI_MENU_LOAD_SAVE, KP_GLUE_EXPANSION_CAMPAIGN, 0, 0, 1);
-	kp_t_eq_str(T, H->last_log, "glue: load failed", NULL);
+	kp_t_eq_str(T, H->last_log, "glue: load failed: no save", NULL);
 	in_menus(H, KP_GLUE_LOAD_SCREEN, "the failed load");
 	kp_t_eq(T, H->f.ui->menus.expansion, 1, "the expansion's");
 	wait_for(H, "rez\\gluload.bin", MENU_FRAMES);
+}
+
+/* The row of the interface's saves named name, or -1. */
+static int save_row(const Host *H, const char *name)
+{
+	int k;
+	for (k = 0; k < H->f.ui->menus.save_count; k++) {
+		if (strcmp(H->f.ui->menus.saves[k], name) == 0) return k;
+	}
+	return -1;
+}
+
+/* The load screens' reading of a save at Ok (check_save, Koprulu's: saves do not migrate, ADR 0021): this build's save
+ * loads (0); a missing file and a damaged one are gluAll 66, a save of another build gluAll 67 (the statuses of
+ * ValidateSaveFile 0x499750), each logged with why. */
+static void check_save_tells_why_a_save_does_not_load(KpT *T)
+{
+	static const struct { const char *name; uint16_t want; const char *log; } ROWS[] = {
+		{ "flowgood", 0, NULL }, { "flowcut", 66, "refused" }, { "flowold", 67, "another build" },
+		{ "flowmissing", 66, "no file" } };
+	Host *H = glue_host(T, 0);
+	KpUi *ui;
+	KpError err;
+	char path[400];
+	uint8_t *bytes, *old;
+	size_t size = 0, old_size = 0, k;
+	play(H, PROTOSS01);
+	save(H, "flowgood");
+	save(H, "flowcut");
+	save(H, "flowold");
+	save_path(H, "flowgood", path, sizeof path);
+	kp_t_ok(T, (bytes = kp_read_file(path, &size)) != NULL, "%s", path);
+	kp_t_defer(T, free, bytes);
+	kp_t_ok(T, size > 100, "%s: %lu bytes", path, (unsigned long)size);
+	save_path(H, "flowcut", path, sizeof path);
+	kp_t_ok(T, kp_write_file_atomic(path, bytes, 100, &err) == 0, "%s", err.msg);
+	old = kp_t_save_rebuilt(T, bytes, size, KP_SAVE_SCHEMA - 1, NULL, 0, &old_size);
+	save_path(H, "flowold", path, sizeof path);
+	kp_t_ok(T, kp_write_file_atomic(path, old, old_size, &err) == 0, "%s", err.msg);
+	game_event(H, KP_EVENT_GAME_EXIT, EXIT_QUIT_MISSION, NULL);
+	frame(H);
+	kp_profile_add_save(&H->profile, "flowmissing");
+	ui = H->f.ui;
+	kp_glue_saves(ui, &H->profile);
+	for (k = 0; k < sizeof ROWS / sizeof ROWS[0]; k++) {
+		int row = save_row(H, ROWS[k].name);
+		kp_t_ok(T, row >= 0, "%s listed", ROWS[k].name);
+		H->last_log[0] = 0;
+		kp_t_eq(T, ui->check_save(ui->host, row), ROWS[k].want, "%s", ROWS[k].name);
+		if (ROWS[k].log) kp_t_ok(T, strstr(H->last_log, ROWS[k].log) != NULL, "%s: %s", ROWS[k].name, H->last_log);
+	}
+	kp_t_eq(T, ui->check_save(ui->host, ui->menus.save_count), KP_UI_GLUALL_SAVE_DAMAGED, "no such row");
 }
 
 /* The interface's delete: a save's file and its name in the profile (a missing file counts as deleted); a file that
@@ -3203,6 +3257,7 @@ static const KpTest TESTS[] = {
 	{ "load_that_fails_keeps_the_game_or_opens_the_campaign_menu",
 		load_that_fails_keeps_the_game_or_opens_the_campaign_menu, 0 },
 	{ "glue_load_that_fails_opens_the_load_screen_again", glue_load_that_fails_opens_the_load_screen_again, 0 },
+	{ "check_save_tells_why_a_save_does_not_load", check_save_tells_why_a_save_does_not_load, 0 },
 	{ "delete_keeps_the_name_of_a_file_that_stays", delete_keeps_the_name_of_a_file_that_stays, 0 },
 	{ "saves_are_each_ids_and_leave_with_it", saves_are_each_ids_and_leave_with_it, 0 },
 	{ "glue_load_takes_the_row_of_the_logged_in_ids_list", glue_load_takes_the_row_of_the_logged_in_ids_list, 0 },

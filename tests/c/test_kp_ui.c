@@ -2786,6 +2786,88 @@ static void save_dialog_reports_a_file_that_stays(KpT *T)
 	kp_t_eq_str(T, ui->menus.saves[0], "beta", NULL);
 }
 
+/* The host's check_save: refusal for every save (0: it loads), the save asked last. */
+typedef struct {
+	uint16_t refusal;
+	int calls, index;
+} Checks;
+
+static uint16_t test_check_save(void *host, int index)
+{
+	Checks *k = (Checks *)host;
+	k->calls++;
+	k->index = index;
+	return k->refusal;
+}
+
+/* The in-game load dialog's save that does not load (Koprulu's: the host reads it at Ok, saves do not migrate, ADR
+ * 0021): an OK box with the gluAll string the host names (66 unreadable, 67 another version), no load sent, the load
+ * dialog again after it; a save that loads sends its load (SendLoadGameCommand 0x473f30). */
+static void load_dialog_refuses_a_save_that_does_not_load(KpT *T)
+{
+	enum { ID_OK = -2, ID_LIST = 1, CMD_LOAD = 0x07 };
+	KpOracleGame *game;
+	KpOracleUi *u;
+	KpUi *ui;
+	Checks chk;
+	Clock c;
+	char name[128];
+	uint8_t first[KP_UI_COMMAND_BYTES];
+	size_t size;
+	int pass;
+	if (!kp_t_ready(T, "test_kp_ui.load_dialog_refuses_a_save_that_does_not_load", GAME_FILES)) return;
+	game = terran01(T);
+	u = kp_t_ui(T, KP_ORACLE_UI_STRINGS);
+	ui = u->ui;
+	kp_ui_font_set(ui, 1);
+	theme(T, ui, 1);
+	ui->now = 1000;
+	hud(T, ui, game->g);
+	c.ui = ui;
+	c.now = 1000;
+	memset(&chk, 0, sizeof chk);
+	ui->check_save = test_check_save;
+	ui->host = &chk;
+	snprintf(ui->menus.saves[0], sizeof ui->menus.saves[0], "alpha");
+	snprintf(ui->menus.saves[1], sizeof ui->menus.saves[1], "beta");
+	ui->menus.save_count = 2;
+	kp_ui_save_dialog(ui, 1);
+	frames(&c, 10);
+	kp_t_eq_str(T, kp_t_ui_bin(ui, ui->open, name, sizeof name), "rez\\loadgame.bin", NULL);
+	(void)kp_t_ui_take_commands(ui, NULL, &size);
+	for (pass = 0; pass < 2; pass++) { /* unreadable, then another version */
+		const uint8_t *want;
+		chk.refusal = (uint16_t)(66 + pass);
+		want = kp_ui_tbl(ui, KP_UI_GLUALL, chk.refusal);
+		kp_t_ok(T, want != NULL && want[0] != 0, "gluAll string %d", chk.refusal);
+		kp_ui_list_select(ui, kp_ui_find_control(ui, ui->open, ID_LIST), 1);
+		frames(&c, 2);
+		dialog_click(T, &c, ID_OK);
+		kp_t_eq(T, chk.calls, pass + 1, "the host asked at Ok");
+		kp_t_eq(T, chk.index, 1, "for beta's row");
+		kp_t_eq_str(T, kp_t_ui_bin(ui, ui->open, name, sizeof name), "rez\\ok.bin", "the box");
+		kp_t_eq_str(T, ui->box.text, want != NULL ? (const char *)want : "", "gluAll string %d", chk.refusal);
+		kp_t_eq(T, kp_t_ui_take_commands(ui, NULL, &size), 0, "no load sent");
+		dialog_click(T, &c, ID_OK);
+		kp_t_eq_str(T, kp_t_ui_bin(ui, ui->open, name, sizeof name), "rez\\loadgame.bin", "the load dialog again");
+		kp_t_eq(T, ui->menus.save_count, 2, "the list kept");
+	}
+	chk.refusal = 0;
+	kp_ui_list_select(ui, kp_ui_find_control(ui, ui->open, ID_LIST), 1);
+	frames(&c, 2);
+	dialog_click(T, &c, ID_OK);
+	kp_t_eq(T, kp_t_ui_take_commands(ui, first, &size), 1, "a save that loads: its load sent");
+	kp_t_ok(T, size > 5 && first[0] == CMD_LOAD && first[1] == 1 && strcmp((const char *)first + 5, "beta") == 0,
+		"the load of beta's row");
+	/* a load the host could not make after the check: the unreadable box over the game */
+	kp_ui_load_failed(ui);
+	frames(&c, 10);
+	kp_t_eq_str(T, kp_t_ui_bin(ui, ui->open, name, sizeof name), "rez\\ok.bin", "the box after a failed load");
+	kp_t_eq_str(T, ui->box.text, (const char *)kp_ui_tbl(ui, KP_UI_GLUALL, 66), NULL);
+	dialog_click(T, &c, ID_OK);
+	kp_t_ok(T, !ui->box.open, "closed by its OK");
+}
+
 /* The view the interface moved to, or 0. */
 static int take_camera(KpUi *ui, int32_t *x, int32_t *y)
 {
@@ -3653,6 +3735,7 @@ static const KpTest TESTS[] = {
 	{ "failed_console_leaves_no_game_input", failed_console_leaves_no_game_input, 0 },
 	{ "end_game_resets_the_input_procedures", end_game_resets_the_input_procedures, 0 },
 	{ "save_dialog_reports_a_file_that_stays", save_dialog_reports_a_file_that_stays, 0 },
+	{ "load_dialog_refuses_a_save_that_does_not_load", load_dialog_refuses_a_save_that_does_not_load, 0 },
 	{ "first_view_on_the_start_location", first_view_on_the_start_location, 0 },
 	{ "file_names_the_game_refuses", file_names_the_game_refuses, 0 },
 	{ "text_reads_utf8_and_windows_1252_bytes", text_reads_utf8_and_windows_1252_bytes, 0 },

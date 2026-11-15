@@ -1,8 +1,10 @@
-/* Saves at a step boundary (version 1, kp_save/kp_load; plan D17, ADR 0008): a game saved in the middle of every
- * scenario of tests/golden/oracle/scenarios/ and loaded into a game of the same mission, fresh from its start or run on
- * to the scenario's end, continues exactly as the original did (the per-step CRCs of its state dumps), and saving the
- * loaded game gives the same bytes. The initial state of every mission survives a save and a load unchanged. Needs the
- * converter's generated data; skipped without it. */
+/* The state walk (kp_save.c; plan D17, ADR 0008, ADR 0021): it covers every byte of the game's state or leaves it out
+ * on purpose; the state hash is the hash of the save's bytes; the walk's fingerprint belongs to its save version. Saves
+ * at a step boundary (version 2): a game saved in the middle of every scenario of tests/golden/oracle/scenarios/ and
+ * loaded into a game of the same mission, fresh from its start or run on to the scenario's end, continues exactly as
+ * the original did (the per-step CRCs of its state dumps), with the same state hash, and saving the loaded game gives
+ * the same bytes. The initial state of every mission survives a save and a load unchanged. Needs the converter's
+ * generated data; skipped without it. */
 #include "kp_test.h"
 
 #define DIR "tests/golden/oracle/"
@@ -49,6 +51,99 @@ static void load(KpT *T, KpGame *g, const uint8_t *bytes, size_t size, const cha
 	if (kp_load(g, bytes, size, mission, data, &err) != 0) kp_t_fail(T, "%s", err.msg);
 }
 
+/* The state hash's definition over a section's bytes in a save (kp_game.h), the test's own: 64-bit little-endian
+ * words through a multiply-xorshift, the tail zero-padded, seeded with "kphash" and the version and the tag, closed with
+ * the length and murmur3's finaliser; the total folds the sections' hashes the same way. */
+#define REF_SEED (0x6b70686173680000ULL | (uint64_t)KP_HASH_VERSION)
+#define SAVE_SECTIONS_MAX 64
+
+static uint64_t ref_mix(uint64_t h, uint64_t w)
+{
+	h = (h ^ w) * 0x9e3779b97f4a7c15ULL;
+	return h ^ (h >> 32);
+}
+
+static uint64_t ref_finish(uint64_t h, uint64_t n)
+{
+	h = ref_mix(h, n);
+	h ^= h >> 33;
+	h *= 0xff51afd7ed558ccdULL;
+	h ^= h >> 33;
+	h *= 0xc4ceb9fe1a85ec53ULL;
+	return h ^ (h >> 33);
+}
+
+static uint64_t le_bytes(const uint8_t *p, size_t n)
+{
+	uint64_t w = 0;
+	size_t j;
+	for (j = 0; j < n; j++) w |= (uint64_t)p[j] << (8 * j);
+	return w;
+}
+
+static uint64_t ref_hash(const uint8_t *tag, const uint8_t *p, size_t n)
+{
+	uint64_t h = ref_mix(REF_SEED, le_bytes(tag, 4));
+	size_t k;
+	for (k = 0; k < n; k += 8) h = ref_mix(h, le_bytes(p + k, n - k < 8 ? n - k : 8));
+	return ref_finish(h, (uint64_t)n);
+}
+
+typedef struct {
+	int count;
+	char tag[SAVE_SECTIONS_MAX][5];
+	uint64_t hash[SAVE_SECTIONS_MAX];
+	size_t bytes[SAVE_SECTIONS_MAX];
+} Sections;
+
+static void collect(void *ud, const char *tag, uint64_t hash, size_t bytes)
+{
+	Sections *s = (Sections *)ud;
+	if (s->count == SAVE_SECTIONS_MAX) return;
+	memcpy(s->tag[s->count], tag, 4);
+	s->tag[s->count][4] = 0;
+	s->hash[s->count] = hash;
+	s->bytes[s->count++] = bytes;
+}
+
+static uint64_t state_hash(KpT *T, KpGame *g, Sections *s)
+{
+	uint64_t total = 0;
+	if (s) memset(s, 0, sizeof *s);
+	kp_t_ok(T, kp_state_hash(g, s ? collect : NULL, s, &total) == 0, "the state hash ran out of memory");
+	return total;
+}
+
+/* Game g, restored to step mid of replay r (whose runner was at `run` there), run on to step end: its per-step CRCs
+ * against the original's; the first difference into bad. */
+static void continue_steps(KpT *T, const char *name, const char *into, const KpReplay *r, KpGame *g, const KpRunner *run,
+	int64_t mid, int64_t end, KpBuf *bad)
+{
+	KpRunner cont;
+	int64_t step;
+	kp_runner_init(&cont, g, r);
+	cont.step = run->step;
+	cont.next_command = run->next_command;
+	cont.next_ui = run->next_ui;
+	for (step = mid + 1; step <= end; step++) {
+		int n, at;
+		kp_runner_to(&cont, step);
+		at = kp_replay_step_crcs(r, step, &n);
+		if (at >= 0) {
+			KpStateCrcs crcs;
+			KpBuf diffs;
+			kp_t_ok(T, kp_state_crcs(g, step >= KP_ORACLE_DRAWN_STEP, &crcs) == 0, "out of memory");
+			kp_buf_init(&diffs);
+			if (kp_step_differences(&crcs, &r->crcs[at], n, &diffs) > 0) {
+				kp_buf_printf(bad, "%s%s into %s step %lld%s", bad->size ? ", " : "", name, into, (long long)step,
+					kp_buf_text(&diffs));
+			}
+			kp_buf_free(&diffs);
+			if (bad->size) break;
+		}
+	}
+}
+
 /* Loads the save of `game` (golden g's game, run to step `mid` by `run`) into games of the same mission run to each
  * step of intos (INTO_LAST: the last); each must save the same bytes again and continue as the original's per-step
  * CRCs up to step stop (0: the last). */
@@ -59,13 +154,14 @@ static void continue_from(KpT *T, const char *name, const KpJson *g, const KpRep
 	int64_t last = r->last;
 	size_t size, again_size;
 	uint8_t *bytes = save(T, game, mission, DATA, &size);
+	uint64_t hash = state_hash(T, game, NULL);
 	int i;
 	for (i = 0; i < count; i++) { /* the game that takes the save: fresh, or run on to the end */
 		int mark = kp_t_mark(T);
 		KpOracleGame *loaded = start(T, r);
-		KpRunner to, cont;
+		KpRunner to;
 		uint8_t *again;
-		int64_t step, end = stop && stop < last ? stop : last;
+		int64_t end = stop && stop < last ? stop : last;
 		char into[32];
 		if (intos[i] == INTO_LAST) snprintf(into, sizeof into, "last");
 		else snprintf(into, sizeof into, "%lld", (long long)intos[i]);
@@ -74,27 +170,8 @@ static void continue_from(KpT *T, const char *name, const KpJson *g, const KpRep
 		load(T, loaded->g, bytes, size, mission, DATA);
 		again = save(T, loaded->g, mission, DATA, &again_size);
 		if (again_size != size || memcmp(again, bytes, size) != 0) kp_buf_printf(bad, "%s%s round trip", bad->size ? ", " : "", name);
-		kp_runner_init(&cont, loaded->g, r);
-		cont.step = run->step;
-		cont.next_command = run->next_command;
-		cont.next_ui = run->next_ui;
-		for (step = mid + 1; step <= end; step++) {
-			int n, at;
-			kp_runner_to(&cont, step);
-			at = kp_replay_step_crcs(r, step, &n);
-			if (at >= 0) {
-				KpStateCrcs crcs;
-				KpBuf diffs;
-				kp_t_ok(T, kp_state_crcs(loaded->g, step >= KP_ORACLE_DRAWN_STEP, &crcs) == 0, "out of memory");
-				kp_buf_init(&diffs);
-				if (kp_step_differences(&crcs, &r->crcs[at], n, &diffs) > 0) {
-					kp_buf_printf(bad, "%s%s into %s step %lld%s", bad->size ? ", " : "", name, into, (long long)step,
-						kp_buf_text(&diffs));
-				}
-				kp_buf_free(&diffs);
-				if (bad->size) break;
-			}
-		}
+		if (state_hash(T, loaded->g, NULL) != hash) kp_buf_printf(bad, "%s%s state hash after the load", bad->size ? ", " : "", name);
+		continue_steps(T, name, into, r, loaded->g, run, mid, end, bad);
 		kp_t_release(T, mark);
 	}
 }
@@ -364,8 +441,16 @@ static void loads_reject_other_saves(KpT *T)
 	kp_t_defer(T, free, damaged);
 	memcpy(damaged, bytes, size);
 	damaged[100] = (uint8_t)(damaged[100] + 1);
-	kp_t_ok(T, refused(kp_t_game(T, path, 1, 0, NULL)->g, damaged, size, "a", DATA, &err) && strstr(err.msg, "fingerprint"),
+	kp_t_ok(T, refused(kp_t_game(T, path, 1, 0, NULL)->g, damaged, size, "a", DATA, &err) && strstr(err.msg, "section SCAL damaged"),
 		"a damaged save is refused: %s", err.msg);
+	memcpy(damaged, bytes, size);
+	damaged[4] = 1; /* the version */
+	kp_t_ok(T, refused(kp_t_game(T, path, 1, 0, NULL)->g, damaged, size, "a", DATA, &err) && strstr(err.msg, "version 1, this build reads 2"),
+		"a save of another version is refused: %s", err.msg);
+	memcpy(damaged, bytes, size);
+	damaged[size - 1] = (uint8_t)(damaged[size - 1] + 1); /* the table's total */
+	kp_t_ok(T, refused(kp_t_game(T, path, 1, 0, NULL)->g, damaged, size, "a", DATA, &err) && strstr(err.msg, "hash table"),
+		"a damaged hash table is refused: %s", err.msg);
 	kp_t_ok(T, refused(kp_t_game(T, path, 1, 0, NULL)->g, bytes, 50, "a", DATA, &err), "a truncated save is refused: %s", err.msg);
 	/* A save whose header passes but whose state does not fit the game (another map under the same names) is refused
 	 * before anything is written: the game keeps its state. */
@@ -419,7 +504,264 @@ static void loads_show_the_loaded_countdown(KpT *T)
 	kp_t_eq(T, into->g->trig.countdown_text, 125, "a save's countdown is shown from the load");
 }
 
+/* The walk's coverage (kp_state_ranges, ADR 0021): every byte of KpGame, of its images world and of its generator is
+ * either visited by the walk or left out by the exclusion table on purpose, once. A gap is allowed only where it is
+ * the padding before its range (up to the range's alignment), padding the table names (a platform's, before a struct
+ * aligned past its first walked field) or the struct's tail padding. What this cannot see: the
+ * heap blocks the pointers lead to (the exclusion table classifies each pointer), and a field of 4 bytes or less
+ * between a saved field and the padding before an 8-byte one (it looks like that padding). */
+static const char *const BASE_NAMES[KP_STATE_BASES] = { "KpGame", "KpImages", "KpRngGame" };
+
+static int by_base_offset(const void *a, const void *b)
+{
+	const KpStateRange *x = (const KpStateRange *)a, *y = (const KpStateRange *)b;
+	if (x->base != y->base) return x->base < y->base ? -1 : 1;
+	if (x->offset != y->offset) return x->offset < y->offset ? -1 : 1;
+	return 0;
+}
+
+static size_t round_up(size_t n, size_t a) { return (n + a - 1) / a * a; }
+
+static void walk_covers_the_state(KpT *T)
+{
+	static const char *const CLASSES[] = { "saved", "derived", "static", "view", "host", "padding" };
+	KpOracleGame *game;
+	KpStateRange *r;
+	size_t n, k, at = 0, size[KP_STATE_BASES];
+	const char *prev = "start";
+	int base = -1, seen[KP_STATE_BASES] = { 0, 0, 0 }, b;
+	KpBuf *bad;
+	if (!kp_t_ready(T, "test_save", FILES)) return;
+	game = kp_t_game(T, "scenarios/marine_group", 1, 0, NULL);
+	kp_t_ok(T, kp_state_ranges(game->g, &r, &n) == 0, "out of memory");
+	kp_t_defer(T, free, r);
+	qsort(r, n, sizeof *r, by_base_offset);
+	size[KP_STATE_GAME] = sizeof(KpGame);
+	size[KP_STATE_WORLD] = sizeof(KpImages);
+	size[KP_STATE_RNG] = sizeof(KpRngGame);
+	bad = kp_t_buf(T);
+	for (k = 0; k <= n; k++) {
+		if (k == n || r[k].base != base) {
+			if (base >= 0 && size[base] - at >= 8) { /* a tail of padding only (KpRngGame is aligned to 4) */
+				kp_buf_printf(bad, "\n%s tail +%lu..%lu after %s", BASE_NAMES[base], (unsigned long)at, (unsigned long)size[base], prev);
+			}
+			if (k == n) break;
+			base = r[k].base;
+			seen[base] = 1;
+			at = 0;
+			prev = "start";
+		}
+		if (r[k].offset < at) {
+			kp_buf_printf(bad, "\n%s +%lu %s %s overlaps %s", BASE_NAMES[base], (unsigned long)r[k].offset, CLASSES[r[k].klass],
+				r[k].name, prev);
+		} else if (r[k].offset > at && r[k].offset != round_up(at, r[k].align)) {
+			kp_buf_printf(bad, "\n%s gap +%lu..%lu (%lu bytes) between %s and %s %s", BASE_NAMES[base], (unsigned long)at,
+				(unsigned long)r[k].offset, (unsigned long)(r[k].offset - at), prev, CLASSES[r[k].klass], r[k].name);
+		}
+		if (r[k].offset + r[k].bytes > at) at = r[k].offset + r[k].bytes;
+		prev = r[k].name;
+	}
+	for (b = 0; b < KP_STATE_BASES; b++) kp_t_ok(T, seen[b], "%s has ranges", BASE_NAMES[b]);
+	kp_t_ok(T, bad->size == 0, "the walk and its exclusions leave out or repeat: %s", kp_buf_text(bad));
+}
+
+/* The hashes of game g's sections against its save's bytes (the reference over each section's slice, its tag where
+ * the save has it) and against the save's hash table; differences into bad. */
+static void check_hashes(KpT *T, const char *name, KpGame *g, KpBuf *bad)
+{
+	Sections s;
+	size_t size, at = 4 + 4, k;
+	uint8_t *bytes = save(T, g, "a", DATA, &size);
+	uint64_t total = state_hash(T, g, &s), fold = REF_SEED;
+	int i;
+	for (k = 0; k < 2; k++) at += 4 + (size_t)le_bytes(bytes + at, 4); /* the mission's and the data's names */
+	for (i = 0; i < s.count; i++) {
+		if (at + 4 + s.bytes[i] > size || memcmp(bytes + at, s.tag[i], 4) != 0) {
+			kp_buf_printf(bad, "%s%s: section %s not where its bytes say", bad->size ? ", " : "", name, s.tag[i]);
+			return;
+		}
+		if (ref_hash(bytes + at, bytes + at + 4, s.bytes[i]) != s.hash[i]) {
+			kp_buf_printf(bad, "%s%s: section %s's hash", bad->size ? ", " : "", name, s.tag[i]);
+		}
+		fold = ref_mix(fold, s.hash[i]);
+		at += 4 + s.bytes[i];
+	}
+	if (ref_finish(fold, (uint64_t)s.count) != total) kp_buf_printf(bad, "%s%s: the total", bad->size ? ", " : "", name);
+	if (at + 4 + 12 * (size_t)s.count + 8 != size || le_bytes(bytes + at, 4) != (uint64_t)s.count) {
+		kp_buf_printf(bad, "%s%s: the hash table's size", bad->size ? ", " : "", name);
+		return;
+	}
+	for (at += 4, i = 0; i < s.count; i++, at += 12) {
+		if (memcmp(bytes + at, s.tag[i], 4) != 0 || le_bytes(bytes + at + 4, 8) != s.hash[i]) {
+			kp_buf_printf(bad, "%s%s: the table's %s", bad->size ? ", " : "", name, s.tag[i]);
+		}
+	}
+	if (le_bytes(bytes + at, 8) != total) kp_buf_printf(bad, "%s%s: the table's total", bad->size ? ", " : "", name);
+}
+
+/* The state hash is the hash of the save's bytes, section by section, in the middle of every scenario and at its start
+ * (the same on every platform the suite runs on: host, sanitizers, wasm). */
+static void hash_is_the_saves_bytes(KpT *T)
+{
+	const KpJson *index;
+	KpBuf *bad;
+	int k;
+	if (!kp_t_ready(T, "test_save", FILES)) return;
+	index = load_golden(T, "scenarios/index");
+	bad = kp_t_buf(T);
+	for (k = 0; k < kp_json_len(index); k++) {
+		const char *name = kp_json_str(kp_json_at(index, k), "");
+		char path[256];
+		const KpReplay *r;
+		KpRunner run;
+		KpOracleGame *og;
+		int mark;
+		if (!kp_t_mine_sampled(T, k)) continue;
+		mark = kp_t_mark(T);
+		snprintf(path, sizeof path, "scenarios/%s", name);
+		r = replay_of(T, load_golden(T, path));
+		og = game_at(T, r, 0, &run);
+		check_hashes(T, name, og->g, bad);
+		kp_runner_to(&run, r->last / 2);
+		check_hashes(T, name, og->g, bad);
+		kp_t_release(T, mark);
+	}
+	kp_t_ok(T, bad->size == 0, "state hashes differ from the saves' bytes: %s", kp_buf_text(bad));
+}
+
+/* The save walk's fingerprint of each save version (kp_save_schema): a change of the walk changes the fingerprint and
+ * must come with a new version, as a save of another walk does not load (ADR 0021). Append a row; never edit one. Two
+ * visits of the same kind and count swapped within a section keep the fingerprint: raise the version by hand then. */
+static const struct {
+	int version;
+	uint64_t schema;
+} SCHEMAS[] = {
+	{ 2, 0x12e396b75619fee4ULL },
+};
+
+static void save_schema_matches_its_version(KpT *T)
+{
+	uint64_t schema = kp_save_schema();
+	size_t k, n = sizeof SCHEMAS / sizeof SCHEMAS[0];
+	int found = 0;
+	kp_t_ok(T, schema != 0, "the schema's walk ran out of memory");
+	for (k = 0; k < n; k++) {
+		if (SCHEMAS[k].version == KP_SAVE_VERSION) {
+			found = 1;
+			kp_t_ok(T, SCHEMAS[k].schema == schema,
+				"the save walk changed (fingerprint 0x%016llx, version %d's 0x%016llx): raise KP_SAVE_VERSION and add a row with 0x%016llx",
+				(unsigned long long)schema, KP_SAVE_VERSION, (unsigned long long)SCHEMAS[k].schema, (unsigned long long)schema);
+		} else {
+			kp_t_ok(T, SCHEMAS[k].schema != schema, "the walk's fingerprint is version %d's: raise KP_SAVE_VERSION past it",
+				SCHEMAS[k].version);
+		}
+	}
+	kp_t_ok(T, found, "no row for save version %d: add { %d, 0x%016llx }", KP_SAVE_VERSION, KP_SAVE_VERSION, (unsigned long long)schema);
+}
+
+/* The snapshot of game g into a malloc'd buffer of *size bytes (released at the end). */
+static uint8_t *snapshot(KpT *T, KpGame *g, size_t *size)
+{
+	KpError err;
+	uint8_t *buf;
+	*size = kp_snapshot_size(g);
+	buf = (uint8_t *)malloc(*size);
+	kp_t_ok(T, buf != NULL, "out of memory");
+	kp_t_defer(T, free, buf);
+	kp_t_ok(T, kp_snapshot(g, buf, *size, &err) == 0, "%s", err.msg);
+	return buf;
+}
+
+/* In the middle of every scenario a snapshot; the game run on to the end and restored from it has the middle's state
+ * hash and save and continues as the original did again; the snapshot restored into a fresh game of the mission
+ * continues the same (kp_snapshot, kp_restore). */
+static void snapshots_rewind_as_the_original(KpT *T)
+{
+	const KpJson *index;
+	const unsigned char *mine;
+	KpBuf *bad;
+	int k;
+	if (!kp_t_ready(T, "test_save", FILES)) return;
+	index = load_golden(T, "scenarios/index");
+	mine = kp_t_mine_goldens(T, index, DIR "scenarios/%s.json");
+	bad = kp_t_buf(T);
+	for (k = 0; k < kp_json_len(index) && bad->size == 0; k++) {
+		const char *name = kp_json_str(kp_json_at(index, k), "");
+		char path[256];
+		const KpReplay *r;
+		KpRunner run, at_mid;
+		KpOracleGame *og, *fresh;
+		uint8_t *snap, *bytes, *again;
+		size_t snap_size, size, again_size;
+		uint64_t hash;
+		int64_t mid;
+		KpError err;
+		int mark = kp_t_mark(T);
+		if (!mine[k]) continue;
+		snprintf(path, sizeof path, "scenarios/%s", name);
+		r = replay_of(T, load_golden(T, path));
+		mid = r->last / 2;
+		og = game_at(T, r, mid, &run);
+		at_mid = run;
+		snap = snapshot(T, og->g, &snap_size);
+		hash = state_hash(T, og->g, NULL);
+		bytes = save(T, og->g, "a", DATA, &size);
+		kp_runner_to(&run, r->last);
+		kp_t_ok(T, kp_restore(og->g, snap, snap_size, &err) == 0, "%s: %s", name, err.msg);
+		again = save(T, og->g, "a", DATA, &again_size);
+		if (state_hash(T, og->g, NULL) != hash) kp_buf_printf(bad, "%s%s rewind's state hash", bad->size ? ", " : "", name);
+		if (again_size != size || memcmp(again, bytes, size) != 0) kp_buf_printf(bad, "%s%s rewind's save", bad->size ? ", " : "", name);
+		continue_steps(T, name, "rewind", r, og->g, &at_mid, mid, r->last, bad);
+		fresh = start(T, r);
+		kp_t_ok(T, kp_restore(fresh->g, snap, snap_size, &err) == 0, "%s: %s", name, err.msg);
+		continue_steps(T, name, "a fresh game", r, fresh->g, &at_mid, mid, r->last, bad);
+		kp_t_release(T, mark);
+	}
+	kp_t_ok(T, bad->size == 0, "continuations after a restore differ: %s", kp_buf_text(bad));
+}
+
+/* A snapshot that does not fit is refused before the game changes: a short buffer, another mission's snapshot. */
+static void restores_refuse_other_snapshots(KpT *T)
+{
+	const char *path = "scenarios/marine_group";
+	char other_path[512];
+	KpOracleGame *game, *other;
+	uint8_t *snap, *small;
+	size_t size;
+	KpError err;
+	KpBuf *before, *after, *game_before, *game_after;
+	if (!kp_t_ready(T, "test_save", FILES)) return;
+	game = kp_t_game(T, path, 1, 0, NULL);
+	snap = snapshot(T, game->g, &size);
+	game_before = kp_t_buf(T);
+	game_after = kp_t_buf(T);
+	kp_t_ok(T, kp_state_lines(game->g, 0, game_before) == 0, "out of memory");
+	small = (uint8_t *)malloc(size - 1);
+	kp_t_ok(T, small != NULL, "out of memory");
+	kp_t_defer(T, free, small);
+	kp_t_ok(T, kp_snapshot(game->g, small, size - 1, &err) != 0 && strstr(err.msg, "too small"), "a short buffer takes no snapshot: %s",
+		err.msg);
+	snprintf(other_path, sizeof other_path, "initial_state/%s", kp_json_str(kp_json_at(load_golden(T, "initial_state/index"), 0), ""));
+	snprintf(other_path, sizeof other_path, "missions/%s", kp_json_field_str(load_golden(T, other_path), "mission", ""));
+	other = kp_t_game(T, other_path, 1, 0, NULL);
+	before = kp_t_buf(T);
+	after = kp_t_buf(T);
+	kp_t_ok(T, kp_state_lines(other->g, 0, before) == 0, "out of memory");
+	kp_t_ok(T, kp_restore(other->g, snap, size, &err) != 0, "another mission's snapshot is refused");
+	kp_t_ok(T, kp_restore(game->g, snap, size - 1, &err) != 0 && strstr(err.msg, "buffer of"), "a cut snapshot is refused: %s", err.msg);
+	kp_t_ok(T, kp_state_lines(other->g, 0, after) == 0, "out of memory");
+	kp_t_ok(T, before->size == after->size && memcmp(before->data, after->data, before->size) == 0, "the refused snapshot changed nothing");
+	kp_t_ok(T, kp_state_lines(game->g, 0, game_after) == 0, "out of memory");
+	kp_t_ok(T, game_before->size == game_after->size && memcmp(game_before->data, game_after->data, game_before->size) == 0,
+		"the cut snapshot changed nothing");
+}
+
 static const KpTest TESTS[] = {
+	{ "walk_covers_the_state", walk_covers_the_state, 0 },
+	{ "hash_is_the_saves_bytes", hash_is_the_saves_bytes, 0 },
+	{ "save_schema_matches_its_version", save_schema_matches_its_version, 0 },
+	{ "snapshots_rewind_as_the_original", snapshots_rewind_as_the_original, 6 },
+	{ "restores_refuse_other_snapshots", restores_refuse_other_snapshots, 0 },
 	{ "saved_scenarios_continue_as_the_original", saved_scenarios_continue_as_the_original, 6 },
 	{ "saved_wasteland_continues_as_the_original", saved_wasteland_continues_as_the_original, 0 },
 	{ "campaign_plays_and_saves_equal_the_original", campaign_plays_and_saves_equal_the_original, 12 },

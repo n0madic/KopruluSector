@@ -15,6 +15,11 @@ extern "C" {
  * open. */
 KpRes *kp_t_install(KpT *T, const char *env);
 
+/* A save (its container's bytes) rebuilt from save's sections with container schema `schema` and CORE's payload
+ * replaced by core (NULL: kept), its CRCs right; freed when the test ends (test_session.c, test_flow.c). */
+uint8_t *kp_t_save_rebuilt(KpT *T, const uint8_t *save, size_t size, uint32_t schema, const uint8_t *core,
+	size_t core_size, size_t *out_size);
+
 /* The consoles' art (console.kpd, CONW) built from the StarCraft: Remastered install KP_TEST_SCR names as the runtime
  * builds it (kp_hd_ui_scr_console_art), once a process; skips the test without the install or its HD2 consoles. */
 const uint8_t *kp_t_console_art(KpT *T, size_t *size);

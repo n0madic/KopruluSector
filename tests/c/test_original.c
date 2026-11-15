@@ -70,7 +70,7 @@ static void portrait_takes_shared_entries(KpT *T, const KpUiFile *f, int k)
 	int shared = 1;
 	KpSmk s;
 	if (f->size <= KP_SMK_KPW_HEADER + KP_INDEX_USABLE_SIZE || memcmp(f->data, "KPW1", 4) != 0)
-		kp_t_fail(T, "portrait movie %d is no KPW1 (%zu bytes)", k, f->size);
+		kp_t_fail(T, "portrait movie %d is no KPW1 (%lu bytes)", k, (unsigned long)f->size);
 	if ((kp_le_u32(f->data + 20) & KP_SMK_KPW_SHARED) == 0) kp_t_fail(T, "portrait movie %d has no usable entries", k);
 	for (i = 0; i < 256; i++)
 		shared &= ((set[i >> 3] >> (i & 7)) & 1) == (i == 0 || i == 255 || (i >= 14 && i <= 199));

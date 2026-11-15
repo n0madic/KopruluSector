@@ -1,0 +1,68 @@
+# ADR 0021: One walk over the game's state: coverage, hash, snapshot, saves v2
+
+Status: accepted (phase W, 2026-11-15). The user approved the design and the plan; their decisions are listed below. Stages and their state: [docs/phase-state.md](../phase-state.md). The save's container: [docs/formats/rep.md](../formats/rep.md#saves).
+
+## Context
+
+The game's state was described once, by hand, in `walk()` of `kp_save.c`, and served only the save and the load. A state hash and an in-memory snapshot are needed too: by a replay's rewinding, by the determinism checks and, later, by network games. Each would have needed a third and a fourth hand-written list. A field forgotten in `walk()` was caught only by tests of behaviour, if a scenario happened to reach it.
+
+The save was 8.03 MB. On the development Mac (release, `bench_combat`), `kp_save` took 15.3 ms, 11.5 ms of it in the FNV-1a fingerprint over the bytes, and `kp_load` 17.5 ms.
+
+Saves were not compatible in practice anyway:
+- no release and no tag has shipped;
+- `KP_SAVE_VERSION` had been 1 since 2026-10-13 (cf3cd9c), while the walk changed in about eleven commits;
+- a save is already bound to the data (`source_hash`, `profile_id`).
+
+A migration makes no sense for a deterministic simulation: an old state does not continue as the original in a corrected simulation.
+
+## Decision
+
+1. **One walk, four modes.** The walk's `Codec` gains a mode, and its typed primitives (`i64s`, `i32s`, `u32s`, `u8s`, `ints`, `lists`, `str`, the single `u32`/`u64`, `checked_*`) branch on it:
+   - BYTES: the save's little-endian encoding (written, dry-read, read);
+   - HASH: the same values into a streaming 64-bit hash, without bytes (`kp_state_hash`);
+   - RAW: the arrays as they are, into the caller's buffer and back (`kp_snapshot`, `kp_restore`);
+   - COVER: a record per call (section, kind, address, count, element size), for the coverage and the schema.
+
+   There is no visitor interface: the walk's body stays the one list of fields.
+2. **The coverage is a test.** `kp_state_ranges` gives the ranges the walk visits and an exclusion table beside the walk: 94 entries, each with a class:
+   - STATIC: what the mission's start builds and nothing changes (DAT, the map's size, regions, contours, the region graph, the tileset's tables, the power grid's masks, the AI scripts, the trigger strings and briefing, GRP, IScript), 44;
+   - HOST: the host's pointers and settings, 31;
+   - DERIVED: what `restored()` or the next step derives (the changed-terrain set, the spatial index's frames, the collision and AI scratch, the countdown's text, the draw keys), 13;
+   - VIEW: the event ring and the interface's serials (selection, refresh, minimap, load), 5;
+   - PADDING: a platform's padding before a struct aligned past its first walked field, measured from addresses (4 bytes before `KpPathing` in wasm, none on the 64-bit hosts), 1.
+
+   `test_save.walk_covers_the_state` checks that the two cover the whole of `KpGame`, `KpImages` and `KpRngGame`, without overlaps and with holes only of padding (smaller than the next field's alignment).
+3. **The state hash is the save's bytes.** A section's hash mixes the section's bytes in the save (its 4-byte tag left out) as 8-byte little-endian words, the tail zero-padded. It is seeded with the tag and closed with the length (murmur3's finaliser). The total folds the sections' hashes in order. The header (the mission's and the data's names) is not hashed. The arithmetic is `uint64_t` only, so the hash does not depend on the host's layout or byte order. `KP_HASH_VERSION` (1) is in the seed.
+4. **Saves v2, one version, no migrations.**
+   - The native save (`KPSV`) is version 2: the FNV-1a fingerprint gave way to a table of the sections' hashes (count, then tag and hash per section, then the total). A load checks every section's hash in its dry walk, before the game changes, and names a damaged section.
+   - The container (`KP_SAVE_SCHEMA` 2): CORE holds the native save's size (u32) and its zlib stream at level 1, the only form.
+   - A save of another version or schema is refused with a message the player sees: gluAll 67, "a version mismatch". A damaged one gets gluAll 66, "invalid or corrupted". These are the statuses of the original's ValidateSaveFile 0x499750.
+5. **The schema's fingerprint forces the version.** `kp_save_schema()` hashes the sequence of (section, kind, count) of a COVER walk over a zeroed game. `test_save.save_schema_matches_its_version` keeps a table {version → fingerprint}: a change of the walk fails it until `KP_SAVE_VERSION` is raised and a row is added. It does not see two visits of the same kind and count swapped within a section: the fingerprint has no addresses, so that it is the same on every platform, and such a change raises the version by hand.
+6. **Snapshots stay in the process.** A snapshot holds a header (sizes of the records, the counts of the variable parts, the map's size) and the arrays as they are. `kp_restore` refuses another game's snapshot (its header or size) before changing anything; a snapshot damaged past its header is refused with the game partly restored. A snapshot is never written to disk or carried between builds.
+
+## Consequences
+
+- **Every save made before this change no longer loads.** That covers the desktop's, the Fold7's and the web's: the load screens say why (gluAll 67) instead of failing silently.
+- **A field added to `KpGame`, `KpImages` or `KpRngGame` fails the coverage test** until it is walked or excluded with a class. A field added to the walk fails the schema test until the version is raised.
+- **The hash, the snapshot and the save cannot drift apart:** they are one walk. `test_save.hash_is_the_saves_bytes` checks the streaming hash against the table in the save's bytes and against the test's own reference function, on every configuration of `kp_test` (the host, ASan/UBSan, wasm with a 32-bit `size_t`).
+- **What the coverage does not see:** the contents of heap blocks (trigger records, the region graph's slots, contours). Each pointer to them is classified by hand in the table.
+- **Times on the development Mac** (release, `bench_combat` at its end, `kp_bench --state`):
+
+  | Operation | Before (ms) | After (ms) |
+  |---|---|---|
+  | `kp_save` | 15.3 | 3.8 |
+  | `kp_load` | 17.5 | 5.4 |
+  | state hash | — | 1.4 |
+  | snapshot | — | 0.17 |
+  | restore | — | 0.15 |
+
+  zlib level 1 adds 6.3 ms to a save and the inflate 4.2 ms to a load. The file shrinks from 8.03 MB to 172 KB.
+- **`kp_core` gets no zlib:** the compression lives in `kp_app_core` (`kp_session.c`), which already links it.
+
+## Alternatives
+
+- **Keeping version 1 and migrating old saves.** The old states would not continue as the original in the corrected simulation, and no save has shipped. Rejected (the user's choice of 2026-11-15).
+- **Keeping FNV-1a over the bytes.** It cost three quarters of the save's time and could not name a damaged section. Rejected.
+- **A visitor interface with a callback per field.** It would have meant a call per value in the hottest walk, and the walk's body rewritten. Rejected for a mode in the existing `Codec`.
+- **`offsetof` tables for the coverage.** They are not portable to the C++11 check for every member. The exclusions are built from the live game's addresses instead.
+- **A hash of `kp_dump`'s text.** The oracle's goldens depend on that text, and its CRCs took 2.1 ms against the walk's 1.4 ms. It stays as it is, for the goldens.

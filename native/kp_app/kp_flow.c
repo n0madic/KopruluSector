@@ -111,6 +111,15 @@ static void save_file(const KpFlow *f, const char *name, char *out, size_t size)
 	kp_save_file_name(kp_profile_save_owner(f->profile), name, out, size);
 }
 
+/* The bytes of the logged-in ID's save name (malloc'd, *size), or NULL when its file does not read. */
+static uint8_t *read_save(const KpFlow *f, const char *name, size_t *size)
+{
+	char file[KP_SAVE_FILE_NAME], path[1100];
+	save_file(f, name, file, sizeof file);
+	pref_path(f, file, path, sizeof path);
+	return kp_read_file(path, size);
+}
+
 /* --- the screen and the camera --- */
 
 void kp_flow_picture(KpFlow *f)
@@ -767,10 +776,37 @@ static void export_replay(void *host, int index)
 	free(bytes);
 }
 
+/* --- Load Game (the load screen and the in-game load dialog) --- */
+
+/* Koprulu's reading of a listed save at Ok (kp_save_check): 0 for one that loads; gluAll 67 for a save of another build
+ * or of other game data, 66 for a missing file or one that does not read. The original's list leaves such saves out
+ * (AddSavedGameToList 0x499250 skips what ValidateSaveFile 0x499750 refuses, statuses 2 and 1 with these texts in its
+ * multiplayer list); Koprulu's is the profile's, so the player is told why at Ok. */
+static uint16_t check_save(void *host, int index)
+{
+	KpFlow *f = (KpFlow *)host;
+	const KpUiMenus *m = &f->ui->menus;
+	uint8_t *bytes;
+	size_t size;
+	KpError err;
+	int refusal;
+	if (index < 0 || index >= m->save_count) return KP_UI_GLUALL_SAVE_DAMAGED;
+	if (!(bytes = read_save(f, m->saves[index], &size))) {
+		say(f, "load %s: no file", m->saves[index]);
+		return KP_UI_GLUALL_SAVE_DAMAGED;
+	}
+	refusal = kp_save_check(bytes, size, f->identity, &err);
+	free(bytes);
+	if (refusal == KP_SAVE_LOADABLE) return 0;
+	say(f, "load %s: refused: %s", m->saves[index], err.msg);
+	return refusal == KP_SAVE_OTHER_BUILD ? KP_UI_GLUALL_SAVE_VERSION : KP_UI_GLUALL_SAVE_DAMAGED;
+}
+
 static void interface_host(KpFlow *f, KpUi *ui)
 {
 	ui->list_replays = list_replays;
 	ui->check_replay = check_replay;
+	ui->check_save = check_save;
 	ui->import_replay = f->host.pick_replay ? import_replay : NULL;
 	ui->export_replay = f->host.export_replay ? export_replay : NULL;
 	ui->delete_save = delete_save;
@@ -1115,14 +1151,12 @@ static int load_game(KpFlow *f, const char *file, char *why, size_t why_size)
  * refused (its load failed for another reason: starting the mission again would fail the same way). */
 static int start_saved_game(KpFlow *f, const char *name, int other_only, char *why, size_t why_size)
 {
-	char file[KP_SAVE_FILE_NAME], path[1100], mission[256];
+	char mission[256];
 	uint8_t *bytes;
 	size_t size;
 	KpError err;
 	int k, rc;
-	save_file(f, name, file, sizeof file);
-	pref_path(f, file, path, sizeof path);
-	if (!(bytes = kp_read_file(path, &size))) {
+	if (!(bytes = read_save(f, name, &size))) {
 		snprintf(why, why_size, "no save");
 		return -1;
 	}
@@ -1187,6 +1221,7 @@ static void save_requests(KpFlow *f)
 			/* another mission's save: its game */
 			if (start_saved_game(f, name, 1, why2, sizeof why2) == 0) continue;
 			say(f, "load failed: %s", why);
+			if (f->playing && f->hud_on) kp_ui_load_failed(f->ui); /* the player is told (check_save let it through) */
 			if (!f->playing) { /* the game went with the other mission's failed start: its campaign's menu */
 				say(f, "load: %s", why2);
 				if (f->glue_on) kp_glue_menus(&f->glue, menu);
@@ -1609,12 +1644,15 @@ static void glue_frame(KpFlow *f)
 		f->language_chosen = 1;
 		break;
 	case KP_GLUE_LOAD: {
-		char why[256];
+		char why[256] = "no such save";
 		if (ev.save < 0 || ev.save >= f->ui->menus.save_count
 			|| kp_flow_load_saved(f, f->ui->menus.saves[ev.save], why, sizeof why) != 0) {
 			/* the load screen again, as the original's state stays when LoadSavedGameByName 0x498bd0 fails
-			 * (RunLoadGameScreen 0x459970); its Back keeps the campaign it came from */
-			say(f, "glue: load failed");
+			 * (RunLoadGameScreen 0x459970); its Back keeps the campaign it came from. TODO: tell the player there too
+			 * (an OK popup with KP_UI_GLUALL_SAVE_DAMAGED once the screen stands, as kp_ui_load_failed does in a
+			 * game): check_save refuses at Ok what kp_save_mission refuses, so only a save whose mission is not in the
+			 * data or whose start fails gets here. */
+			say(f, "glue: load failed: %s", why);
 			kp_glue_menus(&f->glue, KP_GLUE_LOAD_SCREEN);
 		}
 		break;

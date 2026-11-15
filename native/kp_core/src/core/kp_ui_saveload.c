@@ -431,6 +431,8 @@ static int save_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 	return kp_ui_modeless_default(ui, d, e);
 }
 
+static void reopen_load(KpUi *ui, int32_t result);
+
 static int load_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 {
 	/* LoadDialogProc 0x49b3e0 */
@@ -443,6 +445,11 @@ static int load_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 			if (ui->result == ID_OK) { /* LoadDialogConfirm 0x49afa0 */
 				const char *s = list_text(ui, self);
 				int k = s != NULL ? save_index_of(ui, s) : -1;
+				uint16_t refusal = k >= 0 && ui->check_save != NULL ? ui->check_save(ui->host, k) : 0;
+				if (refusal != 0) { /* Koprulu's: the save does not load here; the load dialog after the box */
+					message_box(ui, (const char *)kp_ui_tbl(ui, KP_UI_GLUALL, refusal), reopen_load, "rez\\ok.bin");
+					return 1;
+				}
 				if (k >= 0) {
 					uint8_t cmd[1 + 4 + CMD_NAME];
 					memset(cmd, 0, sizeof cmd);
@@ -463,6 +470,19 @@ static int load_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 }
 
 static void open_save_dialog(KpUi *ui) { (void)kp_ui_open_modeless(ui, "rez\\savegame.bin", save_proc); }
+
+static void reopen_load(KpUi *ui, int32_t result)
+{
+	/* as ReopenSaveDialog 0x49b420 does for the save dialog */
+	(void)result;
+	ui->menu_depth = 0;
+	(void)kp_ui_open_modeless(ui, "rez\\loadgame.bin", load_proc);
+}
+
+void kp_ui_load_failed(KpUi *ui)
+{
+	message_box(ui, (const char *)kp_ui_tbl(ui, KP_UI_GLUALL, KP_UI_GLUALL_SAVE_DAMAGED), NULL, "rez\\ok.bin");
+}
 
 void kp_ui_save_dialog(KpUi *ui, int load)
 {

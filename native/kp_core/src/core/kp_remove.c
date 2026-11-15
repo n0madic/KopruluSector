@@ -88,6 +88,7 @@ void kp_remove_from_local_selection(KpGame *g, int64_t n)
 	int64_t slot, rest[KP_SLOTS];
 	int count = 0, k;
 	if (kp_band(g->w->spr.flags[s], SPRITE_SELECTED) == 0) return;
+	memset(rest, 0, sizeof rest); /* GCC 15's -Wmaybe-uninitialized cannot see that count bounds the reads */
 	slot = g->w->spr.selection[s];
 	for (k = 0; k < KP_SLOTS; k++) {
 		int64_t m = g->local_selection[k];

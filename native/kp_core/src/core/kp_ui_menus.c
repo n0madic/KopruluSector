@@ -1412,7 +1412,16 @@ static int load_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 			ok_cancel_popup(ui, kp_ui_tbl(ui, KP_UI_GLUALL, STR_DELETE_SAVE), delete_save_done);
 			return 1;
 		}
-		if (ui->result == R_LOAD_OK) m->save_choice = kp_ui_list_selection(ui, load_list);
+		if (ui->result == R_LOAD_OK) {
+			int s = kp_ui_list_selection(ui, load_list);
+			/* Koprulu's: a save that does not load here keeps the screen, with why (gluAll 66 or 67) */
+			uint16_t refusal = s != KP_UI_LIST_NONE && ui->check_save != NULL ? ui->check_save(ui->host, s) : 0;
+			if (refusal != 0) {
+				ok_popup(ui, kp_ui_tbl(ui, KP_UI_GLUALL, refusal), NULL); /* the screen stays */
+				return 1;
+			}
+			m->save_choice = s;
+		}
 		kp_ui_glue_slide_out(ui, self);
 		return 1;
 	case KP_UI_POST_LOAD: {
@@ -1702,9 +1711,13 @@ static void enter_replay_folder(KpUi *ui, const KpUiReplayEntry *e)
 		char *cut = strrchr(m->replay_dir, '/');
 		if (cut != NULL) *cut = 0;
 		else m->replay_dir[0] = 0;
-	} else if (strlen(m->replay_dir) + 1 + strlen(e->file) < sizeof m->replay_dir) {
-		if (m->replay_dir[0] != 0) strcat(m->replay_dir, "/");
-		strcat(m->replay_dir, e->file);
+	} else {
+		/* lengths and memmove, not strcat: both buffers are KpUiMenus', which GCC's -Wrestrict takes for an overlap */
+		size_t n = strlen(m->replay_dir), sep = n != 0, f = strlen(e->file);
+		if (n + 1 + f < sizeof m->replay_dir) {
+			if (sep) m->replay_dir[n] = '/';
+			memmove(m->replay_dir + n + sep, e->file, f + 1);
+		}
 	}
 }
 

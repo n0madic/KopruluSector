@@ -8,6 +8,10 @@
  * kp_bench --dump ROOT GOLDEN [EVERY]: the state dumps of a golden run (tests/golden/oracle) as the C suites take
  * them: every EVERY steps (default 16) the category CRCs of the text dump (kp_state_crcs) and the state hash
  * (kp_dump_hash), each timed (CLOCK_MONOTONIC); the steps' own time, and the last dump's bytes by category.
+ * kp_bench --state ROOT REPLAY [RUNS]: the game's state walks at the replay's end (ADR 0021): the save (kp_save) and its
+ * load (kp_load), the state hash (kp_state_hash), the snapshot (kp_snapshot) and its restore (kp_restore), the save's
+ * zlib stream at level 1 as a save's CORE holds it and its inflate, each timed RUNS times (default 20; CLOCK_MONOTONIC):
+ * the minimum and median, and the bytes of each form.
  * Built for the phone with the Android NDK (tools/native/android_bench.sh) and for the desktop by CMakeLists.txt.
  */
 #define _POSIX_C_SOURCE 199309L
@@ -23,12 +27,15 @@
 #include "kp_res.h"
 #include "kp_runner.h"
 #include "../src/core/kp_kpf.h"
+#include "zlib.h"
 
 #define SLOWEST 8
 #define GLYPH_RUNS_MAX 1000
 #define DUMP_EVERY 16      /* test_session's CHECK_EVERY_LONG */
 #define DUMP_CATEGORIES 96 /* KP_ORACLE_CATEGORIES */
 #define DUMP_SHOWN 12      /* the categories of the most bytes printed */
+#define STATE_RUNS 20      /* --state's runs by default */
+#define STATE_LEVEL 1      /* a save's CORE (kp_session.c CORE_LEVEL) */
 
 static double now_ms(void)
 {
@@ -142,8 +149,9 @@ static int dumps(int argc, char **argv)
 	volatile int64_t step = 0, count = 0;
 	volatile double step_ms = 0, crcs_ms = 0, hash_ms = 0;
 	volatile uint32_t mix = 0, text = 0; /* the hashes and the text dumps' CRCs over the run (both drawn and not) */
-	int every = argc > 2 ? atoi(argv[2]) : DUMP_EVERY, k, j;
-	size_t total = 0;
+	volatile int every = argc > 2 ? atoi(argv[2]) : DUMP_EVERY;
+	int k, j;
+	size_t total;
 	if (argc < 2 || every < 1) {
 		fprintf(stderr, "usage: kp_bench --dump ROOT GOLDEN [EVERY]\n");
 		return 2;
@@ -188,7 +196,7 @@ static int dumps(int argc, char **argv)
 	kp_images_end(gr.game.g->w, &t);
 	memset(&sizes, 0, sizeof sizes);
 	kp_dump(gr.game.g, 1, dump_size_line, &sizes);
-	for (k = 0; k < sizes.count; k++) total += sizes.bytes[k];
+	for (total = 0, k = 0; k < sizes.count; k++) total += sizes.bytes[k];
 	printf("kp_bench dump %s: %lld steps in %.0f ms; %lld dumps every %d steps: text CRCs %.3f ms each, hash %.3f ms "
 		"each; the last dump %zu bytes; the run's text CRCs %08x, hashes %08x\n", gr.replay.mission,
 		(long long)gr.replay.last, step_ms, (long long)count, every, count ? crcs_ms / (double)count : 0,
@@ -209,6 +217,127 @@ static int dumps(int argc, char **argv)
 	return 0;
 }
 
+/* --state's runs over the game at the replay's end; a failure printed, 1 */
+static int time_states(KpGame *g, const KpReplay *r, int runs)
+{
+	enum { SAVE, LOAD, HASH, SNAPSHOT, RESTORE, DEFLATE, INFLATE, OPS };
+	static const char *const NAMES[OPS] = { "save", "load", "hash", "snapshot", "restore", "zlib-1", "inflate" };
+	KpError err;
+	uint8_t *saved = NULL, *snap, *packed = NULL, *unpacked = NULL;
+	size_t saved_size = 0, snap_size = kp_snapshot_size(g);
+	uLongf packed_size = 0, unpacked_size;
+	uint64_t first = 0, total = 0;
+	double *times[OPS];
+	int k, op, rc = 1, missing;
+	const char *why = "out of memory";
+	err.msg[0] = '\0';
+	missing = (snap = (uint8_t *)malloc(snap_size)) == NULL;
+	for (op = 0; op < OPS; op++) missing |= (times[op] = (double *)malloc(sizeof *times[op] * (size_t)runs)) == NULL;
+	if (missing || kp_state_hash(g, NULL, NULL, &first) != 0) goto stop;
+	for (k = 0; k < runs; k++) {
+		double t0;
+		free(saved); /* the last run's save, not timed */
+		saved = NULL;
+		why = err.msg;
+		t0 = now_ms();
+		if (kp_save(g, r->mission, "bench", &saved, &saved_size, &err) != 0) goto stop;
+		times[SAVE][k] = now_ms() - t0;
+		t0 = now_ms();
+		if (kp_load(g, saved, saved_size, r->mission, "bench", &err) != 0) goto stop;
+		times[LOAD][k] = now_ms() - t0;
+		t0 = now_ms();
+		why = "the state hash failed";
+		if (kp_state_hash(g, NULL, NULL, &total) != 0) goto stop;
+		times[HASH][k] = now_ms() - t0;
+		why = "the state hash differs after the load";
+		if (total != first) goto stop;
+		why = err.msg;
+		t0 = now_ms();
+		if (kp_snapshot(g, snap, snap_size, &err) != 0) goto stop;
+		times[SNAPSHOT][k] = now_ms() - t0;
+		t0 = now_ms();
+		if (kp_restore(g, snap, snap_size, &err) != 0) goto stop;
+		times[RESTORE][k] = now_ms() - t0;
+		why = "the state hash differs after the restore";
+		if (kp_state_hash(g, NULL, NULL, &total) != 0 || total != first) goto stop; /* not timed */
+		why = "out of memory";
+		if (!packed) {
+			packed = (uint8_t *)malloc((size_t)compressBound((uLong)saved_size));
+			unpacked = (uint8_t *)malloc(saved_size);
+			if (!packed || !unpacked) goto stop;
+		}
+		packed_size = compressBound((uLong)saved_size);
+		t0 = now_ms();
+		if (compress2(packed, &packed_size, saved, (uLong)saved_size, STATE_LEVEL) != Z_OK) goto stop;
+		times[DEFLATE][k] = now_ms() - t0;
+		unpacked_size = (uLongf)saved_size;
+		why = "the save's stream does not inflate to the save";
+		t0 = now_ms();
+		if (uncompress(unpacked, &unpacked_size, packed, packed_size) != Z_OK || unpacked_size != saved_size
+			|| memcmp(unpacked, saved, saved_size) != 0) goto stop;
+		times[INFLATE][k] = now_ms() - t0;
+	}
+	printf("kp_bench state %s at step %lld: %d runs; save %zu bytes, zlib-1 %lu bytes, snapshot %zu bytes; hash %016llx\n",
+		r->mission, (long long)r->last, runs, saved_size, (unsigned long)packed_size, snap_size, (unsigned long long)first);
+	printf("kp_bench state ms (min/median):");
+	for (op = 0; op < OPS; op++) {
+		qsort(times[op], (size_t)runs, sizeof *times[op], by_value);
+		printf(" %s %.3f/%.3f", NAMES[op], times[op][0], times[op][runs / 2]);
+	}
+	printf("\n");
+	rc = 0;
+stop:
+	if (rc != 0) fprintf(stderr, "kp_bench: %s\n", why);
+	for (op = 0; op < OPS; op++) free(times[op]);
+	free(saved);
+	free(snap);
+	free(packed);
+	free(unpacked);
+	return rc;
+}
+
+/* kp_bench --state ROOT REPLAY [RUNS] (argv past "--state") */
+static int states(int argc, char **argv)
+{
+	KpReplay r;
+	KpReplayGame rg;
+	KpRunner run;
+	KpError err;
+	KpTry t;
+	uint8_t *text;
+	size_t size = 0;
+	/* read after the setjmp below (GCC's -Wclobbered) */
+	volatile int runs = argc > 2 ? atoi(argv[2]) : STATE_RUNS, rc;
+	if (argc < 2 || runs < 1) {
+		fprintf(stderr, "usage: kp_bench --state ROOT REPLAY [RUNS]\n");
+		return 2;
+	}
+	text = kp_read_file(argv[1], &size);
+	if (!text || kp_replay_parse(&r, (const char *)text, size, &err) != 0) {
+		fprintf(stderr, "kp_bench: %s\n", text ? err.msg : "cannot read the replay");
+		free(text);
+		return 2;
+	}
+	free(text);
+	if (kp_replay_game_start(&rg, argv[0], &r, &err) != 0) {
+		fprintf(stderr, "kp_bench: %s\n", err.msg);
+		return 2;
+	}
+	kp_runner_init(&run, rg.g, &r);
+	kp_images_begin(rg.g->w, &t);
+	if (setjmp(t.buf)) {
+		kp_images_end(rg.g->w, &t);
+		fprintf(stderr, "kp_bench: step %lld: %s\n", (long long)run.step, rg.g->w->error);
+		return 1;
+	}
+	kp_runner_to(&run, r.last);
+	rc = time_states(rg.g, &r, runs);
+	kp_images_end(rg.g->w, &t);
+	kp_replay_game_free(&rg);
+	kp_replay_free(&r);
+	return rc;
+}
+
 int main(int argc, char **argv)
 {
 	KpReplay r;
@@ -223,9 +352,10 @@ int main(int argc, char **argv)
 	int64_t *at;
 	if (argc > 1 && strcmp(argv[1], "--glyphs") == 0) return glyphs(argc - 2, argv + 2);
 	if (argc > 1 && strcmp(argv[1], "--dump") == 0) return dumps(argc - 2, argv + 2);
+	if (argc > 1 && strcmp(argv[1], "--state") == 0) return states(argc - 2, argv + 2);
 	if (argc < 3 || runs < 1) {
 		fprintf(stderr, "usage: kp_bench ROOT REPLAY [RUNS] | kp_bench --glyphs DATA LOCALE [RUNS] | kp_bench --dump ROOT "
-			"GOLDEN [EVERY]\n");
+			"GOLDEN [EVERY] | kp_bench --state ROOT REPLAY [RUNS]\n");
 		return 2;
 	}
 	text = kp_read_file(argv[2], &size);

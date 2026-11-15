@@ -4831,9 +4831,21 @@ static int glue_delete_save(void *host, const char *name)
 	return delete_result;
 }
 
+/* The host's check_save for the load screen's test: the calls, the save asked last; gluAll 67 (another version). */
+static int checks, checked;
+
+static uint16_t glue_check_save(void *host, int index)
+{
+	(void)host;
+	checks++;
+	checked = index;
+	return 67;
+}
+
 /* The glue's load screen (RunLoadGameScreen 0x459970) lists the player's saved games; Delete asks (gluAll 0x16) and
  * deletes the chosen one (DeleteSelectedSave 0x4599e0: the host's file, the list again: a file that stays is listed
- * again, with no error box), Ok ends the screen with the save to load. */
+ * again, with no error box), Ok ends the screen with the save to load. A save the host refuses at Ok (Koprulu's:
+ * saves do not migrate, ADR 0021) shows why in an OK popup (gluAll 66 or 67) and keeps the screen. */
 static void glue_load_screen_deletes_and_loads(KpT *T)
 {
 	enum { LIST = 6, OK = 4, DELETE = 7, LOAD_SCREEN = 13 };
@@ -4865,7 +4877,20 @@ static void glue_load_screen_deletes_and_loads(KpT *T)
 		kp_t_eq_str(T, top(G, name, sizeof name), "rez\\gluload.bin", "back on the load screen");
 	}
 	ui->delete_save = NULL;
+	ui->check_save = glue_check_save;
+	checks = 0;
 	glue_click(G, LIST, 8, 4); /* now "beta" */
+	glue_click(G, OK, -1, -1);
+	wait_for(G, "rez\\glupok.bin", 2000);
+	kp_t_eq(T, checks, 1, "the host reads the save at Ok");
+	kp_t_eq(T, checked, 0, "the chosen row");
+	kp_t_eq_str(T, ui->menus.popup_text, (const char *)kp_ui_tbl(ui, KP_UI_GLUALL, 67), "why: gluAll 67");
+	glue_click(G, 1, -1, -1); /* the popup's Ok */
+	for (k = 0; k < 30; k++) glue_frame(G);
+	kp_t_eq_str(T, top(G, name, sizeof name), "rez\\gluload.bin", "the screen stays");
+	kp_t_ok(T, !(G->has_last && G->last.kind == KP_GLUE_LOAD), "no save to load");
+	ui->check_save = NULL;
+	glue_click(G, LIST, 8, 4);
 	glue_click(G, OK, -1, -1);
 	for (k = 0; k < 600 && !(G->has_last && G->last.kind == KP_GLUE_LOAD); k++) glue_frame(G);
 	kp_t_ok(T, G->has_last && G->last.kind == KP_GLUE_LOAD, "the screen ends with a save to load");

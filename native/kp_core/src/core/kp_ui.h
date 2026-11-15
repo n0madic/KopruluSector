@@ -422,6 +422,9 @@ struct KpUiOptionsBlock {
 
 /* The string tables of strings.kpd (GetTblString 0x4c13b0). */
 enum { KP_UI_STAT_TXT, KP_UI_NETWORK, KP_UI_GLUALL, KP_UI_GLUHIST, KP_UI_TIPS, KP_UI_HELP, KP_UI_TBLS };
+/* gluAll's refusals of a saved game (ValidateSaveFile 0x499750's statuses 1 and 2): check_save's answers */
+#define KP_UI_GLUALL_SAVE_DAMAGED 66 /* "This saved game is unreadable because it is invalid or corrupted." */
+#define KP_UI_GLUALL_SAVE_VERSION 67 /* "This saved game is unreadable because of a version mismatch." */
 
 /* The 20-byte event record: user code, parameter, key, modifiers, type, cursor. */
 typedef struct {
@@ -1201,13 +1204,19 @@ struct KpUi {
 	                                                * none) */
 	uint16_t (*check_replay)(void *host, int index); /* CreateGameFromEntry 0x45bfc0's reading of a replay at Ok: 0
 	                                                * to start it, else the gluAll text that refuses it */
+	uint16_t (*check_save)(void *host, int index); /* Koprulu's reading of the saved game menus.saves[index] at the load
+	                                                * screen's and the load dialog's Ok: 0 to load it, else the gluAll
+	                                                * text that refuses it (KP_UI_GLUALL_SAVE_DAMAGED,
+	                                                * KP_UI_GLUALL_SAVE_VERSION: the original lists only the saves
+	                                                * ValidateSaveFile 0x499750 passes, Koprulu lists the profile's)
+	                                                * (NULL: none) */
 	/* Koprulu's Import and Export on Load Replay (defs/ui/koprulu-dialogs.json's extend; each shown only when set): the
 	 * platform's file picker for a .rep to copy into the listed folder (the host answers with kp_ui_replay_imported),
 	 * and for where the listed replay at index is written (a new name) */
 	void (*import_replay)(void *host);
 	void (*export_replay)(void *host, int index);
-	void *host;                      /* delete_save's, delete_profile_saves', list_replays', check_replay's, import_replay's,
-	                                  * export_replay's */
+	void *host;                      /* delete_save's, delete_profile_saves', list_replays', check_replay's, check_save's,
+	                                  * import_replay's, export_replay's */
 #define KP_UI_SLOT_NAMES 8
 	uint8_t slot_names[KP_UI_SLOT_NAMES][25]; /* a replay's player records' names (0x6726c8 +0x0b), the host's */
 	struct {
@@ -1514,6 +1523,9 @@ void kp_ui_save_dialog(KpUi *ui, int load);
  * file stays (the list keeps it). */
 int kp_ui_delete_save(KpUi *ui, const char *name);
 void kp_ui_saving(KpUi *ui, const char *name);
+/* A load the host could not make after check_save let it through (the save's state does not fit the mission's game):
+ * the in-game message box with KP_UI_GLUALL_SAVE_DAMAGED (Koprulu's). */
+void kp_ui_load_failed(KpUi *ui);
 /* IsInvalidFileName 0x408300: 1 when name (limit bytes at most) is not a file name the game takes: unterminated, a
  * control byte, a character of network.tbl string 17 (without / and \ when allow_path) after a drive prefix, an
  * empty name, or a DOS device name (0x5025b8) before its first dot. */

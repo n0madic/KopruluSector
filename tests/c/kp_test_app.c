@@ -7,7 +7,7 @@
 
 #include "kp_data.h"
 #include "kp_hd_ui_scr.h"
-#include "kp_kpf.h" /* kp_le_put32 */
+#include "kp_kpf.h" /* kp_le_put32, the save's container */
 
 /* kp_res_close as a deferred cleanup (a call through another function type is undefined) */
 static void res_close(void *p) { kp_res_close((KpRes *)p); }
@@ -25,6 +25,33 @@ KpRes *kp_t_install(KpT *T, const char *env)
 	kp_t_ok(T, r != NULL, "%s: %s", dir, err);
 	kp_t_defer(T, res_close, r);
 	return r;
+}
+
+uint8_t *kp_t_save_rebuilt(KpT *T, const uint8_t *save, size_t size, uint32_t schema, const uint8_t *core,
+	size_t core_size, size_t *out_size)
+{
+	KpKpf c;
+	KpKpfOut outs[8];
+	KpError err;
+	uint8_t *out = NULL;
+	int k;
+	kp_t_ok(T, kp_kpf_parse(&c, save, size, "save", 1, &err) == 0, "%s", err.msg);
+	if (c.section_count > 8) {
+		kp_kpf_free(&c);
+		kp_t_fail(T, "a save of %d sections, the helper takes 8", c.section_count);
+	}
+	for (k = 0; k < c.section_count; k++) {
+		int is_core = strcmp(c.sections[k].fourcc, "CORE") == 0 && core != NULL;
+		outs[k].fourcc = c.sections[k].fourcc;
+		outs[k].payload = is_core ? core : c.sections[k].data;
+		outs[k].size = is_core ? core_size : c.sections[k].size;
+		outs[k].schema_version = c.sections[k].schema_version;
+	}
+	kp_t_ok(T, kp_kpf_build(c.kind, schema, c.converter_version, c.profile_id, c.source_hash, outs, c.section_count, &out,
+		out_size) == 0, "out of memory");
+	kp_kpf_free(&c);
+	kp_t_defer(T, free, out);
+	return out;
 }
 
 const uint8_t *kp_t_console_art(KpT *T, size_t *size)
