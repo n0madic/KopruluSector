@@ -53,8 +53,9 @@ typedef struct {
 	int sections;
 	uint32_t section_tag[KP_SAVE_SECTIONS_MAX];
 	size_t section_start[KP_SAVE_SECTIONS_MAX];
-	/* HASH: the open section's state, partial word (fill bytes) and length; the sections' fold */
+	/* HASH: the open section's state, partial word (fill bytes) and length; the sections' fold and its count (folded) */
 	uint64_t h, word, total;
+	int folded_sections;
 	unsigned fill;
 	size_t length;
 	const char *tag; /* HASH and COVER: the open section's tag */
@@ -101,6 +102,20 @@ static uint32_t tag_word(const char *tag)
 {
 	const uint8_t *t = (const uint8_t *)tag;
 	return (uint32_t)t[0] | (uint32_t)t[1] << 8 | (uint32_t)t[2] << 16 | (uint32_t)t[3] << 24;
+}
+
+/* The section of the local player's view of the units (KP_UNIT_VIEW_STATE): saved and in the hash table, but the
+ * total (the table's last word, kp_state_hash's) folds every other section only, as a viewer's game and a player's
+ * have it apart (ADR 0023). */
+#define VIEW_SECTION "VIEW"
+static int folded(uint32_t tag) { return tag != tag_word(VIEW_SECTION); }
+
+int kp_unit_view_field(const char *name)
+{
+#define VIEW_FIELD(f) if (strcmp(name, #f) == 0) return 1;
+	KP_UNIT_VIEW_STATE(VIEW_FIELD)
+#undef VIEW_FIELD
+	return 0;
 }
 
 static uint64_t le64(const uint8_t *p)
@@ -156,7 +171,10 @@ static void hash_close(Codec *c)
 	if (!c->tag) return;
 	if (c->fill) c->h = mix(c->h, c->word);
 	h = finish(c->h, (uint64_t)c->length);
-	c->total = mix(c->total, h);
+	if (folded(tag_word(c->tag))) {
+		c->total = mix(c->total, h);
+		c->folded_sections++;
+	}
 	c->sections++;
 	if (c->each) c->each(c->ud, c->tag, h, c->length);
 	c->tag = NULL;
@@ -656,7 +674,7 @@ static void walk(Codec *c, KpGame *g)
 	I64S(g->scalar);
 	u8s(c, g->scalar_present, sizeof g->scalar_present);
 	section(c, "UNIT");
-#define UNIT(name) I64S(g->u.name);
+#define UNIT(name) if (!kp_unit_view_field(#name)) I64S(g->u.name);
 	KP_UNIT_FIELDS(UNIT)
 #undef UNIT
 	lists(c, g->lists, KP_LIST_COUNT);
@@ -953,6 +971,10 @@ static void walk(Codec *c, KpGame *g)
 	}
 	section(c, "WRLD");
 	walk_world(c, g->w);
+	section(c, VIEW_SECTION);
+#define VIEW(name) I64S(g->u.name);
+	KP_UNIT_VIEW_STATE(VIEW)
+#undef VIEW
 	section(c, "END ");
 }
 
@@ -999,11 +1021,11 @@ static uint64_t section_hash(const Codec *c, const uint8_t *bytes, int k, size_t
 }
 
 /* The hash table after the sections: u32 their count, per section its tag and u64 hash, then u64 the total (the
- * sections' hashes folded as kp_state_hash folds them). */
+ * sections' hashes but VIEW's folded as kp_state_hash folds them). */
 static void put_table(Codec *c)
 {
 	size_t end = c->size;
-	uint32_t n = (uint32_t)c->sections;
+	uint32_t n = (uint32_t)c->sections, count = 0;
 	uint64_t total = HASH_SEED;
 	int k;
 	if (c->failed) return;
@@ -1011,18 +1033,21 @@ static void put_table(Codec *c)
 	for (k = 0; k < c->sections && !c->failed; k++) {
 		uint32_t tag = c->section_tag[k];
 		uint64_t h = section_hash(c, c->buf, k, end);
-		total = mix(total, h);
+		if (folded(tag)) {
+			total = mix(total, h);
+			count++;
+		}
 		u32(c, &tag);
 		u64(c, &h);
 	}
-	total = finish(total, n);
+	total = finish(total, count);
 	u64(c, &total);
 }
 
 static int check_table(Codec *c, const uint8_t *bytes)
 {
 	size_t end = c->at;
-	uint32_t n = 0;
+	uint32_t n = 0, count = 0;
 	uint64_t want = 0, total = HASH_SEED;
 	int k;
 	checked_u32(c, &n);
@@ -1044,10 +1069,13 @@ static int check_table(Codec *c, const uint8_t *bytes)
 				(char)(t >> 16 & 0xff), (char)(t >> 24));
 			break;
 		}
-		total = mix(total, h);
+		if (folded(tag)) {
+			total = mix(total, h);
+			count++;
+		}
 	}
 	checked_u64(c, &want);
-	if (!c->failed && finish(total, n) != want) fail(c, "save: damaged (hash table)");
+	if (!c->failed && finish(total, count) != want) fail(c, "save: damaged (hash table)");
 	return c->failed ? -1 : 0;
 }
 
@@ -1147,7 +1175,7 @@ static int walk_dry(Codec *c, KpGame *g, const uint8_t *bytes, size_t size)
 int kp_save_seal(KpGame *g, const uint8_t *bytes, size_t size, uint8_t **out, size_t *out_size)
 {
 	Codec c;
-	uint64_t total = HASH_SEED;
+	uint64_t total = HASH_SEED, count = 0;
 	uint8_t *o, *t;
 	int k;
 	*out = NULL;
@@ -1160,12 +1188,15 @@ int kp_save_seal(KpGame *g, const uint8_t *bytes, size_t size, uint8_t **out, si
 	t += 4;
 	for (k = 0; k < c.sections; k++) {
 		uint64_t h = section_hash(&c, bytes, k, c.at);
-		total = mix(total, h);
+		if (folded(c.section_tag[k])) {
+			total = mix(total, h);
+			count++;
+		}
 		put_le(t, c.section_tag[k], 4);
 		put_le(t + 4, h, 8);
 		t += 12;
 	}
-	put_le(t, finish(total, (uint64_t)c.sections), 8);
+	put_le(t, finish(total, count), 8);
 	*out = o;
 	*out_size = c.at + 4 + (size_t)c.sections * 12 + 8;
 	return 0;
@@ -1196,7 +1227,7 @@ int kp_state_hash(KpGame *g, KpSectionHash each, void *ud, uint64_t *total)
 	c.total = HASH_SEED;
 	walk(&c, g);
 	hash_close(&c);
-	if (total) *total = finish(c.total, (uint64_t)c.sections);
+	if (total) *total = finish(c.total, (uint64_t)c.folded_sections);
 	return c.failed ? -1 : 0;
 }
 

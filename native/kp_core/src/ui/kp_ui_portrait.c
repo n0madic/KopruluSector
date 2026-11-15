@@ -286,16 +286,15 @@ static int64_t displayed_type(KpGame *g, int64_t n)
 {
 	/* GetDisplayedUnitType 0x428b20 */
 	if (kp_is_morphing_zerg_building(g, n)) {
-		const KpUnits *u = &g->u;
-		switch (u->queue_slot[n] % 5) {
-		case 0: return u->queue0[n];
-		case 1: return u->queue1[n];
-		case 2: return u->queue2[n];
-		case 3: return u->queue3[n];
-		default: return u->queue4[n];
+		switch (kp_unit_get_queue_slot(g, n) % 5) {
+		case 0: return kp_unit_get_queue0(g, n);
+		case 1: return kp_unit_get_queue1(g, n);
+		case 2: return kp_unit_get_queue2(g, n);
+		case 3: return kp_unit_get_queue3(g, n);
+		default: return kp_unit_get_queue4(g, n);
 		}
 	}
-	return g->u.type[n];
+	return kp_unit_get_type(g, n);
 }
 
 static void fill(KpUi *ui, KpUiSurface *s, uint8_t v)
@@ -698,8 +697,7 @@ void kp_ui_portrait_talk(KpUi *ui, int64_t unit, uint32_t duration, int ping, ui
 		ui->portrait.camera_y = y - EVENT_HALF_H < 0 ? 0 : y - EVENT_HALF_H;
 		/* the minimap's blink counter and colour are the unit's (+0x8a, +0x8b): the interface's, which nothing of the
 		 * simulation reads (ADR 0010) */
-		g->u.last_event_timer[unit] = TALK_BLINK;
-		g->u.last_event_color[unit] = colour;
+		kp_unit_set_blink(g, unit, TALK_BLINK, colour);
 		kp_ui_minimap_ping(ui, (uint32_t)x, (uint32_t)y, colour);
 	}
 }

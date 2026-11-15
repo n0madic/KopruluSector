@@ -170,7 +170,7 @@ static void populate(KpUi *ui)
 			i++;
 			rec += BUTTON_RECORD;
 		}
-		if ((g->w->replay || status == 0 || g->u.owner[status] == g->local_player) && rec && i < count
+		if ((g->w->replay || status == 0 || kp_unit_get_owner(g, status) == g->local_player) && rec && i < count
 			&& b->id >= (int16_t)kp_le_u16(rec)) {
 			uint16_t icon = (uint16_t)kp_le_u16(rec + 2);
 			b->user = (uint32_t)(rec - ui->button_sets) + 1;
@@ -203,7 +203,7 @@ static void merge_sets(KpUi *ui)
 {
 	KpUiCard *k = cc(ui);
 	KpGame *g = game(ui);
-	uint16_t base = (uint16_t)g->u.button_set[ui->hud.status_unit], linked_base, linked_s;
+	uint16_t base = (uint16_t)kp_unit_get_button_set(g, ui->hud.status_unit), linked_base, linked_s;
 	int workers = 0, cloakers = 0, zerg_ground = 0, burrowable = 0, i;
 	for (i = 0; i < KP_UI_SLOTS; i++) {
 		int64_t n = ui->hud.selection[i];
@@ -212,11 +212,11 @@ static void merge_sets(KpUi *ui)
 		int cb = 0, cs = 0;
 		const uint8_t *a, *b;
 		if (n == 0) continue;
-		s = (uint16_t)g->u.button_set[n];
-		f = (uint32_t)KP_DAT(g, units, special_ability_flags, g->u.type[n]);
+		s = (uint16_t)kp_unit_get_button_set(g, n);
+		f = (uint32_t)KP_DAT(g, units, special_ability_flags, kp_unit_get_type(g, n));
 		if (f & DAT_WORKER) workers++;
 		if (f & DAT_CLOAKABLE) cloakers++;
-		if (!(g->u.status[n] & STATUS_IN_AIR) && kp_unit_race(g, n) == KP_RACE_ZERG) zerg_ground++;
+		if (!(kp_unit_get_status(g, n) & STATUS_IN_AIR) && kp_unit_race(g, n) == KP_RACE_ZERG) zerg_ground++;
 		if (f & DAT_BURROWABLE) burrowable = 1;
 		if (s == base) continue;
 		a = set_of(ui, s, &linked_s, &cs);
@@ -277,9 +277,9 @@ static void highlight(KpUi *ui)
 static void status_orders(KpUi *ui, uint8_t *order, uint8_t *suborder)
 {
 	KpGame *g = game(ui);
-	int64_t n = ui->hud.status_unit, sub = g->u.subunit[n];
-	*order = (uint8_t)g->u.order[n];
-	*suborder = sub ? (uint8_t)g->u.order[sub] : ORDER_NONE;
+	int64_t n = ui->hud.status_unit, sub = kp_unit_get_subunit(g, n);
+	*order = (uint8_t)kp_unit_get_order(g, n);
+	*suborder = sub ? (uint8_t)kp_unit_get_order(g, sub) : ORDER_NONE;
 }
 
 /* --- the tooltip --- */
@@ -394,7 +394,7 @@ void kp_ui_card_tooltip(KpUi *ui, int32_t c)
 		return;
 	}
 	s = kp_ui_tbl(ui, KP_UI_STAT_TXT, kp_le_u16(rec + 16));
-	owner = status ? g->u.owner[status] : g->local_player;
+	owner = status ? kp_unit_get_owner(g, status) : g->local_player;
 	t = (int64_t)kp_le_u16(rec + 14);
 	if (b->flags & KP_UI_DISABLED) {
 		uint32_t id = disabled_string(ui, rec);
@@ -544,7 +544,7 @@ void kp_ui_card_refresh(KpUi *ui)
 	if (ui->hud.card_refresh && (k->forced == KP_UI_SET_NONE || g->w->replay)) kp_ui_card_modes(ui);
 	if (k->forced != KP_UI_SET_NONE) set = k->forced;
 	else if (k->merged != KP_UI_SET_NONE) set = k->merged;
-	else set = status ? (uint16_t)g->u.button_set[status] : KP_UI_SET_NONE;
+	else set = status ? (uint16_t)kp_unit_get_button_set(g, status) : KP_UI_SET_NONE;
 	if (set != k->set) {
 		k->set = set;
 		ui->hud.card_refresh = 1;

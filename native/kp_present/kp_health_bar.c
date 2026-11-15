@@ -210,14 +210,14 @@ void kp_bar_of_unit(KpGame *g, int64_t n, KpBar *bar)
 {
 	KpImages *w = g->w;
 	KpBarUnit u;
-	int64_t t = g->u.type[n], s = g->u.sprite[n];
+	int64_t t = kp_unit_get_type(g, n), s = kp_unit_get_sprite(g, n);
 	u.type = t;
-	u.hp = g->u.hp[n];
-	u.shields = g->u.shields[n];
-	u.energy = g->u.energy[n];
-	u.timer = g->u.remove_timer[n];
-	u.status = g->u.status[n];
-	u.owner = g->u.owner[n];
+	u.hp = kp_unit_get_hp(g, n);
+	u.shields = kp_unit_get_shields(g, n);
+	u.energy = kp_unit_get_energy(g, n);
+	u.timer = kp_unit_get_remove_timer(g, n);
+	u.status = kp_unit_get_status(g, n);
+	u.owner = kp_unit_get_owner(g, n);
 	u.hit_points = KP_DAT(g, units, hit_points, t);
 	u.shield_enabled = KP_DAT(g, units, shield_enabled, t);
 	u.shield_amount = KP_DAT(g, units, shield_amount, t);

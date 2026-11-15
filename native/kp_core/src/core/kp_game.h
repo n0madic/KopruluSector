@@ -67,6 +67,14 @@ extern "C" {
 	X(bound_right) X(bound_top) X(bound_bottom) X(repulse_flags) X(repulse_angle) X(repulse_x) X(repulse_y) \
 	X(sprite) X(queue_head) X(queue_tail)
 
+/* The local player's view state in the unit records (ADR 0023): the attack notices' silence (+0x87), the minimap's
+ * blink counter and its colour (+0x8a, +0x8b). The local player's unit under attack sets the blink
+ * (kp_notify_attacked); the interface writes them through kp_unit_set_blink, kp_unit_blink_step,
+ * kp_unit_silence_attack_notice and kp_units_tick_attack_notices; nothing of the simulation reads them. The save keeps
+ * them in a section of their own (VIEW) that the state hash's total leaves out: a viewer's game and a player's have
+ * them apart. */
+#define KP_UNIT_VIEW_STATE(X) X(attack_notify_timer) X(last_event_timer) X(last_event_color)
+
 /* Every field spans the flingy records: a bullet's flingy part keeps its CFlingy fields at the unit offsets, its owner
  * (+0x4c), state (+0x4d, `order`), signal, order point and target there too. */
 #define KP_UNIT_FIELD(name) int64_t name[KP_FLINGIES + 1];
@@ -722,6 +730,35 @@ typedef struct {
 KpCtx kp_ctx_unit(KpGame *g, int64_t n);
 void kp_ctx_restore(KpGame *g, KpCtx c);
 
+/* The unit fields the layers over the simulation read (ADR 0023): the interface (src/ui), the application and the
+ * presentation read a unit through kp_unit_get_<field> of these only, never g->u (tools/boundaries.sh); a field they
+ * need joins the list. No range check, as the reads they replace: n is a record 0..KP_FLINGIES. */
+#define KP_UNIT_VIEW_FIELDS(X) \
+	X(next) X(hp) X(x) X(y) X(owner) X(order) X(order_unit) X(shields) X(type) X(player_next) X(subunit) X(connected) \
+	X(attack_notify_timer) X(last_event_timer) X(last_event_color) X(rank) X(kills) X(button_set) X(queue0) X(queue1) \
+	X(queue2) X(queue3) X(queue4) X(energy) X(queue_slot) X(uniqueness) X(secondary_order) X(build_time) X(loaded0) \
+	X(loaded1) X(loaded2) X(loaded3) X(loaded4) X(loaded5) X(loaded6) X(loaded7) X(union_0xc8) X(union_0xd0) X(status) \
+	X(resource_type) X(wireframe) X(visibility) X(build_unit) X(rally_x) X(rally_y) X(remove_timer) X(lockdown_timer) \
+	X(stasis_timer) X(parasites) X(blind) X(maelstrom_timer) X(acid_spores) X(sprite)
+#define KP_UNIT_GET(name) \
+	static inline int64_t kp_unit_get_##name(const KpGame *g, int64_t n) { return g->u.name[n]; }
+KP_UNIT_VIEW_FIELDS(KP_UNIT_GET)
+#undef KP_UNIT_GET
+/* A transport's cargo slot k (0..7: +0xa8 on, the loaded unit's reference). */
+static inline int64_t kp_unit_get_loaded(const KpGame *g, int64_t n, int k)
+{
+	switch (k) {
+	case 0: return kp_unit_get_loaded0(g, n);
+	case 1: return kp_unit_get_loaded1(g, n);
+	case 2: return kp_unit_get_loaded2(g, n);
+	case 3: return kp_unit_get_loaded3(g, n);
+	case 4: return kp_unit_get_loaded4(g, n);
+	case 5: return kp_unit_get_loaded5(g, n);
+	case 6: return kp_unit_get_loaded6(g, n);
+	default: return kp_unit_get_loaded7(g, n);
+	}
+}
+
 /* kp_units.c */
 int kp_rally_producer(int64_t t);
 static inline int32_t kp_unit_sprite(KpGame *g, int64_t n)
@@ -985,7 +1022,7 @@ const KpDumpField *kp_dump_fields(int *count);
  * leaves the game unchanged when it refuses the save. *out is malloc'd. A save loads only in a build of its version:
  * a change of the walk raises it (tests/c/test_save.c's save_schema_matches_its_version), and there are no
  * migrations (ADR 0021). */
-#define KP_SAVE_VERSION 2
+#define KP_SAVE_VERSION 3
 #define KP_SAVE_NAME 256
 int kp_save(KpGame *g, const char *mission, const char *data, uint8_t **out, size_t *size, KpError *err);
 int kp_load(KpGame *g, const uint8_t *bytes, size_t size, const char *mission, const char *data, KpError *err);
@@ -1010,9 +1047,10 @@ int kp_save_sections(KpGame *g, const uint8_t *bytes, size_t size, KpSaveSection
 uint64_t kp_save_schema(void);
 /* The state hash (kp_save.c): per section of the save, the hash of its bytes in a save (without its tag; 64-bit
  * little-endian words, the tail zero-padded, the length mixed in, the tag as the seed), computed without encoding
- * them: each(ud, tag, hash, bytes) per section in the save's order (NULL: none), *total (NULL: none) their fold, which
- * a save's hash table also holds. At a step boundary of a game that has not stopped, as kp_save. -1 out of memory. */
-#define KP_HASH_VERSION 1
+ * them: each(ud, tag, hash, bytes) per section in the save's order (NULL: none), *total (NULL: none) the fold of all
+ * but VIEW (KP_UNIT_VIEW_STATE, which a viewer's game and a player's have apart; version 2), which a save's hash table
+ * also holds. At a step boundary of a game that has not stopped, as kp_save. -1 out of memory. */
+#define KP_HASH_VERSION 2
 typedef void (*KpSectionHash)(void *ud, const char *tag, uint64_t hash, size_t bytes);
 int kp_state_hash(KpGame *g, KpSectionHash each, void *ud, uint64_t *total);
 /* In-process snapshots of the state the save walks (the arrays as they are; never written to a file nor taken to
@@ -1617,6 +1655,16 @@ int kp_player_finished(KpGame *g, int64_t p);
 void kp_record_death(KpGame *g, int64_t n, int64_t player);
 void kp_increment_kills(KpGame *g, int64_t n);
 void kp_notify_attacked(KpGame *g, int64_t n);
+/* The view state of KP_UNIT_VIEW_STATE: a talking portrait's ping sets the blink (RequestUnitTalking 0x4a7200); each
+ * minimap draw counts it down (DrawLocalMinimapUnits 0x46e490: 1 while the unit blinks); a notice silences the units
+ * near an attacked one (SuppressNearbyAttackNotices 0x4460d0); the idle event counts every active unit's silence down
+ * (TickSoundCooldowns 0x446ff0). */
+void kp_unit_set_blink(KpGame *g, int64_t n, int64_t timer, int64_t colour);
+int kp_unit_blink_step(KpGame *g, int64_t n);
+void kp_unit_silence_attack_notice(KpGame *g, int64_t n, int64_t timer);
+void kp_units_tick_attack_notices(KpGame *g);
+/* Whether KpUnits' field `name` is one of KP_UNIT_VIEW_STATE (the save's walk, the dump). */
+int kp_unit_view_field(const char *name);
 void kp_damage_hit_points(KpGame *g, int64_t n, int64_t damage, int64_t attacker, int64_t player, int notify);
 void kp_on_unit_damaged(KpGame *g, int64_t n, int64_t attacker, int notify);
 void kp_weapon_damage(KpGame *g, int64_t n, int64_t damage, int64_t weapon, int64_t divisor, int64_t direction,

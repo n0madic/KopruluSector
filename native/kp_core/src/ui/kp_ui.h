@@ -1150,7 +1150,7 @@ struct KpUi {
 	int region_count;
 	KpUiCallback callbacks[KP_UI_CALLBACKS];
 	int callback_count;
-	struct KpGame *game;          /* the game the console reads (kp_ui_hud_create); never written */
+	struct KpGame *game;          /* the game the console reads (kp_ui_hud_create); written only through the simulation's functions (ADR 0023). TODO: const once the local player's state (selection, screen and placement scalars, crt, events) leaves KpGame */
 	KpUiHud hud;
 	KpUiStatus status;
 	KpUiPortrait portrait;

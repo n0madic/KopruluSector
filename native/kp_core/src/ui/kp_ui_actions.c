@@ -142,7 +142,7 @@ void kp_ui_start_placement(KpUi *ui, uint8_t order, uint16_t type)
 	kp_ui_placement_prepare(ui, 1, type); /* StartPlacement 0x47d3a0: the placed type's preview (0x47cec0(1, type)) */
 	/* an add-on's placement checks and shows its parent's place too (0x47cec0(0, parent type)) */
 	ui->input.placement_parent = (uint16_t)(parent != 0
-		&& (KP_DAT(g, units, special_ability_flags, type) & DAT_ADDON) != 0 ? g->u.type[parent] : 0);
+		&& (KP_DAT(g, units, special_ability_flags, type) & DAT_ADDON) != 0 ? kp_unit_get_type(g, parent) : 0);
 	if (ui->input.placement_parent != 0) {
 		kp_ui_placement_prepare(ui, 0, ui->input.placement_parent);
 		/* a layout host's preview beside the parent, not at the cursor (a touch has none) */
@@ -156,7 +156,7 @@ void kp_ui_start_placement(KpUi *ui, uint8_t order, uint16_t type)
 
 /* --- the checks --- */
 
-static int64_t status_owner(KpUi *ui) { return game(ui)->u.owner[ui->hud.status_unit]; }
+static int64_t status_owner(KpUi *ui) { return kp_unit_get_owner(game(ui), ui->hud.status_unit); }
 
 /* CheckUnitCost 0x4086b0 for the status unit's owner, with the supply and the feedback. */
 static int affordable(KpUi *ui, uint16_t type) { return kp_check_unit_cost(game(ui), status_owner(ui), type, 1, 1); }
@@ -174,7 +174,7 @@ static int energy_for(KpUi *ui, int tech_of_unit, uint8_t tech)
 	}
 	{
 		int64_t s = ui->hud.status_unit, race = kp_unit_race(g, s);
-		kp_ui_error_sound(ui, g->u.owner[s], (uint32_t)(SOUND_ENERGY + race), (uint32_t)(STRING_ENERGY + race)); /* 0x4461f0 */
+		kp_ui_error_sound(ui, kp_unit_get_owner(g, s), (uint32_t)(SOUND_ENERGY + race), (uint32_t)(STRING_ENERGY + race)); /* 0x4461f0 */
 	}
 	return 0;
 }
@@ -190,7 +190,7 @@ static int any_can_move(KpUi *ui)
 
 static int grounded_status_building(KpUi *ui)
 {
-	return (game(ui)->u.status[ui->hud.status_unit] & STATUS_GROUNDED_BUILDING) != 0;
+	return (kp_unit_get_status(game(ui), ui->hud.status_unit) & STATUS_GROUNDED_BUILDING) != 0;
 }
 
 /* BtnUseTech 0x47c7b0: the targeting of a targeted spell (techs 5, 9, 10, 11, 23, 26 and 28 do nothing). */
@@ -226,7 +226,7 @@ static void select_larva(KpUi *ui)
 		(int16_t)(y + LARVA_REACH), &count);
 	for (k = 0; k < count && n < SLOTS; k++) {
 		int64_t u = found[k];
-		if (g->u.type[u] == KP_TYPE_LARVA && g->u.connected[u] == s
+		if (kp_unit_get_type(g, u) == KP_TYPE_LARVA && kp_unit_get_connected(g, u) == s
 			&& !(g->w->spr.flags[kp_unit_sprite(g, u)] & KP_SF_HIDDEN)) {
 			list[n++] = u;
 		}
@@ -285,7 +285,7 @@ void kp_ui_button_action(KpUi *ui, uint32_t address, uint16_t value, uint8_t shi
 	case 0x47c550: kp_ui_begin_targeting(ui, O_PATROL, O_PATROL, O_PATROL); break;
 	case 0x47c560: if (affordable(ui, value)) kp_ui_start_placement(ui, O_PLACE_BUILDING, value); break;
 	case 0x47c590: if (affordable(ui, value)) kp_ui_start_placement(ui, O_PLACE_ADDON, value); break;
-	case 0x47c5c0: kp_ui_start_placement(ui, O_CTF_COP2, (uint16_t)g->u.type[ui->hud.status_unit]); break;
+	case 0x47c5c0: kp_ui_start_placement(ui, O_CTF_COP2, (uint16_t)kp_unit_get_type(g, ui->hud.status_unit)); break;
 	case 0x47c5d0: if (affordable(ui, value)) kp_ui_start_placement(ui, O_PLACE_PROTOSS, value); break;
 	case 0x47c600: kp_ui_begin_targeting(ui, O_RALLY_UNIT, O_RALLY_TILE, O_RALLY_TILE); break;
 	case 0x47c610: kp_ui_begin_targeting(ui, O_REAVER_ATTACK, O_ATTACK_MOVE, O_REAVER_MOVE_ATTACK); break;
@@ -301,7 +301,7 @@ void kp_ui_button_action(KpUi *ui, uint32_t address, uint16_t value, uint8_t shi
 	case 0x47c710: /* BtnStimPack */
 		for (k = 0; k < SLOTS; k++) {
 			int64_t n = ui->hud.selection[k];
-			if (n != 0 && g->u.hp[n] > STIM_HP) {
+			if (n != 0 && kp_unit_get_hp(g, n) > STIM_HP) {
 				send1(ui, 0x36);
 				return;
 			}

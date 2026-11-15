@@ -105,45 +105,43 @@ static KpGame *game(KpUi *ui) { return ui->game; }
 static int64_t status_unit(KpUi *ui) { return ui->hud.status_unit; }
 
 /* Owned by the local player (the replay's branch is outside V1). */
-static int owned(KpUi *ui, int64_t n) { return game(ui)->u.owner[n] == game(ui)->local_player; }
+static int owned(KpUi *ui, int64_t n) { return kp_unit_get_owner(game(ui), n) == game(ui)->local_player; }
 
 static int64_t dat_type(int64_t t) { return t < 0 || t >= KP_UNIT_TYPES ? 0 : t; }
 
 static int64_t special(KpGame *g, int64_t t) { return KP_DAT(g, units, special_ability_flags, dat_type(t)); }
 
-static int hallucination(KpGame *g, int64_t n) { return (g->u.status[n] & STATUS_HALLUCINATION) != 0; }
+static int hallucination(KpGame *g, int64_t n) { return (kp_unit_get_status(g, n) & STATUS_HALLUCINATION) != 0; }
 
 /* IsUnitDisabled 0x407b50. */
 static int disabled(KpGame *g, int64_t n)
 {
-	const KpUnits *u = &g->u;
-	return (u->status[n] & STATUS_DISABLED) != 0 || u->lockdown_timer[n] != 0 || u->stasis_timer[n] != 0
-		|| u->maelstrom_timer[n] != 0;
+	return (kp_unit_get_status(g, n) & STATUS_DISABLED) != 0 || kp_unit_get_lockdown_timer(g, n) != 0 || kp_unit_get_stasis_timer(g, n) != 0
+		|| kp_unit_get_maelstrom_timer(g, n) != 0;
 }
 
 /* GetBuildQueueEntry 0x41b300: queue[(slot + i) % 5]. */
 static int64_t queue_at(KpGame *g, int64_t n, int i)
 {
-	const KpUnits *u = &g->u;
-	switch ((u->queue_slot[n] + i) % 5) {
-	case 0: return u->queue0[n];
-	case 1: return u->queue1[n];
-	case 2: return u->queue2[n];
-	case 3: return u->queue3[n];
-	default: return u->queue4[n];
+	switch ((kp_unit_get_queue_slot(g, n) + i) % 5) {
+	case 0: return kp_unit_get_queue0(g, n);
+	case 1: return kp_unit_get_queue1(g, n);
+	case 2: return kp_unit_get_queue2(g, n);
+	case 3: return kp_unit_get_queue3(g, n);
+	default: return kp_unit_get_queue4(g, n);
 	}
 }
 
 /* GetDisplayedUnitType 0x428b20. */
 static int64_t displayed_type(KpGame *g, int64_t n)
 {
-	return kp_is_morphing_zerg_building(g, n) ? queue_at(g, n, 0) : g->u.type[n];
+	return kp_is_morphing_zerg_building(g, n) ? queue_at(g, n, 0) : kp_unit_get_type(g, n);
 }
 
 /* GetUnitRace 0x428d60: of the unit's own type, by its group flags. */
 static int race_of(KpGame *g, int64_t n)
 {
-	int64_t f = KP_DAT(g, units, staredit_group_flags, g->u.type[n]);
+	int64_t f = KP_DAT(g, units, staredit_group_flags, kp_unit_get_type(g, n));
 	if (f & 1) return 0;
 	if (f & 4) return 2;
 	return (f & 2) ? 1 : 4;
@@ -171,23 +169,22 @@ static const uint8_t *unit_name(KpUi *ui, int64_t n) { return kp_ui_unit_type_na
 /* GetBuildProgressPercent 0x41b2b0. */
 static int32_t build_percent(KpGame *g, int64_t n)
 {
-	int64_t t = g->u.type[n], total;
+	int64_t t = kp_unit_get_type(g, n), total;
 	if (t == KP_TYPE_EGG || t == KP_TYPE_COCOON || t == KP_TYPE_LURKER_EGG || kp_is_morphing_zerg_building(g, n)) {
 		t = queue_at(g, n, 0);
 	}
 	total = (uint16_t)KP_DAT(g, units, build_time, dat_type(t));
 	if (total == 0) return 0;
-	return (int32_t)(((total - (uint16_t)g->u.build_time[n]) * 100) / total);
+	return (int32_t)(((total - (uint16_t)kp_unit_get_build_time(g, n)) * 100) / total);
 }
 
 /* GetCurrentWorkTarget 0x41b330. */
 static int64_t work_target(KpGame *g, int64_t n)
 {
-	const KpUnits *u = &g->u;
-	int64_t o = u->order[n];
-	if (o == 0x1e || o == 0x22 || o == 0x21 || kp_building_unit(g, n)) return u->order_unit[n];
-	if (u->secondary_order[n] == 0x26 || u->secondary_order[n] == 0x3f || kp_constructing_addon(g, n)) {
-		return u->build_unit[n];
+	int64_t o = kp_unit_get_order(g, n);
+	if (o == 0x1e || o == 0x22 || o == 0x21 || kp_building_unit(g, n)) return kp_unit_get_order_unit(g, n);
+	if (kp_unit_get_secondary_order(g, n) == 0x26 || kp_unit_get_secondary_order(g, n) == 0x3f || kp_constructing_addon(g, n)) {
+		return kp_unit_get_build_unit(g, n);
 	}
 	return 0;
 }
@@ -195,37 +192,34 @@ static int64_t work_target(KpGame *g, int64_t n)
 /* 0x41fbe0: the ground weapon, the subunit's when the type has none; none for an unburrowed Lurker. */
 static int64_t ground_weapon(KpGame *g, int64_t n)
 {
-	const KpUnits *u = &g->u;
 	int64_t w;
-	if (u->type[n] == KP_TYPE_LURKER && !(u->status[n] & STATUS_BURROWED)) return WEAPON_NONE;
-	w = KP_DAT(g, units, ground_weapon, u->type[n]);
-	if (w == WEAPON_NONE) return u->subunit[n] ? KP_DAT(g, units, ground_weapon, u->type[u->subunit[n]]) : WEAPON_NONE;
+	if (kp_unit_get_type(g, n) == KP_TYPE_LURKER && !(kp_unit_get_status(g, n) & STATUS_BURROWED)) return WEAPON_NONE;
+	w = KP_DAT(g, units, ground_weapon, kp_unit_get_type(g, n));
+	if (w == WEAPON_NONE) return kp_unit_get_subunit(g, n) ? KP_DAT(g, units, ground_weapon, kp_unit_get_type(g, kp_unit_get_subunit(g, n))) : WEAPON_NONE;
 	return w;
 }
 
 /* 0x41fb40. */
 static int64_t air_weapon(KpGame *g, int64_t n)
 {
-	const KpUnits *u = &g->u;
-	int64_t w = KP_DAT(g, units, air_weapon, u->type[n]);
-	if (w == WEAPON_NONE) return u->subunit[n] ? KP_DAT(g, units, air_weapon, u->type[u->subunit[n]]) : WEAPON_NONE;
+	int64_t w = KP_DAT(g, units, air_weapon, kp_unit_get_type(g, n));
+	if (w == WEAPON_NONE) return kp_unit_get_subunit(g, n) ? KP_DAT(g, units, air_weapon, kp_unit_get_type(g, kp_unit_get_subunit(g, n))) : WEAPON_NONE;
 	return w;
 }
 
 /* 0x41fc20: the type's own ground weapon (none for an unburrowed Lurker). */
 static int64_t own_ground_weapon(KpGame *g, int64_t n)
 {
-	const KpUnits *u = &g->u;
-	if (u->type[n] == KP_TYPE_LURKER && !(u->status[n] & STATUS_BURROWED)) return WEAPON_NONE;
-	return KP_DAT(g, units, ground_weapon, u->type[n]);
+	if (kp_unit_get_type(g, n) == KP_TYPE_LURKER && !(kp_unit_get_status(g, n) & STATUS_BURROWED)) return WEAPON_NONE;
+	return KP_DAT(g, units, ground_weapon, kp_unit_get_type(g, n));
 }
 
-static int32_t hp_whole(KpGame *g, int64_t n) { return (int32_t)(g->u.hp[n] + 255) >> 8; }
+static int32_t hp_whole(KpGame *g, int64_t n) { return (int32_t)(kp_unit_get_hp(g, n) + 255) >> 8; }
 
 /* GetMaxHitPoints 0x409c90. */
 static int32_t max_hp(KpGame *g, int64_t n)
 {
-	int32_t m = (int32_t)KP_DAT(g, units, hit_points, g->u.type[n]) >> 8, c;
+	int32_t m = (int32_t)KP_DAT(g, units, hit_points, kp_unit_get_type(g, n)) >> 8, c;
 	if (m != 0) return m;
 	c = hp_whole(g, n);
 	return c ? c : 1;
@@ -331,16 +325,16 @@ static void cache_values(KpUi *ui)
 {
 	KpGame *g = game(ui);
 	int64_t n = status_unit(ui);
-	ui->status.hp[0] = (int32_t)g->u.hp[n];
-	ui->status.energy = (uint16_t)((g->u.energy[n] >> 8) & 0xff);
-	ui->status.shields = (int32_t)g->u.shields[n] >> 8;
+	ui->status.hp[0] = (int32_t)kp_unit_get_hp(g, n);
+	ui->status.energy = (uint16_t)((kp_unit_get_energy(g, n) >> 8) & 0xff);
+	ui->status.shields = (int32_t)kp_unit_get_shields(g, n) >> 8;
 }
 
 /* CacheSecondaryValue 0x4a5910. */
 static void cache_secondary(KpUi *ui)
 {
 	KpGame *g = game(ui);
-	int64_t n = status_unit(ui), t = g->u.type[n];
+	int64_t n = status_unit(ui), t = kp_unit_get_type(g, n);
 	if (t == KP_TYPE_CARRIER || t == KP_TYPE_GANTRITHOR || t == KP_TYPE_REAVER || t == KP_TYPE_WARBRINGER) {
 		uint8_t count = (uint8_t)kp_union_get(g, n, 0xc8, 1);
 		if (t == KP_TYPE_CARRIER || t == KP_TYPE_GANTRITHOR) count = (uint8_t)(count + kp_union_get(g, n, 0xc9, 1));
@@ -351,14 +345,14 @@ static void cache_secondary(KpUi *ui)
 		ui->status.secondary = 0;
 		return;
 	}
-	ui->status.secondary = (ui->status.secondary & 0xffffu) | (uint32_t)((uint16_t)g->u.remove_timer[n] / 10) << 16;
+	ui->status.secondary = (ui->status.secondary & 0xffffu) | (uint32_t)((uint16_t)kp_unit_get_remove_timer(g, n) / 10) << 16;
 }
 
 /* StatusNeedsProgressRefresh 0x4a5320. */
 static int needs_progress(KpUi *ui)
 {
 	KpGame *g = game(ui);
-	int64_t n = status_unit(ui), s = g->u.status[n];
+	int64_t n = status_unit(ui), s = kp_unit_get_status(g, n);
 	if (!owned(ui, n)) return 0;
 	if (kp_is_transport(g, n)) return !(s & STATUS_COMPLETED);
 	if (!(s & STATUS_COMPLETED)) return 1;
@@ -400,7 +394,7 @@ static void armor_slot(KpUi *ui, int slot)
 static void shield_slot(KpUi *ui, int slot)
 {
 	KpGame *g = game(ui);
-	uint8_t b = (uint8_t)kp_upgrade_level(g, g->u.owner[status_unit(ui)], UPG_PLASMA_SHIELDS);
+	uint8_t b = (uint8_t)kp_upgrade_level(g, kp_unit_get_owner(g, status_unit(ui)), UPG_PLASMA_SHIELDS);
 	fill_slot(ui, slot, b, SHIELD_ICON, K_SHIELDS, UPG_PLASMA_SHIELDS);
 	ui->status.upgrades = (uint16_t)(ui->status.upgrades + b);
 }
@@ -409,7 +403,7 @@ static void shield_slot(KpUi *ui, int slot)
 static void weapon_slot(KpUi *ui, int slot, int64_t w)
 {
 	KpGame *g = game(ui);
-	uint8_t b = (uint8_t)kp_upgrade_level(g, g->u.owner[status_unit(ui)], KP_DAT(g, weapons, damage_upgrade, w));
+	uint8_t b = (uint8_t)kp_upgrade_level(g, kp_unit_get_owner(g, status_unit(ui)), KP_DAT(g, weapons, damage_upgrade, w));
 	fill_slot(ui, slot, b, (uint16_t)KP_DAT(g, weapons, icon, w), K_WEAPON, (uint16_t)(w & 0xff));
 	ui->status.upgrades = (uint16_t)(ui->status.upgrades + b);
 }
@@ -418,7 +412,7 @@ static void weapon_slot(KpUi *ui, int slot, int64_t w)
 static void hangar_slot(KpUi *ui, int slot)
 {
 	KpGame *g = game(ui);
-	int64_t n = status_unit(ui), t = g->u.type[n];
+	int64_t n = status_unit(ui), t = kp_unit_get_type(g, n);
 	uint8_t count = 0;
 	uint16_t child = (uint16_t)kp_hangar_child_type(t);
 	if (t == KP_TYPE_REAVER || t == KP_TYPE_WARBRINGER) count = (uint8_t)kp_union_get(g, n, 0xc8, 1);
@@ -433,7 +427,7 @@ static int mine_slot(KpUi *ui, int slot)
 {
 	KpGame *g = game(ui);
 	int64_t n = status_unit(ui);
-	if (kp_can_use_tech(g, TECH_SPIDER_MINES, g->u.owner[n], n) != 1) return 0;
+	if (kp_can_use_tech(g, TECH_SPIDER_MINES, kp_unit_get_owner(g, n), n) != 1) return 0;
 	fill_slot(ui, slot, (uint8_t)kp_union_get(g, n, 0xc0, 1), 13, K_COUNT, 13);
 	return 1;
 }
@@ -449,7 +443,7 @@ static void nuke_slot(KpUi *ui, int slot)
 static void build_slots(KpUi *ui)
 {
 	KpGame *g = game(ui);
-	int64_t n = status_unit(ui), t = g->u.type[n];
+	int64_t n = status_unit(ui), t = kp_unit_get_type(g, n);
 	uint16_t s = 0;
 	int32_t k;
 	if (!hallucination(g, n) || !owned(ui, n)) {
@@ -476,16 +470,16 @@ static void build_slots(KpUi *ui)
 static void energy_text(KpUi *ui)
 {
 	KpGame *g = game(ui);
-	int64_t n = status_unit(ui), t = g->u.type[n];
+	int64_t n = status_unit(ui), t = kp_unit_get_type(g, n);
 	int32_t k = ctl(ui, C_ENERGY);
 	const void *text = NULL;
 	if ((special(g, t) & FLAG_SPELLCASTER) && !hallucination(g, n) && owned(ui, n)) {
-		snprintf(ui->status.energy_text, sizeof ui->status.energy_text, "\x04%d/%d", (int)((g->u.energy[n] >> 8) & 0xff),
+		snprintf(ui->status.energy_text, sizeof ui->status.energy_text, "\x04%d/%d", (int)((kp_unit_get_energy(g, n) >> 8) & 0xff),
 			(int)(kp_max_energy(g, n) >> 8));
 		text = ui->status.energy_text;
 	} else if ((hallucination(g, n) || t == KP_TYPE_BROODLING) && owned(ui, n)) {
 		snprintf(ui->status.energy_text, sizeof ui->status.energy_text, "\x04%d/%d",
-			(int)((uint16_t)g->u.remove_timer[n] / 10), (int)((uint16_t)kp_timed_life(g, n) / 10));
+			(int)((uint16_t)kp_unit_get_remove_timer(g, n) / 10), (int)((uint16_t)kp_timed_life(g, n) / 10));
 		text = ui->status.energy_text;
 	}
 	if (k < 0) return;
@@ -498,19 +492,19 @@ static void energy_text(KpUi *ui)
 static void hp_text(KpUi *ui)
 {
 	KpGame *g = game(ui);
-	int64_t n = status_unit(ui), t = g->u.type[n];
+	int64_t n = status_unit(ui), t = kp_unit_get_type(g, n);
 	int32_t m = (int32_t)KP_DAT(g, units, hit_points, t) >> 8, k = ctl(ui, C_HP);
 	int whole_zero = m == 0 && hp_whole(g, n) == 0;
 	const void *text = NULL;
 	if ((m == 0 ? (whole_zero || hp_whole(g, n) <= MAX_SHOWN) : m <= MAX_SHOWN)
-		&& (uint16_t)KP_DAT(g, units, shield_amount, t) <= MAX_SHOWN && !(g->u.status[n] & STATUS_INVINCIBLE)) {
+		&& (uint16_t)KP_DAT(g, units, shield_amount, t) <= MAX_SHOWN && !(kp_unit_get_status(g, n) & STATUS_INVINCIBLE)) {
 		uint32_t pct = hp_percent(g, n);
 		int colour = pct < 34 ? 6 : pct - 34 < 33 ? 3 : 7;
 		if (!KP_DAT(g, units, shield_enabled, t)) {
 			snprintf(ui->status.hp_text, sizeof ui->status.hp_text, "%c%d/%d", colour, (int)hp_whole(g, n),
 				(int)max_hp(g, n));
 		} else {
-			snprintf(ui->status.hp_text, sizeof ui->status.hp_text, "%d/%d %c%d/%d", (int)((int32_t)g->u.shields[n] >> 8),
+			snprintf(ui->status.hp_text, sizeof ui->status.hp_text, "%d/%d %c%d/%d", (int)((int32_t)kp_unit_get_shields(g, n) >> 8),
 				(int)(uint16_t)KP_DAT(g, units, shield_amount, displayed_type(g, n)), colour, (int)hp_whole(g, n),
 				(int)max_hp(g, n));
 		}
@@ -528,22 +522,21 @@ static void hp_text(KpUi *ui)
 static const uint8_t *rank_text(KpUi *ui, int64_t n)
 {
 	KpGame *g = game(ui);
-	int64_t t = g->u.type[n], f = special(g, t);
+	int64_t t = kp_unit_get_type(g, n), f = special(g, t);
 	if ((f & FLAG_NO_RANK) || t == 0xf || t == 0xd) return NULL;
 	if (t == KP_TYPE_GANTRITHOR) return KP_DAT(g, units, unit_map_string, t) == 0 ? stat_txt(ui, S_HERO_A) : NULL;
 	if ((t == 0xc || t == 0x1d || t == 0x1c) && (f & FLAG_HERO) && KP_DAT(g, units, unit_map_string, t) != 0) {
 		return stat_txt(ui, S_HERO_B);
 	}
 	if (race_of(g, n) != 1) return NULL;
-	return stat_txt(ui, (uint16_t)(S_RANK + (uint8_t)(KP_DAT(g, units, sublabel, t) + g->u.rank[n])));
+	return stat_txt(ui, (uint16_t)(S_RANK + (uint8_t)(KP_DAT(g, units, sublabel, t) + kp_unit_get_rank(g, n))));
 }
 
 /* SetStatusLineText 0x4a40a0. */
 static void status_line(KpUi *ui)
 {
 	KpGame *g = game(ui);
-	int64_t n = status_unit(ui), s = g->u.status[n], t = g->u.type[n];
-	const KpUnits *u = &g->u;
+	int64_t n = status_unit(ui), s = kp_unit_get_status(g, n), t = kp_unit_get_type(g, n);
 	if (hallucination(g, n) && owned(ui, n)) {
 		set_text(ui, C_STATUS, stat_txt(ui, S_HALLUCINATION));
 		return;
@@ -553,17 +546,17 @@ static void status_line(KpUi *ui)
 		set_text(ui, C_STATUS, stat_txt(ui, (uint32_t)(S_DISABLED + race_of(g, n))));
 		return;
 	}
-	if (u->acid_spores[n] != 0 && (s & STATUS_COMPLETED)) {
+	if (kp_unit_get_acid_spores(g, n) != 0 && (s & STATUS_COMPLETED)) {
 		snprintf(ui->status.lines[0], sizeof ui->status.lines[0], "%s (%d)", (const char *)stat_txt(ui, S_ACID_SPORES),
-			(int)(int8_t)u->acid_spores[n]);
+			(int)(int8_t)kp_unit_get_acid_spores(g, n));
 		set_text(ui, C_STATUS, ui->status.lines[0]);
 		return;
 	}
-	if (u->blind[n] != 0 && (s & STATUS_COMPLETED)) {
+	if (kp_unit_get_blind(g, n) != 0 && (s & STATUS_COMPLETED)) {
 		set_text(ui, C_STATUS, stat_txt(ui, S_BLIND));
 		return;
 	}
-	if (u->parasites[n] != 0 && (s & STATUS_COMPLETED)) {
+	if (kp_unit_get_parasites(g, n) != 0 && (s & STATUS_COMPLETED)) {
 		set_text(ui, C_STATUS, stat_txt(ui, S_PARASITE));
 		return;
 	}
@@ -578,11 +571,11 @@ static void status_line(KpUi *ui)
 static void kills_text(KpUi *ui)
 {
 	KpGame *g = game(ui);
-	int64_t n = status_unit(ui), t = g->u.type[n];
+	int64_t n = status_unit(ui), t = kp_unit_get_type(g, n);
 	if (t != KP_TYPE_SCOURGE && t != KP_TYPE_INFESTED_TERRAN && (!hallucination(g, n) || !owned(ui, n))
-		&& (kp_unit_has_weapon(g, n) || (uint8_t)g->u.kills[n] != 0)) {
+		&& (kp_unit_has_weapon(g, n) || (uint8_t)kp_unit_get_kills(g, n) != 0)) {
 		snprintf(ui->status.lines[2], sizeof ui->status.lines[2], "%s %d", (const char *)stat_txt(ui, S_KILLS),
-			(int)(uint8_t)g->u.kills[n]);
+			(int)(uint8_t)kp_unit_get_kills(g, n));
 		set_text(ui, C_KILLS, ui->status.lines[2]);
 		return;
 	}
@@ -657,7 +650,7 @@ static void draw_queue(KpUi *ui)
 		}
 		dirty(ui, k);
 	}
-	if ((g->u.status[n] & STATUS_GROUNDED_BUILDING) && disabled(g, n)) label = S_DISABLED;
+	if ((kp_unit_get_status(g, n) & STATUS_GROUNDED_BUILDING) && disabled(g, n)) label = S_DISABLED;
 	else if (displayed_type(g, n) == KP_TYPE_GATEWAY || displayed_type(g, n) == KP_TYPE_STARGATE) label = S_MORPHING;
 	else label = S_BUILDING;
 	set_text(ui, C_QUEUE_LABEL, stat_txt(ui, (uint32_t)(label + race_of(g, n))));
@@ -682,7 +675,7 @@ static void draw_research(KpUi *ui, int upgrade)
 	enter_mode(ui, (uint8_t)(upgrade ? M_UPGRADE : M_RESEARCH), C_RESEARCH_LABEL, C_RESEARCH, 0);
 	if (upgrade) {
 		id = kp_union_get(g, n, 0xc9, 1);
-		total = (uint16_t)((uint32_t)(uint8_t)kp_upgrade_level(g, g->u.owner[n], id)
+		total = (uint16_t)((uint32_t)(uint8_t)kp_upgrade_level(g, kp_unit_get_owner(g, n), id)
 			* (uint32_t)KP_DAT(g, upgrades, research_time_factor, id) + (uint32_t)KP_DAT(g, upgrades, research_time_base, id));
 	} else {
 		id = kp_union_get(g, n, 0xc8, 1);
@@ -719,7 +712,7 @@ static void draw_addon(KpUi *ui)
 static void draw_supply(KpUi *ui)
 {
 	KpGame *g = game(ui);
-	int64_t n = status_unit(ui), p = g->u.owner[n], t;
+	int64_t n = status_unit(ui), p = kp_unit_get_owner(g, n), t;
 	int r = race_of(g, n);
 	int32_t used, total;
 	if (!owned(ui, n)) {
@@ -740,7 +733,7 @@ static void draw_supply(KpUi *ui)
 	set_text(ui, C_SUPPLY_2, ui->status.lines[2]);
 	set_text(ui, C_SUPPLY_3, ui->status.lines[3]);
 	set_text(ui, C_SUPPLY_4, ui->status.lines[4]);
-	t = g->u.type[n];
+	t = kp_unit_get_type(g, n);
 	if (KP_DAT(g, units, shield_enabled, t)) shield_slot(ui, 0);
 	else if (t == KP_TYPE_OVERLORD || t == KP_TYPE_YGGDRASILL) armor_slot(ui, 0);
 	else hide(ui, slot_control(ui, 0));
@@ -756,14 +749,14 @@ static void draw_resource(KpUi *ui)
 	set_text(ui, C_SUPPLY_1, NULL);
 	set_text(ui, C_SUPPLY_3, NULL);
 	set_text(ui, C_SUPPLY_4, NULL);
-	if (!kp_mineral_field(g->u.type[n]) && amount == 0) {
+	if (!kp_mineral_field(kp_unit_get_type(g, n)) && amount == 0) {
 		set_text(ui, C_SUPPLY_2, stat_txt(ui, S_DEPLETED));
 	} else {
 		snprintf(ui->status.lines[1], sizeof ui->status.lines[1], "%s %d",
-			(const char *)stat_txt(ui, kp_mineral_field(g->u.type[n]) ? S_MINERALS : S_GAS), (int)(int16_t)amount);
+			(const char *)stat_txt(ui, kp_mineral_field(kp_unit_get_type(g, n)) ? S_MINERALS : S_GAS), (int)(int16_t)amount);
 		set_text(ui, C_SUPPLY_2, ui->status.lines[1]);
 	}
-	if (KP_DAT(g, units, shield_enabled, g->u.type[n])) shield_slot(ui, 0);
+	if (KP_DAT(g, units, shield_enabled, kp_unit_get_type(g, n))) shield_slot(ui, 0);
 	else hide(ui, slot_control(ui, 0));
 }
 
@@ -775,7 +768,7 @@ static void draw_silo(KpUi *ui)
 	if ((uint16_t)queue_at(g, n, 0) <= TRAINABLE_LAST) {
 		int32_t k = ctl(ui, C_QUEUE);
 		int64_t target = work_target(g, n);
-		uint16_t t = target ? (uint16_t)g->u.type[target] : 0;
+		uint16_t t = target ? (uint16_t)kp_unit_get_type(g, target) : 0;
 		if (ui->status.mode != M_SILO) {
 			hide_after_hp(ui);
 			ui->status.mode = M_SILO;
@@ -803,7 +796,7 @@ static void draw_silo(KpUi *ui)
 static void draw_building(KpUi *ui)
 {
 	KpGame *g = game(ui);
-	int64_t n = status_unit(ui), t = g->u.type[n];
+	int64_t n = status_unit(ui), t = kp_unit_get_type(g, n);
 	cache_values(ui);
 	ui->status.progress = (uint8_t)needs_progress(ui);
 	cache_secondary(ui);
@@ -811,7 +804,7 @@ static void draw_building(KpUi *ui)
 		draw_resource(ui);
 	} else if (!owned(ui, n)) {
 		enter_mode(ui, M_PLAIN, 0, 0, 0);
-	} else if (!(g->u.status[n] & STATUS_COMPLETED)) {
+	} else if (!(kp_unit_get_status(g, n) & STATUS_COMPLETED)) {
 		draw_construction(ui);
 	} else if (t == KP_TYPE_NUCLEAR_SILO) {
 		draw_silo(ui);
@@ -827,7 +820,7 @@ static void draw_building(KpUi *ui)
 		draw_research(ui, 1);
 	} else if (KP_DAT(g, units, supply_provided, t) != 0) {
 		draw_supply(ui);
-	} else if (kp_gas_building(t) && (g->u.status[n] & STATUS_COMPLETED)) {
+	} else if (kp_gas_building(t) && (kp_unit_get_status(g, n) & STATUS_COMPLETED)) {
 		draw_resource(ui);
 	} else if (KP_DAT(g, units, air_weapon, displayed_type(g, n)) == WEAPON_NONE && own_ground_weapon(g, n) == WEAPON_NONE
 		&& !KP_DAT(g, units, shield_enabled, t)) {
@@ -887,7 +880,7 @@ static void draw_archon(KpUi *ui)
 {
 	KpGame *g = game(ui);
 	int64_t n = status_unit(ui);
-	if (!owned(ui, n) || g->u.order[n] != ORDER_COMPLETING_ARCHON) {
+	if (!owned(ui, n) || kp_unit_get_order(g, n) != ORDER_COMPLETING_ARCHON) {
 		draw_generic(ui);
 		return;
 	}
@@ -917,7 +910,7 @@ static void layout_cargo(KpUi *ui)
 		at(ui, k)->slot.unit = 0;
 		if (at(ui, k)->id == C_CARGO_LAST) break;
 	}
-	if (KP_DAT(g, units, space_provided, g->u.type[n]) >= 7) {
+	if (KP_DAT(g, units, space_provided, kp_unit_get_type(g, n)) >= 7) {
 		big = 18;
 		medium = 21;
 		small = 25;
@@ -932,11 +925,11 @@ static void layout_cargo(KpUi *ui)
 			int64_t c = kp_cargo_unit(g, n, i);
 			int16_t id;
 			uint16_t frame;
-			if (c == 0 || KP_DAT(g, units, space_required, g->u.type[c]) != size) continue;
+			if (c == 0 || KP_DAT(g, units, space_required, kp_unit_get_type(g, c)) != size) continue;
 			id = size == 4 ? big : size == 2 ? medium : small;
 			if (hallucination(g, c)) frame = FRAMES[row][0];
-			else if (special(g, g->u.type[c]) & FLAG_HERO) frame = FRAMES[row][1];
-			else frame = g->u.parasites[c] ? FRAMES[row][2] : FRAMES[row][3];
+			else if (special(g, kp_unit_get_type(g, c)) & FLAG_HERO) frame = FRAMES[row][1];
+			else frame = kp_unit_get_parasites(g, c) ? FRAMES[row][2] : FRAMES[row][3];
 			k = ctl(ui, id);
 			if (k >= 0) {
 				at(ui, k)->wuser = frame;
@@ -961,13 +954,11 @@ static void cache_cargo(KpUi *ui)
 {
 	KpGame *g = game(ui);
 	int64_t n = status_unit(ui);
-	const int64_t *loaded[8] = { g->u.loaded0, g->u.loaded1, g->u.loaded2, g->u.loaded3, g->u.loaded4, g->u.loaded5,
-		g->u.loaded6, g->u.loaded7 };
 	int i;
 	for (i = 0; i < 8; i++) {
 		int64_t c = kp_cargo_unit(g, n, i);
-		ui->status.cargo[i] = (uint16_t)loaded[i][n];
-		ui->status.hp[1 + i] = c ? (int32_t)g->u.hp[c] : 0;
+		ui->status.cargo[i] = (uint16_t)kp_unit_get_loaded(g, n, i);
+		ui->status.hp[1 + i] = c ? (int32_t)kp_unit_get_hp(g, c) : 0;
 	}
 	ui->status.progress = (uint8_t)needs_progress(ui);
 	cache_values(ui);
@@ -992,7 +983,7 @@ static void draw_transport(KpUi *ui)
 			return;
 		}
 	}
-	if (g->u.status[n] & STATUS_GROUNDED_BUILDING) draw_building(ui);
+	if (kp_unit_get_status(g, n) & STATUS_GROUNDED_BUILDING) draw_building(ui);
 	else draw_generic(ui);
 }
 
@@ -1022,7 +1013,7 @@ static void draw_powerup(KpUi *ui)
 		hide_all(ui);
 		ui->status.mode = M_POWERUP;
 	}
-	ui->status.hp[0] = (int32_t)game(ui)->u.hp[status_unit(ui)];
+	ui->status.hp[0] = (int32_t)kp_unit_get_hp(game(ui), status_unit(ui));
 	build_slots(ui);
 	hp_text(ui);
 	status_line(ui);
@@ -1036,8 +1027,8 @@ static void cache_multi(KpUi *ui)
 	int i;
 	for (i = 0; i < KP_UI_SLOTS; i++) {
 		int64_t n = ui->hud.selection[i];
-		ui->status.hp[i] = n ? (int32_t)g->u.hp[n] : 0;
-		ui->status.types[i] = n ? (uint16_t)g->u.type[n] : TYPE_NONE;
+		ui->status.hp[i] = n ? (int32_t)kp_unit_get_hp(g, n) : 0;
+		ui->status.types[i] = n ? (uint16_t)kp_unit_get_type(g, n) : TYPE_NONE;
 	}
 }
 
@@ -1057,7 +1048,7 @@ static void draw_multi(KpUi *ui)
 		int64_t n = ui->hud.selection[i];
 		if (n == 0) continue;
 		at(ui, k)->slot.unit = n;
-		at(ui, k)->slot.frame = (uint16_t)game(ui)->u.type[n];
+		at(ui, k)->slot.frame = (uint16_t)kp_unit_get_type(game(ui), n);
 		at(ui, k)->user = (uint32_t)n;
 		show(ui, k);
 		dirty(ui, k);
@@ -1076,7 +1067,7 @@ static void draw_multi(KpUi *ui)
 static int secondary_changed(KpUi *ui)
 {
 	KpGame *g = game(ui);
-	int64_t n = status_unit(ui), t = g->u.type[n];
+	int64_t n = status_unit(ui), t = kp_unit_get_type(g, n);
 	uint32_t v = ui->status.secondary;
 	int h = 0;
 	if (t == KP_TYPE_CARRIER || t == KP_TYPE_GANTRITHOR) {
@@ -1086,12 +1077,12 @@ static int secondary_changed(KpUi *ui)
 	}
 	if (hallucination(g, n) || t == KP_TYPE_BROODLING) {
 		if (h) return 1;
-		return (v >> 16) != (uint32_t)((uint16_t)g->u.remove_timer[n] / 10);
+		return (v >> 16) != (uint32_t)((uint16_t)kp_unit_get_remove_timer(g, n) / 10);
 	}
 	if (KP_DAT(g, units, supply_provided, t) != 0) {
 		int r = race_of(g, n);
-		if ((v & 0xffff) != (uint32_t)kp_supply_provided_capped(g, r, g->u.owner[n])) return 1;
-		return (v >> 16) != (uint32_t)kp_supply_used(g, r, g->u.owner[n]);
+		if ((v & 0xffff) != (uint32_t)kp_supply_provided_capped(g, r, kp_unit_get_owner(g, n))) return 1;
+		return (v >> 16) != (uint32_t)kp_supply_used(g, r, kp_unit_get_owner(g, n));
 	}
 	if (special(g, t) & FLAG_RESOURCE_CONTAINER) return (uint16_t)v != (uint16_t)kp_union_get(g, n, 0xd0, 2);
 	return v != 0;
@@ -1101,12 +1092,12 @@ static int hp_or_shields_changed(KpUi *ui)
 {
 	KpGame *g = game(ui);
 	int64_t n = status_unit(ui);
-	return ui->status.hp[0] != (int32_t)g->u.hp[n] || ui->status.shields != ((int32_t)g->u.shields[n] >> 8);
+	return ui->status.hp[0] != (int32_t)kp_unit_get_hp(g, n) || ui->status.shields != ((int32_t)kp_unit_get_shields(g, n) >> 8);
 }
 
 static int energy_changed(KpUi *ui)
 {
-	return ui->status.energy != (uint16_t)((game(ui)->u.energy[status_unit(ui)] >> 8) & 0xff);
+	return ui->status.energy != (uint16_t)((kp_unit_get_energy(game(ui), status_unit(ui)) >> 8) & 0xff);
 }
 
 /* NeedsRefreshDefault 0x4a55e0. */
@@ -1132,15 +1123,13 @@ static int refresh_transport(KpUi *ui)
 {
 	KpGame *g = game(ui);
 	int64_t n = status_unit(ui);
-	const int64_t *loaded[8] = { g->u.loaded0, g->u.loaded1, g->u.loaded2, g->u.loaded3, g->u.loaded4, g->u.loaded5,
-		g->u.loaded6, g->u.loaded7 };
 	int i;
 	if (!owned(ui, n)) return refresh_default(ui);
 	for (i = 0; i < 8; i++) {
 		int64_t c;
-		if (ui->status.cargo[i] != (uint16_t)loaded[i][n]) return 1;
+		if (ui->status.cargo[i] != (uint16_t)kp_unit_get_loaded(g, n, i)) return 1;
 		c = kp_cargo_unit(g, n, i);
-		if (c != 0 && ui->status.hp[1 + i] != (int32_t)g->u.hp[c]) return 1;
+		if (c != 0 && ui->status.hp[1 + i] != (int32_t)kp_unit_get_hp(g, c)) return 1;
 	}
 	if (ui->status.progress || hp_or_shields_changed(ui)) return 1;
 	if (!owned(ui, n)) return 0;
@@ -1156,8 +1145,8 @@ static int refresh_supply(KpUi *ui)
 	int r;
 	if (!owned(ui, n)) return refresh_default(ui);
 	r = race_of(g, n);
-	return (ui->status.secondary & 0xffff) != (uint32_t)kp_supply_provided_capped(g, r, g->u.owner[n])
-		|| (ui->status.secondary >> 16) != (uint32_t)kp_supply_used(g, r, g->u.owner[n]);
+	return (ui->status.secondary & 0xffff) != (uint32_t)kp_supply_provided_capped(g, r, kp_unit_get_owner(g, n))
+		|| (ui->status.secondary >> 16) != (uint32_t)kp_supply_used(g, r, kp_unit_get_owner(g, n));
 }
 
 /* 0x4a53a0 (Overlords). */
@@ -1167,7 +1156,7 @@ static int refresh_overlord(KpUi *ui)
 	int64_t n = status_unit(ui);
 	if (hp_or_shields_changed(ui)) return 1;
 	if (kp_has_cargo(g, n)) return refresh_transport(ui);
-	return KP_DAT(g, units, supply_provided, g->u.type[n]) != 0 && refresh_supply(ui);
+	return KP_DAT(g, units, supply_provided, kp_unit_get_type(g, n)) != 0 && refresh_supply(ui);
 }
 
 static int needs_refresh(KpUi *ui, uint32_t address)
@@ -1175,12 +1164,12 @@ static int needs_refresh(KpUi *ui, uint32_t address)
 	KpGame *g = game(ui);
 	int64_t n = status_unit(ui);
 	switch (address) {
-	case 0x4a5160: return g->u.order[n] == ORDER_COMPLETING_ARCHON || refresh_default(ui);
+	case 0x4a5160: return kp_unit_get_order(g, n) == ORDER_COMPLETING_ARCHON || refresh_default(ui);
 	case 0x4a5180: return refresh_building(ui);
 	case 0x4a51f0: return (owned(ui, n) && (uint16_t)queue_at(g, n, 0) <= TRAINABLE_LAST) || refresh_default(ui);
 	case 0x4a52a0: return owned(ui, n) || refresh_default(ui);
 	case 0x4a53a0: return refresh_overlord(ui);
-	case 0x4a53f0: return ui->status.hp[0] != (int32_t)g->u.hp[n];
+	case 0x4a53f0: return ui->status.hp[0] != (int32_t)kp_unit_get_hp(g, n);
 	case 0x4a5410: return refresh_transport(ui);
 	case 0x4a55e0: return refresh_default(ui);
 	default: return 0; /* 0x4b8e80 ReturnFalse */
@@ -1300,7 +1289,7 @@ static void reset_wire_remap(KpUi *ui)
 static void wire_colours(KpUi *ui, int64_t n)
 {
 	KpGame *g = game(ui);
-	uint8_t mark = ui->status.twire[TWIRE_MARK], random = (uint8_t)g->u.wireframe[n];
+	uint8_t mark = ui->status.twire[TWIRE_MARK], random = (uint8_t)kp_unit_get_wireframe(g, n);
 	int32_t m = max_hp(g, n), row, k;
 	const uint8_t (*table)[4] = (random & 1) ? HP_COLOURS_A : HP_COLOURS_B;
 	int64_t dt = displayed_type(g, n), max_shields;
@@ -1316,8 +1305,8 @@ static void wire_colours(KpUi *ui, int64_t n)
 		ui->remap[REMAP_HP + s] = ui->status.twire[table[row][k] % 24];
 	}
 	max_shields = (uint16_t)KP_DAT(g, units, shield_amount, dt);
-	if (KP_DAT(g, units, shield_enabled, g->u.type[n]) && max_shields != 0) {
-		int32_t r = (((int32_t)g->u.shields[n] >> 8) * 7) / (int32_t)max_shields;
+	if (KP_DAT(g, units, shield_enabled, kp_unit_get_type(g, n)) && max_shields != 0) {
+		int32_t r = (((int32_t)kp_unit_get_shields(g, n) >> 8) * 7) / (int32_t)max_shields;
 		if (r < 0) r = 0;
 		if (r > 7) r = 7;
 		ui->remap[REMAP_SHIELDS] = ui->status.twire[SHIELD_COLOURS[r][0]];
@@ -1363,8 +1352,8 @@ static void draw_selection_box(KpUi *ui, KpUiControl *c, int32_t x, int32_t y, c
 	(void)clip;
 	if (n == 0) return;
 	if (hallucination(g, n)) c->wuser = 31;
-	else if (special(g, g->u.type[n]) & FLAG_HERO) c->wuser = 19;
-	else c->wuser = g->u.parasites[n] ? 25 : 13;
+	else if (special(g, kp_unit_get_type(g, n)) & FLAG_HERO) c->wuser = 19;
+	else c->wuser = kp_unit_get_parasites(g, n) ? 25 : 13;
 	button_background(ui, c);
 	wire_colours(ui, n);
 	draw_wire_centred(ui, c, ui->status.grpwire, c->slot.frame);
@@ -1381,7 +1370,7 @@ static void draw_cargo_box(KpUi *ui, KpUiControl *c, int32_t x, int32_t y, const
 	button_background(ui, c);
 	if (n == 0) return;
 	wire_colours(ui, n);
-	draw_wire_centred(ui, c, ui->status.tranwire, (int)game(ui)->u.type[n]);
+	draw_wire_centred(ui, c, ui->status.tranwire, (int)kp_unit_get_type(game(ui), n));
 	reset_wire_remap(ui);
 }
 
@@ -1461,7 +1450,7 @@ static void tooltip_at(KpUi *ui, const KpUiControl *c, const uint8_t *text)
 /* The weapon's damage factor (0x420e40, 0x420eb0): 2 for the Firebats and Zealots, 1 for the Valkyrie. */
 static uint32_t damage_factor(KpGame *g, int64_t n, int64_t w)
 {
-	int64_t t = g->u.type[n];
+	int64_t t = kp_unit_get_type(g, n);
 	uint32_t f = (uint8_t)KP_DAT(g, weapons, damage_factor, w);
 	if (t == KP_TYPE_FIREBAT || t == KP_TYPE_GUI_MONTAG || t == KP_TYPE_ZEALOT || t == KP_TYPE_FENIX_ZEALOT) f = 2;
 	if (t == KP_TYPE_VALKYRIE) f = 1;
@@ -1472,7 +1461,7 @@ static uint32_t damage_factor(KpGame *g, int64_t n, int64_t w)
 static uint16_t weapon_bonus(KpGame *g, int64_t n, int64_t w)
 {
 	return (uint16_t)((uint32_t)(uint16_t)KP_DAT(g, weapons, damage_bonus, w)
-		* (uint8_t)kp_upgrade_level(g, g->u.owner[n], KP_DAT(g, weapons, damage_upgrade, w)) * damage_factor(g, n, w));
+		* (uint8_t)kp_upgrade_level(g, kp_unit_get_owner(g, n), KP_DAT(g, weapons, damage_upgrade, w)) * damage_factor(g, n, w));
 }
 
 static uint16_t weapon_damage(KpGame *g, int64_t n, int64_t w)
@@ -1509,10 +1498,10 @@ static void weapon_armor_tooltip(KpUi *ui, const KpUiControl *c)
 	case K_ARMOR:
 		b = (uint8_t)kp_armor_bonus(g, n);
 		value_text(buf, txt(ui, (uint32_t)KP_DAT(g, upgrades, label, c->slot.id)), txt(ui, S_ARMOR),
-			(uint8_t)KP_DAT(g, units, armor, g->u.type[n]), b);
+			(uint8_t)KP_DAT(g, units, armor, kp_unit_get_type(g, n)), b);
 		break;
 	case K_SHIELDS:
-		b = (uint8_t)kp_upgrade_level(g, g->u.owner[n], UPG_PLASMA_SHIELDS);
+		b = (uint8_t)kp_upgrade_level(g, kp_unit_get_owner(g, n), UPG_PLASMA_SHIELDS);
 		value_text(buf, txt(ui, (uint32_t)KP_DAT(g, upgrades, label, c->slot.id)), txt(ui, S_SHIELDS), 0, b);
 		break;
 	case K_COUNT: {
@@ -1555,7 +1544,7 @@ static void status_tooltip(KpUi *ui, int32_t k)
 	}
 	if ((c->id >= C_QUEUE && c->id <= C_QUEUE + 4) || c->id == C_ADDON) {
 		/* ShowQueueSlotTooltip 0x4a19e0 */
-		int64_t t = g->u.type[n];
+		int64_t t = kp_unit_get_type(g, n);
 		if (c->slot.kind == K_COUNT
 			&& (!(t == TYPE_EGG || t == TYPE_COCOON || t == TYPE_LURKER_EGG) || !disabled(g, n))) {
 			format_s(buf, TOOLTIP_TEXT, stat_txt(ui, S_QUEUED + (uint32_t)race_of(g, n)),
@@ -1661,7 +1650,7 @@ static void send_cancel(KpUi *ui, KpUiControl *c)
 		else return;
 		kp_ui_queue_command(ui, cmd, 1);
 	} else if (c->id == C_ADDON && n != 0) {
-		int64_t t = g->u.type[n];
+		int64_t t = kp_unit_get_type(g, n);
 		if (!(t == TYPE_EGG || t == TYPE_COCOON || t == TYPE_LURKER_EGG)) cmd[0] = CMD_CANCEL_ADDON;
 		else if (!disabled(g, n)) cmd[0] = CMD_CANCEL_CONSTRUCTION;
 		else return;
@@ -1682,7 +1671,7 @@ static void box_click(KpUi *ui, KpUiControl *c)
 			const KpUiControl *b = &ui->controls[k];
 			if (b->id < C_BOX_FIRST || b->id > C_BOX_LAST) break;
 			if (!(b->flags & KP_UI_VISIBLE) || b->slot.unit == 0) continue;
-			if (ui->input.keys[0] ? b != c : g->u.type[b->slot.unit] == g->u.type[u]) list[n++] = b->slot.unit;
+			if (ui->input.keys[0] ? b != c : kp_unit_get_type(g, b->slot.unit) == kp_unit_get_type(g, u)) list[n++] = b->slot.unit;
 		}
 	} else if (u != 0) {
 		list[n++] = u;
@@ -1908,7 +1897,7 @@ void kp_ui_status_frame(KpUi *ui)
 			ui->status.mode = M_NAME;
 		}
 	} else if (ui->hud.selection_count == 1) {
-		int64_t t = game(ui)->u.type[n];
+		int64_t t = kp_unit_get_type(game(ui), n);
 		if (ui->hud.status_refresh || needs_refresh(ui, layout_word(ui, t, 0))) {
 			draw_layout(ui, layout_word(ui, t, 1));
 			update_wireframe(ui);
@@ -1918,7 +1907,7 @@ void kp_ui_status_frame(KpUi *ui)
 		int i, changed = 0;
 		for (i = 0; i < KP_UI_SLOTS && !changed; i++) { /* MultiSelectionChanged 0x4a52d0 */
 			int64_t m = ui->hud.selection[i];
-			if (m != 0 && (ui->status.hp[i] != (int32_t)game(ui)->u.hp[m] || ui->status.types[i] != (uint16_t)game(ui)->u.type[m])) {
+			if (m != 0 && (ui->status.hp[i] != (int32_t)kp_unit_get_hp(game(ui), m) || ui->status.types[i] != (uint16_t)kp_unit_get_type(game(ui), m))) {
 				changed = 1;
 			}
 		}

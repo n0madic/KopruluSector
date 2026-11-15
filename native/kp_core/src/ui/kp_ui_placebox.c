@@ -59,7 +59,7 @@ static void draw_ghost(KpUi *ui, KpUiSurface *target, uint16_t type)
 	if (order == KP_ORD_BUILDING_LAND || (order == KP_ORD_PLACE_ADDON && type == 0)) {
 		owner = g->w->spr.owner[kp_unit_sprite(g, status)];
 	} else {
-		owner = g->u.owner[status];
+		owner = kp_unit_get_owner(g, status);
 	}
 	memcpy(remap, ui->remap, sizeof remap);
 	memcpy(ui->remap + 8, ui->player_colours[kp_ui_player_row(ui, owner % 12) % 12], 8); /* SetDrawColor 0x41d740 */
@@ -106,7 +106,7 @@ static int64_t check_placement(KpUi *ui, int64_t tx, int64_t ty)
 	KpGame *g = ui->game;
 	KpUiPlacement *pl = &ui->placement;
 	uint16_t type = (uint16_t)kp_scalar(g, KP_PLACEMENT_TYPE), parent = ui->input.placement_parent;
-	int64_t status = ui->hud.status_unit, owner = status ? g->u.owner[status] : g->local_player, e, e2 = 0;
+	int64_t status = ui->hud.status_unit, owner = status ? kp_unit_get_owner(g, status) : g->local_player, e, e2 = 0;
 	e = kp_validate_placement_cells(g, status, owner, tx, ty, type, 1, 0, 0, pl->cells[1]);
 	if (parent != 0) { /* add-on mode: the parent at its place for the add-on */
 		e2 = kp_validate_placement_cells(g, status, owner, tx - (int16_t)KP_DAT(g, units, addon_position, type * 2) / 32,
@@ -180,7 +180,7 @@ void kp_ui_placement_anchor(KpUi *ui, int64_t parent)
 {
 	KpUiPlacement *pl = &ui->placement;
 	KpGame *g = ui->game;
-	uint16_t type = (uint16_t)kp_scalar(g, KP_PLACEMENT_TYPE), parent_type = (uint16_t)g->u.type[parent];
+	uint16_t type = (uint16_t)kp_scalar(g, KP_PLACEMENT_TYPE), parent_type = (uint16_t)kp_unit_get_type(g, parent);
 	int32_t sprite = kp_unit_sprite(g, parent), x, y, cx, cy;
 	int64_t tx, ty, ctx, cty;
 	pl->anchored = 0;

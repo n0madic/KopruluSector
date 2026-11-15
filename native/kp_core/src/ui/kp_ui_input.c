@@ -148,7 +148,7 @@ size_t kp_ui_take_command(KpUi *ui, uint8_t *out, size_t capacity)
 
 uint16_t kp_ui_unit_ref(struct KpGame *g, int64_t n)
 {
-	return (uint16_t)((n & 0x7ff) | (g->u.uniqueness[n] & 0x1f) << UNIQUE_SHIFT);
+	return (uint16_t)((n & 0x7ff) | (kp_unit_get_uniqueness(g, n) & 0x1f) << UNIQUE_SHIFT);
 }
 
 /* SendSelectionCommands 0x474130: the new local selection against the network's mirror, as one select command or
@@ -235,7 +235,7 @@ static void select_locally(KpUi *ui, const int64_t *units, int n, int sound, int
 
 static int group_kept(KpGame *g, int64_t u, int n)
 {
-	return u != 0 && !(g->w->spr.flags[kp_unit_sprite(g, u)] & KP_SF_HIDDEN) && g->u.owner[u] == g->local_player
+	return u != 0 && !(g->w->spr.flags[kp_unit_sprite(g, u)] & KP_SF_HIDDEN) && kp_unit_get_owner(g, u) == g->local_player
 		&& (kp_multi_selectable(g, u) || n <= 1);
 }
 
@@ -322,10 +322,10 @@ static void flash_rally(KpUi *ui, int64_t n)
 {
 	KpGame *g = game(ui);
 	int64_t x, y;
-	if (n == 0 || g->u.owner[n] != g->local_player || !kp_rally_producer(g->u.type[n])) return;
-	x = g->u.rally_x[n];
-	y = g->u.rally_y[n];
-	if ((x == 0 && y == 0) || (x == g->u.x[n] && y == g->u.y[n])) return;
+	if (n == 0 || kp_unit_get_owner(g, n) != g->local_player || !kp_rally_producer(kp_unit_get_type(g, n))) return;
+	x = kp_unit_get_rally_x(g, n);
+	y = kp_unit_get_rally_y(g, n);
+	if ((x == 0 && y == 0) || (x == kp_unit_get_x(g, n) && y == kp_unit_get_y(g, n))) return;
 	kp_mark_target(g, x, y, 0);
 }
 
@@ -380,7 +380,7 @@ static int recall_group_of(KpUi *ui, int64_t unit)
 
 /* --- the units under the mouse --- */
 
-static uint32_t unit_flags(KpGame *g, int64_t n) { return (uint32_t)KP_DAT(g, units, special_ability_flags, g->u.type[n]); }
+static uint32_t unit_flags(KpGame *g, int64_t n) { return (uint32_t)KP_DAT(g, units, special_ability_flags, kp_unit_get_type(g, n)); }
 
 /* IsUnselectableType 0x4bc730: the types 14, 85, 105, 202 and 205-208. */
 static int unselectable(int64_t t)
@@ -400,7 +400,7 @@ static int visible(KpGame *g, int64_t n)
 		return 0;
 	}
 	if (!(sprite & vision & 0xff)) return 0;
-	return !(g->u.status[n] & STATUS_CLOAKED) || (g->u.visibility[n] & vision);
+	return !(kp_unit_get_status(g, n) & STATUS_CLOAKED) || (kp_unit_get_visibility(g, n) & vision);
 }
 
 /* GetSpriteClickableBounds 0x4160e0 with IsPointInSpriteBounds 0x416980. */
@@ -456,7 +456,7 @@ static int unit_hit(KpGame *g, int64_t n, int32_t x, int32_t y, int subunit)
 		int hit = (unit_flags(g, n) & DAT_SPRITE_HIT) ? sprite_hit(w, s, x, y) : image_hit(w, w->spr.main[s], x, y);
 		if (hit) return 1;
 	}
-	return !subunit && g->u.subunit[n] != 0 && unit_hit(g, g->u.subunit[n], x, y, 1);
+	return !subunit && kp_unit_get_subunit(g, n) != 0 && unit_hit(g, kp_unit_get_subunit(g, n), x, y, 1);
 }
 
 static int32_t placement_area(KpGame *g, int64_t t)
@@ -479,10 +479,10 @@ static int64_t pick_unit(KpUi *ui, int32_t x, int32_t y)
 		int64_t u = found[k];
 		int32_t a;
 		if (!in_sprite_bounds(w, kp_unit_sprite(g, u), x, y)) continue;
-		if (unit_flags(g, u) & DAT_SUBUNIT) u = g->u.subunit[u];
-		if (!visible(g, u) || unselectable(g->u.type[u])) continue;
+		if (unit_flags(g, u) & DAT_SUBUNIT) u = kp_unit_get_subunit(g, u);
+		if (!visible(g, u) || unselectable(kp_unit_get_type(g, u))) continue;
 		if (best == 0) {
-			a = placement_area(g, g->u.type[u]);
+			a = placement_area(g, kp_unit_get_type(g, u));
 		} else if (kp_sprite_depth_key(w, kp_unit_sprite(g, best)) < kp_sprite_depth_key(w, kp_unit_sprite(g, u))) {
 			if (unit_hit(g, u, x, y, 0)) {
 				int32_t s = kp_unit_sprite(g, u);
@@ -491,11 +491,11 @@ static int64_t pick_unit(KpUi *ui, int32_t x, int32_t y)
 				area = a;
 				continue;
 			}
-			a = placement_area(g, g->u.type[u]);
+			a = placement_area(g, kp_unit_get_type(g, u));
 			if (area <= a) continue;
 		} else {
 			if (unit_hit(g, best, x, y, 0)) continue;
-			a = placement_area(g, g->u.type[u]);
+			a = placement_area(g, kp_unit_get_type(g, u));
 			if (area <= a) continue;
 		}
 		best = u;
@@ -525,7 +525,6 @@ static void replace_by_depth(KpGame *g, int64_t *list, int count, int64_t n, int
 static int filter_selectable(KpUi *ui, const int64_t *list, int count, int64_t *out, int64_t exemplar)
 {
 	KpGame *g = game(ui);
-	KpUnits *u = &g->u;
 	int n = 0, k, j;
 	int64_t last = 0;
 	if (exemplar) out[n++] = exemplar;
@@ -533,23 +532,23 @@ static int filter_selectable(KpUi *ui, const int64_t *list, int count, int64_t *
 		int64_t v = list[k];
 		int dup = 0;
 		if (v == exemplar) continue;
-		if (u->subunit[v] != 0) {
-			if (unit_flags(g, v) & DAT_SUBUNIT) v = u->subunit[v];
+		if (kp_unit_get_subunit(g, v) != 0) {
+			if (unit_flags(g, v) & DAT_SUBUNIT) v = kp_unit_get_subunit(g, v);
 			for (j = 0; j < n; j++) dup |= out[j] == v;
 			if (dup) continue;
 		}
-		if (!visible(g, v) || unselectable(u->type[v])) continue;
-		if (!multi_selectable(g, v) || g->w->replay || u->owner[v] != g->local_player) {
+		if (!visible(g, v) || unselectable(kp_unit_get_type(g, v))) continue;
+		if (!multi_selectable(g, v) || g->w->replay || kp_unit_get_owner(g, v) != g->local_player) {
 			last = v;
 			continue;
 		}
 		if (exemplar) {
-			if (u->owner[v] != u->owner[exemplar] || u->type[v] != u->type[exemplar]) continue;
-			if ((u->status[v] ^ u->status[exemplar]) & STATUS_BURROWED) continue;
+			if (kp_unit_get_owner(g, v) != kp_unit_get_owner(g, exemplar) || kp_unit_get_type(g, v) != kp_unit_get_type(g, exemplar)) continue;
+			if ((kp_unit_get_status(g, v) ^ kp_unit_get_status(g, exemplar)) & STATUS_BURROWED) continue;
 			/* a unit cloaked for free (IsCloakingForFree 0x4a04e0: the Arbiter's field, not burrowed) matches either */
-			if (!((u->status[v] & STATUS_FREE_CLOAK) && !(u->status[v] & STATUS_BURROWED))
-				&& ((u->status[v] ^ u->status[exemplar]) & STATUS_CLOAK_BIT)) continue;
-			if ((u->status[v] ^ u->status[exemplar]) & STATUS_HALLUCINATION) continue;
+			if (!((kp_unit_get_status(g, v) & STATUS_FREE_CLOAK) && !(kp_unit_get_status(g, v) & STATUS_BURROWED))
+				&& ((kp_unit_get_status(g, v) ^ kp_unit_get_status(g, exemplar)) & STATUS_CLOAK_BIT)) continue;
+			if ((kp_unit_get_status(g, v) ^ kp_unit_get_status(g, exemplar)) & STATUS_HALLUCINATION) continue;
 		}
 		if (n < SLOTS) out[n++] = v;
 		else replace_by_depth(g, out, SLOTS, v, exemplar);
@@ -569,7 +568,7 @@ static int merge_into_selection(KpUi *ui, int64_t *dest, const int64_t *src, int
 	while (c < SLOTS && dest[c] != 0) c++;
 	if (c >= SLOTS) return SLOTS;
 	if (c >= 1 && !(multi_selectable(g, src[0]) && multi_selectable(g, dest[0]) && !g->w->replay
-			&& g->u.owner[src[0]] == g->local_player && g->u.owner[dest[0]] == g->local_player)) {
+			&& kp_unit_get_owner(g, src[0]) == g->local_player && kp_unit_get_owner(g, dest[0]) == g->local_player)) {
 		return c;
 	}
 	n = c;
@@ -636,8 +635,8 @@ static void click_select(KpUi *ui, int32_t x, int32_t y)
 			select_locally(ui, buf, c, 0, 1);
 			return;
 		}
-		if (c >= SLOTS || !multi_selectable(g, buf[0]) || g->w->replay || g->u.owner[buf[0]] != g->local_player
-			|| !multi_selectable(g, u) || g->u.owner[u] != g->local_player) {
+		if (c >= SLOTS || !multi_selectable(g, buf[0]) || g->w->replay || kp_unit_get_owner(g, buf[0]) != g->local_player
+			|| !multi_selectable(g, u) || kp_unit_get_owner(g, u) != g->local_player) {
 			return;
 		}
 		buf[c] = u;
@@ -775,10 +774,9 @@ static void begin_box(KpUi *ui, KpUiEvent *e)
 /* CanUnitTakeRightClick 0x47f4b0. */
 static int takes_right_click(KpGame *g, int64_t n)
 {
-	KpUnits *u = &g->u;
-	int64_t t = u->type[n], order = u->order[n];
+	int64_t t = kp_unit_get_type(g, n), order = kp_unit_get_order(g, n);
 	if (kp_unit_disabled(g, n)) return 0;
-	if ((u->status[n] & STATUS_BURROWED) && t != KP_TYPE_LURKER) return 0;
+	if ((kp_unit_get_status(g, n) & STATUS_BURROWED) && t != KP_TYPE_LURKER) return 0;
 	if (t == KP_TYPE_SCV && order == ORDER_CONSTRUCTING) return 0;
 	if ((t == 1 || t == 16 || t == 100 || t == 99 || t == 104) && order == ORDER_NUKE_TRACK) return 0;
 	if (t == KP_TYPE_ARCHON && order == ORDER_ARCHON_SUMMON) return 0;
@@ -800,12 +798,12 @@ static int right_click_feedback(KpUi *ui, int64_t target)
 		int unattackable = 0;
 		if (u == 0) continue;
 		c = kp_right_click_action(g, u);
-		if ((g->u.status[u] & STATUS_HALLUCINATION) && (c == 4 || c == 5)) c = 1;
+		if ((kp_unit_get_status(g, u) & STATUS_HALLUCINATION) && (c == 4 || c == 5)) c = 1;
 		if (c > 5 || c == 2) return 1;
 		if (c == 0) continue;
 		race = kp_unit_race(g, u);
 		if (target != 0) {
-			int64_t tt = g->u.type[target];
+			int64_t tt = kp_unit_get_type(g, target);
 			unattackable = beacon(tt) || (KP_DAT(g, units, special_ability_flags, tt) & DAT_UNSELECTABLE_TARGET);
 			if ((c == 4 || c == 5) && !unattackable && tt == KP_TYPE_GEYSER) {
 				sound = (int32_t)race + 1;
@@ -814,7 +812,7 @@ static int right_click_feedback(KpUi *ui, int64_t target)
 			}
 		}
 		if (c == 1 || c == 4 || c == 5) {
-			if (target == 0 || (c != 1 && (KP_DAT(g, units, special_ability_flags, g->u.type[target]) & DAT_UNSELECTABLE_TARGET))
+			if (target == 0 || (c != 1 && (KP_DAT(g, units, special_ability_flags, kp_unit_get_type(g, target)) & DAT_UNSELECTABLE_TARGET))
 				|| !kp_is_enemy(g, status, target) || unattackable || kp_can_attack(g, u, target, 1)) {
 				return 1;
 			}
@@ -843,15 +841,15 @@ static void right_click(KpUi *ui, KpUiEvent *e)
 	uint8_t cmd[10];
 	int k, ok = 0;
 	if (over_console(ui, e->x, e->y)) return;
-	if (p->mirror[0] == 0 || g->u.owner[p->mirror[0]] != g->local_player) return; /* 0x4720f0 */
-	if (status == 0 || g->w->replay || g->u.owner[status] != g->local_player) return;
+	if (p->mirror[0] == 0 || kp_unit_get_owner(g, p->mirror[0]) != g->local_player) return; /* 0x4720f0 */
+	if (status == 0 || g->w->replay || kp_unit_get_owner(g, status) != g->local_player) return;
 	for (k = 0; k < SLOTS; k++) ok |= ui->hud.selection[k] != 0 && takes_right_click(g, ui->hud.selection[k]);
 	if (!ok) return;
 	mx = e->x + (int16_t)p->screen_x;
 	my = e->y + (int16_t)p->screen_y;
 	u = pick_unit(ui, mx, my);
 	if (ui->hud.selection_count == 1 && u == status
-		&& !((g->u.status[u] & STATUS_GROUNDED_BUILDING) && kp_rally_producer(g->u.type[u]))) {
+		&& !((kp_unit_get_status(g, u) & STATUS_GROUNDED_BUILDING) && kp_rally_producer(kp_unit_get_type(g, u)))) {
 		return;
 	}
 	if (u == 0) {
@@ -898,33 +896,32 @@ static int type_attackable_by(KpGame *g, int64_t u, uint16_t type)
 /* ValidateOrderTarget 0x429870's errors (the interface's use: only the error). */
 static void order_target_error(KpGame *g, int64_t u, uint8_t order, int64_t target, int64_t *err)
 {
-	KpUnits *units = &g->u;
 	switch (order) {
 	case ORDER_REPAIR:
 		if (target == 0 || kp_unit_race(g, target) != KP_RACE_TERRAN) *err = ERR_NOT_TERRAN;
-		else if (!(KP_DAT(g, units, special_ability_flags, units->type[target]) & DAT_MECHANICAL)
-			|| !(units->status[target] & STATUS_COMPLETED_FLAG)) *err = ERR_NOT_MECHANICAL;
+		else if (!(KP_DAT(g, units, special_ability_flags, kp_unit_get_type(g, target)) & DAT_MECHANICAL)
+			|| !(kp_unit_get_status(g, target) & STATUS_COMPLETED_FLAG)) *err = ERR_NOT_MECHANICAL;
 		break;
 	case ORDER_HARVEST:
 		if (target == 0) break;
-		if (units->type[target] == KP_TYPE_GEYSER) *err = STRING_HARVEST_ERROR + kp_unit_race(g, u);
-		else if (kp_mineral_field(units->type[target])) break;
-		else if (!(KP_DAT(g, units, special_ability_flags, units->type[target]) & DAT_RESOURCE_CONTAINER)) *err = ERR_NOT_RESOURCE;
-		else if (units->owner[target] != units->owner[u]) *err = ERR_NOT_YOURS;
+		if (kp_unit_get_type(g, target) == KP_TYPE_GEYSER) *err = STRING_HARVEST_ERROR + kp_unit_race(g, u);
+		else if (kp_mineral_field(kp_unit_get_type(g, target))) break;
+		else if (!(KP_DAT(g, units, special_ability_flags, kp_unit_get_type(g, target)) & DAT_RESOURCE_CONTAINER)) *err = ERR_NOT_RESOURCE;
+		else if (kp_unit_get_owner(g, target) != kp_unit_get_owner(g, u)) *err = ERR_NOT_YOURS;
 		break;
 	case ORDER_PICKUP:
-		if (target == 0 || units->owner[target] != units->owner[u]) *err = ERR_CANNOT_LOAD;
+		if (target == 0 || kp_unit_get_owner(g, target) != kp_unit_get_owner(g, u)) *err = ERR_CANNOT_LOAD;
 		else if (!kp_can_load(g, target, u)
-			&& KP_DAT(g, units, space_required, units->type[target]) <= KP_DAT(g, units, space_provided, units->type[u])) {
+			&& KP_DAT(g, units, space_required, kp_unit_get_type(g, target)) <= KP_DAT(g, units, space_provided, kp_unit_get_type(g, u))) {
 			*err = ERR_TRANSPORT_FULL;
 		} else if (!kp_can_load(g, target, u)) {
 			*err = ERR_CANNOT_LOAD;
 		}
 		break;
 	case ORDER_HEAL_MOVE:
-		if (target == 0 || !kp_can_use_tech(g, KP_TECH_HEALING, units->owner[u], u)) break;
-		if ((units->status[target] & (STATUS_GROUNDED_BUILDING | STATUS_IN_AIR))
-			|| !(KP_DAT(g, units, special_ability_flags, units->type[target]) & DAT_ORGANIC)) *err = ERR_NOT_ORGANIC;
+		if (target == 0 || !kp_can_use_tech(g, KP_TECH_HEALING, kp_unit_get_owner(g, u), u)) break;
+		if ((kp_unit_get_status(g, target) & (STATUS_GROUNDED_BUILDING | STATUS_IN_AIR))
+			|| !(KP_DAT(g, units, special_ability_flags, kp_unit_get_type(g, target)) & DAT_ORGANIC)) *err = ERR_NOT_ORGANIC;
 		break;
 	default:
 		break;
@@ -947,9 +944,9 @@ static void obscured_target_error(KpGame *g, int64_t u, uint8_t order, uint16_t 
 /* GetTargetErrorString 0x4bceb0. */
 static int64_t target_error(KpGame *g, int64_t target, int64_t weapon, int64_t err)
 {
-	if (target != 0 && (g->u.status[target] & STATUS_INVINCIBLE)) {
-		if (g->u.stasis_timer[target] != 0) return ERR_IN_STASIS;
-		return (g->u.status[target] & STATUS_GROUNDED_BUILDING) ? ERR_INVINCIBLE_BUILDING : ERR_NO_ENERGY_SPELL;
+	if (target != 0 && (kp_unit_get_status(g, target) & STATUS_INVINCIBLE)) {
+		if (kp_unit_get_stasis_timer(g, target) != 0) return ERR_IN_STASIS;
+		return (kp_unit_get_status(g, target) & STATUS_GROUNDED_BUILDING) ? ERR_INVINCIBLE_BUILDING : ERR_NO_ENERGY_SPELL;
 	}
 	if ((uint16_t)err == ERR_NONE) err = STRING_CANNOT_ATTACK;
 	if (weapon != WEAPON_NONE) err = KP_DAT(g, weapons, target_error_message, weapon);
@@ -1005,17 +1002,17 @@ static void confirm_targeted(KpUi *ui, int32_t x, int32_t y, int64_t target, uin
 	}
 	if (w && (!valid || err != ERR_NONE)) {
 		err = target_error(g, target, weapon, err);
-		kp_ui_error_sound(ui, g->u.owner[status], (uint32_t)(SOUND_TARGET_ERROR + kp_unit_race(g, status)), (uint32_t)err);
+		kp_ui_error_sound(ui, kp_unit_get_owner(g, status), (uint32_t)(SOUND_TARGET_ERROR + kp_unit_race(g, status)), (uint32_t)err);
 		if (weapon != WEAPON_NONE) return;
 	} else if (!w && cost != 0 && !spell_ok) {
 		kp_ui_error_buzz(ui, status, (uint32_t)(err == ERR_NONE ? ERR_NO_ENERGY_SPELL : err), g->local_player);
 		return;
 	} else if (cost != 0 && !energy_ok) {
 		int64_t race = kp_unit_race(g, status);
-		kp_ui_error_sound(ui, g->u.owner[status], (uint32_t)(SOUND_NO_ENERGY + race), (uint32_t)(STRING_NO_ENERGY + race));
+		kp_ui_error_sound(ui, kp_unit_get_owner(g, status), (uint32_t)(SOUND_NO_ENERGY + race), (uint32_t)(STRING_NO_ENERGY + race));
 		return;
 	} else if (err != ERR_NONE) {
-		kp_ui_error_buzz(ui, status, (uint32_t)err, g->u.owner[status]);
+		kp_ui_error_buzz(ui, status, (uint32_t)err, kp_unit_get_owner(g, status));
 		return;
 	} else {
 		kp_ui_yes_sound(ui, status);
@@ -1043,7 +1040,7 @@ void kp_ui_minimap_right_click(KpUi *ui, int32_t x, int32_t y)
 	int64_t status = ui->hud.status_unit;
 	uint8_t cmd[10];
 	int k, takes = 0, classes = 0;
-	if (status == 0 || g->u.owner[status] != g->local_player) return;
+	if (status == 0 || kp_unit_get_owner(g, status) != g->local_player) return;
 	for (k = 0; k < SLOTS; k++) {
 		int64_t n = ui->hud.selection[k], c;
 		if (n == 0) continue;
@@ -1294,7 +1291,7 @@ static void game_command(KpUi *ui, KpUiEvent *e)
 /* IsEnemyOfLocalPlayer 0x43e740. */
 static int enemy_of_local(KpGame *g, int64_t u)
 {
-	return kp_alliance(g, g->local_player, g->u.owner[u]) == 0 && !g->w->replay;
+	return kp_alliance(g, g->local_player, kp_unit_get_owner(g, u)) == 0 && !g->w->replay;
 }
 
 /* GetUnitHoverCursorId 0x43ea90. */
@@ -1307,11 +1304,11 @@ static uint16_t hover_cursor(KpUi *ui)
 	u = pick_unit(ui, (int16_t)p->screen_x + ui->mouse_x, (int16_t)p->screen_y + ui->mouse_y);
 	if (p->targeting) {
 		if (u == 0) return 5;
-		if (g->u.owner[u] == OWNER_NEUTRAL) return 2;
+		if (kp_unit_get_owner(g, u) == OWNER_NEUTRAL) return 2;
 		return enemy_of_local(g, u) ? 3 : 4;
 	}
 	if (u == 0) return 0;
-	if (g->u.owner[u] == OWNER_NEUTRAL) return 8;
+	if (kp_unit_get_owner(g, u) == OWNER_NEUTRAL) return 8;
 	return enemy_of_local(g, u) ? 7 : 6;
 }
 
@@ -1364,9 +1361,9 @@ int kp_ui_touch_target(KpUi *ui, int32_t x, int32_t y)
 	if (p->targeting) return KP_UI_TOUCH_AIM;
 	if (kp_scalar(g, KP_PLACEMENT_ACTIVE) == 1) return kp_ui_placement_at(ui, x, y) ? KP_UI_TOUCH_GHOST : KP_UI_TOUCH_PLACE;
 	u = pick_unit(ui, x + (int16_t)p->screen_x, y + (int16_t)p->screen_y);
-	if (u != 0 && g->u.owner[u] == g->local_player) return KP_UI_TOUCH_SELECT;
+	if (u != 0 && kp_unit_get_owner(g, u) == g->local_player) return KP_UI_TOUCH_SELECT;
 	s = g->local_selection[0];
-	return s != 0 && g->u.owner[s] == g->local_player && !g->w->replay ? KP_UI_TOUCH_ORDER : KP_UI_TOUCH_SELECT;
+	return s != 0 && kp_unit_get_owner(g, s) == g->local_player && !g->w->replay ? KP_UI_TOUCH_ORDER : KP_UI_TOUCH_SELECT;
 }
 
 /* --- the procedures --- */

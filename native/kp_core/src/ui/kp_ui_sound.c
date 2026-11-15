@@ -320,7 +320,7 @@ static void note_call(KpUi *ui, uint32_t id, int32_t attenuation, int32_t pan, i
 int kp_ui_play_sound_internal(KpUi *ui, uint32_t id, int32_t attenuation, int32_t pan, int64_t unit)
 {
 	KpUiSound *s = sd(ui);
-	int32_t unit_type = !unit ? -1 : sd(ui)->call_type >= 0 ? sd(ui)->call_type : (int32_t)ui->game->u.type[unit];
+	int32_t unit_type = !unit ? -1 : sd(ui)->call_type >= 0 ? sd(ui)->call_type : (int32_t)kp_unit_get_type(ui->game, unit);
 	uint8_t f;
 	int c, r;
 	if (!s->device || s->effects == 0 || id >= KP_UI_SFX) {

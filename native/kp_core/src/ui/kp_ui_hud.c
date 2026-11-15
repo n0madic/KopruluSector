@@ -194,12 +194,12 @@ static void update_resources(KpUi *ui, int32_t dialog)
 	viewer = g->local_player;
 	if (g->w->replay) { /* the selection's owner, or nothing shown without a selection or for a neutral unit */
 		int64_t n = ui->hud.selection_count == 1 ? ui->hud.status_unit : ui->hud.selection[0];
-		if (ui->hud.selection_count == 0 || n == 0 || g->u.owner[n] == NEUTRAL_PLAYER) {
+		if (ui->hud.selection_count == 0 || n == 0 || kp_unit_get_owner(g, n) == NEUTRAL_PLAYER) {
 			ui->hud.replay_viewer = -1;
 			for (; c >= 0 && ui->controls[c].id <= LAST_RESOURCE_CONTROL; c = next_control(ui, c)) kp_ui_hide_control(ui, c);
 			return;
 		}
-		viewer = g->u.owner[n];
+		viewer = kp_unit_get_owner(g, n);
 		snap = viewer != ui->hud.replay_viewer;
 		ui->hud.replay_viewer = viewer;
 	}

@@ -3,6 +3,9 @@
 #   - no mutable static or global state in native/kp_core/src (two games and two interfaces live in one process: a
 #     rewind's preview, tests on threads); a const table instead of a lazily built one, the state in KpGame or KpUi.
 #     The only process-wide one: kp_smk.c's video_codec, set once before any game (kp_smk_set_video).
+#   - the layers over the simulation (the interface native/kp_core/src/ui, the application native/kp_app, the
+#     presentation native/kp_present) read a unit through kp_unit_get_<field> (KP_UNIT_VIEW_FIELDS, kp_game.h) and
+#     write its view state through the simulation's functions (KP_UNIT_VIEW_STATE), never through g->u or KpUnits.
 # Exits 1 with the offending lines.
 #   tools/boundaries.sh
 set -euo pipefail
@@ -26,6 +29,14 @@ statics="$(find native/kp_core/src -name '*.[ch]' -print0 | sort -z | xargs -0 p
 if [ -n "$statics" ]; then
   echo "boundaries: mutable static state in native/kp_core/src (a const table, or a field of KpGame or KpUi):" >&2
   printf '%s\n' "$statics" >&2
+  failed=1
+fi
+
+units="$(grep -rnE --include='*.[ch]' --include='*.cpp' -e '->u\.[a-z_]|KpUnits' native/kp_core/src/ui native/kp_app \
+  native/kp_present || true)"
+if [ -n "$units" ]; then
+  echo "boundaries: a unit's fields outside the simulation (kp_unit_get_<field>, KP_UNIT_VIEW_FIELDS in kp_game.h):" >&2
+  printf '%s\n' "$units" >&2
   failed=1
 fi
 

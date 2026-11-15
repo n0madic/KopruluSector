@@ -185,7 +185,7 @@ static uint32_t sight_mask(KpGame *g, int64_t n)
 {
 	int32_t s = kp_unit_sprite(g, n);
 	uint32_t mask = (uint32_t)g->w->spr.visibility[s] & 0xff;
-	if (g->u.status[n] & STATUS_CLOAK) mask &= (uint32_t)g->u.visibility[n];
+	if (kp_unit_get_status(g, n) & STATUS_CLOAK) mask &= (uint32_t)kp_unit_get_visibility(g, n);
 	return mask;
 }
 
@@ -193,7 +193,7 @@ static void box_of(KpUi *ui, int64_t n, uint8_t c)
 {
 	KpGame *g = ui->game;
 	int32_t s = kp_unit_sprite(g, n);
-	int64_t t = g->u.type[n];
+	int64_t t = kp_unit_get_type(g, n);
 	unit_box(ui, (uint32_t)(uint16_t)g->w->spr.x[s], (uint32_t)(uint16_t)g->w->spr.y[s], placement(g, t, 0),
 		placement(g, t, 1), c, (KP_DAT(g, units, special_ability_flags, t) & FLAG_BUILDING) != 0);
 }
@@ -238,8 +238,8 @@ static void other_units(KpUi *ui, int64_t p, int resources)
 	KpGame *g = ui->game;
 	uint8_t c = player_colour(ui, p);
 	int64_t n;
-	for (n = g->player_units[p]; n != 0; n = g->u.player_next[n]) {
-		int64_t t = g->u.type[n];
+	for (n = g->player_units[p]; n != 0; n = kp_unit_get_player_next(g, n)) {
+		int64_t t = kp_unit_get_type(g, n);
 		if (skipped(g, t)) continue;
 		if (!seen(g, sight_mask(g, n))) continue;
 		box_of(ui, n, resources && (kp_mineral_field(t) || t == KP_TYPE_GEYSER) ? colour(ui, UI_RESOURCE) : c);
@@ -253,17 +253,16 @@ static void local_units(KpUi *ui)
 	KpUiMinimap *m = mm(ui);
 	int64_t n;
 	m->blinked = 0;
-	for (n = g->player_units[g->local_player]; n != 0; n = g->u.player_next[n]) {
-		int64_t t = g->u.type[n];
+	for (n = g->player_units[g->local_player]; n != 0; n = kp_unit_get_player_next(g, n)) {
+		int64_t t = kp_unit_get_type(g, n);
 		uint8_t c = colour(ui, UI_LOCAL);
 		if (skipped(g, t)) continue;
 		if (!(sight_mask(g, n) & (1u << g->local_player))) continue; /* outside a replay only (draw_units) */
 		/* the blink counter +0x8a (under attack 20, a talk with a ping 8) counts the draws down: the interface writes
-		 * the unit's byte as the original does, and nothing of the simulation reads it (ADR 0010) */
-		if ((g->u.last_event_timer[n] & 0xff) != 0) {
-			g->u.last_event_timer[n] = (g->u.last_event_timer[n] & 0xff) - 1;
+		 * the unit's byte as the original does, and nothing of the simulation reads it (ADR 0010, 0023) */
+		if (kp_unit_blink_step(g, n)) {
 			m->blinked = 1;
-			if (m->blink_phase) c = (uint8_t)g->u.last_event_color[n];
+			if (m->blink_phase) c = (uint8_t)kp_unit_get_last_event_color(g, n);
 		}
 		box_of(ui, n, c);
 	}

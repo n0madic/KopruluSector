@@ -187,9 +187,9 @@ void kp_ui_yes_sound(KpUi *ui, int64_t unit)
 	uint32_t saved, id;
 	if (!s->voices || s->quiet) return;
 	s->select_unit = 0;
-	if (g->w->replay || g->u.owner[unit] != g->local_player || kp_unit_disabled(g, unit)) return;
+	if (g->w->replay || kp_unit_get_owner(g, unit) != g->local_player || kp_unit_disabled(g, unit)) return;
 	saved = s->previous;
-	id = choose_yes(ui, g->u.type[unit]);
+	id = choose_yes(ui, kp_unit_get_type(g, unit));
 	if (kp_ui_sound_at_unit(ui, id, unit, ui->options & OPTION_ANSWERS, VOLUME_MAX)) {
 		kp_ui_voice_talk(ui, unit, id, 0, TALK_COLOUR);
 	} else {
@@ -200,7 +200,7 @@ void kp_ui_yes_sound(KpUi *ui, int64_t unit)
 /* IsHpAtMostOneThird 0x438dd0 and IsHpInYellowRange 0x446080: the unit's hit points in percent of its type's. */
 static int32_t hp_percent(KpGame *g, int64_t n)
 {
-	int32_t hp = (int32_t)((g->u.hp[n] + 0xff) >> 8), max = (int32_t)(KP_DAT(g, units, hit_points, g->u.type[n]) >> 8);
+	int32_t hp = (int32_t)((kp_unit_get_hp(g, n) + 0xff) >> 8), max = (int32_t)(KP_DAT(g, units, hit_points, kp_unit_get_type(g, n)) >> 8);
 	if (max == 0) max = hp ? hp : 1;
 	return hp * 100 / max;
 }
@@ -248,8 +248,8 @@ static void select_sound(KpUi *ui, int64_t unit)
 	int building, completed; /* units.dat's building flag; the answer's branch also wants it completed */
 	if (!s->voices || s->quiet) return;
 	if (unit == 0 || g->w->replay
-		|| (g->u.owner[unit] != g->local_player
-			&& !(g->u.owner[unit] == OWNER_NEUTRAL && (kp_resource_type(g->u.type[unit]) || kp_is_critter(g, unit))))) {
+		|| (kp_unit_get_owner(g, unit) != g->local_player
+			&& !(kp_unit_get_owner(g, unit) == OWNER_NEUTRAL && (kp_resource_type(kp_unit_get_type(g, unit)) || kp_is_critter(g, unit))))) {
 		s->select_unit = 0;
 		s->annoyed = 0;
 		return;
@@ -260,10 +260,10 @@ static void select_sound(KpUi *ui, int64_t unit)
 		s->annoyed = 0;
 		s->select_unit = unit;
 	}
-	t = g->u.type[unit];
+	t = kp_unit_get_type(g, unit);
 	group = (uint32_t)KP_DAT(g, units, staredit_group_flags, t);
 	building = (KP_DAT(g, units, special_ability_flags, t) & DAT_BUILDING) != 0;
-	completed = building && (g->u.status[unit] & STATUS_COMPLETED);
+	completed = building && (kp_unit_get_status(g, unit) & STATUS_COMPLETED);
 	if (completed) {
 		int32_t pct = hp_percent(g, unit);
 		if (pct <= 33 && (group & GROUP_TERRAN)) id = SOUND_TERRAN_BURNING;
@@ -313,11 +313,8 @@ void kp_ui_tick_sounds(KpUi *ui)
 		if (s->cooldown[k] != 0) s->cooldown[k]--;
 	}
 	if (s->tick_counter-- == 0) {
-		int64_t n;
 		s->tick_counter = 1;
-		for (n = g->lists[KP_LIST_ACTIVE].head; n != 0; n = g->u.next[n]) {
-			if (g->u.attack_notify_timer[n] != 0) g->u.attack_notify_timer[n]--;
-		}
+		kp_units_tick_attack_notices(g);
 	}
 }
 
@@ -365,10 +362,10 @@ void kp_ui_worker_voice(KpUi *ui, int64_t unit, uint32_t base, int32_t string)
 	 * the unit, its talking request when it played */
 	KpGame *g = game(ui);
 	uint32_t id;
-	if (unit == 0 || g->u.owner[unit] != g->local_player || g->w->replay) return;
+	if (unit == 0 || kp_unit_get_owner(g, unit) != g->local_player || g->w->replay) return;
 	id = base + (uint32_t)kp_unit_race(g, unit);
 	if (kp_ui_sound_at_unit(ui, id, unit, 1, VOLUME_MAX)) kp_ui_voice_talk(ui, unit, id, 1, TALK_COLOUR);
-	if (string >= 0) error_line(ui, g->u.owner[unit], (uint32_t)string);
+	if (string >= 0) error_line(ui, kp_unit_get_owner(g, unit), (uint32_t)string);
 }
 
 void kp_ui_placed_sound(KpUi *ui, int64_t type)
@@ -450,11 +447,11 @@ void kp_ui_sound_event(KpUi *ui, int64_t kind, int64_t a, int64_t b, int64_t c)
 		int n, k;
 		uint32_t id;
 		unit = a;
-		if (s->cooldown[2] != 0 || !off_screen(ui, x, y) || g->u.attack_notify_timer[unit] != 0) return;
+		if (s->cooldown[2] != 0 || !off_screen(ui, x, y) || kp_unit_get_attack_notify_timer(g, unit) != 0) return;
 		/* SuppressNearbyAttackNotices 0x4460d0 */
 		n = kp_units_in_rect(g, (int16_t)(x - ATTACK_NOTICE_REACH), (int16_t)(y - ATTACK_NOTICE_REACH),
 			(int16_t)(x + ATTACK_NOTICE_REACH), (int16_t)(y + ATTACK_NOTICE_REACH), found, ATTACK_NOTICE_UNITS);
-		for (k = 0; k < n; k++) g->u.attack_notify_timer[found[k]] = ATTACK_NOTICE_SILENCE;
+		for (k = 0; k < n; k++) kp_unit_silence_attack_notice(g, found[k], ATTACK_NOTICE_SILENCE);
 		s->cooldown[2] = ATTACK_COOLDOWN;
 		id = (b ? SOUND_ATTACKED_BUILDING : SOUND_ATTACKED) + (uint32_t)kp_ui_local_race(ui);
 		(void)sound_at_unit(ui, id, 0, 0, 0, ui->options & OPTION_ADVISOR, 0);

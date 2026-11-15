@@ -38,12 +38,12 @@ Not in the phase:
 
 - **`kp_state_hash(g, each, ud, &total)`:**
   - **Section hash.** Each section is hashed over its bytes as they are in the save (its tag left out), as 8-byte little-endian words, the tail zero-padded. The seed is `mix(HASH_SEED, tag)` with `HASH_SEED = 0x6b70686173680000 | KP_HASH_VERSION`. A word goes in by `mix(h, w) = ((h ^ w) * 0x9e3779b97f4a7c15) ^ (… >> 32)`, and the section is closed by mixing in its length, then murmur3's `fmix64`.
-  - **Total.** The sections' hashes, folded in order from `HASH_SEED` and closed with their count.
+  - **Total.** The sections' hashes, folded in order from `HASH_SEED` and closed with their count. Since save version 3 and `KP_HASH_VERSION` 2 (ADR 0023) the `VIEW` section (the units' view state: the attack notices' silence, the minimap blink's counter and colour) is left out of the fold and of the count; its hash is still in the table.
   - **Implementations.** Two implement the same definition. One works over the bytes, for the save's table and the load's check. The other is the HASH mode: a shift accumulator that adds each value of 8, 4 or 1 bytes to the current word, without encoding.
 - **The native save v2:**
   - **Layout.** `KPSV`, u32 version 2, the mission's and the data's names, the sections with their tags, `END `, then the table: u32 count, per section its tag and u64 hash, u64 total.
   - **The load's checks, in order:** the version (`save: version N, this build reads 2`), the names, a dry walk that hashes the input's sections against the table (`save: section XXXX damaged`, or `save: damaged (hash table)`), then the real walk and `restored()`. A refusal leaves the game as it was.
-- **`kp_save_schema()`** runs a COVER walk over a zeroed game (`calloc`'d `KpGame`, `KpImages`, `KpRngGame`) and hashes the sequence of (section, kind, count). There are no addresses in it, so it is the same on every platform. Version 2's fingerprint is `0x12e396b75619fee4`.
+- **`kp_save_schema()`** runs a COVER walk over a zeroed game (`calloc`'d `KpGame`, `KpImages`, `KpRngGame`) and hashes the sequence of (section, kind, count). There are no addresses in it, so it is the same on every platform. Version 2's fingerprint is `0x12e396b75619fee4`, version 3's (the `VIEW` section) `0x009a8709ec54eb16`.
 - **`tests/c/test_save.c`:**
   - `hash_is_the_saves_bytes` (sampled with `kp_t_mine_sampled`, at the start and the middle of each scenario): `kp_state_hash` equals the table in `kp_save`'s bytes and the test's own reference function over the bytes cut by the callback's sizes. It runs on every configuration of `kp_test`, which closes the platforms' equality.
   - `save_schema_matches_its_version`: the table {version → fingerprint}. A changed walk fails with "raise KP_SAVE_VERSION and add a row". Two visits of the same kind and count swapped within a section keep the fingerprint (it holds no addresses, to be the same on every platform): such a change raises the version by hand.

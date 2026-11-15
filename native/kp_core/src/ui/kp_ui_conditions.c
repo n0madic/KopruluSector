@@ -82,29 +82,29 @@ static const int64_t SCV_ADVANCED[] = { KP_TYPE_FACTORY, KP_TYPE_STARPORT, KP_TY
 
 typedef int (*UnitTest)(KpGame *g, int64_t n);
 
-static int64_t status(KpGame *g, int64_t n) { return g->u.status[n]; }
+static int64_t status(KpGame *g, int64_t n) { return kp_unit_get_status(g, n); }
 static int burrowed(KpGame *g, int64_t n) { return (status(g, n) & STATUS_BURROWED) != 0; }
-static int not_constructing(KpGame *g, int64_t n) { return (g->u.order[n] & 0xff) != KP_ORD_CONSTRUCTING; }
-static int carrying(KpGame *g, int64_t n) { return (g->u.resource_type[n] & CARRIED_RESOURCE) != 0; }
+static int not_constructing(KpGame *g, int64_t n) { return (kp_unit_get_order(g, n) & 0xff) != KP_ORD_CONSTRUCTING; }
+static int carrying(KpGame *g, int64_t n) { return (kp_unit_get_resource_type(g, n) & CARRIED_RESOURCE) != 0; }
 static int not_carrying(KpGame *g, int64_t n) { return !carrying(g, n); }
-static int researching(KpGame *g, int64_t n) { return (g->u.union_0xc8[n] & 0xff) != KP_TECH_NONE; } /* +0xc8 */
-static int upgrading(KpGame *g, int64_t n) { return ((g->u.union_0xc8[n] >> 8) & 0xff) != KP_UPG_NONE; } /* +0xc9 */
+static int researching(KpGame *g, int64_t n) { return (kp_unit_get_union_0xc8(g, n) & 0xff) != KP_TECH_NONE; } /* +0xc8 */
+static int upgrading(KpGame *g, int64_t n) { return ((kp_unit_get_union_0xc8(g, n) >> 8) & 0xff) != KP_UPG_NONE; } /* +0xc9 */
 
 static int hatchery_tier(KpGame *g, int64_t n)
 {
-	int64_t t = g->u.type[n];
+	int64_t t = kp_unit_get_type(g, n);
 	return t == KP_TYPE_HATCHERY || t == KP_TYPE_LAIR || t == KP_TYPE_HIVE;
 }
 
 static int sieged(KpGame *g, int64_t n)
 {
-	int64_t t = g->u.type[n];
+	int64_t t = kp_unit_get_type(g, n);
 	return t == KP_TYPE_SIEGE_TANK_SIEGED || t == KP_TYPE_EDMUND_DUKE_SIEGED;
 }
 
 static int burrowable(KpGame *g, int64_t n)
 {
-	return (KP_DAT(g, units, special_ability_flags, g->u.type[n]) & FLAG_BURROWABLE) != 0;
+	return (KP_DAT(g, units, special_ability_flags, kp_unit_get_type(g, n)) & FLAG_BURROWABLE) != 0;
 }
 
 /* IsCloakingForFree 0x4a04e0, inlined by the cloak conditions. */
@@ -128,20 +128,20 @@ static int active_armed(KpGame *g, int64_t n) { return !kp_unit_disabled(g, n) &
 /* TransportHasFreeSpace 0x4382f0: its passengers' space below the space it provides. */
 static int free_space(KpGame *g, int64_t n)
 {
-	return kp_cargo_space(g, n) < KP_DAT(g, units, space_provided, g->u.type[n]);
+	return kp_cargo_space(g, n) < KP_DAT(g, units, space_provided, kp_unit_get_type(g, n));
 }
 
 /* Carrier with interceptors (+0xc8 + +0xc9 as a byte), Reaver with scarabs (+0xc8). */
 static int armed_carrier(KpGame *g, int64_t n)
 {
-	int64_t t = g->u.type[n], h = g->u.union_0xc8[n];
+	int64_t t = kp_unit_get_type(g, n), h = kp_unit_get_union_0xc8(g, n);
 	return (t == KP_TYPE_CARRIER || t == KP_TYPE_GANTRITHOR) && ((h + (h >> 8)) & 0xff) != 0;
 }
 
 static int armed_reaver(KpGame *g, int64_t n)
 {
-	int64_t t = g->u.type[n];
-	return (t == KP_TYPE_REAVER || t == KP_TYPE_WARBRINGER) && (g->u.union_0xc8[n] & 0xff) != 0;
+	int64_t t = kp_unit_get_type(g, n);
+	return (t == KP_TYPE_REAVER || t == KP_TYPE_WARBRINGER) && (kp_unit_get_union_0xc8(g, n) & 0xff) != 0;
 }
 
 /* Whether a unit of the selection (all twelve slots) passes the test. */
@@ -174,7 +174,7 @@ static int64_t can_train_hangar_unit(KpUi *ui, int64_t t, int64_t player, int64_
 	for (k = 0; k < KP_UI_SLOTS; k++) {
 		int64_t n = ui->hud.selection[k];
 		if (n == 0) continue;
-		if (g->u.type[n] != g->u.type[lead]) return 0;
+		if (kp_unit_get_type(g, n) != kp_unit_get_type(g, lead)) return 0;
 		if (result == 0) result = kp_can_train_unit(g, t, player, n);
 	}
 	return result;
@@ -257,7 +257,7 @@ static int64_t burrow_visible(KpUi *ui, int64_t tech, int64_t player)
 		if (n == 0 || !burrowable(g, n)) continue;
 		r = kp_can_use_tech(g, tech, player, n);
 		if (r != 1) return r;
-		order = g->u.order[n] & 0xff;
+		order = kp_unit_get_order(g, n) & 0xff;
 		if (!burrowed(g, n) && order != KP_ORD_BURROWING && order != KP_ORD_UNBURROWING) return 1;
 	}
 	return 0;
@@ -272,7 +272,7 @@ static int unburrow_visible(KpUi *ui, int64_t tech, int64_t player)
 	for (k = 0; k < KP_UI_SLOTS; k++) {
 		int64_t n = ui->hud.selection[k];
 		if (n == 0 || !burrowable(g, n)) continue;
-		order = g->u.order[n] & 0xff;
+		order = kp_unit_get_order(g, n) & 0xff;
 		if (!burrowed(g, n) || order == KP_ORD_BURROWING || order == KP_ORD_UNBURROWING) return 0;
 		if (kp_can_use_tech(g, tech, player, n) != 1) return 0;
 	}
@@ -318,7 +318,7 @@ int kp_ui_button_condition(KpUi *ui, uint32_t address, uint8_t value, int64_t pl
 	}
 	/* the original builds no card without a game and a status unit */
 	if (g == NULL || n == 0) return 0;
-	t = g->u.type[n];
+	t = kp_unit_get_type(g, n);
 	switch (address) {
 	case CAN_TRAIN_UNIT: /* BtnCondCanTrainUnit 0x49f420 */
 		if ((uint8_t)ui->hud.selection_count > 1 && t != KP_TYPE_LARVA && t != KP_TYPE_MUTALISK && t != KP_TYPE_HYDRALISK) {
@@ -378,7 +378,7 @@ int kp_ui_button_condition(KpUi *ui, uint32_t address, uint8_t value, int64_t pl
 	case DRONE_CAN_RETURN: /* BtnCondDroneCanReturn 0x49fdc0 */
 		return !any_selected(ui, burrowed) && any_selected(ui, carrying);
 	case SAME_BURROW_STATE: return same_burrow_state(ui);
-	case NO_NYDUS_EXIT: return g->u.union_0xd0[n] == 0;             /* BtnCondNoNydusExit 0x49fe60: +0xd0 */
+	case NO_NYDUS_EXIT: return kp_unit_get_union_0xd0(g, n) == 0;             /* BtnCondNoNydusExit 0x49fe60: +0xd0 */
 	case DRONE_BASIC_BUILD_MENU: /* BtnCondDroneBasicBuildMenu 0x49fe80 */
 		return single && !burrowed(g, n) && any_trainable(g, DRONE_BASIC, COUNT(DRONE_BASIC), player, n);
 	case DRONE_ADVANCED_BUILD_MENU: /* BtnCondDroneAdvancedBuildMenu 0x49ff20 */

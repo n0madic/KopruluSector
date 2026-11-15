@@ -454,13 +454,10 @@ static int field_take(Dump *d, const char *name)
 {
 	if (d->failed) return 0;
 	if (d->filter == FILTER_IMAGE && (name[0] == 'x' || name[0] == 'y') && name[1] == '\0') return 0;
-	/* the minimap's blink counter, which the minimap's drawing counts down (0x46e490), its color and the silence of
-	 * the under-attack notices (0x446f00), which the camera and the idle loop (0x446ff0) decide */
-	if (d->filter == FILTER_UNIT && (name[0] == 'l' || name[0] == 'a')
-		&& (strcmp(name, "last_event_timer") == 0 || strcmp(name, "last_event_color") == 0
-			|| strcmp(name, "attack_notify_timer") == 0)) {
-		return 0;
-	}
+	/* the units' view state (KP_UNIT_VIEW_STATE): the minimap's blink counter, which the minimap's drawing counts
+	 * down (0x46e490), its color and the silence of the under-attack notices (0x446f00), which the camera and the
+	 * idle loop (0x446ff0) decide */
+	if (d->filter == FILTER_UNIT && (name[0] == 'l' || name[0] == 'a') && kp_unit_view_field(name)) return 0;
 	if (d->count >= MAX_FIELDS) {
 		d->failed = 1;
 		return 0;

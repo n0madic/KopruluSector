@@ -147,6 +147,29 @@ void kp_notify_attacked(KpGame *g, int64_t n)
 		kp_unit_sprite_packed(g, n), NULL);
 }
 
+void kp_unit_set_blink(KpGame *g, int64_t n, int64_t timer, int64_t colour)
+{
+	g->u.last_event_timer[n] = timer;
+	g->u.last_event_color[n] = colour;
+}
+
+int kp_unit_blink_step(KpGame *g, int64_t n)
+{
+	if ((g->u.last_event_timer[n] & 0xff) == 0) return 0;
+	g->u.last_event_timer[n] = (g->u.last_event_timer[n] & 0xff) - 1;
+	return 1;
+}
+
+void kp_unit_silence_attack_notice(KpGame *g, int64_t n, int64_t timer) { g->u.attack_notify_timer[n] = timer; }
+
+void kp_units_tick_attack_notices(KpGame *g)
+{
+	int64_t n;
+	for (n = g->lists[KP_LIST_ACTIVE].head; n != 0; n = g->u.next[n]) {
+		if (g->u.attack_notify_timer[n] != 0) g->u.attack_notify_timer[n]--;
+	}
+}
+
 /* DamageHitPoints 0x41e150: raw damage with its attacker (or 0), the attacking player and whether the victim's
  * owner is notified. */
 void kp_damage_hit_points(KpGame *g, int64_t n, int64_t damage, int64_t attacker, int64_t player, int notify)

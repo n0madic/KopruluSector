@@ -412,6 +412,47 @@ static void initial_states_survive_a_save(KpT *T)
 }
 
 /* A load that must be refused: 1 when it is, with its message in err. */
+/* The local player's view of the units (KP_UNIT_VIEW_STATE: the attack notices' silence, the minimap's blink and its
+ * colour, which the interface writes) is saved in its own section, VIEW, which the state hash's total leaves out
+ * (ADR 0023): a game whose view state differs has the same total, another VIEW hash, and its save brings the view
+ * state back. */
+static void view_state_is_saved_outside_the_total(KpT *T)
+{
+	const char *path = "scenarios/marine_group";
+	KpGame *g, *loaded;
+	Sections before, after;
+	uint64_t total;
+	uint8_t *bytes;
+	size_t size;
+	int64_t n;
+	int k, views = 0, others = 1;
+	if (!kp_t_ready(T, "test_save", FILES)) return;
+	g = kp_t_game(T, path, 1, 0, NULL)->g;
+	n = g->lists[KP_LIST_ACTIVE].head;
+	kp_t_ok(T, n != 0, "a unit");
+	total = state_hash(T, g, &before);
+	kp_unit_set_blink(g, n, 8, 0xae);
+	kp_unit_silence_attack_notice(g, n, 24);
+	kp_t_eq(T, (int64_t)state_hash(T, g, &after), (int64_t)total, "the same total");
+	kp_t_eq(T, after.count, before.count, "the same sections");
+	for (k = 0; k < after.count && k < before.count; k++) {
+		int view = strcmp(after.tag[k], "VIEW") == 0;
+		views += view;
+		if (view) kp_t_ok(T, after.hash[k] != before.hash[k], "VIEW's hash follows the view state");
+		else others &= after.hash[k] == before.hash[k];
+	}
+	kp_t_eq(T, views, 1, "one VIEW section");
+	kp_t_ok(T, others, "the other sections' hashes stay");
+	bytes = save(T, g, "a", DATA, &size);
+	loaded = kp_t_game(T, path, 1, 0, NULL)->g;
+	load(T, loaded, bytes, size, "a", DATA);
+	kp_t_ok(T, kp_unit_get_last_event_timer(loaded, n) == 8 && kp_unit_get_last_event_color(loaded, n) == 0xae
+		&& kp_unit_get_attack_notify_timer(loaded, n) == 24, "the load brings the view state back");
+	kp_t_ok(T, kp_unit_blink_step(loaded, n) && kp_unit_get_last_event_timer(loaded, n) == 7, "a minimap draw counts down");
+	kp_units_tick_attack_notices(loaded);
+	kp_t_eq(T, kp_unit_get_attack_notify_timer(loaded, n), 23, "the idle event counts the silence down");
+}
+
 static int refused(KpGame *g, const uint8_t *bytes, size_t size, const char *mission, const char *data, KpError *err)
 {
 	return kp_load(g, bytes, size, mission, data, err) != 0;
@@ -425,7 +466,7 @@ static void loads_reject_other_saves(KpT *T)
 	size_t size, mine_size;
 	KpError err;
 	KpBuf *before, *after;
-	char other_path[512];
+	char other_path[512], expect[64];
 	const KpJson *first;
 	const char *id;
 	int k;
@@ -445,7 +486,8 @@ static void loads_reject_other_saves(KpT *T)
 		"a damaged save is refused: %s", err.msg);
 	memcpy(damaged, bytes, size);
 	damaged[4] = 1; /* the version */
-	kp_t_ok(T, refused(kp_t_game(T, path, 1, 0, NULL)->g, damaged, size, "a", DATA, &err) && strstr(err.msg, "version 1, this build reads 2"),
+	snprintf(expect, sizeof expect, "version 1, this build reads %d", KP_SAVE_VERSION);
+	kp_t_ok(T, refused(kp_t_game(T, path, 1, 0, NULL)->g, damaged, size, "a", DATA, &err) && strstr(err.msg, expect),
 		"a save of another version is refused: %s", err.msg);
 	memcpy(damaged, bytes, size);
 	damaged[size - 1] = (uint8_t)(damaged[size - 1] + 1); /* the table's total */
@@ -572,7 +614,7 @@ static void check_hashes(KpT *T, const char *name, KpGame *g, KpBuf *bad)
 	Sections s;
 	size_t size, at = 4 + 4, k;
 	uint8_t *bytes = save(T, g, "a", DATA, &size);
-	uint64_t total = state_hash(T, g, &s), fold = REF_SEED;
+	uint64_t total = state_hash(T, g, &s), fold = REF_SEED, folded = 0;
 	int i;
 	for (k = 0; k < 2; k++) at += 4 + (size_t)le_bytes(bytes + at, 4); /* the mission's and the data's names */
 	for (i = 0; i < s.count; i++) {
@@ -583,10 +625,13 @@ static void check_hashes(KpT *T, const char *name, KpGame *g, KpBuf *bad)
 		if (ref_hash(bytes + at, bytes + at + 4, s.bytes[i]) != s.hash[i]) {
 			kp_buf_printf(bad, "%s%s: section %s's hash", bad->size ? ", " : "", name, s.tag[i]);
 		}
-		fold = ref_mix(fold, s.hash[i]);
+		if (strcmp(s.tag[i], "VIEW") != 0) { /* the local player's view of the units: outside the total (ADR 0023) */
+			fold = ref_mix(fold, s.hash[i]);
+			folded++;
+		}
 		at += 4 + s.bytes[i];
 	}
-	if (ref_finish(fold, (uint64_t)s.count) != total) kp_buf_printf(bad, "%s%s: the total", bad->size ? ", " : "", name);
+	if (ref_finish(fold, folded) != total) kp_buf_printf(bad, "%s%s: the total", bad->size ? ", " : "", name);
 	if (at + 4 + 12 * (size_t)s.count + 8 != size || le_bytes(bytes + at, 4) != (uint64_t)s.count) {
 		kp_buf_printf(bad, "%s%s: the hash table's size", bad->size ? ", " : "", name);
 		return;
@@ -637,6 +682,7 @@ static const struct {
 	uint64_t schema;
 } SCHEMAS[] = {
 	{ 2, 0x12e396b75619fee4ULL },
+	{ 3, 0x009a8709ec54eb16ULL }, /* VIEW: the units' view state out of UNIT (ADR 0023) */
 };
 
 static void save_schema_matches_its_version(KpT *T)
@@ -1023,6 +1069,7 @@ static void restores_refuse_other_snapshots(KpT *T)
 static const KpTest TESTS[] = {
 	{ "walk_covers_the_state", walk_covers_the_state, 0 },
 	{ "hash_is_the_saves_bytes", hash_is_the_saves_bytes, 0 },
+	{ "view_state_is_saved_outside_the_total", view_state_is_saved_outside_the_total, 0 },
 	{ "save_schema_matches_its_version", save_schema_matches_its_version, 0 },
 	{ "snapshots_rewind_as_the_original", snapshots_rewind_as_the_original, 6 },
 	{ "restores_refuse_other_snapshots", restores_refuse_other_snapshots, 0 },

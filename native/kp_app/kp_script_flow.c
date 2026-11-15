@@ -525,7 +525,7 @@ int kp_script_flow_value(const KpFlow *f, const KpScriptRun *run, const KpScript
 			return -1;
 		}
 		*out = 0;
-		for (n = g->lists[KP_LIST_ACTIVE].head; n > 0; n = g->u.next[n]) *out += g->u.owner[n] == ref->arg;
+		for (n = g->lists[KP_LIST_ACTIVE].head; n > 0; n = kp_unit_get_next(g, n)) *out += kp_unit_get_owner(g, n) == ref->arg;
 		break;
 	case V_CREEP_TILES:
 	case V_CREEP_RECEDING:
@@ -555,7 +555,7 @@ int kp_script_flow_value(const KpFlow *f, const KpScriptRun *run, const KpScript
 	case V_MOVED:
 		if ((n = picked(run, g, ref->arg, why, size)) == 0) return -1;
 		if (ref->id == V_MOVED) {
-			double dx = (double)(g->u.x[n] - run->pick_x[ref->arg]), dy = (double)(g->u.y[n] - run->pick_y[ref->arg]);
+			double dx = (double)(kp_unit_get_x(g, n) - run->pick_x[ref->arg]), dy = (double)(kp_unit_get_y(g, n) - run->pick_y[ref->arg]);
 			*out = (int64_t)sqrt(dx * dx + dy * dy);
 		} else if (ref->id == V_SELECTION_FIRST) {
 			*out = g->local_selection[0] == n;
@@ -767,8 +767,8 @@ int kp_script_flow_point(const KpFlow *f, const KpScriptRun *run, const KpScript
 			return -1;
 		}
 		if ((n = picked(run, f->session->g, p->name, why, size)) == 0) return -1;
-		*x = (int32_t)(f->session->g->u.x[n] - f->cam_x);
-		*y = (int32_t)(f->session->g->u.y[n] - f->cam_y);
+		*x = (int32_t)(kp_unit_get_x(f->session->g, n) - f->cam_x);
+		*y = (int32_t)(kp_unit_get_y(f->session->g, n) - f->cam_y);
 		if (p->kind == KP_SCRIPT_AT_UNIT) {
 			*x += p->x;
 			*y += p->y;
@@ -812,10 +812,10 @@ static int race_of(const KpGame *g)
 {
 	int64_t n;
 	int r;
-	for (n = g->lists[KP_LIST_ACTIVE].head; n > 0; n = g->u.next[n]) {
-		if (g->u.owner[n] != g->local_player) continue;
+	for (n = g->lists[KP_LIST_ACTIVE].head; n > 0; n = kp_unit_get_next(g, n)) {
+		if (kp_unit_get_owner(g, n) != g->local_player) continue;
 		for (r = 0; r < RACES; r++) {
-			if (g->u.type[n] == RACE[r].worker) return r;
+			if (kp_unit_get_type(g, n) == RACE[r].worker) return r;
 		}
 	}
 	return -1;
@@ -834,13 +834,13 @@ static int64_t role_unit(const KpGame *g, int role)
 	int race = race_of(g), type;
 	if (race < 0) return 0;
 	type = role == UNIT_WORKER ? RACE[race].worker : RACE[race].main;
-	for (n = g->lists[KP_LIST_ACTIVE].head; n > 0 && (g->u.type[n] != type || g->u.owner[n] != g->local_player);
-		n = g->u.next[n]) {}
+	for (n = g->lists[KP_LIST_ACTIVE].head; n > 0 && (kp_unit_get_type(g, n) != type || kp_unit_get_owner(g, n) != g->local_player);
+		n = kp_unit_get_next(g, n)) {}
 	return n > 0 ? n : 0;
 }
 
 /* Whether a box selects the local player's unit along with others. */
-static int groups(KpGame *g, int64_t n) { return g->u.owner[n] == g->local_player && kp_multi_selectable(g, n); }
+static int groups(KpGame *g, int64_t n) { return kp_unit_get_owner(g, n) == g->local_player && kp_multi_selectable(g, n); }
 
 /* The unit whose box of the radius takes the most units around it, whichever types the mission gave the player
  * (zerg02's Zerg have no Zerglings); 0 none. */
@@ -848,11 +848,11 @@ static int64_t group_unit(KpGame *g, int32_t radius)
 {
 	int64_t n, m, best = 0;
 	int most = 0;
-	for (n = g->lists[KP_LIST_ACTIVE].head; n > 0; n = g->u.next[n]) {
+	for (n = g->lists[KP_LIST_ACTIVE].head; n > 0; n = kp_unit_get_next(g, n)) {
 		int near = 0;
 		if (!groups(g, n)) continue;
-		for (m = g->lists[KP_LIST_ACTIVE].head; m > 0; m = g->u.next[m]) { /* the distance first: it is the cheap test */
-			near += llabs((long long)(g->u.x[m] - g->u.x[n])) <= radius && llabs((long long)(g->u.y[m] - g->u.y[n])) <= radius
+		for (m = g->lists[KP_LIST_ACTIVE].head; m > 0; m = kp_unit_get_next(g, m)) { /* the distance first: it is the cheap test */
+			near += llabs((long long)(kp_unit_get_x(g, m) - kp_unit_get_x(g, n))) <= radius && llabs((long long)(kp_unit_get_y(g, m) - kp_unit_get_y(g, n))) <= radius
 				&& groups(g, m);
 		}
 		if (near > most) {
@@ -878,11 +878,11 @@ int kp_script_flow_select(KpFlow *f, const KpScriptStep *step, int32_t box[4], c
 		return -1;
 	}
 	/* the camera on it as the HD check placed it: the logical screen's centre */
-	f->cam_x = g->u.x[n] - f->world_w / 2;
-	f->cam_y = g->u.y[n] - f->world_h / 2;
+	f->cam_x = kp_unit_get_x(g, n) - f->world_w / 2;
+	f->cam_y = kp_unit_get_y(g, n) - f->world_h / 2;
 	kp_flow_clamp_camera(f);
-	x = (int32_t)(g->u.x[n] - f->cam_x);
-	y = (int32_t)(g->u.y[n] - f->cam_y);
+	x = (int32_t)(kp_unit_get_x(g, n) - f->cam_x);
+	y = (int32_t)(kp_unit_get_y(g, n) - f->cam_y);
 	box[0] = x - r;
 	box[1] = y - r;
 	box[2] = x + r;
@@ -898,14 +898,14 @@ static int64_t own_unit(KpFlow *f)
 	int32_t vw, vh;
 	int64_t n, best = 0, best_d = INT64_MAX;
 	view_size(f, &vw, &vh);
-	for (n = g->lists[KP_LIST_ACTIVE].head; n > 0; n = g->u.next[n]) {
-		int64_t x = g->u.x[n] - f->cam_x, y = g->u.y[n] - f->cam_y, dd;
-		if (g->u.owner[n] != g->local_player || x < PICK_MARGIN || y < PICK_MARGIN || x >= vw - PICK_MARGIN
+	for (n = g->lists[KP_LIST_ACTIVE].head; n > 0; n = kp_unit_get_next(g, n)) {
+		int64_t x = kp_unit_get_x(g, n) - f->cam_x, y = kp_unit_get_y(g, n) - f->cam_y, dd;
+		if (kp_unit_get_owner(g, n) != g->local_player || x < PICK_MARGIN || y < PICK_MARGIN || x >= vw - PICK_MARGIN
 			|| y >= vh - PICK_MARGIN) {
 			continue;
 		}
 		if (f->hud_on && kp_hud_pad_at(&f->hud, (int32_t)x, (int32_t)y) >= 0) continue;
-		if (kp_ui_pick_unit(f->ui, (int32_t)g->u.x[n], (int32_t)g->u.y[n]) != n) continue;
+		if (kp_ui_pick_unit(f->ui, (int32_t)kp_unit_get_x(g, n), (int32_t)kp_unit_get_y(g, n)) != n) continue;
 		dd = (x - vw / 2) * (x - vw / 2) + (y - vh / 2) * (y - vh / 2);
 		if (dd < best_d) {
 			best_d = dd;
@@ -1001,8 +1001,8 @@ int kp_script_flow_act(KpFlow *f, KpScriptRun *run, const KpScriptStep *step, ch
 			return -1;
 		}
 		run->picks[step->id] = kp_unit_ref(f->session->g, n);
-		run->pick_x[step->id] = f->session->g->u.x[n];
-		run->pick_y[step->id] = f->session->g->u.y[n];
+		run->pick_x[step->id] = kp_unit_get_x(f->session->g, n);
+		run->pick_y[step->id] = kp_unit_get_y(f->session->g, n);
 		return 0;
 	default:
 		return KP_SCRIPT_FLOW_NONE;
