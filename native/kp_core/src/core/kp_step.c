@@ -38,7 +38,7 @@ void kp_set_context(KpGame *g, int64_t n)
 	g->w->has_unit = g->w->has_flingy = 1;
 }
 
-static void clear_context(KpGame *g) { g->w->has_unit = g->w->has_flingy = 0; }
+static void clear_context(KpGame *g) { g->w->unit = g->w->flingy = g->w->has_unit = g->w->has_flingy = 0; }
 
 
 /* WebCoverCallback 0x43a880: a ground unit under a web (and its cargo or turret) cannot attack. */

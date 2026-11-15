@@ -961,8 +961,25 @@ typedef void (*KpCategoryCrc)(void *ud, const char *category, uint32_t crc);
 int kp_dump_crcs(KpGame *g, int drawn, KpCategoryCrc each, void *ud);
 /* A 64-bit hash of the same state lines without their text, for comparing two of Koprulu's games in one process (a
  * recording and its playback): it changes when any line would, but it is no CRC of the original's, so it is never
- * compared with a golden. -1 when out of memory. */
+ * compared with a golden. -1 when out of memory. Each of the three also gives -1 for a state its lines cannot read
+ * (the accessor's message in g->w->error). */
 int kp_dump_hash(KpGame *g, int drawn, uint64_t *out);
+/* The dump's coverage of the saved state: the saved fields (named as kp_snapshot_fields names them; a name ending in
+ * '*' covers every name it begins) whose changes the dump's lines do not show, each with its reason, and those it shows
+ * that no game of tests/c/test_save.c dump_shows_the_saved_state changes on a record the dump lists. Classes:
+ *   KP_DUMP_SHOWN   the dump shows it (why: where); the test checks it by changing every element by one;
+ *   KP_DUMP_MODEL   the original keeps it (why: where) and the state model (tools/native_state.py) does not read it;
+ *   KP_DUMP_HEAP    the original keeps it in a heap block the emulator's state dumps do not hold;
+ *   KP_DUMP_KOPRULU Koprulu's own, with no counterpart in the original's memory.
+ * Every saved field the test sees change without a change of the dump must be listed; a listed field the dump shows
+ * changing, other than a KP_DUMP_SHOWN one, fails the test. */
+enum { KP_DUMP_SHOWN, KP_DUMP_MODEL, KP_DUMP_HEAP, KP_DUMP_KOPRULU };
+typedef struct {
+	const char *name;
+	int klass;
+	const char *why;
+} KpDumpField;
+const KpDumpField *kp_dump_fields(int *count);
 /* Saves (kp_save.c, version 2): the game's mutable state with the mission's name and the data's identity, both
  * checked by kp_load, which restores into a game of the same mission and data (fresh or at any later step) and
  * leaves the game unchanged when it refuses the save. *out is malloc'd. A save loads only in a build of its version:
@@ -991,6 +1008,16 @@ int kp_state_hash(KpGame *g, KpSectionHash each, void *ud, uint64_t *total);
 size_t kp_snapshot_size(KpGame *g);
 int kp_snapshot(KpGame *g, uint8_t *buf, size_t size, KpError *err);
 int kp_restore(KpGame *g, const uint8_t *buf, size_t size, KpError *err);
+/* The walk's visits as the game's snapshot places them (the dump's coverage, tests/c/test_save.c): each one's section
+ * tag, its name (the expression kp_save.c's walk gives it, with the call's line: a field's elements walked in a loop
+ * share both), its bytes in the snapshot and their element's size (an int64_t array's 8). *out is malloc'd; -1 out of
+ * memory. */
+typedef struct {
+	const char *tag, *name;
+	int line;
+	size_t offset, bytes, elem;
+} KpSnapshotField;
+int kp_snapshot_fields(KpGame *g, KpSnapshotField **out, size_t *count);
 /* The coverage of the walk (kp_save.c): the byte ranges of the game (KP_STATE_GAME), its images world and its
  * generator it visits (KP_STATE_SAVED, named by their section's tag) and the ones it leaves out on purpose (the
  * exclusion table's, named by their field, and the padding before a member whose struct is aligned past its first

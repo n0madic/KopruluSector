@@ -720,6 +720,268 @@ static void snapshots_rewind_as_the_original(KpT *T)
 	kp_t_ok(T, bad->size == 0, "continuations after a restore differ: %s", kp_buf_text(bad));
 }
 
+/* The dump's coverage of the saved state (kp_dump.c against kp_save.c's walk; kp_dump_fields): a saved field is shown
+ * by the dump when a game whose field alone was taken from a later step of the same game dumps differently (or fails
+ * to dump: its lines read the field). Each field's whole array comes from a real state, so its values are ones the
+ * game can hold (indices in range, lists without cycles); the restore derives the rest from them as a load does. A
+ * field that changes between two states only in records the dump does not list (the free ones) is not shown that way:
+ * kp_dump_fields names those the dump does show (KP_DUMP_SHOWN), and the test checks them by adding one to every
+ * element. */
+typedef struct {
+	const char *name;
+	int line;
+	int differed, shown, rebuilt; /* rebuilt: the restore puts back what it derives from the rest */
+	int confirmed;                /* a KP_DUMP_SHOWN field's check passed */
+	size_t first, count;          /* its visits in `order` */
+} DumpGroup;
+
+typedef struct {
+	DumpGroup *g;
+	size_t n, cap;
+	size_t *order; /* the visits by group */
+	size_t nfields;
+} DumpGroups;
+
+/* The games whose states show every field the dump shows changing (each shows at least one field first, in this
+ * order: the replays of the original's campaign games, the idle AI runs, the scenarios). */
+static const char *const DUMP_DONORS[] = { "replays/defeat-terran02.01-m02", "replays/exp-protoss.02-m33",
+	"replays/exp-protoss.03-m34", "replays/exp-protoss.04-m35", "replays/exp-protoss.05-m36", "replays/exp-protoss.06-m37",
+	"replays/exp-protoss.07-m38", "replays/exp-protoss.08-m39", "replays/exp-terran.01-m40", "replays/exp-terran.02-m41",
+	"replays/exp-terran.03-m42", "replays/exp-terran.04-m43", "replays/exp-terran.05-m44", "replays/exp-terran.06-m46",
+	"replays/exp-zerg.01-m49", "replays/exp-zerg.04-m52", "replays/exp-zerg.05-m58", "replays/exp-zerg.06-m59",
+	"replays/exp-zerg.08-m61", "replays/orig-protoss.01-m22", "replays/orig-terran.07-m07", "replays/orig-zerg.08-m19",
+	"replays/xprotoss01", "runs/protoss-m22", "runs/protoss-m28", "runs/protoss-m30", "runs/xterran-m45", "runs/xzerg-m59",
+	"scenarios/addon_orphan", "scenarios/ai_battlecruiser", "scenarios/ai_defiler", "scenarios/ai_suicide",
+	"scenarios/ai_templar", "scenarios/arbiter_stasis", "scenarios/archon_maelstrom", "scenarios/burrow_ensnared",
+	"scenarios/devourer_acid", "scenarios/ghost_lockdown", "scenarios/harvest_depletion", "scenarios/irradiate_bunker",
+	"scenarios/medic_flare", "scenarios/queen_spells", "scenarios/stim_marines", "scenarios/terran_landing",
+	"scenarios/trigger_outcome", "scenarios/vessel_matrix" };
+#define DUMP_COVER_POINTS 5 /* the states of a game the fields are taken between: its start, its quarters, its end */
+
+static DumpGroup *dump_group(KpT *T, DumpGroups *gs, const KpSnapshotField *f)
+{
+	size_t k;
+	for (k = 0; k < gs->n; k++) {
+		if (gs->g[k].line == f->line && strcmp(gs->g[k].name, f->name) == 0) return &gs->g[k];
+	}
+	if (gs->n == gs->cap) {
+		size_t cap = gs->cap ? gs->cap * 2 : 512;
+		DumpGroup *more = (DumpGroup *)realloc(gs->g, cap * sizeof *more);
+		kp_t_ok(T, more != NULL, "out of memory");
+		gs->g = more;
+		gs->cap = cap;
+	}
+	memset(&gs->g[gs->n], 0, sizeof gs->g[0]);
+	gs->g[gs->n].name = f->name;
+	gs->g[gs->n].line = f->line;
+	return &gs->g[gs->n++];
+}
+
+static void dump_groups_free(void *p)
+{
+	DumpGroups *gs = (DumpGroups *)p;
+	free(gs->g);
+	free(gs->order);
+}
+
+/* The row of kp_dump_fields naming a field (its own, else the longest '*' row it begins with), or NULL. */
+static const KpDumpField *dump_row(const char *name)
+{
+	const KpDumpField *rows, *best = NULL;
+	size_t best_len = 0;
+	int n, k;
+	rows = kp_dump_fields(&n);
+	for (k = 0; k < n; k++) {
+		size_t len = strlen(rows[k].name);
+		if (strcmp(rows[k].name, name) == 0) return &rows[k];
+		if (len > 0 && rows[k].name[len - 1] == '*' && strncmp(rows[k].name, name, len - 1) == 0 && len > best_len) {
+			best = &rows[k];
+			best_len = len;
+		}
+	}
+	return best;
+}
+
+/* A probe's game restored from a mixed snapshot: its snapshot back and its dump's hash. */
+typedef struct {
+	KpGame *g;
+	const uint8_t *snap;
+	uint8_t *back;
+	size_t size;
+	uint64_t hash;
+	int refused, unread; /* unread: the dump failed on the state (it read the field) */
+	char why[sizeof ((KpError *)0)->msg];
+} DumpProbe;
+
+static void dump_probe(KpT *T, void *ud)
+{
+	DumpProbe *p = (DumpProbe *)ud;
+	KpError err;
+	(void)T; /* kp_t_pcall's callback: a failure of the restore's walk lands in its handler */
+	p->refused = kp_restore(p->g, p->snap, p->size, &err) != 0 || (p->back && kp_snapshot(p->g, p->back, p->size, &err) != 0);
+	if (p->refused) {
+		snprintf(p->why, sizeof p->why, "%s", err.msg);
+		return;
+	}
+	p->unread = kp_dump_hash(p->g, 0, &p->hash) != 0;
+}
+
+/* Whether the dump of the game restored from snap differs from base (or fails); *kept whether the restore kept the
+ * group's bytes as snap has them (back NULL: not asked). */
+static int dump_differs(KpT *T, DumpProbe *probe, const DumpGroups *gs, const DumpGroup *d, const KpSnapshotField *fields,
+	uint64_t base, int *kept)
+{
+	char msg[512];
+	size_t j;
+	if (kp_t_pcall(T, dump_probe, probe, msg, sizeof msg) != 0 || probe->refused || probe->unread) return 1; /* it read the field */
+	for (j = 0; kept && j < d->count && *kept; j++) {
+		const KpSnapshotField *f = &fields[gs->order[d->first + j]];
+		*kept = memcmp(probe->back + f->offset, probe->snap + f->offset, f->bytes) == 0;
+	}
+	return probe->hash != base;
+}
+
+/* Every element of the group's visits one more (as an unsigned number of its size). */
+static void dump_bump(uint8_t *snap, const DumpGroups *gs, const DumpGroup *d, const KpSnapshotField *fields)
+{
+	size_t j, e, b;
+	for (j = 0; j < d->count; j++) {
+		const KpSnapshotField *f = &fields[gs->order[d->first + j]];
+		for (e = 0; e + f->elem <= f->bytes; e += f->elem) {
+			for (b = 0; b < f->elem && ++snap[f->offset + e + b] == 0; b++) { /* the carry: little-endian */
+			}
+		}
+	}
+}
+
+/* Golden path's game at DUMP_COVER_POINTS steps; between each two, every group not yet shown taken alone from the later
+ * one into the earlier; and each KP_DUMP_SHOWN row's field one more, until a state shows it. */
+static void dump_cover_game(KpT *T, DumpGroups *gs, const char *path)
+{
+	const KpReplay *r;
+	KpGoldenRun *gr;
+	KpGame *g;
+	KpSnapshotField *fields;
+	uint8_t *at_point[DUMP_COVER_POINTS], *mix, *back;
+	size_t size, other, nfields, j, k;
+	uint64_t base;
+	KpError err;
+	DumpProbe probe;
+	int p, mark = kp_t_mark(T);
+	gr = kp_t_golden_run(T, load_golden(T, path), NULL, 0);
+	r = &gr->replay;
+	g = gr->game.g;
+	for (p = 0; p < DUMP_COVER_POINTS; p++) {
+		kp_runner_to(&gr->run, 1 + (r->last - 1) * p / (DUMP_COVER_POINTS - 1));
+		at_point[p] = snapshot(T, g, p ? &other : &size);
+		kp_t_ok(T, !p || other == size, "%s: snapshots of %lu and %lu bytes", path, (unsigned long)size, (unsigned long)other);
+	}
+	mix = snapshot(T, g, &other);
+	back = snapshot(T, g, &other);
+	kp_t_ok(T, kp_snapshot_fields(g, &fields, &nfields) == 0, "out of memory");
+	kp_t_defer(T, free, fields);
+	if (!gs->order) { /* the groups from the first game's visits (every game walks the same names) */
+		size_t *at;
+		gs->order = (size_t *)malloc(nfields * sizeof *gs->order);
+		kp_t_ok(T, gs->order != NULL, "out of memory");
+		for (j = 0; j < nfields; j++) dump_group(T, gs, &fields[j])->count++;
+		at = (size_t *)calloc(gs->n, sizeof *at);
+		kp_t_ok(T, at != NULL, "out of memory");
+		for (k = 1; k < gs->n; k++) gs->g[k].first = gs->g[k - 1].first + gs->g[k - 1].count;
+		for (j = 0; j < nfields; j++) {
+			DumpGroup *d = dump_group(T, gs, &fields[j]);
+			gs->order[d->first + at[d - gs->g]++] = j;
+		}
+		free(at);
+		gs->nfields = nfields;
+	}
+	kp_t_ok(T, nfields == gs->nfields, "%s: %lu visits, the first game's %lu", path, (unsigned long)nfields,
+		(unsigned long)gs->nfields);
+	memset(&probe, 0, sizeof probe);
+	probe.g = g;
+	probe.snap = mix;
+	probe.size = size;
+	for (p = 0; p + 1 < DUMP_COVER_POINTS; p++) {
+		const uint8_t *a = at_point[p], *b = at_point[p + 1];
+		memcpy(mix, a, size);
+		kp_t_ok(T, kp_restore(g, mix, size, &err) == 0, "%s: %s", path, err.msg);
+		kp_t_ok(T, kp_dump_hash(g, 0, &base) == 0, "out of memory");
+		for (k = 0; k < gs->n; k++) {
+			DumpGroup *d = &gs->g[k];
+			const KpDumpField *row = dump_row(d->name);
+			int differs = 0, kept = 1;
+			if (row && row->klass == KP_DUMP_SHOWN && !d->confirmed) {
+				dump_bump(mix, gs, d, fields);
+				probe.back = NULL;
+				d->confirmed = dump_differs(T, &probe, gs, d, fields, base, NULL);
+				memcpy(mix, a, size);
+			}
+			if (d->shown || d->rebuilt) continue;
+			for (j = 0; j < d->count && !differs; j++) {
+				const KpSnapshotField *f = &fields[gs->order[d->first + j]];
+				differs = memcmp(a + f->offset, b + f->offset, f->bytes) != 0;
+			}
+			if (!differs) continue;
+			d->differed = 1;
+			for (j = 0; j < d->count; j++) {
+				const KpSnapshotField *f = &fields[gs->order[d->first + j]];
+				memcpy(mix + f->offset, b + f->offset, f->bytes);
+			}
+			probe.back = back;
+			if (dump_differs(T, &probe, gs, d, fields, base, &kept)) d->shown = 1;
+			else if (!kept) d->rebuilt = 1;
+			for (j = 0; j < d->count; j++) {
+				const KpSnapshotField *f = &fields[gs->order[d->first + j]];
+				memcpy(mix + f->offset, a + f->offset, f->bytes);
+			}
+		}
+	}
+	kp_t_release(T, mark);
+}
+
+static void dump_shows_the_saved_state(KpT *T)
+{
+	static DumpGroups gs;
+	const KpDumpField *rows;
+	KpBuf *bad, *idle;
+	size_t k;
+	int n, i, *used;
+	if (!kp_t_ready(T, "test_save", FILES) || !kp_t_has(T, DIR "replays/index.json")) return;
+	memset(&gs, 0, sizeof gs);
+	kp_t_defer(T, dump_groups_free, &gs);
+	for (i = 0; i < (int)(sizeof DUMP_DONORS / sizeof DUMP_DONORS[0]); i++) dump_cover_game(T, &gs, DUMP_DONORS[i]);
+	rows = kp_dump_fields(&n);
+	used = (int *)calloc((size_t)n, sizeof *used);
+	kp_t_ok(T, used != NULL, "out of memory");
+	kp_t_defer(T, free, used);
+	bad = kp_t_buf(T);
+	idle = kp_t_buf(T);
+	for (k = 0; k < gs.n; k++) {
+		const DumpGroup *d = &gs.g[k];
+		const KpDumpField *row = dump_row(d->name);
+		if (row) used[row - rows] = 1;
+		if (k > 0 && strcmp(d->name, gs.g[k - 1].name) == 0) {
+			kp_buf_printf(bad, "\n  %s: walked at lines %d and %d under one name", d->name, gs.g[k - 1].line, d->line);
+		} else if (d->rebuilt) {
+			kp_buf_printf(bad, "\n  %s: the restore derives it, so it need not be saved", d->name);
+		} else if (row && row->klass == KP_DUMP_SHOWN) {
+			if (d->shown) kp_buf_printf(bad, "\n  %s: a game shows it now; drop its row", d->name);
+			else if (!d->confirmed) kp_buf_printf(bad, "\n  %s: the dump does not show it", d->name);
+		} else if (row && d->shown) {
+			kp_buf_printf(bad, "\n  %s: the dump shows it; drop its row", d->name);
+		} else if (!row && d->differed && !d->shown) {
+			kp_buf_printf(bad, "\n  %s: the dump does not show it; dump it or list it in kp_dump_fields", d->name);
+		} else if (!row && !d->differed) {
+			kp_buf_printf(idle, " %s", d->name);
+		}
+	}
+	for (i = 0; i < n; i++) {
+		if (!used[i]) kp_buf_printf(bad, "\n  row %s: no saved field", rows[i].name);
+	}
+	kp_t_log(T, "dump coverage: %lu saved fields; no game changes:%s", (unsigned long)gs.n, kp_buf_text(idle));
+	kp_t_ok(T, bad->size == 0, "the dump's coverage:%s", kp_buf_text(bad));
+}
+
 /* A snapshot that does not fit is refused before the game changes: a short buffer, another mission's snapshot. */
 static void restores_refuse_other_snapshots(KpT *T)
 {
@@ -762,6 +1024,7 @@ static const KpTest TESTS[] = {
 	{ "save_schema_matches_its_version", save_schema_matches_its_version, 0 },
 	{ "snapshots_rewind_as_the_original", snapshots_rewind_as_the_original, 6 },
 	{ "restores_refuse_other_snapshots", restores_refuse_other_snapshots, 0 },
+	{ "dump_shows_the_saved_state", dump_shows_the_saved_state, 0 },
 	{ "saved_scenarios_continue_as_the_original", saved_scenarios_continue_as_the_original, 6 },
 	{ "saved_wasteland_continues_as_the_original", saved_wasteland_continues_as_the_original, 0 },
 	{ "campaign_plays_and_saves_equal_the_original", campaign_plays_and_saves_equal_the_original, 12 },

@@ -1549,17 +1549,212 @@ static void dump_lines(Dump *d, KpGame *g)
 }
 
 
-/* A dump of g's lines: emit (the text) or the hash into *hash; -1 out of memory. */
+/* The previous links of a list's records in its order (tools/native_state.py prevs): from head along next, each
+ * record's prev; bounded as CHAIN. */
+#define PREVS(t, head, next, prev, none, limit) \
+	do { \
+		int64_t c_ = (head); \
+		int guard_ = 0; \
+		while (c_ != (none) && c_ >= 0 && c_ < (limit) && guard_++ <= (limit)) { \
+			text_item(&(t), (prev)[c_]); \
+			c_ = (next)[c_]; \
+		} \
+	} while (0)
+
+/* The categories of stage T3 (docs/phase-state.md, tools/native_state.py later): the state the earlier ones left out,
+ * which test_save.dump_shows_the_saved_state found unseen, each a category of its own so the goldens of the others and
+ * the plays' fingerprints (kp_oracle.c FINGERPRINT_CATEGORIES) stay. */
+static void later_lines(Dump *d, KpGame *g)
+{
+	static const char *const LIST_NAMES[KP_LIST_COUNT] = { "active", "pending", "free", "hidden", "special" };
+	static const int UNIT_LISTS[4] = { KP_LIST_ACTIVE, KP_LIST_HIDDEN, KP_LIST_SPECIAL, KP_LIST_PENDING };
+	KpUnits *u = &g->u;
+	KpImages *w = g->w;
+	KpBullets *bl = &g->bullets;
+	KpOrders *o = &g->orders;
+	const KpMove *mv = &g->mv;
+	int64_t k, n;
+	int p, l;
+	{ /* the step's globals: the previous shot (0x540760), the Lurker line's hits (0x540768), the price cache
+	   * (0x53dad0), the spell selector's flag (0x665d30), the RNG's switch and total, the moving unit's step globals
+	   * (0x543280..) and the IScript contexts (0x543300) */
+		Text hits = text_new(d), minerals = text_new(d), gas = text_new(d), supply = text_new(d);
+		for (k = 0; k < KP_HIT_SLOTS * KP_HIT_PAIRS; k++) {
+			if (bl->hit_source[k] != 0 || bl->hit_target[k] != 0) {
+				int64_t hit[3];
+				hit[0] = k;
+				hit[1] = bl->hit_source[k];
+				hit[2] = bl->hit_target[k];
+				text_record(&hits, hit, 3);
+			}
+		}
+		for (p = 0; p < KP_PLAYERS; p++) {
+			text_item(&minerals, kp_u32v(g->cost_minerals[p]));
+			text_item(&gas, kp_u32v(g->cost_gas[p]));
+			text_item(&supply, kp_u32v(g->cost_supply[p]));
+		}
+		begin(d, "step_state", "0");
+		field_int(d, "bullet_spawner", bl->last_spawner);
+		field_int(d, "bullet_spin", bl->spin_sign);
+		field_text(d, "hits", &hits);
+		field_int(d, "hit_used", bl->hit_used);
+		field_text(d, "cost_minerals", &minerals);
+		field_text(d, "cost_gas", &gas);
+		field_text(d, "cost_supply", &supply);
+		field_int(d, "spell_reactive", kp_u32v(g->ai.spell_reactive));
+		field_int(d, "rng_enabled", g->rng->enabled);
+		field_int(d, "rng_total", g->rng->total);
+		field_int(d, "move_next_x", mv->next_x);
+		field_int(d, "move_next_y", mv->next_y);
+		field_int(d, "move_old_x", mv->old_x);
+		field_int(d, "move_old_y", mv->old_y);
+		field_int(d, "move_halt_x", mv->next_halt_x);
+		field_int(d, "move_halt_y", mv->next_halt_y);
+		field_int(d, "move_step", mv->step);
+		field_int(d, "move_walk_stop", mv->walk_stop);
+		field_int(d, "move_walk_start", mv->walk_start);
+		field_int(d, "move_flags_before", mv->flags_before);
+		field_int(d, "move_flags_after", mv->flags_after);
+		field_int(d, "context_unit", w->has_unit ? w->unit : 0);
+		field_int(d, "context_flingy", w->has_flingy ? w->flingy : 0);
+		field_int(d, "context_bullet", w->has_bullet ? w->bullet : 0);
+		end(d);
+	}
+	{ /* the lists of the main images and the sprites the earlier categories do not walk: the free lists (0x544694, tail
+	   * 0x592898; 0x5c51c8, tail 0x5c51cc) and the sprite rows' previous links. A category of the local interface, as
+	   * "sprite" and "image" are: a viewer's selection circles and ground marker change it (kp_script_flow.c sim.crc) */
+		Text images = text_new(d), image_prev = text_new(d), rows = text_new(d), sprites = text_new(d);
+		Text sprite_prev = text_new(d);
+		int r;
+		CHAIN(images, w->free_images.head, w->img.next, KP_NONE, KP_IMG_MAIN);
+		PREVS(image_prev, w->free_images.head, w->img.next, w->img.prev, KP_NONE, KP_IMG_MAIN);
+		for (r = 0; r < KP_ROWS; r++) PREVS(rows, w->rows[r].head, w->spr.next, w->spr.prev, KP_NONE, KP_SPRITES);
+		CHAIN(sprites, w->free_sprites.head, w->spr.next, KP_NONE, KP_SPRITES);
+		PREVS(sprite_prev, w->free_sprites.head, w->spr.next, w->spr.prev, KP_NONE, KP_SPRITES);
+		begin(d, "sprite_lists", "images");
+		field_text(d, "nodes", &images);
+		field_text(d, "prev", &image_prev);
+		field_int(d, "tail", w->free_images.tail);
+		end(d);
+		begin(d, "sprite_lists", "rows");
+		field_text(d, "prev", &rows);
+		end(d);
+		begin(d, "sprite_lists", "sprites");
+		field_text(d, "nodes", &sprites);
+		field_text(d, "prev", &sprite_prev);
+		field_int(d, "tail", w->free_sprites.tail);
+		end(d);
+	}
+	/* the previous links along the lists the earlier categories walk forward */
+	for (l = 0; l < KP_LIST_COUNT; l++) {
+		Text t = text_new(d);
+		PREVS(t, g->lists[l].head, u->next, u->prev, 0, KP_UNITS + 1);
+		begin(d, "links", "unit.%s", LIST_NAMES[l]);
+		field_text(d, "prev", &t);
+		end(d);
+	}
+	{
+		Text active = text_new(d), free_list = text_new(d);
+		PREVS(active, bl->active.head, bl->next, bl->prev, 0, KP_BULLETS + 1);
+		PREVS(free_list, bl->free.head, bl->next, bl->prev, 0, KP_BULLETS + 1);
+		begin(d, "links", "bullet.active");
+		field_text(d, "prev", &active);
+		end(d);
+		begin(d, "links", "bullet.free");
+		field_text(d, "prev", &free_list);
+		end(d);
+	}
+	{
+		Text t = text_new(d);
+		PREVS(t, g->power_head, u->rally_unit, g->power.prev, 0, KP_UNITS + 1);
+		begin(d, "links", "power");
+		field_text(d, "prev", &t);
+		end(d);
+	}
+	{
+		Text queues = text_new(d), free_list = text_new(d);
+		for (l = 0; l < 4; l++) {
+			for (n = g->lists[UNIT_LISTS[l]].head; n > 0 && n <= KP_UNITS; n = u->next[n]) {
+				PREVS(queues, u->queue_head[n], o->next, o->prev, KP_NONE, KP_ORDER_NODES);
+			}
+		}
+		PREVS(free_list, o->free.head, o->next, o->prev, KP_NONE, KP_ORDER_NODES);
+		begin(d, "links", "order.queues");
+		field_text(d, "prev", &queues);
+		end(d);
+		begin(d, "links", "order.free");
+		field_text(d, "prev", &free_list);
+		end(d);
+	}
+	for (p = 0; p < 8; p++) {
+		Text t = text_new(d);
+		PREVS(t, g->guards.heads[p], g->guards.next, g->guards.prev, KP_NONE, KP_GUARDS);
+		begin(d, "links", "guard.%d", p);
+		field_text(d, "prev", &t);
+		end(d);
+	}
+	{ /* the military records (0x6acc50) of each AI region's list (+0x30) as "record:prev:type:harass:unit:player:region",
+	   * and the pool's free list (0x6b1a70) */
+		const KpMilitaryAis *m = &g->military;
+		int64_t i;
+		for (p = 0; p < KP_AI_PLAYERS; p++) {
+			for (i = 0; i < g->regions.count && i < KP_AI_REGIONS; i++) {
+				Text records;
+				int64_t c = g->air.military[p][i] - 1;
+				int seen = 0;
+				if (c < 0) continue; /* before text_new: a skipped Text would keep a spare buffer */
+				records = text_new(d);
+				while (c >= 0 && c < KP_MILITARY_AIS && seen++ <= KP_MILITARY_AIS) {
+					int64_t rec[7];
+					rec[0] = c;
+					rec[1] = m->prev[c];
+					rec[2] = m->type[c];
+					rec[3] = m->harass[c];
+					rec[4] = m->unit[c];
+					rec[5] = m->player[c];
+					rec[6] = m->region[c];
+					text_record(&records, rec, 7);
+					c = m->next[c];
+				}
+				begin_pair(d, "ai_military", p, i);
+				field_text(d, "records", &records);
+				end(d);
+			}
+		}
+		{
+			Text t = text_new(d);
+			CHAIN(t, m->free, m->next, KP_NONE, KP_MILITARY_AIS);
+			begin(d, "ai_military", "free");
+			field_text(d, "records", &t);
+			end(d);
+		}
+	}
+}
+#undef PREVS
+
+
+/* A dump of g's lines: emit (the text) or the hash into *hash; -1 out of memory, or when the state is one the dump
+ * cannot read (a failure of the game's accessors, its message in g->w->error: a state no game reaches, such as the
+ * mixed ones of test_save.dump_shows_the_saved_state). The dump's own memory is freed then; in the text's modes a line
+ * being built keeps its buffer. */
 static int run_dump(KpGame *g, int drawn, KpDumpLine emit, void *ud, uint64_t *hash)
 {
 	Dump *d = (Dump *)calloc(1, sizeof *d);
+	KpTry t;
 	int failed, k;
 	if (!d) return -1;
 	d->emit = emit;
 	d->ud = ud;
 	d->drawn = drawn;
 	d->hash = hash != NULL;
-	dump_lines(d, g);
+	kp_images_begin(g->w, &t);
+	if (setjmp(t.buf)) {
+		d->failed = 1;
+	} else {
+		dump_lines(d, g);
+		later_lines(d, g);
+	}
+	kp_images_end(g->w, &t);
 	give_back(d);
 	failed = d->failed;
 	if (hash) *hash = mix(d->h, (uint64_t)drawn);
@@ -1636,4 +1831,72 @@ int kp_dump_crcs(KpGame *g, int drawn, KpCategoryCrc each, void *ud)
 	r = r != 0 || o->failed ? -1 : 0;
 	free(o);
 	return r;
+}
+
+/* The dump's coverage of the saved state (kp_game.h). The names are kp_save.c's walk's. */
+static const KpDumpField DUMP_FIELDS[] = {
+	/* shown, but no game of the test changes them on a listed record */
+	{ "g->u.order_type", KP_DUMP_SHOWN, "unit order_type (+0x50; a build order's type, 228 otherwise)" },
+	{ "g->orders.type", KP_DUMP_SHOWN, "order type" },
+	{ "g->guards.kind", KP_DUMP_SHOWN, "guard records" },
+	{ "g->guards.type", KP_DUMP_SHOWN, "guard records" },
+	{ "g->guards.x2", KP_DUMP_SHOWN, "guard records" },
+	{ "g->guards.y2", KP_DUMP_SHOWN, "guard records" },
+	{ "g->power.prev", KP_DUMP_SHOWN, "links power" },
+	{ "g->military.type", KP_DUMP_SHOWN, "ai_military records (4 in every listed record)" },
+	/* TODO: the free lists of the other image pools (their heads' addresses are not known yet) */
+	{ "&w->free_health", KP_DUMP_MODEL, "the health bars' free list" },
+	{ "&w->free_circles", KP_DUMP_MODEL, "the selection circles' free list" },
+	{ "&w->free_ghosts", KP_DUMP_MODEL, "the placement ghosts' free list" },
+	{ "&w->free_boxes", KP_DUMP_MODEL, "the placement boxes' free list" },
+	/* TODO: the lone and fog thingies (atlas P05: the lone records 0x5c5ae0, 16 bytes; the dump lists their sprites;
+	 * the lists' heads and the fog records' addresses are not known yet) */
+	{ "w->thg.*", KP_DUMP_MODEL, "the lone thingy records 0x5c5ae0" },
+	{ "&w->free_lone", KP_DUMP_MODEL, "the lone thingies' free list" },
+	{ "&w->active_lone", KP_DUMP_MODEL, "the lone thingies' active list" },
+	{ "w->fog.*", KP_DUMP_MODEL, "the fog thingy records" },
+	{ "&w->free_fog", KP_DUMP_MODEL, "the fog thingies' free list" },
+	{ "&w->active_fog", KP_DUMP_MODEL, "the fog thingies' active list" },
+	/* TODO: the images' fields the model must map: a GRP header's pointer to its file, a draw parameter (a remap's
+	 * table) to its meaning */
+	{ "w->img.grp", KP_DUMP_MODEL, "CImage +0x2c (the GRP's header: a pointer the model must map to its file)" },
+	{ "w->img.param", KP_DUMP_MODEL, "CImage +0x28 (the draw function's parameter)" },
+	{ "w->vgrp_*", KP_DUMP_HEAP, "the virtual GRP headers of the health-bar and box images" },
+	{ "tr->current", KP_DUMP_HEAP, "the current trigger 0x6ca790: a node in the heap, whose address the dumps' copies "
+		"lack (Koprulu only writes it: the actions take their trigger as an argument)" },
+	{ "&holdrand", KP_DUMP_HEAP, "the CRT generator's state (rand 0x4d14d4): the thread's data block _ptd, in the heap; "
+		"its draws are the creep variants' and the interface's (the oracle's \"crt\" events)" },
+	/* TODO: the DAT values and lazy tables the game writes while it runs */
+	{ "offsets", KP_DUMP_MODEL, "weapons.dat's forward offsets in memory, which attkshiftproj 0x411023 writes" },
+	{ "g->req_offsets[k]", KP_DUMP_MODEL, "the requirement offsets of the lazy initializers 0x407d50, 0x407f20, 0x4080d0, 0x408280" },
+	{ "g->req_offsets_ready", KP_DUMP_MODEL, "the lazy initializers' flags" },
+	/* TODO: the path searches' state, kept between searches */
+	{ "p->extent_ctx", KP_DUMP_MODEL, "the placement's extents context" },
+	{ "r->*", KP_DUMP_MODEL, "the region search's nodes" },
+	{ "p->rheap*", KP_DUMP_MODEL, "the region search's open heap" },
+	{ "lg->*", KP_DUMP_MODEL, "the geometry context 0x69d930" },
+	{ "e->*", KP_DUMP_MODEL, "the geometry context's edge arrays (+0x2d0)" },
+	{ "v->*", KP_DUMP_MODEL, "the swept areas 0x69ec08, 0x69ee10, 0x69f018" },
+	{ "n->*", KP_DUMP_MODEL, "the local search's nodes" },
+	{ "p->lnode_count", KP_DUMP_MODEL, "the local search's nodes in use" },
+	{ "p->lheap*", KP_DUMP_MODEL, "the local search's open heap" },
+	{ "p->hash_*", KP_DUMP_MODEL, "the local search's node hash" },
+	/* TODO: the receding creep: the original's chains of InitRecedingCreepPool 0x4b44a0, here nodes per tile */
+	{ "t->recede_next", KP_DUMP_MODEL, "the receding creep's chains (the dump has the buckets' counts)" },
+	{ "t->recede_prev", KP_DUMP_MODEL, "the receding creep's chains" },
+	{ "t->recede_x", KP_DUMP_MODEL, "the receding creep's chains" },
+	{ "t->recede_y", KP_DUMP_MODEL, "the receding creep's chains" },
+	{ "t->recede_bucket", KP_DUMP_MODEL, "the receding creep's chains" },
+	{ "t->recede_head", KP_DUMP_MODEL, "the receding creep's chains" },
+	{ "t->recede_node", KP_DUMP_KOPRULU, "each tile's receding node, in place of the original's hash of 1024 chains" },
+	/* Koprulu's own */
+	{ "g->scalar_present", KP_DUMP_KOPRULU, "which of the original's globals the game holds" },
+	{ "g->spatial.seen", KP_DUMP_KOPRULU, "the unit query's marks of its seen units" },
+	{ "g->spatial.stamp", KP_DUMP_KOPRULU, "the unit query's stamp" },
+};
+
+const KpDumpField *kp_dump_fields(int *count)
+{
+	*count = (int)(sizeof DUMP_FIELDS / sizeof DUMP_FIELDS[0]);
+	return DUMP_FIELDS;
 }

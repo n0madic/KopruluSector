@@ -376,8 +376,7 @@ void kp_bullets_step(KpGame *g)
 		dispatch(g, b);
 		b = next;
 	}
-	w->has_bullet = 0;
-	w->has_flingy = 0;
+	w->bullet = w->flingy = w->has_bullet = w->has_flingy = 0; /* the original's null contexts */
 }
 
 /* ClearBulletReferencesToUnit 0x40a5a0. */

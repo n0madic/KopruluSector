@@ -82,7 +82,15 @@ PLAY_GOLDEN = ROOT / "tests" / "golden" / "oracle" / "plays"
 # flag 0x67cc90 and full vision); their goldens have the plays' shape.
 REPLAY_ROOT = EMU_ROOT / "replays"
 REPLAY_GOLDEN = ROOT / "tests" / "golden" / "oracle" / "replays"
-FINGERPRINT = "fingerprint"
+FINGERPRINT, FINGERPRINT_LATER = "fingerprint", "fingerprint_later"
+# The categories the fingerprint covers: those of the oracle's first version (kp_oracle.c FINGERPRINT_CATEGORIES, the
+# same list). The plays' raw dumps are gone, so a category added later stays out of it and their goldens stand; the
+# replays' goldens keep the later fingerprint of the other categories beside it (FINGERPRINT_LATER).
+FINGERPRINT_CATEGORIES = frozenset((
+    "ai_area", "ai_building", "ai_lists", "ai_player", "ai_reach", "ai_region", "ai_resource", "ai_script", "ai_town",
+    "ai_worker", "bullet", "bullets", "counter", "density", "economy", "global", "guard", "guard_time", "image", "list",
+    "location", "order", "order_free", "path", "path_free", "player", "power", "pstat", "resources", "rng_sources",
+    "selection", "spatial", "sprite", "step", "terrain", "tiles", "trigger", "trigger_counts", "triggers", "unit"))
 SYNC_COMMAND = "37"
 FULL_EVERY = 500
 # The kinds of dumps: their default roots and their goldens (index.json: the runs whose every compared step equals
@@ -269,10 +277,12 @@ def write_golden(name: str, mission: str, seed: int, expansion: int, crcs: dict[
                                                       "objectives": objectives, "crc": crcs}))
 
 
-def fingerprint(crcs: dict[str, int]) -> int:
+def fingerprint(crcs: dict[str, int], later: bool = False) -> int:
     """The continuation fingerprint of a state (kp_state_fingerprint, native/kp_core/tools/kp_oracle.c): the CRC-32 of
-    its category CRCs as lines "<category> <crc>\\n" in category order."""
-    return zlib.crc32("".join(f"{c} {crcs[c]}\n" for c in sorted(crcs)).encode())
+    its category CRCs as lines "<category> <crc>\\n" in category order, of FINGERPRINT_CATEGORIES only; `later`: of the
+    other categories (kp_state_fingerprint_later)."""
+    return zlib.crc32("".join(f"{c} {crcs[c]}\n" for c in sorted(crcs)
+                              if (c in FINGERPRINT_CATEGORIES) != later).encode())
 
 
 def ui_entry(e: dict) -> dict:
@@ -340,6 +350,8 @@ def write_scenario_golden(name: str, mission: str, seed: int, expansion: int, co
     for step, crcs in sorted(steps.items()):
         if plays_golden(golden) and (step - 1) % FULL_EVERY != 0 and step != last:
             data["steps"][step] = {FINGERPRINT: fingerprint(crcs)}
+            if any(c not in FINGERPRINT_CATEGORIES for c in crcs):
+                data["steps"][step][FINGERPRINT_LATER] = fingerprint(crcs, later=True)
         else:
             data["steps"][step] = dict(crcs)
     (golden / f"{name}.json").write_text(golden_json(data))

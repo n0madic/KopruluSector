@@ -19,6 +19,7 @@ extern "C" {
  * 0x445de0); tools/state_check.py leaves them out there. */
 #define KP_ORACLE_DRAWN_STEP 3
 #define KP_ORACLE_FINGERPRINT "fingerprint"
+#define KP_ORACLE_FINGERPRINT_LATER "fingerprint_later"
 
 /* A golden file (a JSON twin) loaded. */
 typedef struct {
@@ -51,10 +52,14 @@ int kp_state_crcs(KpGame *g, int drawn, KpStateCrcs *out);
 /* A category's CRC; 0 when the state has none (*found 0). */
 uint32_t kp_state_crc(const KpStateCrcs *c, const char *category, int *found);
 /* The continuation fingerprint of a state: the CRC-32 of its category CRCs as lines "<category> <crc>\n" in category
- * order (tools/state_check.py fingerprint; the play goldens keep it at every compared step). */
+ * order, of the oracle's first version's categories only (tools/state_check.py fingerprint; the play goldens keep it
+ * at every compared step). */
 uint32_t kp_state_fingerprint(const KpStateCrcs *c);
+/* The same of the categories added after the first version (the replays' goldens keep it beside the fingerprint). */
+uint32_t kp_state_fingerprint_later(const KpStateCrcs *c);
 /* The differences of a state from a golden step's CRCs (want[0..count-1]): each differing category appended to out
- * as " <category>", or " fingerprint" for a step that keeps only the fingerprint; returns how many. */
+ * as " <category>", or " fingerprint" / " fingerprint_later" for a step that keeps only fingerprints; returns how
+ * many. */
 int kp_step_differences(const KpStateCrcs *c, const KpReplayCrc *want, int count, KpBuf *out);
 
 /* The trigger trace line of a KP_EVENT_TRIGGER event ("frame player trigger action type result", the emulator's

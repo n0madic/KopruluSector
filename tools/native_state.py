@@ -169,6 +169,27 @@ GUARD_FREE, GUARD_HEADS = 0x6B6908 + 32000, 0x6BE614
 # A unit's AI record (+0x134) by its pool: its letter (kp_dump.c), base, record size and count.
 AI_POOLS = (("g", 0x6B6908, 0x20, 1000), ("w", 0x67F7B0, 24, 1000), ("b", 0x685578, 44, 1000),
             ("m", 0x6ACC50, 20, 1000))
+# The categories of stage T3 (docs/phase-state.md): the state the earlier ones left out, which the transplant test
+# test_save.dump_shows_the_saved_state found unseen. "step_state": the previous shot's unit and spin side, the Lurker
+# line's hit history (32 slots of 16 source and target pairs) and its used pairs, the price cache, the spell
+# selector's reactive flag, the RNG's switch and draw total, the moving unit's step globals and the IScript contexts.
+BULLET_SPAWNER, BULLET_SPIN, HITS, HIT_PAIRS, HIT_USED = 0x540760, 0x540764, 0x540768, 32 * 16, 0x54176C
+COSTS = (("cost_minerals", 0x53DAD0), ("cost_gas", 0x53DB00), ("cost_supply", 0x53DB30))
+SPELL_REACTIVE, RNG_ENABLED, RNG_TOTAL = 0x665D30, 0x673930, 0x673938
+MOVE = (("move_next_x", 0x543280, "h"), ("move_next_y", 0x543284, "h"), ("move_old_x", 0x543288, "h"),
+        ("move_old_y", 0x54328C, "h"), ("move_halt_x", 0x543290, "i"), ("move_halt_y", 0x543294, "i"),
+        ("move_step", 0x543298, "i"), ("move_walk_start", 0x5432F8, "B"), ("move_walk_stop", 0x5432F9, "B"),
+        ("move_flags_before", 0x5432FA, "B"), ("move_flags_after", 0x5432FB, "B"))
+CONTEXT_UNIT, CONTEXT_FLINGY, CONTEXT_BULLET = 0x543300, 0x543304, 0x543308
+FLINGY_BULLETS = UNITS  # a bullet's flingy number in Koprulu: UNITS + its index
+# "sprite_lists": the lists of the main images and the sprites the other categories do not walk, the local interface's
+# like "sprite" and "image" (a viewer's selection circles and ground marker): the free lists (head, tail; next +4,
+# prev +0) and the sprite rows' previous links.
+IMAGE_FREE, IMAGE_FREE_TAIL, SPRITE_FREE, SPRITE_FREE_TAIL = 0x544694, 0x592898, 0x5C51C8, 0x5C51CC
+MAIN_IMAGES = IMAGE_POOLS[0][1]
+# "ai_military": the military records (pool 0x6acc50, links +0/+4, type +8, harass region +0xa, unit +0xc, AI region
+# record +0x10), the pool's free head +0x4e20, an AI region record's list head +0x30.
+MILITARY_BASE, MILITARY_SIZE, MILITARY_COUNT, MILITARY_FREE, AI_REGION_MILITARY = 0x6ACC50, 20, 1000, 0x6B1A70, 0x30
 
 # CUnit fields: name, offset, struct format, pointer kind (None = value).
 CUNIT = (
@@ -402,13 +423,100 @@ class Decoder:
             return f"t{self.town_index(p)}"
         if GUARD_BLOCK <= p < GUARD_BLOCK + GUARD_SIZE * GUARD_RECORDS:
             return f"g{self.guard_index(p)}"
+        return f"r{self.ai_region_of(p)[1]}"
+
+    def flingy_index(self, p: int) -> int:
+        """A flingy pointer (a unit's or a bullet's) as Koprulu's flingy number, 0 for null."""
+        if BULLET_BASE <= p < BULLET_BASE + BULLET_SIZE * BULLETS:
+            return FLINGY_BULLETS + self.bullet_index(p)
+        return self.unit_index(p)
+
+    def military_index(self, p: int) -> int:
+        return self.pool_index(p, MILITARY_BASE, MILITARY_SIZE, MILITARY_COUNT, "military")
+
+    def ai_region_of(self, p: int) -> tuple[int, int]:
+        """An AI region record pointer as (player, region), (-1, -1) for null."""
+        if p == 0:
+            return -1, -1
         for q in range(8):
             name = f"ai_regions{q}"
             if name in self.s.blobs:
                 base, data = self.s.blobs[name]
                 if base <= p < base + len(data) and not (p - base) % AI_REGION_SIZE:
-                    return f"r{(p - base) // AI_REGION_SIZE}"
-        raise ValueError(f"AI context pointer {p:#x}")
+                    return q, (p - base) // AI_REGION_SIZE
+        raise ValueError(f"AI region pointer {p:#x}")
+
+    def prevs(self, head: int, next_offset: int, prev_offset: int, to_index, limit: int) -> str:
+        """The previous links of a list's records in its order (kp_dump.c "links")."""
+        out, p = [], head
+        while p:
+            out.append(to_index(self.u32(p + prev_offset)))
+            if len(out) > limit:
+                raise ValueError("list cycle")
+            p = self.u32(p + next_offset)
+        return ",".join(map(str, out))
+
+    def later(self, m: dict, units: list) -> None:
+        """The categories of stage T3 (kp_dump.c "step_state", "sprite_lists", "links", "ai_military")."""
+        f = {"bullet_spawner": self.unit_index(self.u32(BULLET_SPAWNER)), "bullet_spin": self.u32(BULLET_SPIN),
+             "hit_used": self.u32(HIT_USED), "spell_reactive": self.u32(SPELL_REACTIVE),
+             "rng_enabled": self.u32(RNG_ENABLED), "rng_total": self.u32(RNG_TOTAL),
+             "context_unit": self.unit_index(self.u32(CONTEXT_UNIT)),
+             "context_flingy": self.flingy_index(self.u32(CONTEXT_FLINGY)),
+             "context_bullet": self.bullet_index(self.u32(CONTEXT_BULLET))}
+        hits = struct.unpack(f"<{2 * HIT_PAIRS}I", self.s.read(HITS, 8 * HIT_PAIRS))
+        f["hits"] = ",".join(f"{k}:{self.unit_index(hits[2 * k])}:{self.unit_index(hits[2 * k + 1])}"
+                             for k in range(HIT_PAIRS) if hits[2 * k] or hits[2 * k + 1])
+        for name, base in COSTS:
+            f[name] = _u32s(self.s.read(base, 48))
+        for name, a, fmt in MOVE:
+            f[name] = struct.unpack("<" + fmt, self.s.read(a, struct.calcsize(fmt)))[0]
+        m["step_state"] = [("0", f)]
+        m["sprite_lists"] = [
+            ("images", {"nodes": ",".join(map(str, self.chain(self.u32(IMAGE_FREE), 4, self.image_index, MAIN_IMAGES))),
+                        "prev": self.prevs(self.u32(IMAGE_FREE), 4, 0, self.image_index, MAIN_IMAGES),
+                        "tail": self.image_index(self.u32(IMAGE_FREE_TAIL))}),
+            ("rows", {"prev": ",".join(
+                q for q in (self.prevs(self.u32(ROW_HEADS + 4 * r), 4, 0, self.sprite_index, SPRITES)
+                            for r in range(ROWS)) if q)}),
+            ("sprites", {"nodes": ",".join(map(str, self.chain(self.u32(SPRITE_FREE), 4, self.sprite_index, SPRITES))),
+                         "prev": self.prevs(self.u32(SPRITE_FREE), 4, 0, self.sprite_index, SPRITES),
+                         "tail": self.sprite_index(self.u32(SPRITE_FREE_TAIL))})]
+        links = [(f"unit.{name}", {"prev": self.prevs(self.u32(head), 4, 0, self.unit_index, UNITS)})
+                 for name, head in UNIT_LISTS]
+        links += [(f"bullet.{name[7:]}", {"prev": self.prevs(self.u32(head), 4, 0, self.bullet_index, BULLETS)})
+                  for name, head in BULLET_LISTS]
+        links.append(("power", {"prev": self.prevs(self.u32(POWER_HEAD), 0xFC, 0xF8, self.unit_index, UNITS)}))
+        queues = []
+        for _, u in units:
+            if u["queue_head"] != -1:
+                queues.append(self.prevs(ORDER_BASE + u["queue_head"] * ORDER_SIZE, 4, 0, self.order_index, ORDERS))
+        links.append(("order.queues", {"prev": ",".join(queues)}))
+        links.append(("order.free", {"prev": self.prevs(self.u32(ORDER_FREE), 4, 0, self.order_index, ORDERS)}))
+        links += [(f"guard.{p}", {"prev": self.prevs(self.u32(GUARD_HEADS + 8 * p), 0, 4, self.guard_index,
+                                                     GUARD_RECORDS)}) for p in range(8)]
+        m["links"] = links
+        military = []
+        for p in range(8):
+            name = f"ai_regions{p}"
+            if name not in self.s.blobs:
+                continue
+            base, blob = self.s.blobs[name]
+            for r in range(len(blob) // AI_REGION_SIZE):
+                at = struct.unpack_from("<I", blob, AI_REGION_SIZE * r + AI_REGION_MILITARY)[0]
+                records = []
+                while at:
+                    nxt, prev, mtype, harass, unit, region = struct.unpack("<IIHHII", self.s.read(at, MILITARY_SIZE))
+                    records.append(":".join(map(str, (self.military_index(at), self.military_index(prev), mtype, harass,
+                                                      self.unit_index(unit), *self.ai_region_of(region)))))
+                    if len(records) > MILITARY_COUNT:
+                        raise ValueError("military list cycle")
+                    at = nxt
+                if records:
+                    military.append((f"{p}.{r}", {"records": ",".join(records)}))
+        military.append(("free", {"records": ",".join(map(str, self.chain(self.u32(MILITARY_FREE), 0, self.military_index,
+                                                                         MILITARY_COUNT)))}))
+        m["ai_military"] = military
 
     def ai_towns(self, m: dict) -> None:
         """The towns, workers and buildings that differ from their start (kp_dump.c "ai_town", "ai_worker",
@@ -731,6 +839,7 @@ class Decoder:
         self.ai_towns(m)
         self.ai_areas(m, m["unit"])
         self.triggers(m)
+        self.later(m, m["unit"])
         w, h = self.s.header["map"]
         tiles = self.s.blob("tile_flags")
         m["tiles"] = [(str(ty), {"flags": "".join(f"{struct.unpack_from('<I', tiles, 4 * (ty * w + tx))[0]:08x}"

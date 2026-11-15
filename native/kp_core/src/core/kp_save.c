@@ -64,6 +64,13 @@ typedef struct {
 	/* COVER: the calls */
 	Call *calls;
 	size_t ncalls, ncap;
+	/* the visit's name (the expression the walk gave its primitive) and its line; RAW counting with log: the visits'
+	 * places in a snapshot (kp_snapshot_fields) */
+	const char *name;
+	int line, log;
+	size_t elem; /* RAW: the visit's element size */
+	KpSnapshotField *fields;
+	size_t nfields, fcap;
 } Codec;
 
 static void fail(Codec *c, const char *msg)
@@ -222,10 +229,35 @@ static const uint8_t *take(Codec *c, size_t n)
 	return p;
 }
 
+/* kp_snapshot_fields: the visit about to take n bytes at the snapshot's offset (a section's tag has no name). */
+static void log_field(Codec *c, size_t n)
+{
+	KpSnapshotField *f;
+	if (!c->name) return;
+	if (c->nfields == c->fcap) {
+		size_t cap = c->fcap ? c->fcap * 2 : 1024;
+		KpSnapshotField *more = (KpSnapshotField *)realloc(c->fields, cap * sizeof *more);
+		if (!more) {
+			fail(c, "state: out of memory");
+			return;
+		}
+		c->fields = more;
+		c->fcap = cap;
+	}
+	f = &c->fields[c->nfields++];
+	f->tag = c->tag;
+	f->name = c->name;
+	f->line = c->line;
+	f->offset = SNAP_HEADER + c->size;
+	f->bytes = n;
+	f->elem = c->elem;
+}
+
 /* RAW: n bytes of the state as they are, into the caller's buffer (or counted) or back. */
 static void raw(Codec *c, void *v, size_t n)
 {
 	if (c->failed) return;
+	if (c->log) log_field(c, n);
 	if (c->reading) {
 		const uint8_t *p = take(c, n);
 		if (p) memcpy(v, p, n);
@@ -246,7 +278,7 @@ static void u64(Codec *c, uint64_t *v)
 	switch (c->mode) {
 	case MODE_COVER: cover(c, KIND_U64, v, 1, 8); return;
 	case MODE_HASH: hash_put(c, *v, 8); return;
-	case MODE_RAW: raw(c, v, 8); return;
+	case MODE_RAW: c->elem = 8; raw(c, v, 8); return;
 	default: break;
 	}
 	if (c->reading) {
@@ -268,7 +300,7 @@ static void u32(Codec *c, uint32_t *v)
 	switch (c->mode) {
 	case MODE_COVER: cover(c, KIND_U32, v, 1, 4); return;
 	case MODE_HASH: hash_put(c, *v, 4); return;
-	case MODE_RAW: raw(c, v, 4); return;
+	case MODE_RAW: c->elem = 4; raw(c, v, 4); return;
 	default: break;
 	}
 	if (c->reading) {
@@ -289,7 +321,7 @@ static void i64s(Codec *c, int64_t *v, size_t n)
 	case MODE_HASH:
 		for (k = 0; k < n; k++) hash_put(c, (uint64_t)v[k], 8);
 		return;
-	case MODE_RAW: raw(c, v, n * sizeof *v); return;
+	case MODE_RAW: c->elem = sizeof *v; raw(c, v, n * sizeof *v); return;
 	default: break;
 	}
 	for (k = 0; k < n; k++) {
@@ -307,7 +339,7 @@ static void i32s(Codec *c, int32_t *v, size_t n)
 	case MODE_HASH:
 		for (k = 0; k < n; k++) hash_put(c, (uint32_t)v[k], 4);
 		return;
-	case MODE_RAW: raw(c, v, n * sizeof *v); return;
+	case MODE_RAW: c->elem = sizeof *v; raw(c, v, n * sizeof *v); return;
 	default: break;
 	}
 	for (k = 0; k < n; k++) {
@@ -322,7 +354,7 @@ static void u32s(Codec *c, uint32_t *v, size_t n)
 	size_t k;
 	switch (c->mode) {
 	case MODE_COVER: cover(c, KIND_U32, v, n, 4); return;
-	case MODE_RAW: raw(c, v, n * sizeof *v); return;
+	case MODE_RAW: c->elem = sizeof *v; raw(c, v, n * sizeof *v); return;
 	default: break;
 	}
 	for (k = 0; k < n; k++) u32(c, &v[k]);
@@ -333,7 +365,7 @@ static void u8s(Codec *c, uint8_t *v, size_t n)
 	switch (c->mode) {
 	case MODE_COVER: cover(c, KIND_U8, v, n, 1); return;
 	case MODE_HASH: hash_run(c, v, n); return;
-	case MODE_RAW: raw(c, v, n); return;
+	case MODE_RAW: c->elem = 1; raw(c, v, n); return;
 	default: break;
 	}
 	if (c->reading) {
@@ -352,7 +384,7 @@ static void ints(Codec *c, int *v, size_t n)
 	case MODE_HASH:
 		for (k = 0; k < n; k++) hash_put(c, (uint32_t)(int32_t)v[k], 4);
 		return;
-	case MODE_RAW: raw(c, v, n * sizeof *v); return;
+	case MODE_RAW: c->elem = sizeof *v; raw(c, v, n * sizeof *v); return;
 	default: break;
 	}
 	for (k = 0; k < n; k++) {
@@ -373,7 +405,7 @@ static void lists(Codec *c, KpList *l, size_t n)
 			hash_put(c, (uint32_t)l[k].tail, 4);
 		}
 		return;
-	case MODE_RAW: raw(c, l, n * sizeof *l); return;
+	case MODE_RAW: c->elem = sizeof l->head; raw(c, l, n * sizeof *l); return;
 	default: break;
 	}
 	for (k = 0; k < n; k++) {
@@ -405,9 +437,11 @@ static void str(Codec *c, char *s, size_t cap)
 /* A section tag: written, or checked when reading; the hash's and the coverage's domain. */
 static void section(Codec *c, const char *tag)
 {
+	c->name = NULL;
 	switch (c->mode) {
 	case MODE_COVER: c->tag = tag; return;
 	case MODE_HASH: hash_open(c, tag); return;
+	case MODE_RAW: c->tag = tag; break;
 	default: break;
 	}
 	if (c->reading) {
@@ -448,11 +482,25 @@ static void checked_u32(Codec *c, uint32_t *v)
 	c->dry = dry;
 }
 
+/* From here on a primitive's call names its visit: the expression it was given and the call's line, for
+ * kp_snapshot_fields (the dump's coverage). The functions are called by their names in parentheses. */
+#define NAMED(c_, v) ((c_)->name = #v, (c_)->line = __LINE__)
+#define u64(c_, v) (NAMED(c_, v), (u64)(c_, v))
+#define u32(c_, v) (NAMED(c_, v), (u32)(c_, v))
+#define i64s(c_, v, n) (NAMED(c_, v), (i64s)(c_, v, n))
+#define i32s(c_, v, n) (NAMED(c_, v), (i32s)(c_, v, n))
+#define u32s(c_, v, n) (NAMED(c_, v), (u32s)(c_, v, n))
+#define u8s(c_, v, n) (NAMED(c_, v), (u8s)(c_, v, n))
+#define ints(c_, v, n) (NAMED(c_, v), (ints)(c_, v, n))
+#define lists(c_, v, n) (NAMED(c_, v), (lists)(c_, v, n))
+#define checked_u64(c_, v) (NAMED(c_, v), (checked_u64)(c_, v))
+#define checked_u32(c_, v) (NAMED(c_, v), (checked_u32)(c_, v))
+
 #define ARRAY_N(a) (sizeof(a) / sizeof((a)[0]))
-#define I64S(field) i64s(c, (field), ARRAY_N(field))
-#define I64(field) i64s(c, &(field), 1)
+#define I64S(f) (NAMED(c, f), (i64s)(c, (f), ARRAY_N(f)))
+#define I64(f) (NAMED(c, f), (i64s)(c, &(f), 1))
 /* a multi-dimensional int64_t array, all its elements */
-#define I64N(field) i64s(c, (int64_t *)(field), sizeof(field) / sizeof(int64_t))
+#define I64N(f) (NAMED(c, f), (i64s)(c, (int64_t *)(f), sizeof(f) / sizeof(int64_t)))
 
 static void walk_pathing(Codec *c, KpGame *g)
 {
@@ -1209,6 +1257,24 @@ int kp_restore(KpGame *g, const uint8_t *buf, size_t size, KpError *err)
 		return -1;
 	}
 	restored(g);
+	return 0;
+}
+
+int kp_snapshot_fields(KpGame *g, KpSnapshotField **out, size_t *count)
+{
+	Codec c;
+	*out = NULL;
+	*count = 0;
+	memset(&c, 0, sizeof c);
+	c.mode = MODE_RAW;
+	c.log = 1;
+	walk(&c, g);
+	if (c.failed) {
+		free(c.fields);
+		return -1;
+	}
+	*out = c.fields;
+	*count = c.nfields;
 	return 0;
 }
 

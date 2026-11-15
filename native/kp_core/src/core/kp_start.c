@@ -526,6 +526,8 @@ KpGame *kp_start(const KpStartInput *in, KpError *err)
 	}
 	start_steps(g, in, effects, nydus, addons);
 	if (in->replay) g->local_vision = w->local_vision = 0xff; /* 0x67cc84 = 0x672668 = 0xff (step 13) */
+	/* 0x467ba0 runs StartGame 0x443f40 with the game RNG on (kp_game_seed turned it on) and turns it off after */
+	kp_rng_game_set_enabled(g->rng, 0);
 	kp_images_end(w, &t);
 	free(effects);
 	free(nydus);

@@ -66,3 +66,13 @@ A migration makes no sense for a deterministic simulation: an old state does not
 - **A visitor interface with a callback per field.** It would have meant a call per value in the hottest walk, and the walk's body rewritten. Rejected for a mode in the existing `Codec`.
 - **`offsetof` tables for the coverage.** They are not portable to the C++11 check for every member. The exclusions are built from the live game's addresses instead.
 - **A hash of `kp_dump`'s text.** The oracle's goldens depend on that text, and its CRCs took 2.1 ms against the walk's 1.4 ms. It stays as it is, for the goldens.
+
+## Addition: the dump's coverage (stage T3)
+
+Accepted 2026-11-15 with the design of phase T ([docs/phase-turns.md](../phase-turns.md#t3-as-built)). The coverage above binds the walk to the structures; nothing bound the oracle's dump (`kp_dump.c`) to the walk, so a saved field the dump never prints was compared with the original by no golden.
+
+- **The dump is not derived from the walk.** It is a model of the original's memory, by which every golden's CRCs were computed (`tools/native_state.py`). A test binds the two instead: `test_save.dump_shows_the_saved_state` moves each saved field's bytes between two snapshots of real games and checks that the dump's hash changes.
+- **The walk's visits get names** (`#expr` and the line, recorded by macros of the primitives' names; logged in the RAW mode only, `kp_snapshot_fields`). The save's bytes, the hash and the schema's fingerprint do not change.
+- **Every saved field the dump does not show is listed** in `kp_dump_fields()` with a class: `KP_DUMP_SHOWN` (shown, but changed by no game on a listed record; the test bumps every element), `KP_DUMP_MODEL` (at a known address of the original, not read by the model yet: a TODO), `KP_DUMP_HEAP` (in a heap block the emulator's dumps lack) or `KP_DUMP_KOPRULU` (no counterpart). A new saved field fails the test until the dump shows it or the table lists it.
+- **What the oracle did not read goes into new categories** (`step_state`, `sprite_lists`, `links`, `ai_military`), so the earlier CRCs stand. The sprites' and images' lists are a category of their own, `sprite_lists`, since a viewer's selection circles and ground marker change them: a script's `sim.crc` leaves it aside with `sprite` and `image`. The plays' fingerprint covers the first version's 40 categories only: the plays' step dumps are gone and a later category would break all their goldens. The replays, whose dumps are kept, also keep `fingerprint_later` over the rest.
+- **Consequence:** the new categories found two differences from the original at step boundaries (the RNG's switch after the start, the IScript contexts' null values), both fixed.

@@ -19,7 +19,7 @@ Not in the phase:
 - a replay's rewinding in the session and the interface (the snapshot is its base);
 - a hash equal across the players' places (the VIEW masks);
 - a change of `KpGame`'s layout;
-- `kp_dump` (the oracle's goldens depend on its text);
+- `kp_dump` (the oracle's goldens depend on its text; its coverage by the walk came with stage T3, [phase T](phase-turns.md#t3-as-built));
 - the `.rep` format and the save's `REPL` section;
 - a run on the Fold7 (the save's time on the phone is not measured).
 

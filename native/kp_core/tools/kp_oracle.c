@@ -140,33 +140,57 @@ uint32_t kp_state_crc(const KpStateCrcs *c, const char *category, int *found)
 
 static int by_name(const void *a, const void *b) { return strcmp(*(const char *const *)a, *(const char *const *)b); }
 
-uint32_t kp_state_fingerprint(const KpStateCrcs *c)
+/* The categories the fingerprint covers: those of the oracle's first version, in name order (tools/state_check.py
+ * FINGERPRINT_CATEGORIES, the same list). The plays' goldens keep only the fingerprint at most steps and their raw
+ * dumps are gone, so a category added later stays out of it and those goldens stand; the later fingerprint covers the
+ * rest. */
+static const char *const FINGERPRINT_CATEGORIES[] = {
+	"ai_area", "ai_building", "ai_lists", "ai_player", "ai_reach", "ai_region", "ai_resource", "ai_script", "ai_town",
+	"ai_worker", "bullet", "bullets", "counter", "density", "economy", "global", "guard", "guard_time", "image", "list",
+	"location", "order", "order_free", "path", "path_free", "player", "power", "pstat", "resources", "rng_sources",
+	"selection", "spatial", "sprite", "step", "terrain", "tiles", "trigger", "trigger_counts", "triggers", "unit",
+};
+
+static int first_version(const char *category)
+{
+	return bsearch(&category, FINGERPRINT_CATEGORIES, sizeof FINGERPRINT_CATEGORIES / sizeof *FINGERPRINT_CATEGORIES,
+		sizeof *FINGERPRINT_CATEGORIES, by_name) != NULL;
+}
+
+/* The fingerprint of the first version's categories (later 0) or of the others (later 1). */
+static uint32_t fingerprint_of(const KpStateCrcs *c, int later)
 {
 	const char *names[KP_ORACLE_CATEGORIES];
 	KpBuf lines;
 	uint32_t crc;
-	int k;
-	for (k = 0; k < c->count; k++) names[k] = c->names[k];
-	qsort(names, (size_t)c->count, sizeof *names, by_name);
+	int k, n = 0;
+	for (k = 0; k < c->count; k++)
+		if (first_version(c->names[k]) != later) names[n++] = c->names[k];
+	qsort(names, (size_t)n, sizeof *names, by_name);
 	kp_buf_init(&lines);
-	for (k = 0; k < c->count; k++) kp_buf_printf(&lines, "%s %u\n", names[k], (unsigned)kp_state_crc(c, names[k], NULL));
+	for (k = 0; k < n; k++) kp_buf_printf(&lines, "%s %u\n", names[k], (unsigned)kp_state_crc(c, names[k], NULL));
 	crc = kp_crc32((const uint8_t *)kp_buf_text(&lines), lines.size);
 	kp_buf_free(&lines);
 	return crc;
 }
 
+uint32_t kp_state_fingerprint(const KpStateCrcs *c) { return fingerprint_of(c, 0); }
+
+uint32_t kp_state_fingerprint_later(const KpStateCrcs *c) { return fingerprint_of(c, 1); }
+
 int kp_step_differences(const KpStateCrcs *c, const KpReplayCrc *want, int count, KpBuf *out)
 {
-	int k, bad = 0;
+	int k, bad = 0, prints = 0;
 	for (k = 0; k < count; k++) {
-		if (strcmp(want[k].category, KP_ORACLE_FINGERPRINT) == 0) {
-			if (kp_state_fingerprint(c) != want[k].crc) {
-				kp_buf_str(out, " " KP_ORACLE_FINGERPRINT);
-				return 1;
-			}
-			return 0;
+		int later = strcmp(want[k].category, KP_ORACLE_FINGERPRINT_LATER) == 0;
+		if (!later && strcmp(want[k].category, KP_ORACLE_FINGERPRINT) != 0) continue;
+		prints++;
+		if (fingerprint_of(c, later) != want[k].crc) {
+			kp_buf_printf(out, " %s", want[k].category);
+			bad++;
 		}
 	}
+	if (prints > 0) return bad;
 	for (k = 0; k < count; k++) {
 		int found;
 		if (kp_state_crc(c, want[k].category, &found) != want[k].crc || !found) {
