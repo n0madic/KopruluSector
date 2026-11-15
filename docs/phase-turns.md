@@ -1,12 +1,25 @@
 # The turn source, fuzzing and the dump's coverage (phase T)
 
-The user approved the design on 2026-11-15, with stage T3 first; T1 and T2 follow. The dump's coverage extends [ADR 0021](adr/0021-state-walk-and-saves.md#addition-the-dumps-coverage-stage-t3); the turn source and the fuzzing get an ADR of their own when they are built.
+The user approved the design on 2026-11-15, with stage T3 first; T1 and T2 follow. The dump's coverage extends [ADR 0021](adr/0021-state-walk-and-saves.md#addition-the-dumps-coverage-stage-t3); the turn source and the fuzzing are [ADR 0022](adr/0022-turn-source-and-fuzzing.md).
 
 | Stage | What | State |
 |---|---|---|
-| T1 | The turn source: the session's commands, a replay's feed and the recorder behind one source of turns | planned |
+| T1 | The turn source: the session's commands, a replay's feed and the recorder behind one source of turns | done 2026-11-15 |
 | T2 | Fuzzing of the untrusted inputs (saves, replays, commands) by libFuzzer, the findings kept as regression inputs | planned |
 | T3 | The dump's coverage: names of the walk's visits, `test_save.dump_shows_the_saved_state`, `kp_dump_fields()`, the state the oracle did not read added as new categories, the plays' fingerprint fixed at the first version | done 2026-11-15 |
+
+## T1 as built
+
+- **`native/kp_app/kp_turns.{h,c}`** (`KpTurns`, held by `KpSession.turns`): the kinds `KP_TURNS_LOCAL` (the queued commands, each a whole buffer) and `KP_TURNS_REPLAY` (the record's commands of the frame by `kp_record_feed`, split by `kp_record_split`, each as the player whose record has its Storm ID, then the live commands).
+- **The calls:** `kp_turns_replay` (the record loaded), `kp_turns_begin` (the local player, once the game started), `kp_turns_submit` (a playback's filter, table 0x47636c), `kp_turns_frame` (`KP_TURNS_READY`, `KP_TURNS_ENDED` once, `KP_TURNS_NO_MEMORY`), `kp_turns_done`, `kp_turns_record` (the recorder watching the executed list: the seats with a Storm ID, the local player's 0 in a game played alone).
+- **`kp_session.c`:** the step asks the source, opens the victory dialog on `KP_TURNS_ENDED` and keeps a playback paused after it, records through `kp_turns_record` and runs the frame. `KpSession.rec` is a recorded game's recorder only (a playback's record is the source's). The save writes CMDS from the source's queue and restores it through `kp_turns_submit`. `kp_session_playing`, `kp_session_replay_ended` and `kp_session_replay_frames` replace the fields the flow and the scripts read.
+- **The network's third kind is a TODO** in `kp_turns.h`: a frame not ready yet, the session's players as seats, a viewer as a replay over a growing record.
+
+## T1 verification
+
+- `test_session` (35 tests, with the two new ones and the replays of every golden scenario, play and idle run recorded and played back), `test_scenarios` (the 65 replays against the original at every step), `test_kp_rep`, `test_flow`, `test_script` passed.
+- The new tests fail on a broken source: a playback's filter that lets a select through, a recording under the wrong Storm ID.
+- The full `tools/ci.sh` (`KOPRULU_FULL`, both installs, the macOS product) passed: 631 C tests on the host, under ASan/UBSan and in wasm; the product scripts, `tests/scripts/replay.kps` among them, 0 failures.
 
 ## T3 as built
 

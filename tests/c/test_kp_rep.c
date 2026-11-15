@@ -228,7 +228,7 @@ static void player_slot_past_the_players_refused(KpT *T)
 	kp_session_start_defaults(&st);
 	base = kp_session_replay_start(&st, rp);
 	kp_t_eq(T, base, 0, "slot 1 plays");
-	p.slot = KP_SESSION_REPLAY_SLOTS;
+	p.slot = KP_TURNS_SLOTS;
 	kp_rep_set_player(rp, 1, &p);
 	kp_session_start_defaults(&st);
 	kp_t_eq(T, kp_session_replay_start(&st, rp), -1, "slot %u refused", (unsigned)p.slot);

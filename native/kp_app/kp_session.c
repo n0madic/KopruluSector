@@ -203,26 +203,16 @@ int kp_session_load_from(KpSession *s, const KpHostShared *sh, const KpDat *dat,
 	return 0;
 }
 
-/* The replay's recorder of a start: the playback's loaded with the file's record, or an empty one recording. */
-static int start_recorder(KpSession *s, const KpSessionStart *start)
+/* A start's turn source (a replay's playback: its record) and recorder (a recorded game's, empty, recording). */
+static int start_turns(KpSession *s, const KpSessionStart *start)
 {
-	int k;
-	if (!start->replay && !start->record) return 0;
+	if (start->replay) return kp_turns_replay(&s->turns, start->replay);
+	if (!start->record) return 0;
 	if (!(s->rec = (KpRecorder *)malloc(sizeof *s->rec))) return -1;
 	if (kp_record_init(s->rec) != 0) {
 		free(s->rec);
 		s->rec = NULL;
 		return -1;
-	}
-	if (!start->replay) return 0;
-	if (kp_record_load(s->rec, start->replay->record, start->replay->record_size) != 0) return -1;
-	s->playing = 1;
-	s->replay_frames = kp_rep_frames(start->replay);
-	for (k = 0; k < KP_SESSION_REPLAY_SLOTS; k++) {
-		KpRepPlayer p;
-		kp_rep_player(start->replay, k, &p);
-		s->replay_storm[k] = (uint32_t)p.storm;
-		s->replay_slot[k] = p.slot;
 	}
 	return 0;
 }
@@ -233,7 +223,7 @@ int kp_session_start(KpSession *s, const KpSessionStart *start)
 	KpError err;
 	FirstTurn first;
 	kp_clock_init(&s->clock, start->speed, start->max_catchup);
-	if (start_recorder(s, start) != 0) {
+	if (start_turns(s, start) != 0) {
 		fail(s, "replay: out of memory");
 		return -1;
 	}
@@ -249,12 +239,11 @@ int kp_session_start(KpSession *s, const KpSessionStart *start)
 		return -1;
 	}
 	s->g = s->host.g;
-	s->replay_player = s->g->local_player;
-	if (s->playing) {
-		s->g->replay_frames = s->replay_frames;
+	kp_turns_begin(&s->turns, s->g->local_player);
+	if (start->replay) {
+		s->g->replay_frames = kp_turns_frames(&s->turns);
 		s->g->replay_header_speed = kp_rep_speed(start->replay);
-	}
-	if (start->record && !start->replay) {
+	} else if (start->record) {
 		KpRepGame game;
 		kp_session_replay_game(s, start->seed, &game);
 		kp_session_replay_header(s, &game);
@@ -275,21 +264,20 @@ void kp_session_free(KpSession *s)
 {
 	if (s->rec) kp_record_free(s->rec);
 	free(s->rec);
-	free(s->list);
+	kp_turns_free(&s->turns);
 	kp_host_game_free(&s->host);
 	memset(s, 0, sizeof *s);
 }
 
 int kp_session_command(KpSession *s, const uint8_t *bytes, size_t size, int64_t player)
 {
-	KpQueuedCommand *c;
-	if (!s->g || s->pending_count >= KP_SESSION_PENDING || size > KP_SESSION_COMMAND_BYTES) return -1;
-	c = &s->pending[s->pending_count++];
-	c->player = player < 0 ? s->g->local_player : player;
-	c->size = (uint16_t)size;
-	memcpy(c->bytes, bytes, size);
-	return 0;
+	if (!s->g) return -1;
+	return kp_turns_submit(&s->turns, bytes, size, player < 0 ? s->g->local_player : player);
 }
+
+int kp_session_playing(const KpSession *s) { return kp_turns_playing(&s->turns); }
+int kp_session_replay_ended(const KpSession *s) { return kp_turns_ended(&s->turns); }
+uint32_t kp_session_replay_frames(const KpSession *s) { return kp_turns_frames(&s->turns); }
 
 typedef struct {
 	KpGame *g;
@@ -303,121 +291,33 @@ static void run_frame(void *ud)
 	kp_run_frame(f->g, f->list, f->count);
 }
 
-/* A step's list with room for n more commands; -1 out of memory. */
-static int list_room(KpSession *s, int count, int n)
-{
-	KpCommand *l;
-	int cap;
-	if (count + n <= s->list_cap) return 0;
-	cap = s->list_cap ? s->list_cap : KP_SESSION_PENDING;
-	while (cap < count + n) cap *= 2;
-	if (!(l = (KpCommand *)realloc(s->list, (size_t)cap * sizeof *l))) return -1;
-	s->list = l;
-	s->list_cap = cap;
-	return 0;
-}
-
-typedef struct {
-	KpSession *s;
-	int count, failed;
-	int64_t player;
-} Split;
-
-static void add_command(void *ud, const uint8_t *cmd, size_t n)
-{
-	Split *sp = (Split *)ud;
-	KpCommand *c;
-	if (sp->failed || list_room(sp->s, sp->count, 1) != 0) {
-		sp->failed = 1;
-		return;
-	}
-	c = &sp->s->list[sp->count++];
-	c->player = sp->player;
-	c->bytes = cmd;
-	c->size = n;
-}
-
-/* FeedReplayCommands 0x4769b0's part of a step: the commands recorded for this frame, each buffer's player the one
- * whose record has its Storm ID (kept from the buffer before when none has), walked as ExecuteTurnCommands 0x475d30
- * walks them. At the end of the record the playback pauses (SetReplayPaused 0x480e00) and the victory dialog opens
- * (the presentation's, on replay_ended). */
 #define KP_REPLAY_RESULT 3 /* the victory dialog's result (KP_EVENT_GAME_RESULT's a) */
-
-static int feed(KpSession *s, Split *sp)
-{
-	const KpRecordEntry *e;
-	int n, k, j;
-	if (kp_record_feed(s->rec, kp_scalar(s->g, KP_FRAME), s->replay_frames, &e, &n)) {
-		if (!s->replay_ended) kp_event(s->g, KP_EVENT_GAME_RESULT, KP_REPLAY_RESULT, 0, 0, NULL); /* 0x4bcff0 */
-		s->replay_ended = 1;
-		s->g->replay_paused = 1;
-		return 0;
-	}
-	for (k = 0; k < n; k++) {
-		for (j = 0; j < KP_SESSION_REPLAY_SLOTS; j++) {
-			if (s->replay_storm[j] == e[k].storm && s->replay_slot[j] < KP_SESSION_REPLAY_SLOTS) { /* checked at the start too */
-				s->replay_player = s->replay_slot[j];
-				break;
-			}
-		}
-		sp->player = s->replay_player;
-		(void)kp_record_split(e[k].bytes, e[k].size, add_command, sp);
-	}
-	return sp->failed ? -1 : 0;
-}
-
-/* The replay filter of ExecuteTurnCommands 0x475d30 for the live commands of a playback (table 0x47636c): the
- * keep-alive, restart, pause and resume, the sync and the four the network's (0x37-0x3b), latency and the replay
- * speed. */
-static int live_in_replay(uint8_t id)
-{
-	return id == 0x05 || id == 0x08 || id == 0x10 || id == 0x11 || (id >= 0x37 && id <= 0x3b) || id == 0x55 || id == 0x56;
-}
-
-static void record_command(void *ud, const uint8_t *cmd, size_t n)
-{
-	KpSession *s = (KpSession *)ud;
-	kp_record_command(s->rec, kp_scalar(s->g, KP_FRAME), 0, cmd, n);
-}
 
 int kp_session_step(KpSession *s, double (*clock_ms)(void))
 {
-	KpCommand *list;
 	Frame frame;
-	Split sp;
 	double t0, ms;
-	int count, k;
+	int64_t f;
+	int status;
 	if (s->failed || !s->g) return 0;
-	memset(&sp, 0, sizeof sp);
-	sp.s = s;
-	if (s->playing && feed(s, &sp) != 0) {
-		fail(s, "replay: out of memory");
-		return 0;
-	}
-	count = sp.count;
-	if (list_room(s, count, s->pending_count) != 0) {
+	f = kp_scalar(s->g, KP_FRAME);
+	frame.g = s->g;
+	status = kp_turns_frame(&s->turns, f, &frame.list, &frame.count);
+	if (status == KP_TURNS_NO_MEMORY) {
 		fail(s, "step: out of memory");
 		return 0;
 	}
-	list = s->list;
-	for (k = 0; k < s->pending_count; k++) {
-		const KpQueuedCommand *q = &s->pending[k];
-		if (s->playing && (q->size == 0 || !live_in_replay(q->bytes[0]))) continue;
-		/* RecordCommand 0x478340 of the dispatched commands, at the frame before the step (the human's Storm ID 0) */
-		if (s->rec && s->rec->recording && q->player == s->g->local_player) kp_record_split(q->bytes, q->size, record_command, s);
-		list[count].player = q->player;
-		list[count].bytes = q->bytes;
-		list[count].size = q->size;
-		count++;
-	}
+	/* at the end of the record the playback pauses (SetReplayPaused 0x480e00) and the victory dialog opens once
+	 * (ShowVictoryDialog 0x4bcff0, the presentation's on the event) */
+	if (status == KP_TURNS_ENDED) kp_event(s->g, KP_EVENT_GAME_RESULT, KP_REPLAY_RESULT, 0, 0, NULL);
+	if (kp_turns_ended(&s->turns)) s->g->replay_paused = 1;
+	/* RecordCommand 0x478340 of the dispatched commands, at the frame before the step */
+	if (s->rec) kp_turns_record(&s->turns, s->rec, f, frame.list, frame.count);
 	s->tick++;
 	t0 = clock_ms ? clock_ms() : 0;
-	frame.g = s->g;
-	frame.list = list;
-	frame.count = count;
 	(void)kp_session_guard(s, run_frame, &frame);
 	/* the commands are the step's (the list points into the queue until the step is done) */
-	s->pending_count = 0;
+	kp_turns_done(&s->turns);
 	ms = clock_ms ? clock_ms() - t0 : 0;
 	s->step_ms += ms;
 	if (ms > s->step_max_ms) s->step_max_ms = ms;
@@ -429,14 +329,14 @@ int kp_session_step(KpSession *s, double (*clock_ms)(void))
 		if (speed != KP_NIL && game_speed(s->clock.speed) != speed && speed >= 0 && speed < KP_CLOCK_SPEEDS) {
 			kp_clock_set_speed(&s->clock, (int)speed + 1);
 		}
-		if (s->playing) kp_clock_set_multiplier(&s->clock, s->g->replay_multiplier);
+		if (kp_turns_playing(&s->turns)) kp_clock_set_multiplier(&s->clock, s->g->replay_multiplier);
 	}
 	return 1;
 }
 
 int kp_session_steps_per_tick(const KpSession *s)
 {
-	return s->playing && s->g && s->g->replay_multiplier >= 8 && kp_scalar(s->g, KP_SPEED) != 0 ? 10 : 1;
+	return kp_turns_playing(&s->turns) && s->g && s->g->replay_multiplier >= 8 && kp_scalar(s->g, KP_SPEED) != 0 ? 10 : 1;
 }
 
 int kp_session_advance(KpSession *s, double now, double *alpha, double (*clock_ms)(void))
@@ -476,7 +376,7 @@ int kp_session_replay_start(KpSessionStart *st, const KpRep *rep)
 	for (k = 0; k < KP_REP_PLAYERS; k++) { /* a record with a Storm ID plays as its slot: a game's player, 0..7 */
 		KpRepPlayer p;
 		kp_rep_player(rep, k, &p);
-		if (p.storm != -1 && p.slot >= KP_SESSION_REPLAY_SLOTS) return -1;
+		if (p.storm != -1 && p.slot >= KP_TURNS_SLOTS) return -1;
 	}
 	/* the entries as the feed reads them (ReadRecordedFrame 0x478480, kp_record.c read_frame: an entry's length may run
 	 * past its block's size, the next block's header follows it; an unknown id or an entry past the record ends the
@@ -558,7 +458,7 @@ int kp_session_replay_file(KpSession *s, const KpRepTail *tail, KpRep *out, KpEr
 	const uint8_t *bytes;
 	size_t size;
 	memset(out, 0, sizeof *out);
-	if (!s->g || !s->rec || !s->rec->recording) return err_msg(err, "replay: the game is not recorded");
+	if (!s->g || !s->rec) return err_msg(err, "replay: the game is not recorded");
 	memcpy(out->header, s->rec_header, sizeof out->header);
 	kp_rep_set_frames(out, (uint32_t)kp_scalar(s->g, KP_FRAME));
 	bytes = kp_record_bytes(s->rec, &size);
@@ -769,7 +669,7 @@ int kp_save_encode(KpSession *s, const KpSaveIdentity *id, const KpSaveCampaign 
 	/* REPL (a recorded game's): u32 version, the header kept since the start, u32 the loads, u32 whether one lost the
 	 * record, i64 the open block's frame, u32 size and the record, its open block closed (SaveRecordedCommands
 	 * 0x478980: commands of the same frame recorded after it go on without a header) */
-	if (s->rec && s->rec->recording) {
+	if (s->rec) {
 		size_t n;
 		const uint8_t *bytes = kp_record_bytes(s->rec, &n);
 		put32(&rpl, REPL_VERSION);
@@ -786,11 +686,12 @@ int kp_save_encode(KpSession *s, const KpSaveIdentity *id, const KpSaveCampaign 
 		nsections = 5;
 	}
 	/* CMDS: u32 count, then per command u8 player, u16 size and its bytes */
-	put32(&cmds, (uint32_t)s->pending_count);
-	for (k = 0; k < s->pending_count; k++) {
-		put8(&cmds, (uint32_t)s->pending[k].player);
-		put16(&cmds, s->pending[k].size);
-		put(&cmds, s->pending[k].bytes, s->pending[k].size);
+	put32(&cmds, (uint32_t)s->turns.pending_count);
+	for (k = 0; k < s->turns.pending_count; k++) {
+		const KpQueuedCommand *q = &s->turns.pending[k];
+		put8(&cmds, (uint32_t)q->player);
+		put16(&cmds, q->size);
+		put(&cmds, q->bytes, q->size);
 	}
 	/* CAMP: u8 present; u8 expansion, u8 table (from 1; 0 no cached row), u16 row (from 1), u16 mission, u8 size and
 	 * the pending next scenario's name, the profile's six u32 */
@@ -1060,24 +961,24 @@ int kp_save_load(KpSession *s, const uint8_t *save, size_t size, const KpSaveIde
 	KpSavePresentation *pres, KpError *err)
 {
 	SaveParts p;
-	KpQueuedCommand cmds[KP_SESSION_PENDING];
+	KpQueuedCommand cmds[KP_TURNS_PENDING];
 	uint32_t count, k;
 	size_t at = 4;
 	KpSaveCampaign c;
 	const KpKpfSection *repl = NULL;
 	uint8_t *core = NULL;
-	int recorded = s->rec != NULL && s->rec->recording, refusal;
+	int recorded = s->rec != NULL, refusal;
 	if (!s->g) return err_msg(err, "mission: no game to load into");
 	if (decode(&p, save, size, id, &refusal, err) != 0) return -1;
 	if (decode_campaign(p.camp, &c, err) != 0) goto failed;
-	if (p.cmds->size < 4 || (count = kp_le_u32(p.cmds->data)) > KP_SESSION_PENDING) {
+	if (p.cmds->size < 4 || (count = kp_le_u32(p.cmds->data)) > KP_TURNS_PENDING) {
 		err_msg(err, "save: bad commands");
 		goto failed;
 	}
 	for (k = 0; k < count; k++) {
 		uint32_t n;
 		if (at + 3 > p.cmds->size || at + 3 + (n = kp_le_u16(p.cmds->data + at + 1)) > p.cmds->size
-			|| n > KP_SESSION_COMMAND_BYTES) {
+			|| n > KP_TURNS_COMMAND_BYTES) {
 			err_msg(err, "save: bad commands");
 			goto failed;
 		}
@@ -1098,8 +999,9 @@ int kp_save_load(KpSession *s, const uint8_t *save, size_t size, const KpSaveIde
 	if (recorded) restore_record(s, repl);
 	s->failed = 0;
 	s->error[0] = 0;
-	memcpy(s->pending, cmds, sizeof cmds[0] * count);
-	s->pending_count = (int)count;
+	/* the saved queue, as the source takes commands (a playback lets its live ones through only) */
+	kp_turns_done(&s->turns);
+	for (k = 0; k < count; k++) (void)kp_turns_submit(&s->turns, cmds[k].bytes, cmds[k].size, cmds[k].player);
 	{
 		KpEvent e;
 		while (kp_event_take(s->g, &e)) {

@@ -15,6 +15,7 @@
 #include "kp_campaign.h"
 #include "kp_record.h"
 #include "kp_rep.h"
+#include "kp_turns.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -64,15 +65,6 @@ int kp_clock_advance_wall(KpClock *c, double now, double *alpha);
 
 /* --- the session --- */
 
-#define KP_SESSION_PENDING 256
-#define KP_SESSION_COMMAND_BYTES 256
-
-typedef struct {
-	int64_t player;
-	uint16_t size;
-	uint8_t bytes[KP_SESSION_COMMAND_BYTES];
-} KpQueuedCommand;
-
 /* The start of a game: the seed, the expansion byte, the campaign row (0x526524), what the game before left (carry,
  * cheats; has_carry 0 the process's first game), the briefing's objectives (objective_count -1: the briefing's first
  * tick's). */
@@ -98,28 +90,19 @@ typedef struct {
 	int replay_as_game;
 } KpSessionStart;
 
-#define KP_SESSION_REPLAY_SLOTS 8 /* the player records the feed matches and the players they play as: 0..7 */
 typedef struct {
 	KpHostGame host;
 	KpGame *g; /* host.g, NULL when the game did not start */
 	KpClock clock;
-	KpQueuedCommand pending[KP_SESSION_PENDING];
-	int pending_count;
+	KpTurns turns; /* where the steps' commands come from: the queued ones, or a replay's record and its live ones */
 	int64_t tick;  /* logical steps since the game's start (its turns: a paused game's step runs one too) */
 	int64_t loads; /* saves loaded: the presentation restarts its motion when this changes */
 	double step_ms, step_max_ms;
 	int64_t start_frame, start_turn;
 	int failed;
 	char error[KP_ERROR_SIZE];
-	/* The replay: the record of a recorded game or of the playback (owned, NULL none) */
+	/* The record of a recorded game (owned, NULL none), which watches the executed commands (kp_turns_record) */
 	KpRecorder *rec;
-	int playing;            /* a replay's playback */
-	int replay_ended;       /* the playback passed the header's frame count (0x480e00, the victory dialog) */
-	uint32_t replay_frames; /* the header's frame count */
-	uint32_t replay_storm[KP_SESSION_REPLAY_SLOTS], replay_slot[KP_SESSION_REPLAY_SLOTS]; /* their Storm IDs, players (0x6726c8) */
-	int64_t replay_player;  /* the player the feed's commands run as (0x508d48), kept when a Storm ID has no record */
-	KpCommand *list;        /* owned: a step's commands (the record's, then the queued ones) */
-	int list_cap;
 	/* a recorded game's header as its start left it (kp_session_replay_game; the frame count is written with the
 	 * file) and the saves loaded since (each restored the record a save kept; one without it left the record empty) */
 	uint8_t rec_header[KP_REP_HEADER_SIZE];
@@ -142,8 +125,14 @@ int kp_session_start(KpSession *s, const KpSessionStart *start);
 const KpMission *kp_session_mission(const KpSession *s);
 const KpGrpMeta *kp_session_grp(const KpSession *s);
 void kp_session_free(KpSession *s);
-/* Queues a command of player (-1: the local player) for the next step; -1 when the queue is full or it is too long. */
+/* Queues a command of player (-1: the local player) for the next step; -1 when the queue is full, it is too long or a
+ * playback does not let it through (kp_turns_submit). */
 int kp_session_command(KpSession *s, const uint8_t *bytes, size_t size, int64_t player);
+/* A replay's playback; whether it passed the header's frame count (0x480e00, the victory dialog); that count (0 when
+ * not playing). */
+int kp_session_playing(const KpSession *s);
+int kp_session_replay_ended(const KpSession *s);
+uint32_t kp_session_replay_frames(const KpSession *s);
 /* One logical step with the queued commands; 0 once the game has stopped. now_ms (for the step's cost) may be 0. */
 int kp_session_step(KpSession *s, double (*clock_ms)(void));
 /* Advances the wall clock to now (seconds) and runs the steps it is due: their number, *alpha the presentation's

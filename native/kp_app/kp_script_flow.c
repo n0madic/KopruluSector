@@ -578,8 +578,8 @@ int kp_script_flow_value(const KpFlow *f, const KpScriptRun *run, const KpScript
 		}
 		*out = ref->id == V_LIST_TOP ? kp_ui_list_top(ui, x) : ui->controls[x].list->selected;
 		break;
-	case V_REPLAY_ENDED: *out = f->session->replay_ended != 0; break;
-	case V_REPLAY_FRAMES: *out = f->session->playing ? (int64_t)f->session->replay_frames : 0; break;
+	case V_REPLAY_ENDED: *out = kp_session_replay_ended(f->session); break;
+	case V_REPLAY_FRAMES: *out = (int64_t)kp_session_replay_frames(f->session); break;
 	case V_SIM_CRC: {
 		uint32_t folded = 0;
 		if (kp_dump_crcs(g, 0, fold_crc, &folded) != 0) {

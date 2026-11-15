@@ -287,10 +287,144 @@ static void session_speed_and_commands(KpT *T)
 	kp_t_eq(T, s->clock.speed, 3, NULL);
 	kp_t_eq(T, kp_scalar(s->g, KP_SPEED), 2, NULL);
 	kp_t_eq(T, kp_session_command(s, bytes, sizeof bytes, -1), 0, NULL);
-	kp_t_eq(T, s->pending[0].player, s->g->local_player, "the local player's");
+	kp_t_eq(T, s->turns.pending[0].player, s->g->local_player, "the local player's");
 	step(T, s, 1);
-	kp_t_eq(T, s->pending_count, 0, "sent once");
+	kp_t_eq(T, s->turns.pending_count, 0, "sent once");
 	kp_t_eq(T, s->tick, 1, NULL);
+}
+
+static void free_turns(void *p)
+{
+	kp_turns_free((KpTurns *)p);
+	free(p);
+}
+
+static KpTurns *turns_new(KpT *T)
+{
+	KpTurns *t = (KpTurns *)calloc(1, sizeof *t);
+	if (!t) kp_t_fail(T, "out of memory");
+	kp_t_defer(T, free_turns, t);
+	return t;
+}
+
+static void free_recorder(void *p)
+{
+	kp_record_free((KpRecorder *)p);
+	free(p);
+}
+
+static KpRecorder *recorder_new(KpT *T)
+{
+	KpRecorder *r = (KpRecorder *)calloc(1, sizeof *r);
+	if (!r || kp_record_init(r) != 0) {
+		free(r);
+		kp_t_fail(T, "out of memory");
+	}
+	kp_t_defer(T, free_recorder, r);
+	return r;
+}
+
+static const uint8_t TURN_STOP[2] = { 0x1a, 0 }, TURN_HOLD[2] = { 0x2b, 0 };
+static const uint8_t TURN_SPEED[10] = { 0x56, 0, 4, 0, 0, 0, 8, 0, 0, 0 }, TURN_SELECT[2] = { 0x09, 0 };
+
+/* The local source (ADR 0022): the queue's buffers whole, in order, of their players, once; the recording watches the
+ * executed list: the local player's commands under Storm ID 0, each command of a buffer, the others' none. */
+static void turns_local_queue_and_recording(KpT *T)
+{
+	static const uint8_t TWO[4] = { 0x1a, 0, 0x2b, 0 };
+	static uint8_t long_command[KP_TURNS_COMMAND_BYTES + 1];
+	KpTurns *t = turns_new(T);
+	KpRecorder *got = recorder_new(T), *want = recorder_new(T);
+	const KpCommand *list;
+	const uint8_t *a, *b;
+	size_t na, nb;
+	int count, k;
+	kp_turns_begin(t, 2);
+	kp_t_ok(T, !kp_turns_playing(t) && kp_turns_frames(t) == 0, "a local source");
+	kp_t_eq(T, kp_turns_submit(t, TURN_STOP, sizeof TURN_STOP, 2), 0, NULL);
+	kp_t_eq(T, kp_turns_submit(t, TURN_HOLD, sizeof TURN_HOLD, 5), 0, NULL);
+	kp_t_eq(T, kp_turns_submit(t, TWO, sizeof TWO, 2), 0, NULL);
+	kp_t_eq(T, kp_turns_submit(t, TURN_SELECT, sizeof TURN_SELECT, 2), 0, "any command");
+	kp_t_eq(T, kp_turns_submit(t, long_command, sizeof long_command, 2), -1, "too long");
+	kp_t_eq(T, kp_turns_frame(t, 7, &list, &count), KP_TURNS_READY, NULL);
+	kp_t_eq(T, count, 4, "the queued buffers, whole");
+	kp_t_ok(T, list[0].player == 2 && list[0].size == 2 && list[0].bytes[0] == 0x1a, "the first");
+	kp_t_ok(T, list[1].player == 5 && list[1].bytes[0] == 0x2b, "the other player's");
+	kp_t_ok(T, list[2].player == 2 && list[2].size == 4, "a buffer of two commands, one entry");
+	kp_turns_record(t, got, 7, list, count);
+	kp_record_command(want, 7, 0, TURN_STOP, sizeof TURN_STOP);
+	kp_record_command(want, 7, 0, TURN_STOP, sizeof TURN_STOP);
+	kp_record_command(want, 7, 0, TURN_HOLD, sizeof TURN_HOLD);
+	kp_record_command(want, 7, 0, TURN_SELECT, sizeof TURN_SELECT);
+	a = kp_record_bytes(got, &na);
+	b = kp_record_bytes(want, &nb);
+	kp_t_ok(T, na == nb && memcmp(a, b, na) == 0, "recorded: the local player's commands, each of a buffer (%d bytes, %d)",
+		(int)na, (int)nb);
+	kp_turns_done(t);
+	kp_t_eq(T, kp_turns_frame(t, 8, &list, &count), KP_TURNS_READY, NULL);
+	kp_t_eq(T, count, 0, "run once");
+	for (k = 0; k < KP_TURNS_PENDING; k++) kp_t_eq(T, kp_turns_submit(t, TURN_STOP, sizeof TURN_STOP, 2), 0, "%d", k);
+	kp_t_eq(T, kp_turns_submit(t, TURN_STOP, sizeof TURN_STOP, 2), -1, "the queue full");
+}
+
+/* A replay's source (FeedReplayCommands 0x4769b0): each buffer as the player whose record has its Storm ID, the player
+ * before kept for a Storm ID without one; the live commands the playback lets through after the record's; the end
+ * once at the header's frame count, ended after; no seat recorded. */
+static void turns_replay_feed_and_live_commands(KpT *T)
+{
+	KpTurns *t = turns_new(T);
+	KpRecorder *r = recorder_new(T), *none = recorder_new(T);
+	KpRepGame game;
+	KpRep rep;
+	const KpCommand *list;
+	const uint8_t *bytes;
+	size_t size;
+	int count, f, k;
+	int64_t players[4];
+	int got = 0;
+	memset(&game, 0, sizeof game);
+	for (k = 0; k < 8; k++) {
+		game.players[k].slot = (uint32_t)k;
+		game.players[k].storm = -1;
+	}
+	game.players[3].storm = 0;
+	game.players[5].storm = 1;
+	game.frames = 10;
+	memset(&rep, 0, sizeof rep);
+	kp_rep_header(&rep, &game);
+	kp_record_command(r, 2, 0, TURN_STOP, sizeof TURN_STOP);
+	kp_record_command(r, 4, 7, TURN_HOLD, sizeof TURN_HOLD); /* a Storm ID no record has */
+	kp_record_command(r, 4, 1, TURN_STOP, sizeof TURN_STOP);
+	kp_record_command(r, 8, 0, TURN_STOP, sizeof TURN_STOP); /* the last block: never fed */
+	bytes = kp_record_bytes(r, &size);
+	rep.record = (uint8_t *)bytes;
+	rep.record_size = size;
+	kp_t_eq(T, kp_turns_replay(t, &rep), 0, NULL);
+	kp_turns_begin(t, 0);
+	kp_t_ok(T, kp_turns_playing(t) && kp_turns_frames(t) == 10 && !kp_turns_ended(t), "a playback of 10 frames");
+	kp_t_eq(T, kp_turns_submit(t, TURN_SELECT, sizeof TURN_SELECT, 0), -1, "a select is not let through");
+	kp_t_eq(T, kp_turns_submit(t, TURN_SELECT, 0, 0), -1, "nor an empty command");
+	kp_t_eq(T, kp_turns_submit(t, TURN_SPEED, sizeof TURN_SPEED, 0), 0, "the replay speed is");
+	for (f = 0; f < 10; f++) {
+		kp_t_eq(T, kp_turns_frame(t, f, &list, &count), KP_TURNS_READY, "frame %d", f);
+		if (f == 0) kp_t_ok(T, count == 1 && list[0].bytes[0] == 0x56 && list[0].player == 0, "frame 0: the live command");
+		for (k = 0; k < count; k++) {
+			if (list[k].bytes[0] != 0x56 && got < 4) players[got++] = f * 10 + list[k].player;
+		}
+		kp_turns_record(t, none, f, list, count);
+		kp_turns_done(t);
+	}
+	kp_t_eq(T, got, 3, "three recorded commands fed");
+	kp_t_ok(T, got == 3 && players[0] == 23 && players[1] == 43 && players[2] == 45,
+		"frame 2 as player 3, frame 4 as 3 (kept) and 5");
+	kp_t_eq(T, kp_turns_submit(t, TURN_SPEED, sizeof TURN_SPEED, 0), 0, NULL);
+	kp_t_eq(T, kp_turns_frame(t, 10, &list, &count), KP_TURNS_ENDED, "the end at the header's frames");
+	kp_t_ok(T, count == 1 && list[0].bytes[0] == 0x56, "the live commands still come");
+	kp_turns_done(t);
+	kp_t_eq(T, kp_turns_frame(t, 11, &list, &count), KP_TURNS_READY, "the end given once");
+	kp_t_ok(T, kp_turns_ended(t), "ended after");
+	(void)kp_record_bytes(none, &size);
+	kp_t_eq(T, (int64_t)size, 0, "a playback records no seat");
 }
 
 static void fail_in_the_game(void *ud) { kp_game_fail((KpGame *)ud, "test: a failure in the console's input"); }
@@ -365,7 +499,7 @@ static void session_a_loaded_save_continues_as_the_saved_game(KpT *T)
 	kp_t_eq(T, kp_scalar(other->g, KP_SPEED), 2, "the player's speed, not the saved game's");
 	kp_t_eq(T, other->loads, 1, NULL);
 	kp_session_set_speed(other, m->clock.speed);
-	kp_t_eq(T, other->pending_count, 0, "the queued commands are the save's (none)");
+	kp_t_eq(T, other->turns.pending_count, 0, "the queued commands are the save's (none)");
 	step(T, other, 40);
 	crcs(T, other, &got);
 	same_crcs(T, &expected, &got, "continued");
@@ -422,7 +556,7 @@ static void session_a_game_save_keeps_the_queued_commands_and_the_campaign(KpT *
 	step(T, other, 9);
 	kp_t_ok(T, kp_save_load(other, bytes, size, &id, &got, &got_pres, &err) == 0, "%s", err.msg);
 	kp_t_eq(T, kp_save_pres_get(&got_pres, "portrait_ms", -1), 1500, "the presentation's state");
-	kp_t_eq(T, other->pending_count, 1, "the queued command");
+	kp_t_eq(T, other->turns.pending_count, 1, "the queued command");
 	kp_t_eq(T, got.run.mission, 42, NULL);
 	kp_t_eq(T, got.run.row.table, 4, NULL);
 	kp_t_eq(T, got.run.row.index, 2, NULL);
@@ -1246,7 +1380,7 @@ static void session_replay_plays_the_recorded_game(KpT *T)
 	kp_t_eq(T, kp_session_replay_start(&start, back), 0, "a replay V1 plays");
 	if (kp_session_start(p, &start) != 0) kp_t_fail(T, "the playback does not start: %s", p->error);
 	kp_t_guard(T, p->g);
-	kp_t_ok(T, p->playing && p->g->w->replay && p->g->local_vision == 0xff, "a playback with full vision");
+	kp_t_ok(T, kp_session_playing(p) && p->g->w->replay && p->g->local_vision == 0xff, "a playback with full vision");
 	/* recorded[k] is the state after k + 1 steps (the first the select's) */
 	for (k = 0; k < steps; k++) {
 		step(T, p, 1);
@@ -1260,10 +1394,10 @@ static void session_replay_plays_the_recorded_game(KpT *T)
 			kp_t_eq(T, v, recorded[k].crcs[c], "step %d: %s", k, recorded[k].names[c]);
 		}
 	}
-	kp_t_ok(T, !p->replay_ended, "not ended before the header's frames");
+	kp_t_ok(T, !kp_session_replay_ended(p), "not ended before the header's frames");
 	while (kp_event_take(p->g, &ev)) {}
 	step(T, p, 1);
-	kp_t_ok(T, p->replay_ended && p->g->replay_paused, "the end pauses the playback");
+	kp_t_ok(T, kp_session_replay_ended(p) && p->g->replay_paused, "the end pauses the playback");
 	{
 		int64_t frame = kp_scalar(p->g, KP_FRAME);
 		int results = 0;
@@ -1638,7 +1772,7 @@ static void golden_plays_back(KpT *T, const char *name, const KpJson *g, int eve
 		if (last_frame >= 0 && frame >= last_frame) break;
 		if (unrecorded >= 0 && k >= unrecorded) break;
 		/* a game paused by a trigger stands at its frame: the playback ends when it reaches the recorded game's last */
-		if (b->replay_ended && frame >= (int64_t)kp_rep_frames(back)) break;
+		if (kp_session_replay_ended(b) && frame >= (int64_t)kp_rep_frames(back)) break;
 		if ((k % every == 0 || k == steps - 1) && state_hash(T, b) != hash[k]) {
 			kp_buf_printf(bad, "%s%s at step %lld%s", bad->size ? ", " : "", name, (long long)k,
 				local_only ? "" : " (other players' commands left out)");
@@ -1652,13 +1786,13 @@ static void golden_plays_back(KpT *T, const char *name, const KpJson *g, int eve
 			}
 			return;
 		}
-		if (b->replay_ended) {
+		if (kp_session_replay_ended(b)) {
 			kp_buf_printf(bad, "%s%s ended at step %lld", bad->size ? ", " : "", name, (long long)k);
 			return;
 		}
 	}
-	if (!b->replay_ended && unrecorded < 0 && (last_frame < 0 || last_frame >= kp_scalar(b->g, KP_FRAME))) {
-		kp_t_ok(T, golden_step(b) && b->replay_ended, "%s: the end after the header's frames", name);
+	if (!kp_session_replay_ended(b) && unrecorded < 0 && (last_frame < 0 || last_frame >= kp_scalar(b->g, KP_FRAME))) {
+		kp_t_ok(T, golden_step(b) && kp_session_replay_ended(b), "%s: the end after the header's frames", name);
 	}
 }
 
@@ -1710,6 +1844,8 @@ static const KpTest TESTS[] = {
 	{ "clock_window_events", clock_window_events, 0 },
 	{ "clock_negative_dt_ignored", clock_negative_dt_ignored, 0 },
 	{ "session_speed_and_commands", session_speed_and_commands, 0 },
+	{ "turns_local_queue_and_recording", turns_local_queue_and_recording, 0 },
+	{ "turns_replay_feed_and_live_commands", turns_replay_feed_and_live_commands, 0 },
 	{ "session_saves_are_compressed_and_refuse_other_builds", session_saves_are_compressed_and_refuse_other_builds, 0 },
 	{ "session_guard_stops_the_game", session_guard_stops_the_game, 0 },
 	{ "session_a_mission_without_its_files_does_not_load", session_a_mission_without_its_files_does_not_load, 0 },
