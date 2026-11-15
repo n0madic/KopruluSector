@@ -54,7 +54,6 @@ class ScriptsTest(unittest.TestCase):
         with self.assertRaisesRegex(scripts.ScriptError, "outside the file"):
             scripts.ai_directory(ai_bin([(b"Bad!", 10_000)], 16), 16)
 
-    @unittest.skipIf(not ORIGINAL, "KOPRULU_ORIGINAL not set")
     def test_ai_operand_section(self):
         """AIOP (kp_aiscript_check's table): every ordinal from 0 with its terminator flag and operand widths."""
         from scdata.analyze import ai
@@ -73,6 +72,7 @@ class ScriptsTest(unittest.TestCase):
             at += 2 + count
         assert at == len(data)
 
+    @unittest.skipIf(not ORIGINAL, "KOPRULU_ORIGINAL not set")
     def test_original_scripts(self):
         from scdata.mpq.profile import Resolver
 

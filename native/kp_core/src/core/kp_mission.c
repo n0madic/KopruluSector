@@ -7,6 +7,7 @@
 
 #include "kp_chk.h"
 #include "kp_derive.h"
+#include "kp_ids.h"
 
 const char *const KP_TILESET_NAMES[KP_TILESETS] = { "badlands", "platform", "install", "ashworld", "jungle", "desert", "ice",
 	"twilight" };
@@ -200,8 +201,6 @@ static int assemble(KpMission *m, const KpBytes part[], const char *name, KpErro
 #define UNIT_TYPES 228
 #define UNIT_ANY 229        /* Any Unit; Men, Buildings and Factories follow */
 #define UNIT_FACTORIES 232
-#define UNIT_START_LOCATION 214
-#define UNIT_FLAG 215
 #define UNIT_RECORD 36
 #define UNIT_RECORD_TYPE 8
 #define UNIT_RECORD_OWNER 16
@@ -263,7 +262,8 @@ static const char *condition_stops(const uint8_t *c, char *why, size_t why_size)
 /* An action that stops the game when it runs (ADR 0023): Kill and Remove Unit of a direct slot past the players
  * (kp_trigger_units.c kill_player_units), Set Alliance with slot 12 (set_alliance), Set Deaths of a unit type past the
  * aggregates for a slot below 8 (kp_trigger_set_deaths), a leaderboard of units or kills of a type past the table
- * (lb_get), a Flag created (kp_powerup.c: Capture the Flag is outside the V1 profile). NULL when none. */
+ * (lb_get); and a Flag created, refused as Capture the Flag is outside the V1 profile (the runtime stops once a worker
+ * takes it or it goes home, kp_powerup.c). NULL when none. */
 static const char *action_stops(const uint8_t *a, char *why, size_t why_size)
 {
 	uint32_t kind = a[ACTION_TYPE], player = kp_le_u32(a + ACTION_PLAYER), unit = kp_le_u16(a + ACTION_UNIT);
@@ -287,8 +287,8 @@ static const char *action_stops(const uint8_t *a, char *why, size_t why_size)
 		snprintf(why, why_size, "a leaderboard of unit type %u", (unsigned)unit);
 		return why;
 	}
-	if ((kind == ACT_CREATE_UNIT || kind == ACT_CREATE_UNIT_WITH_PROPERTIES) && located && unit == UNIT_FLAG) {
-		snprintf(why, why_size, "a Flag (unit %d) is outside the V1 profile", UNIT_FLAG);
+	if ((kind == ACT_CREATE_UNIT || kind == ACT_CREATE_UNIT_WITH_PROPERTIES) && located && unit == KP_TYPE_FLAG) {
+		snprintf(why, why_size, "a Flag (unit %d) is outside the V1 profile", KP_TYPE_FLAG);
 		return why;
 	}
 	return NULL;
@@ -385,21 +385,22 @@ static int validate_strings(const uint8_t *strs, uint32_t size, char *err, size_
 	return 0;
 }
 
-/* The preplaced units the start stops at (ADR 0023): a start location of a slot past the players (kp_start.c
- * load_units) and a Flag (outside the V1 profile, kp_powerup.c). */
+/* The preplaced units refused (ADR 0023): a start location of a slot past the players, which the start stops at
+ * (kp_start.c load_units), and a Flag of any owner, as Capture the Flag is outside the V1 profile (the runtime stops once
+ * a worker takes it or it goes home, kp_powerup.c). */
 static int validate_units(const uint8_t *units, uint32_t size, char *err, size_t err_size)
 {
 	uint32_t i;
 	for (i = 0; i + UNIT_RECORD <= size; i += UNIT_RECORD) {
 		uint32_t type = kp_le_u16(units + i + UNIT_RECORD_TYPE), owner = units[i + UNIT_RECORD_OWNER];
-		if (type == UNIT_START_LOCATION && owner >= PLAYER_SLOTS) {
+		if (type == KP_TYPE_START_LOCATION && owner >= PLAYER_SLOTS) {
 			snprintf(err, err_size, "UNIT: unit %u: a start location of player %u", (unsigned)(i / UNIT_RECORD),
 				(unsigned)owner);
 			return -1;
 		}
-		if (type == UNIT_FLAG) {
+		if (type == KP_TYPE_FLAG) {
 			snprintf(err, err_size, "UNIT: unit %u: a Flag (unit %d) is outside the V1 profile",
-				(unsigned)(i / UNIT_RECORD), UNIT_FLAG);
+				(unsigned)(i / UNIT_RECORD), KP_TYPE_FLAG);
 			return -1;
 		}
 	}

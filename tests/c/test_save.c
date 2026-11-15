@@ -411,7 +411,6 @@ static void initial_states_survive_a_save(KpT *T)
 	kp_t_ok(T, bad->size == 0, "initial states changed by a save and a load: %s", kp_buf_text(bad));
 }
 
-/* A load that must be refused: 1 when it is, with its message in err. */
 /* The local player's view of the units (KP_UNIT_VIEW_STATE: the attack notices' silence, the minimap's blink and its
  * colour, which the interface writes) is saved in its own section, VIEW, which the state hash's total leaves out
  * (ADR 0023): a game whose view state differs has the same total, another VIEW hash, and its save brings the view
@@ -453,6 +452,7 @@ static void view_state_is_saved_outside_the_total(KpT *T)
 	kp_t_eq(T, kp_unit_get_attack_notify_timer(loaded, n), 23, "the idle event counts the silence down");
 }
 
+/* A load that must be refused: 1 when it is, with its message in err. */
 static int refused(KpGame *g, const uint8_t *bytes, size_t size, const char *mission, const char *data, KpError *err)
 {
 	return kp_load(g, bytes, size, mission, data, err) != 0;

@@ -457,7 +457,7 @@ static int field_take(Dump *d, const char *name)
 	/* the units' view state (KP_UNIT_VIEW_STATE): the minimap's blink counter, which the minimap's drawing counts
 	 * down (0x46e490), its color and the silence of the under-attack notices (0x446f00), which the camera and the
 	 * idle loop (0x446ff0) decide */
-	if (d->filter == FILTER_UNIT && (name[0] == 'l' || name[0] == 'a') && kp_unit_view_field(name)) return 0;
+	if (d->filter == FILTER_UNIT && kp_unit_view_field(name)) return 0;
 	if (d->count >= MAX_FIELDS) {
 		d->failed = 1;
 		return 0;

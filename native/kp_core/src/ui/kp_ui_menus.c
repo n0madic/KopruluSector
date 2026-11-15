@@ -232,7 +232,7 @@ static void popup_post_load(KpUi *ui, int32_t dialog)
 	/* InitGluePopupDialog 0x460580 */
 	KpUiMenus *m = mn(ui);
 	KpUiControl *d = &ui->controls[dialog];
-	kp_ui_glue_init_dialog(ui, dialog, mn(ui)->popup_procs, mn(ui)->popup_proc_count, state_theme(m->state));
+	kp_ui_glue_init_dialog(ui, dialog, m->popup_procs, m->popup_proc_count, state_theme(m->state));
 	d->flags |= DIALOG_TRANSLUCENT;
 	if (m->popup_image.pixels != NULL) {
 		kp_ui_drop_image(ui, d);
@@ -283,8 +283,8 @@ static int32_t run_popup(KpUi *ui, const char *bin, const KpUiInteract *procs, i
 {
 	KpUiMenus *m = mn(ui);
 	int32_t d;
-	memcpy(mn(ui)->popup_procs, procs, sizeof procs[0] * (size_t)count);
-	mn(ui)->popup_proc_count = count;
+	memcpy(m->popup_procs, procs, sizeof procs[0] * (size_t)count);
+	m->popup_proc_count = count;
 	d = kp_ui_modal(ui, bin, proc, done);
 	m->popup = d;
 	return d;
@@ -403,8 +403,8 @@ static void edit_popup(KpUi *ui, const uint8_t *prompt, const char *text, int ma
 	m->edit_extra = extra;
 	m->edit_max = max;
 	popup_background(ui, "pEPopup.pcx");
-	memcpy(mn(ui)->popup_procs, PROCS, sizeof PROCS);
-	mn(ui)->popup_proc_count = 4;
+	memcpy(m->popup_procs, PROCS, sizeof PROCS);
+	m->popup_proc_count = 4;
 	d = kp_ui_load_dialog(ui, "rez\\gluPEdit.bin");
 	if (d < 0) return;
 	if ((edit = kp_ui_find_control(ui, d, ID_EDIT)) >= 0) ui->controls[edit].user = (uint32_t)max;
@@ -494,7 +494,7 @@ static void game_mode_done(KpUi *ui, int32_t r)
 		m->expansion = 1;
 		proceed = 1;
 	}
-	ui->result = mn(ui)->saved_result;
+	ui->result = m->saved_result;
 	if (proceed && m->screen >= 0) kp_ui_glue_slide_out(ui, m->screen);
 }
 
@@ -507,7 +507,7 @@ static void game_mode_popup(KpUi *ui)
 	KpUiInteract procs[7];
 	memcpy(procs, PROCS, sizeof PROCS);
 	procs[1] = procs[4] = kp_ui_type_interact(10);
-	mn(ui)->saved_result = ui->result;
+	m->saved_result = ui->result;
 	close_popup(ui);
 	snprintf(m->popup_text, sizeof m->popup_text, "%s", (const char *)kp_ui_tbl(ui, KP_UI_GLUALL, STR_GAME_TYPE));
 	m->popup_text2[0] = 0;
@@ -588,7 +588,7 @@ static void language_done(KpUi *ui, int32_t r)
 {
 	KpUiMenus *m = mn(ui);
 	const KpUiLanguages *l = &m->languages;
-	ui->result = mn(ui)->saved_result;
+	ui->result = m->saved_result;
 	if (r == ID_LANGUAGE_OK && (l->chosen_text != l->text || l->chosen_speech != l->speech) && m->screen >= 0) {
 		ui->result = R_LANGUAGE;
 		kp_ui_glue_slide_out(ui, m->screen);
@@ -602,7 +602,7 @@ static void language_popup(KpUi *ui)
 	memset(procs, 0, sizeof procs);
 	procs[ID_LANGUAGE_OK - 1] = procs[ID_LANGUAGE_CANCEL - 1] = kp_ui_text_button_proc;
 	procs[ID_LANGUAGE_TEXT - 1] = procs[ID_LANGUAGE_SPEECH - 1] = language_button;
-	mn(ui)->saved_result = ui->result;
+	m->saved_result = ui->result;
 	close_popup(ui);
 	m->popup_text[0] = m->popup_text2[0] = 0;
 	m->languages.chosen_text = m->languages.text;
@@ -832,8 +832,8 @@ static int login_list_proc(KpUi *ui, KpUiControl *c, KpUiEvent *e)
 	if (e->type == KP_UI_USER) {
 		switch (e->code) {
 		case KP_UI_CREATE: { /* FillLoginList 0x45a620 */
-			int32_t ok = kp_ui_find_control(ui, mn(ui)->login_dialog, ID_LOGIN_OK);
-			int32_t del = kp_ui_find_control(ui, mn(ui)->login_dialog, ID_LOGIN_DELETE);
+			int32_t ok = kp_ui_find_control(ui, m->login_dialog, ID_LOGIN_OK);
+			int32_t del = kp_ui_find_control(ui, m->login_dialog, ID_LOGIN_DELETE);
 			if (del >= 0) kp_ui_set_enabled(ui, del, 0);
 			if (ok >= 0) kp_ui_set_enabled(ui, ok, 0);
 			kp_ui_list_redraw(ui, self, 0);
@@ -845,7 +845,7 @@ static int login_list_proc(KpUi *ui, KpUiControl *c, KpUiEvent *e)
 		case KP_UI_DESTROY: kp_ui_list_clear(ui, self); break;
 		case KP_UI_POST_LOAD:
 			c->flags |= LIST_FLAG;
-			mn(ui)->login_list = self;
+			m->login_list = self;
 			break;
 		case KP_UI_VALUE_CHANGED:
 			r = kp_ui_list_proc(ui, c, e);
@@ -892,11 +892,11 @@ static void new_profile_done(KpUi *ui, int32_t r)
 	m->profiles[at].time = time;
 	m->profile_count++;
 	m->profiles_changed = 1;
-	kp_ui_list_insert(ui, mn(ui)->login_list, at, (const uint8_t *)m->profiles[at].name, 0);
-	kp_ui_list_select(ui, mn(ui)->login_list, at);
+	kp_ui_list_insert(ui, m->login_list, at, (const uint8_t *)m->profiles[at].name, 0);
+	kp_ui_list_select(ui, m->login_list, at);
 	{
-		int32_t ok = kp_ui_find_control(ui, mn(ui)->login_dialog, ID_LOGIN_OK);
-		int32_t del = kp_ui_find_control(ui, mn(ui)->login_dialog, ID_LOGIN_DELETE);
+		int32_t ok = kp_ui_find_control(ui, m->login_dialog, ID_LOGIN_OK);
+		int32_t del = kp_ui_find_control(ui, m->login_dialog, ID_LOGIN_DELETE);
 		if (del >= 0) kp_ui_set_enabled(ui, del, 1);
 		if (ok >= 0) kp_ui_set_enabled(ui, ok, 1);
 	}
@@ -905,7 +905,7 @@ static void new_profile_done(KpUi *ui, int32_t r)
 static void new_profile(KpUi *ui)
 {
 	KpUiMenus *m = mn(ui);
-	if (kp_ui_list_count(ui, mn(ui)->login_list) >= KP_UI_PROFILES) {
+	if (kp_ui_list_count(ui, m->login_list) >= KP_UI_PROFILES) {
 		ok_popup(ui, kp_ui_tbl(ui, KP_UI_GLUALL, STR_TOO_MANY), NULL);
 		return;
 	}
@@ -919,15 +919,15 @@ static void delete_profile_done(KpUi *ui, int32_t r)
 	/* DeleteSelectedProfile 0x45a4b0 after its popup: DeleteCharacterAndSaves 0x4baf70 deletes the profile's saved
 	 * games (the host's), then its record */
 	KpUiMenus *m = mn(ui);
-	int s = kp_ui_list_selection(ui, mn(ui)->login_list);
+	int s = kp_ui_list_selection(ui, m->login_list);
 	if (r != R_OK || s == KP_UI_LIST_NONE || s >= m->profile_count) return;
 	if (ui->delete_profile_saves) ui->delete_profile_saves(ui->host, m->profiles[s].name);
-	kp_ui_list_delete(ui, mn(ui)->login_list, s);
+	kp_ui_list_delete(ui, m->login_list, s);
 	memmove(&m->profiles[s], &m->profiles[s + 1], sizeof m->profiles[0] * (size_t)(m->profile_count - s - 1));
 	m->profile_count--;
 	m->profiles_changed = 1;
-	if (m->profile_count == 0) kp_ui_list_select(ui, mn(ui)->login_list, KP_UI_LIST_NONE);
-	else kp_ui_list_select(ui, mn(ui)->login_list, s < m->profile_count ? s : m->profile_count - 1);
+	if (m->profile_count == 0) kp_ui_list_select(ui, m->login_list, KP_UI_LIST_NONE);
+	else kp_ui_list_select(ui, m->login_list, s < m->profile_count ? s : m->profile_count - 1);
 	login_buttons(ui);
 }
 
@@ -958,7 +958,7 @@ static int login_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 	KpUiMenus *m = mn(ui);
 	int32_t self = (int32_t)(d - ui->controls);
 	KpUiInteract base = kp_ui_type_interact(0);
-	if (is_wheel(e)) return wheel_list(ui, mn(ui)->login_list, e);
+	if (is_wheel(e)) return wheel_list(ui, m->login_list, e);
 	if (e->type != KP_UI_USER) return base(ui, d, e);
 	switch (e->code) {
 	case KP_UI_CREATE: /* LoadLoginProfiles 0x45a000 */
@@ -968,7 +968,7 @@ static int login_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 	case KP_UI_CLOSE:
 		switch (ui->result) {
 		case R_LOGIN_OK: { /* SelectLoginProfile 0x45a240 */
-			int s = kp_ui_list_selection(ui, mn(ui)->login_list);
+			int s = kp_ui_list_selection(ui, m->login_list);
 			if (s == KP_UI_LIST_NONE || s >= m->profile_count) return 1;
 			snprintf(m->player, sizeof m->player, "%s", m->profiles[s].name);
 			kp_ui_glue_slide_out(ui, self);
@@ -976,7 +976,7 @@ static int login_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 		}
 		case R_NEW_ID: new_profile(ui); return 1;
 		case R_DELETE:
-			if (kp_ui_list_selection(ui, mn(ui)->login_list) == KP_UI_LIST_NONE) return 1;
+			if (kp_ui_list_selection(ui, m->login_list) == KP_UI_LIST_NONE) return 1;
 			ok_cancel_popup(ui, kp_ui_tbl(ui, KP_UI_GLUALL, STR_DELETE_PROFILE), delete_profile_done);
 			return 1;
 		default: kp_ui_glue_slide_out(ui, self); return 1;
@@ -996,7 +996,7 @@ static int login_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 		for (k = 3; k <= 6; k++) procs[k] = kp_ui_text_button_proc; /* 0x5081ac */
 		procs[7] = login_list_proc;
 		procs[8] = kp_ui_type_interact(10);
-		mn(ui)->login_dialog = self;
+		m->login_dialog = self;
 		kp_ui_glue_init_dialog(ui, self, procs, 9, THEME_NONE);
 		kp_ui_glue_slide_in(ui, self, SLIDES, 3, 0);
 		break;
@@ -1241,8 +1241,8 @@ static void history_done(KpUi *ui, int32_t r)
 		font_key_draws(ui, 2);
 	}
 	m->mission = mission;
-	ui->result = mn(ui)->episode_result;
-	if (mn(ui)->campaign_dialog >= 0) kp_ui_glue_slide_out(ui, mn(ui)->campaign_dialog);
+	ui->result = m->episode_result;
+	if (m->campaign_dialog >= 0) kp_ui_glue_slide_out(ui, m->campaign_dialog);
 }
 
 void kp_ui_menus_mission_draws(KpUi *ui) { font_key_draws(ui, 2); }
@@ -1275,7 +1275,7 @@ static int campaign_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 			kp_ui_glue_slide_out(ui, self);
 			return 1;
 		}
-		mn(ui)->episode_result = ui->result;
+		m->episode_result = ui->result;
 		if (m->hints[race] != 0) {
 			uint32_t str = m->expansion ? (race == 1 ? NET_PLAY_ZERG : NET_PLAY_PROTOSS)
 				: (race == 2 ? NET_PROTOSS_WARNING : NET_ZERG_WARNING);
@@ -1299,7 +1299,7 @@ static int campaign_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 			procs[5] = procs[7] = episode_proc;
 			procs[6] = kp_ui_flc_button_proc;
 		}
-		mn(ui)->campaign_dialog = self;
+		m->campaign_dialog = self;
 		kp_ui_glue_init_dialog(ui, self, procs, 11, THEME_CAMPAIGN);
 		kp_ui_glue_slide_in(ui, self, SLIDES, 2, 0);
 		break;
@@ -1314,7 +1314,7 @@ int32_t kp_ui_campaign_open(KpUi *ui, int expansion)
 	KpUiMenus *m = mn(ui);
 	m->multiplayer = 0;
 	m->expansion = expansion;
-	mn(ui)->campaign_dialog = -1;
+	m->campaign_dialog = -1;
 	episode_hints(ui, expansion);
 	return open_screen(ui, expansion ? "rez\\gluExpCmpgn.bin" : "rez\\gluCmpgn.bin", campaign_proc, campaign_done);
 }
@@ -1340,12 +1340,12 @@ static int save_list_proc(KpUi *ui, KpUiControl *c, KpUiEvent *e)
 		switch (e->code) {
 		case KP_UI_CREATE: /* 0x459dd0: the player's saved games */
 			for (k = 0; k < m->save_count; k++) (void)kp_ui_list_add(ui, self, (const uint8_t *)m->saves[k], 0);
-			mn(ui)->load_list = self;
+			m->load_list = self;
 			load_buttons(ui);
 			break;
 		case KP_UI_POST_LOAD:
 			c->flags |= LIST_FLAG;
-			mn(ui)->load_list = self;
+			m->load_list = self;
 			break;
 		case KP_UI_VALUE_CHANGED:
 			(void)kp_ui_list_proc(ui, c, e);
@@ -1362,13 +1362,13 @@ static void delete_save_done(KpUi *ui, int32_t r)
 	/* DeleteSelectedSave 0x4599e0 after its popup: the save's file (0x498b30, its result not looked at: a file that
 	 * stays is listed again), the list again (0x4991b0 with 0x459bc0) and the buttons (0x459af0) */
 	KpUiMenus *m = mn(ui);
-	int s = kp_ui_list_selection(ui, mn(ui)->load_list), k;
+	int s = kp_ui_list_selection(ui, m->load_list), k;
 	char name[sizeof m->saves[0]];
 	if (r != R_OK || s == KP_UI_LIST_NONE || s >= m->save_count) return;
 	snprintf(name, sizeof name, "%s", m->saves[s]);
 	(void)kp_ui_delete_save(ui, name);
-	kp_ui_list_clear(ui, mn(ui)->load_list);
-	for (k = 0; k < m->save_count; k++) (void)kp_ui_list_add(ui, mn(ui)->load_list, (const uint8_t *)m->saves[k], 0);
+	kp_ui_list_clear(ui, m->load_list);
+	for (k = 0; k < m->save_count; k++) (void)kp_ui_list_add(ui, m->load_list, (const uint8_t *)m->saves[k], 0);
 	load_buttons(ui);
 }
 
@@ -1396,7 +1396,7 @@ static int load_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 			return 1;
 		}
 		if (ui->result == R_LOAD_OK) {
-			int s = kp_ui_list_selection(ui, mn(ui)->load_list);
+			int s = kp_ui_list_selection(ui, m->load_list);
 			/* Koprulu's: a save that does not load here keeps the screen, with why (gluAll 66 or 67) */
 			uint16_t refusal = s != KP_UI_LIST_NONE && ui->check_save != NULL ? ui->check_save(ui->host, s) : 0;
 			if (refusal != 0) {
@@ -1413,7 +1413,7 @@ static int load_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 		memset(procs, 0, sizeof procs);
 		procs[3] = procs[4] = procs[6] = kp_ui_text_button_proc; /* 0x508178 */
 		procs[5] = save_list_proc;
-		mn(ui)->load_dialog = self;
+		m->load_dialog = self;
 		kp_ui_glue_slide_in(ui, self, SLIDES, 3, 0);
 		kp_ui_glue_init_dialog(ui, self, procs, 7, THEME_NONE);
 		break;
@@ -1521,12 +1521,12 @@ static void publish_replay_info(KpUi *ui, int k)
 	info_text(ui, ID_INFO_TITLE, m->replay_title);
 	info_text(ui, ID_INFO_DESCRIPTION, m->replay_description);
 	for (u = 0; u < INFO_UNVERIFIED_LABELS; u++) { /* the reason's label alone */
-		j = kp_ui_find_control(ui, mn(ui)->replay_dialog, (int16_t)(ID_INFO_UNVERIFIED + u));
+		j = kp_ui_find_control(ui, m->replay_dialog, (int16_t)(ID_INFO_UNVERIFIED + u));
 		if (j >= 0) kp_ui_set_visible(ui, j, r != NULL && r->status == 0 && r->unverified == KP_UI_REPLAY_LOADS + u);
 	}
 	for (j = 0; j < FIELD_LINES; j++) { /* SetMapInfoText 0x455d10: the label is the format, 0x12 aligns the value */
 		const char *label = (const char *)kp_ui_tbl(ui, KP_UI_GLUALL, INFO_LINES[j].label);
-		int32_t c = kp_ui_find_control(ui, mn(ui)->replay_dialog, INFO_LINES[j].control);
+		int32_t c = kp_ui_find_control(ui, m->replay_dialog, INFO_LINES[j].control);
 		if (strlen(label) + strlen(value[j]) < sizeof m->replay_lines[0]) {
 			snprintf((char *)m->replay_lines[j], sizeof m->replay_lines[j], label, 0x12, value[j]);
 		} /* else the line keeps its old text: 0x455d51 skips SetControlText */
@@ -1549,12 +1549,12 @@ static void preview_tick(KpUi *ui, int32_t owner)
 static void preview_replay(KpUi *ui, int k)
 {
 	KpUiMenus *m = mn(ui);
-	kp_ui_delete_timer(&ui->timers, mn(ui)->replay_dialog, PREVIEW_TIMER);
+	kp_ui_delete_timer(&ui->timers, m->replay_dialog, PREVIEW_TIMER);
 	if (k < 0 || k >= m->replay_count) return;
 	publish_replay_info(ui, -1);
 	if (m->replays[k].kind != KP_UI_REPLAY_ENTRY_FILE) return; /* a folder's information is none (0x45dfc0) */
 	m->replay_preview = k;
-	(void)kp_ui_set_timer(&ui->timers, mn(ui)->replay_dialog, PREVIEW_TIMER, PREVIEW_PERIOD, kp_ui_callback(ui, preview_tick),
+	(void)kp_ui_set_timer(&ui->timers, m->replay_dialog, PREVIEW_TIMER, PREVIEW_PERIOD, kp_ui_callback(ui, preview_tick),
 		ui->now);
 }
 
@@ -1623,16 +1623,16 @@ static void refresh_replays_at(KpUi *ui, const char *select)
 {
 	KpUiMenus *m = mn(ui);
 	int chosen = 0;
-	int32_t folder = mn(ui)->replay_dialog >= 0 ? kp_ui_find_control(ui, mn(ui)->replay_dialog, ID_CREATE_FOLDER) : -1;
+	int32_t folder = m->replay_dialog >= 0 ? kp_ui_find_control(ui, m->replay_dialog, ID_CREATE_FOLDER) : -1;
 	const char *last = strrchr(m->replay_dir, '/');
 	int k;
-	if (mn(ui)->replay_list < 0) return;
+	if (m->replay_list < 0) return;
 	if (folder >= 0) { /* SetFolderLabel 0x4560d0: the listed folder's last name */
 		kp_ui_set_control_text(ui, folder, (const uint8_t *)(m->replay_dir[0] == 0 ? ROOT_LABEL : last ? last + 1 : m->replay_dir));
 	}
 	m->replay_count = 0;
-	kp_ui_list_redraw(ui, mn(ui)->replay_list, 0);
-	kp_ui_list_clear(ui, mn(ui)->replay_list);
+	kp_ui_list_redraw(ui, m->replay_list, 0);
+	kp_ui_list_clear(ui, m->replay_list);
 	if (ui->list_replays != NULL) (void)ui->list_replays(ui->host, ui);
 	for (k = 0; k < m->replay_count; k++) {
 		KpUiReplayEntry *e = &m->replays[k];
@@ -1644,16 +1644,16 @@ static void refresh_replays_at(KpUi *ui, const char *select)
 		} else {
 			snprintf(e->label, sizeof e->label, "%s", e->file);
 		}
-		at = kp_ui_list_add(ui, mn(ui)->replay_list, (const uint8_t *)e->label, 3);
-		if (at != KP_UI_LIST_NONE) kp_ui_list_set_data(ui, mn(ui)->replay_list, at, (uint32_t)k);
+		at = kp_ui_list_add(ui, m->replay_list, (const uint8_t *)e->label, 3);
+		if (at != KP_UI_LIST_NONE) kp_ui_list_set_data(ui, m->replay_list, at, (uint32_t)k);
 		if (at != KP_UI_LIST_NONE && select != NULL && e->kind == KP_UI_REPLAY_ENTRY_FILE && strcmp(e->file, select) == 0) {
 			chosen = at;
 		}
 	}
-	kp_ui_list_redraw(ui, mn(ui)->replay_list, 1);
+	kp_ui_list_redraw(ui, m->replay_list, 1);
 	if (m->replay_count == 0) return;
-	preview_replay(ui, (int)kp_ui_list_data(ui, mn(ui)->replay_list, chosen));
-	kp_ui_list_select(ui, mn(ui)->replay_list, chosen);
+	preview_replay(ui, (int)kp_ui_list_data(ui, m->replay_list, chosen));
+	kp_ui_list_select(ui, m->replay_list, chosen);
 }
 
 static int replay_list_proc(KpUi *ui, KpUiControl *c, KpUiEvent *e)
@@ -1708,10 +1708,10 @@ static void replay_refused(KpUi *ui, int32_t r) { (void)ui; (void)r; } /* the sc
 static int replay_ok(KpUi *ui)
 {
 	KpUiMenus *m = mn(ui);
-	int s = mn(ui)->replay_list >= 0 ? kp_ui_list_selection(ui, mn(ui)->replay_list) : KP_UI_LIST_NONE, k;
+	int s = m->replay_list >= 0 ? kp_ui_list_selection(ui, m->replay_list) : KP_UI_LIST_NONE, k;
 	uint16_t refusal;
 	if (s == KP_UI_LIST_NONE) return 0;
-	k = (int)kp_ui_list_data(ui, mn(ui)->replay_list, s);
+	k = (int)kp_ui_list_data(ui, m->replay_list, s);
 	if (k < 0 || k >= m->replay_count) return 0;
 	if (m->replays[k].kind != KP_UI_REPLAY_ENTRY_FILE) { /* 0x8000000b: the folder entered, the list rebuilt */
 		enter_replay_folder(ui, &m->replays[k]);
@@ -1733,8 +1733,8 @@ static int replay_ok(KpUi *ui)
 static void replay_file_button(KpUi *ui, int32_t r)
 {
 	KpUiMenus *m = mn(ui);
-	int at = mn(ui)->replay_list >= 0 ? kp_ui_list_selection(ui, mn(ui)->replay_list) : KP_UI_LIST_NONE;
-	int k = at != KP_UI_LIST_NONE ? (int)kp_ui_list_data(ui, mn(ui)->replay_list, at) : -1;
+	int at = m->replay_list >= 0 ? kp_ui_list_selection(ui, m->replay_list) : KP_UI_LIST_NONE;
+	int k = at != KP_UI_LIST_NONE ? (int)kp_ui_list_data(ui, m->replay_list, at) : -1;
 	if (r == R_REPLAY_IMPORT && ui->import_replay != NULL) ui->import_replay(ui->host);
 	else if (r == R_REPLAY_EXPORT && ui->export_replay != NULL && k >= 0 && k < m->replay_count
 		&& m->replays[k].kind == KP_UI_REPLAY_ENTRY_FILE) {
@@ -1745,7 +1745,7 @@ static void replay_file_button(KpUi *ui, int32_t r)
 void kp_ui_replay_imported(KpUi *ui, const char *file, uint16_t refusal)
 {
 	KpUiMenus *m = mn(ui);
-	if (m->state != STATE_LOAD_REPLAY || m->screen < 0 || mn(ui)->replay_list < 0) return;
+	if (m->state != STATE_LOAD_REPLAY || m->screen < 0 || m->replay_list < 0) return;
 	if (refusal != 0) ok_popup(ui, kp_ui_tbl(ui, KP_UI_GLUALL, refusal), replay_refused);
 	else refresh_replays_at(ui, file);
 }
@@ -1826,7 +1826,7 @@ static int create_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 int32_t kp_ui_replay_open(KpUi *ui)
 {
 	KpUiMenus *m = mn(ui);
-	mn(ui)->replay_dialog = mn(ui)->replay_list = -1;
+	m->replay_dialog = m->replay_list = -1;
 	m->replay_dir[0] = 0; /* InitMapList 0x455aa0 in a replay's mode: the root each time */
 	m->replay_preview = -1;
 	m->replay_choice = -1;

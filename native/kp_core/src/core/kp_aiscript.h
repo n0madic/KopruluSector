@@ -36,10 +36,11 @@ uint32_t kp_ai_bins_find(const KpAiBins *b, uint32_t id, int *bin);
  * the others stop the game (the melee scripts' opcodes whose helpers are not ported). */
 int kp_aiscript_ported(int op);
 
-/* Script `id` checked before a game starts (ADR 0023): the conservative closure of scdata/analyze/ai.py from its
- * entry, every address operand and the fallthrough up to a terminator, over b->operands. 0 when no instruction in it
- * stops the game, or no binary has the id (the launch does nothing); -1 with why set when one reads outside its binary
- * or is an opcode not ported. */
+/* Script `id` checked before a game starts (ADR 0023): the closure of scdata/analyze/ai.py from its entry, every
+ * address operand (a panic block of 0 is none) and the fallthrough up to a terminator, over b->operands; a return's
+ * shared return address is not followed (a TODO in kp_aiscript.c). 0 when no instruction in it stops the game, or no
+ * binary has the id (the launch does nothing); -1 with why set when one reads outside its binary or is an opcode not
+ * ported. */
 int kp_aiscript_check(const KpAiBins *b, uint32_t id, char *why, size_t why_size);
 
 #ifdef __cplusplus

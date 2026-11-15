@@ -482,44 +482,103 @@ static void stock_defense_types_have_strength(KpT *T)
 	kp_t_eq(T, g->strength[0][32], 0, "a gg entry without air strength, the Firebat: the direction matters");
 }
 
-/* kp_aiscript_ported is the interpreter's: a script of one opcode (every other byte a stop, so its operands read
- * 0x24 and its jumps and return land on a stop) stops the game with "ai: opcode 0xNN, <name>" exactly when the opcode is not
- * ported. */
-/* Script s run once; a failure ends it with the game's error set (no local of the caller lives across the setjmp). */
-static void execute_once(KpGame *g, int64_t s)
+/* One script run once under kp_t_pcall: a failure lands in the harness, whose setjmp is out of the caller's frame (a
+ * static helper with its own setjmp is inlined by GCC, and -Wclobbered flags the caller's locals). */
+typedef struct {
+	KpGame *g;
+	int64_t s;
+} Once;
+
+static void execute_once(KpT *T, void *ud)
 {
-	KpTry t;
-	kp_images_begin(g->w, &t);
-	if (setjmp(t.buf)) {
-		kp_images_end(g->w, &t);
-		return;
-	}
-	kp_aiscript_execute(g, s);
-	kp_images_end(g->w, &t);
+	const Once *o = (const Once *)ud;
+	(void)T;
+	kp_aiscript_execute(o->g, o->s);
 }
 
+/* The AIOP entry of opcode `op` (scdata/analyze/ai.py section): its length, the opcode byte and its operands' widths,
+ * and whether one operand is an address; -1 when the table does not hold it. */
+#define CHECK_FILL 0x24      /* stop: every operand byte, so a word operand reads 0x2424 */
+#define CHECK_TARGET 0x2424  /* where a jump of the one-opcode script lands */
+static int aiop_entry(const KpDefsTable *t, int op, int *address)
+{
+	uint32_t at = 1, k, i;
+	*address = 0;
+	if (!t || t->size < 1) return -1;
+	for (k = 0; k < t->data[0]; k++) {
+		uint32_t n;
+		if (at + 2 > t->size) return -1;
+		n = t->data[at + 1];
+		if (at + 2 + n > t->size) return -1;
+		if ((int)k == op) {
+			int length = 1;
+			for (i = 0; i < n; i++) {
+				length += t->data[at + 2 + i] & 0x7f;
+				if (t->data[at + 2 + i] & 0x80) *address = 1;
+			}
+			return length;
+		}
+		at += 2 + n;
+	}
+	return -1;
+}
+
+/* The PC of the second instruction script s traced (KP_EVENT_AI: pc << 8 | op), -1 when it ran one only. */
+static int64_t second_pc(KpGame *g, int64_t s)
+{
+	KpEvent e;
+	int64_t pc = -1;
+	int seen = 0;
+	while (kp_event_take(g, &e)) {
+		if (e.kind != KP_EVENT_AI || e.b >> 1 != s) continue;
+		if (++seen == 2) pc = e.c >> 8;
+	}
+	return pc;
+}
+
+/* kp_aiscript_ported and AIOP are the interpreter's. A script of one opcode (every other byte a stop, so its operands
+ * read 0x24 and its jumps and return land on a stop) stops the game with "ai: opcode 0xNN, <name>" exactly when the
+ * opcode is not ported; and when it goes on to a second instruction, that one is past the operands AIOP gives it (the
+ * interpreter read as many bytes as kp_aiscript_check skips), or a jump's target when AIOP has an address operand. */
 static void ported_opcodes_are_the_interpreters(KpT *T)
 {
 	static uint8_t code[0x2500];
+	const KpDefsTable *aiop = kp_defs_table(kp_defs_profile("bw-1.17.0.1"), "AIOP");
 	int op, mismatches = 0;
 	if (!kp_t_ready(T, "test_aiscript", FILES)) return;
+	kp_t_ok(T, aiop != NULL, "the profile's AIOP");
 	for (op = 0; op <= 0x72; op++) {
 		KpOracleGame *og = new_game(T);
 		KpGame *g = og->g;
-		int64_t s;
+		int64_t s, next;
 		char want[32];
-		int stopped;
-		memset(code, 0x24, sizeof code);
+		int stopped, length, address;
+		char error[KP_ERROR_SIZE];
+		KpEvent e;
+		Once once;
+		memset(code, CHECK_FILL, sizeof code);
 		code[0] = (uint8_t)op;
 		program(T, g, code, sizeof code, code, sizeof code);
 		s = kp_aiscript_create(g, 0, 0, NULL, 0);
 		g->scripts.ret = 1; /* return lands on a stop too */
-		execute_once(g, s);
+		while (kp_event_take(g, &e)) {
+		}
+		g->events.trace = 1;
+		once.g = g;
+		once.s = s;
+		kp_t_pcall(T, execute_once, &once, error, sizeof error);
 		snprintf(want, sizeof want, "ai: opcode 0x%02x, ", (unsigned)op);
-		stopped = strncmp(g->w->error, want, strlen(want)) == 0;
+		stopped = strncmp(error, want, strlen(want)) == 0;
 		if (stopped == kp_aiscript_ported(op)) {
 			kp_t_ok(T, 0, "opcode 0x%02x: ported %d, the interpreter: %s", (unsigned)op, kp_aiscript_ported(op),
-				g->w->error[0] ? g->w->error : "runs");
+				error[0] ? error : "runs");
+			mismatches++;
+		}
+		next = second_pc(g, s);
+		length = aiop_entry(aiop, op, &address);
+		if (op <= 0x70 && next >= 0 && next != length && !(address && next == CHECK_TARGET)) {
+			kp_t_ok(T, 0, "opcode 0x%02x: the interpreter goes on at %lld, AIOP's length is %d%s", (unsigned)op,
+				(long long)next, length, address ? " (or its target)" : "");
 			mismatches++;
 		}
 		kp_t_game_free(T, og);

@@ -580,8 +580,9 @@ static int64_t script_town(KpGame *g, int64_t s, int64_t op)
 	return g->scripts.town[s];
 }
 
-/* The opcodes only the melee scripts use (StartCustomLevelAIScripts 0x4486a0's), whose helpers are not ported: the
- * interpreter stops the game at one, and kp_aiscript_check refuses a script that reaches one.
+/* The opcodes only the melee scripts use (StartCustomLevelAIScripts 0x4486a0's), whose helpers are not ported: they have
+ * no case in the interpreter, whose default stops the game at one, and kp_aiscript_check refuses a script that reaches
+ * one (tests/c/test_aiscript.c's ported_opcodes_are_the_interpreters keeps the two the same).
  * TODO: the melee AI's opcodes (outside V1). */
 static const struct {
 	uint8_t op;
@@ -720,12 +721,17 @@ static int check_run(Check *c, int bin, uint32_t pc, char *why, size_t why_size)
 			}
 			for (k = 0; k < w; k++) value |= (uint32_t)code[next + k] << (8 * k);
 			next += w;
-			/* the panic block runs from aiscript.bin whichever binary set it (kp_ai_town.c, 0x494e80) */
-			if ((d & AIOP_ADDRESS) && push(c, op == OP_PANIC ? 0 : bin, value) != 0) {
+			/* the panic block runs from aiscript.bin whichever binary set it (kp_ai_town.c, 0x494e80); a block of 0
+			 * is none (GetPanicBlock 0x482c10: panic_expansion starts nothing) */
+			if ((d & AIOP_ADDRESS) && !(op == OP_PANIC && value == 0)
+				&& push(c, op == OP_PANIC ? 0 : bin, value) != 0) {
 				snprintf(why, why_size, "out of memory");
 				return -1;
 			}
 		}
+		/* TODO: return jumps to the one return address every script shares (sc->ret: the last call's, 0 after any
+		 * return), which the closure does not follow: a return without its call, or the outer one of nested calls,
+		 * runs from PC 0 or from another script's call site (scdata/analyze/ai.py's closure stops there too). */
 		if (t[at] & AIOP_TERMINATOR) return 0;
 		pc = next;
 	}
@@ -772,7 +778,6 @@ void kp_aiscript_execute(KpGame *g, int64_t s)
 			kp_aiscript_free(g, s);
 			return;
 		}
-		if (!kp_aiscript_ported((int)op)) unported(g, op);
 		switch (op) {
 		case OP_GOTO:
 			sc->pc[s] = read_word(g, s);
@@ -1163,7 +1168,7 @@ void kp_aiscript_execute(KpGame *g, int64_t s)
 			}
 			break;
 		/* outside the campaigns' scripts */
-		default: unported(g, op); break; /* none: the opcodes not ported stop above, the others have a case */
+		default: unported(g, op); break; /* the opcodes not ported (UNPORTED): every other one has a case */
 		}
 	}
 }
