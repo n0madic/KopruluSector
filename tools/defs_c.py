@@ -27,11 +27,11 @@ NONE16 = 0xFFFF
 def tables() -> list[tuple[str, bytes]]:
     """The executable's tables the runtime reads, serialized as the converter writes them into the containers (the same
     functions): the DAT layouts, the requirement bytecode, the interface's tables, the campaign's, the iscript header
-    types' animation slots. A container's section of the same name, where there is one, is read instead (the tests'
+    types' animation slots, the AI dispatcher's operands (AIOP, scdata/analyze/ai.py section). A container's section of the same name, where there is one, is read instead (the tests'
     fixtures)."""
     sys.path.insert(0, str(ROOT / "tools" / "research"))
     from scdata import campaign, ui_tables
-    from scdata.analyze import iscript
+    from scdata.analyze import ai, iscript
     from scdata.formats import dat, requirements
     from scdata.kpf import kpd
 
@@ -42,6 +42,7 @@ def tables() -> list[tuple[str, bytes]]:
     m = campaign.load(PROFILE)
     out += [("TABL", campaign.tables_section(m)), ("CHEA", campaign.cheats_section(m))]
     out += [("SLOT", kpd.slots_section(iscript.Table.load(PROFILE).header_animations))]
+    out.append(("AIOP", ai.section(ai.Table.load(PROFILE))))
     out += built_tables()
     out += scr_tables(PROFILE)
     out.append(("SHUI", hd_ui_table(PROFILE)))
@@ -369,7 +370,7 @@ def render_header() -> str:
         "} KpDefsArchive;",
         "",
         "/* A table of the executable's, serialized as the converter's container section of the same name (tools/defs_c.py",
-        " * tables: COLS, RQ**, BTNS, STLY, MUSI, VOLT, ACCL, ESTB, TABL, CHEA, SLOT), or one the runtime builds its structures",
+        " * tables: COLS, RQ**, BTNS, STLY, MUSI, VOLT, ACCL, ESTB, TABL, CHEA, SLOT, AIOP), or one the runtime builds its structures",
         " * from the original files with (built_tables, scr_tables: the interface's lists, CHKL, MPAK, SPAK, CINM, the SCR rebuilds). */",
         "typedef struct {",
         "\tchar fourcc[5];",

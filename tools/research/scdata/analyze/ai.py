@@ -111,6 +111,25 @@ def closure(table: Table, bins: tuple[bytes, bytes], roots: list[tuple[int, int]
     return c
 
 
+TERMINATOR = 0x01
+ADDRESS = 0x80
+
+
+def section(table: Table) -> bytes:
+    """The runtime's operand table (AIOP, tools/defs_c.py): u8 count of ordinals from 0; per ordinal u8 flags (1: a
+    terminator, local fallthrough ends after it), u8 operand count, then per operand u8 width (1, 2 or 4) | 0x80 for an
+    address operand. kp_aiscript_check builds the closure above from it."""
+    codes = sorted(table.opcodes)
+    if codes != list(range(len(codes))) or len(codes) > 255:
+        raise AiError("the opcodes are not the ordinals 0..n-1")
+    out = bytearray([len(codes)])
+    for code in codes:
+        op = table.opcodes[code]
+        out += bytes([TERMINATOR if op.name in table.terminators else 0, len(op.operands)])
+        out += bytes(width | (ADDRESS if i in op.targets else 0) for i, (_, width) in enumerate(op.operands))
+    return bytes(out)
+
+
 def resolve(aiscript: bytes, bwscript: bytes, script_id: bytes) -> tuple[int, int] | None:
     """`0x494d20`: (bin selector, offset) of a four-byte script id, or None."""
     from ..formats import scripts

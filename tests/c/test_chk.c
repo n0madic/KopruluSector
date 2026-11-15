@@ -254,19 +254,37 @@ static void chk_variants_are_refused(KpT *T)
 	refused(T, v, size + CHUNK_HEADER, 1, "negative size -8");
 }
 
-/* The fixture's first trigger with byte `at` set to `value` (and the u32 at `at32` to `v32` when at32 >= 0): 0 when
- * the mission loads, else -1 with the reason in why. */
-static int with_trigger(KpT *T, size_t at, uint8_t value, long at32, uint32_t v32, char *why, size_t why_size)
+/* The fixture's scenario v (size bytes) loaded as its mission: 0, else -1 with the reason in why. */
+static int load_variant(KpT *T, const uint8_t *v, size_t size, char *why, size_t why_size)
 {
-	size_t chk_size, size, k;
-	const uint8_t *chk = kp_t_read(T, FIXTURE_CHK, &chk_size);
-	uint8_t *v = variant(T, "TRIG", NULL, 0, 0, &size), *trig = NULL;
-	const uint8_t *p = chk;
 	Source s;
 	KpFiles f;
 	KpMission *m = (KpMission *)owned(T, sizeof *m);
 	KpError err;
 	int rc;
+	f = fixture_files(T, &s, v, size);
+	rc = kp_mission_from_files(m, &f, KP_T_FIXTURE_MISSION, &err);
+	if (rc == 0) kp_mission_free(m);
+	snprintf(why, why_size, "%s", err.msg);
+	return rc;
+}
+
+/* A patch of the fixture's TRIG: `width` bytes (1, 2 or 4) little-endian at `at`. */
+typedef struct {
+	size_t at;
+	uint32_t value;
+	int width;
+} Patch;
+
+/* The fixture's triggers with the patches applied in order: 0 when the mission loads, else -1 with the reason in
+ * why. */
+static int with_patches(KpT *T, const Patch *patch, size_t count, char *why, size_t why_size)
+{
+	size_t chk_size, size, k;
+	const uint8_t *chk = kp_t_read(T, FIXTURE_CHK, &chk_size);
+	uint8_t *v = variant(T, "TRIG", NULL, 0, 0, &size), *trig = NULL;
+	const uint8_t *p = chk;
+	int i;
 	for (k = 0; k + CHUNK_HEADER <= chk_size;) { /* the fixture's TRIG, last */
 		size_t len = (size_t)p[k + 4] | (size_t)p[k + 5] << 8 | (size_t)p[k + 6] << 16 | (size_t)p[k + 7] << 24;
 		if (memcmp(p + k, "TRIG", 4) == 0) {
@@ -277,13 +295,22 @@ static int with_trigger(KpT *T, size_t at, uint8_t value, long at32, uint32_t v3
 		k += CHUNK_HEADER + len;
 	}
 	kp_t_ok(T, trig != NULL, "the fixture's TRIG");
-	trig[at] = value;
-	if (at32 >= 0) le32(trig + at32, v32);
-	f = fixture_files(T, &s, v, size);
-	rc = kp_mission_from_files(m, &f, KP_T_FIXTURE_MISSION, &err);
-	if (rc == 0) kp_mission_free(m);
-	snprintf(why, why_size, "%s", err.msg);
-	return rc;
+	for (k = 0; k < count; k++)
+		for (i = 0; i < patch[k].width; i++) trig[patch[k].at + i] = (uint8_t)(patch[k].value >> (8 * i));
+	return load_variant(T, v, size, why, why_size);
+}
+
+/* The fixture's first trigger with byte `at` set to `value` (and the u32 at `at32` to `v32` when at32 >= 0). */
+static int with_trigger(KpT *T, size_t at, uint8_t value, long at32, uint32_t v32, char *why, size_t why_size)
+{
+	Patch p[2];
+	p[0].at = at;
+	p[0].value = value;
+	p[0].width = 1;
+	p[1].at = at32 >= 0 ? (size_t)at32 : 0;
+	p[1].value = v32;
+	p[1].width = 4;
+	return with_patches(T, p, at32 >= 0 ? 2 : 1, why, why_size);
 }
 
 /* scdata/analyze/triggers.py validate: the reachable conditions and actions past the tables or outside the V1
@@ -314,6 +341,94 @@ static void trigger_validation(KpT *T)
 		"an ignored action: %s", why);
 }
 
+/* The runtime's stops a scenario decides (ADR 0023) are refused when its mission loads: the counters of a direct
+ * slot past the players or of a unit type past the table, Kill and Remove Unit of such a slot, Set Alliance with slot
+ * 12, Set Deaths past the aggregates, a leaderboard's unit type, a Flag, a map string without its terminator, a start
+ * location of slot 12; the same records the runtime takes are left. */
+static void runtime_stops_are_refused(KpT *T)
+{
+	enum {
+		C_LOCATION = 0x00, C_PLAYER = 0x04, C_UNIT = 0x0c, C_TYPE = 0x0f, A = TRIGGER_ACTIONS, A_LOCATION = A,
+		A_PLAYER = A + 0x10, A_UNIT = A + 0x18, A_TYPE = A + 0x1a, A3 = A + 3 * 32
+	};
+	static const struct {
+		Patch patch[3];
+		const char *want; /* NULL: loads */
+	} CASES[] = {
+		{ { { C_TYPE, 15, 1 }, { C_PLAYER, 12, 4 } }, "trigger 0 condition 0: a counter of player slot 12" },
+		{ { { C_TYPE, 4, 1 }, { C_PLAYER, 27, 4 } }, "condition 0: a counter of player slot 27" },
+		{ { { C_TYPE, 21, 1 }, { C_PLAYER, 13, 4 } }, NULL }, /* the current player */
+		{ { { C_TYPE, 2, 1 }, { C_PLAYER, 17, 4 } }, NULL },  /* a group */
+		{ { { C_TYPE, 3, 1 }, { C_PLAYER, 12, 4 } }, NULL },  /* Bring without a location counts nothing */
+		{ { { C_TYPE, 3, 1 }, { C_PLAYER, 12, 4 }, { C_LOCATION, 1, 1 } }, "a counter of player slot 12" },
+		{ { { C_TYPE, 15, 1 }, { C_UNIT, 233, 2 } }, "condition 0: a counter of unit type 233" },
+		{ { { C_TYPE, 6, 1 }, { C_UNIT, 228, 2 } }, "a counter of unit type 228" },
+		{ { { C_TYPE, 15, 1 }, { C_UNIT, 229, 2 } }, NULL }, /* Any Unit */
+		{ { { C_TYPE, 7, 1 }, { C_UNIT, 228, 2 } }, NULL },  /* Commands the Most At without a location */
+		{ { { A_TYPE, 22, 1 }, { A_PLAYER, 12, 4 } }, "trigger 0 action 0: Kill Unit of player slot 12" },
+		{ { { A_TYPE, 24, 1 }, { A_PLAYER, 30, 4 } }, "action 0: Remove Unit of player slot 30" },
+		{ { { A_TYPE, 22, 1 }, { A_PLAYER, 13, 4 } }, NULL },
+		{ { { A_TYPE, 23, 1 }, { A_PLAYER, 12, 4 } }, NULL }, /* Kill Unit At takes any slot */
+		{ { { A_TYPE, 57, 1 }, { A_PLAYER, 12, 4 } }, "action 0: Set Alliance with player slot 12" },
+		{ { { A_TYPE, 57, 1 }, { A_PLAYER, 27, 4 } }, NULL }, /* a selector from 27 sets nothing */
+		{ { { A_TYPE, 45, 1 }, { A_UNIT, 233, 2 } }, "action 0: Set Deaths of unit type 233" },
+		{ { { A_TYPE, 45, 1 }, { A_UNIT, 233, 2 }, { A_PLAYER, 8, 4 } }, NULL }, /* slots from 8 are left alone */
+		{ { { A_TYPE, 45, 1 }, { A_UNIT, 228, 2 } }, NULL },
+		{ { { A_TYPE, 20, 1 }, { A_UNIT, 228, 2 } }, "action 0: a leaderboard of unit type 228" },
+		{ { { A_TYPE, 34, 1 }, { A_UNIT, 228, 2 }, { A_LOCATION, 1, 1 } }, "a leaderboard of unit type 228" },
+		{ { { A_TYPE, 18, 1 }, { A_UNIT, 228, 2 } }, NULL }, /* Control At without a location changes nothing */
+		{ { { A_TYPE, 44, 1 }, { A_UNIT, 215, 2 }, { A_LOCATION, 1, 1 } }, "action 0: a Flag (unit 215)" },
+		{ { { A_TYPE, 11, 1 }, { A_UNIT, 215, 2 } }, NULL }, /* no location: nothing is made */
+		{ { { A3 + 0x1a, 22, 1 }, { A3 + 0x10, 12, 4 } }, NULL }, /* after the first action of type 0: never run */
+		{ { { A_TYPE, 22, 1 }, { A_PLAYER, 12, 4 }, { A + 0x1c, 2, 1 } }, NULL }, /* ignored */
+	};
+	static const uint8_t UNITS[3][2] = { { 214, 12 }, { 214, 11 }, { 215, 0 } }; /* type, owner */
+	uint8_t record[3][36];
+	char why[KP_ERROR_SIZE];
+	const uint8_t *chk;
+	uint8_t *strs, *v;
+	size_t k, n, chk_size, size, strs_size = 0;
+	if (!kp_t_ready(T, "test_chk", FIXTURES)) return;
+	for (k = 0; k < sizeof CASES / sizeof CASES[0]; k++) {
+		for (n = 0; n < 3 && CASES[k].patch[n].width; n++) {
+		}
+		if (CASES[k].want) {
+			kp_t_eq(T, with_patches(T, CASES[k].patch, n, why, sizeof why), -1, "case %u refused", (unsigned)k);
+			kp_t_ok(T, strstr(why, CASES[k].want) != NULL, "case %u: %s", (unsigned)k, why);
+		} else {
+			kp_t_eq(T, with_patches(T, CASES[k].patch, n, why, sizeof why), 0, "case %u: %s", (unsigned)k, why);
+		}
+	}
+	memset(record, 0, sizeof record);
+	for (k = 0; k < 3; k++) record[k][8] = UNITS[k][0], record[k][16] = UNITS[k][1];
+	v = variant(T, "UNIT", record[0], sizeof record[0], 0, &size);
+	kp_t_eq(T, load_variant(T, v, size, why, sizeof why), -1, "a start location of slot 12");
+	kp_t_ok(T, strstr(why, "UNIT: unit 0: a start location of player 12") != NULL, "%s", why);
+	v = variant(T, "UNIT", record[1], sizeof record[1], 0, &size);
+	kp_t_eq(T, load_variant(T, v, size, why, sizeof why), 0, "a start location of slot 11: %s", why);
+	v = variant(T, "UNIT", record[2], sizeof record[2], 0, &size);
+	kp_t_eq(T, load_variant(T, v, size, why, sizeof why), -1, "a Flag");
+	kp_t_ok(T, strstr(why, "UNIT: unit 0: a Flag (unit 215) is outside the V1 profile") != NULL, "%s", why);
+	/* the fixture's STR (4 strings, its last byte a terminator) with string 4 past the end, then at the last byte */
+	chk = kp_t_read(T, FIXTURE_CHK, &chk_size);
+	for (k = 0; k + CHUNK_HEADER <= chk_size; k += CHUNK_HEADER + n) {
+		n = (size_t)chk[k + 4] | (size_t)chk[k + 5] << 8 | (size_t)chk[k + 6] << 16 | (size_t)chk[k + 7] << 24;
+		if (memcmp(chk + k, "STR ", 4) == 0) strs_size = n, strs = (uint8_t *)owned(T, n), memcpy(strs, chk + k + 8, n);
+	}
+	kp_t_ok(T, strs_size >= 10 && strs[strs_size - 1] == 0, "the fixture's STR");
+	if (strs_size < 10) return;
+	strs[8] = (uint8_t)(strs_size + 7), strs[9] = 0;
+	v = variant(T, "STR ", strs, strs_size, 0, &size);
+	kp_t_eq(T, load_variant(T, v, size, why, sizeof why), -1, "string 4 past STR");
+	kp_t_ok(T, strstr(why, "STR: string 4 at offset") != NULL && strstr(why, "is not terminated inside STR"), "%s", why);
+	strs[8] = (uint8_t)(strs_size - 1);
+	v = variant(T, "STR ", strs, strs_size, 0, &size);
+	kp_t_eq(T, load_variant(T, v, size, why, sizeof why), 0, "string 4 empty at the last byte: %s", why);
+	strs[strs_size - 1] = 'x';
+	v = variant(T, "STR ", strs, strs_size, 0, &size);
+	kp_t_eq(T, load_variant(T, v, size, why, sizeof why), -1, "STR without its last terminator");
+}
+
 /* --- the installs --- */
 
 static void campaign_free(void *p) { kp_campaign_free((KpCampaign *)p); }
@@ -339,14 +454,23 @@ static KpMission *campaign_mission(KpT *T, const KpFiles *f, const KpCampaign *c
 	return m;
 }
 
+static void ai_bins_free(void *p) { kp_ai_bins_free((KpAiBins *)p); }
+
+/* Every mission of the campaign loads (the checks of kp_mission_from_chk) and its AI scripts pass kp_mission_check_ai
+ * against the install's binaries. */
 static void missions_built(KpT *T, const char *env)
 {
 	KpFiles f;
 	const KpCampaign *c = install_campaign(T, env, &f);
+	KpAiBins *bins = (KpAiBins *)owned(T, sizeof *bins);
+	KpError err;
 	int k, built = 0;
+	kp_t_ok(T, kp_ai_bins_from_files(bins, &f, &err) == 0, "%s", err.msg);
+	kp_t_defer(T, ai_bins_free, bins);
 	for (k = 1; k < c->directory_count && c->directories[k][0]; k++) { /* kp_data_catalog's rows */
 		int mark = kp_t_mark(T);
-		campaign_mission(T, &f, c, k);
+		KpMission *m = campaign_mission(T, &f, c, k);
+		kp_t_ok(T, kp_mission_check_ai(m, bins, &err) == 0, "%s: %s", c->directories[k], err.msg);
 		kp_t_release(T, mark);
 		built++;
 	}
@@ -623,6 +747,7 @@ static const KpTest TESTS[] = {
 	{ "the_fixture_mission_is_built_from_its_chk", fixture_mission_from_its_chk, 0 },
 	{ "chk_variants_are_refused_as_the_native_loader_does", chk_variants_are_refused, 0 },
 	{ "unreachable_or_unsupported_triggers_are_validated", trigger_validation, 0 },
+	{ "runtime_stops_are_refused", runtime_stops_are_refused, 0 },
 	{ "the_1_17_missions_are_built_from_its_files", original_missions, 0 },
 	{ "the_remastered_missions_are_built_from_its_files", remastered_missions, 0 },
 	{ "the_1_17_and_remastered_missions_are_equal", installs_missions_equal, 0 },

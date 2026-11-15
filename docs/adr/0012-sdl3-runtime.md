@@ -39,7 +39,7 @@ The engine's limits shaped a good part of the drawing and the data:
 6. **No Lua.**
    - The presentation becomes `native/kp_present` (plain C, no SDL or GL).
    - The application becomes `native/kp_app`: the session (the manager, the clock passed in), the glue and game flow, input, audio, the virtual file system, the profile and the saves.
-   - The campaign, the save container and the remaining data readers move into `kp_core`.
+   - The campaign, the save container and the remaining data readers move into `kp_core` (since ADR 0023 two libraries: the simulation `kp_sim` and the interface `kp_ui`).
    - The tests become `tests/c` (`kp_test`), the oracle's tools become `kp_oracle` subcommands with the same protocols, and the golden files become JSON.
    - The Lua binding (`native/kp_core/src/lua`), the Defold extensions and the toolchain's bob, dmengine, LuaJIT and Lua 5.1 are removed once the replacement passes the oracles (stage S7).
 7. **Build:** CMake for every target. SDL3 and SDL3_mixer are subprojects built from the pinned source archives (`tools/toolchain/fetch.sh`, checked by SHA-256).

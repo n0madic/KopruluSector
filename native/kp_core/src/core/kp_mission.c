@@ -188,20 +188,127 @@ static int assemble(KpMission *m, const KpBytes part[], const char *name, KpErro
 #define LOCATIONS 255
 #define WAVS_ENTRY 12
 #define STRING_IDS 65536
+/* the fields and ids the checks of ADR 0023 read (kp_game_internal.h's KP_COND_*, KP_ACT_*, KP_SEL_*) */
+#define CONDITION_LOCATION 0x00
+#define CONDITION_PLAYER 0x04
+#define CONDITION_UNIT 0x0c
+#define ACTION_PLAYER 0x10
+#define ACTION_UNIT 0x18
+#define PLAYER_SLOTS 12
+#define SELECTOR_CURRENT 13
+#define SELECTOR_LAST_GROUP 26
+#define UNIT_TYPES 228
+#define UNIT_ANY 229        /* Any Unit; Men, Buildings and Factories follow */
+#define UNIT_FACTORIES 232
+#define UNIT_START_LOCATION 214
+#define UNIT_FLAG 215
+#define UNIT_RECORD 36
+#define UNIT_RECORD_TYPE 8
+#define UNIT_RECORD_OWNER 16
+enum {
+	COND_COMMAND = 2, COND_BRING = 3, COND_ACCUMULATE = 4, COND_KILL = 5, COND_COMMAND_THE_MOST = 6,
+	COND_COMMANDS_THE_MOST_AT = 7, COND_MOST_KILLS = 8, COND_DEATHS = 15, COND_COMMAND_THE_LEAST = 16,
+	COND_COMMAND_THE_LEAST_AT = 17, COND_LEAST_KILLS = 18, COND_SCORE = 21
+};
+enum {
+	ACT_CREATE_UNIT_WITH_PROPERTIES = 11, ACT_RUN_AI_SCRIPT = 15, ACT_RUN_AI_SCRIPT_AT = 16, ACT_LB_CONTROL = 17,
+	ACT_LB_CONTROL_AT = 18, ACT_LB_KILLS = 20, ACT_KILL_UNIT = 22, ACT_REMOVE_UNIT = 24, ACT_LB_GOAL_CONTROL = 33,
+	ACT_LB_GOAL_CONTROL_AT = 34, ACT_LB_GOAL_KILLS = 36, ACT_CREATE_UNIT = 44, ACT_SET_DEATHS = 45,
+	ACT_SET_ALLIANCE = 57
+};
+
+/* The end of a trigger's actions that run: the first type 0 not ignored (the runner 0x4bdf10). */
+static uint32_t actions_end(const uint8_t *base)
+{
+	uint32_t j;
+	for (j = 0; j < ACTION_COUNT; j++) {
+		const uint8_t *a = base + ACTIONS_OFFSET + j * ACTION_SIZE;
+		if (a[ACTION_TYPE] == 0 && !(a[ACTION_FLAGS] & ENTRY_IGNORED)) return j;
+	}
+	return ACTION_COUNT;
+}
+
+/* Whether an action before actions_end runs: neither ignored nor of type 0. */
+static int action_runs(const uint8_t *a) { return a[ACTION_TYPE] != 0 && !(a[ACTION_FLAGS] & ENTRY_IGNORED); }
+
+/* A selector that names one slot directly (kp_trigger_players): neither the current player nor a group. */
+static int direct_slot(uint32_t selector) { return selector < SELECTOR_CURRENT || selector > SELECTOR_LAST_GROUP; }
+
+/* A unit type the counters' getters take (kp_trigger_queries.c unit_counter, kp_trigger_cached_count): a type, Any
+ * Unit, Men, Buildings or Factories. */
+static int counter_unit(uint32_t unit) { return unit < UNIT_TYPES || (unit >= UNIT_ANY && unit <= UNIT_FACTORIES); }
+
+/* A condition that stops the game when evaluated (ADR 0023): a counter of a direct slot past the players (read_slot,
+ * kp_trigger_queries.c) or of a unit type past the table (unit_counter, kp_trigger_cached_count). NULL when none. */
+static const char *condition_stops(const uint8_t *c, char *why, size_t why_size)
+{
+	uint32_t kind = c[CONDITION_TYPE], player = kp_le_u32(c + CONDITION_PLAYER), unit = kp_le_u16(c + CONDITION_UNIT);
+	int located = c[CONDITION_LOCATION] != 0; /* Bring and the rankings At count nothing without a location */
+	int slot = kind == COND_COMMAND || (kind == COND_BRING && located) || kind == COND_ACCUMULATE || kind == COND_KILL
+		|| kind == COND_DEATHS || kind == COND_SCORE;
+	int counted = kind == COND_COMMAND || (kind == COND_BRING && located) || kind == COND_KILL || kind == COND_DEATHS
+		|| kind == COND_COMMAND_THE_MOST || kind == COND_COMMAND_THE_LEAST || kind == COND_MOST_KILLS
+		|| kind == COND_LEAST_KILLS || ((kind == COND_COMMANDS_THE_MOST_AT || kind == COND_COMMAND_THE_LEAST_AT) && located);
+	if (slot && direct_slot(player) && player >= PLAYER_SLOTS) {
+		snprintf(why, why_size, "a counter of player slot %u", (unsigned)player);
+		return why;
+	}
+	if (counted && !counter_unit(unit)) {
+		snprintf(why, why_size, "a counter of unit type %u", (unsigned)unit);
+		return why;
+	}
+	return NULL;
+}
+
+/* An action that stops the game when it runs (ADR 0023): Kill and Remove Unit of a direct slot past the players
+ * (kp_trigger_units.c kill_player_units), Set Alliance with slot 12 (set_alliance), Set Deaths of a unit type past the
+ * aggregates for a slot below 8 (kp_trigger_set_deaths), a leaderboard of units or kills of a type past the table
+ * (lb_get), a Flag created (kp_powerup.c: Capture the Flag is outside the V1 profile). NULL when none. */
+static const char *action_stops(const uint8_t *a, char *why, size_t why_size)
+{
+	uint32_t kind = a[ACTION_TYPE], player = kp_le_u32(a + ACTION_PLAYER), unit = kp_le_u16(a + ACTION_UNIT);
+	int located = a[ACTION_LOCATION] != 0;
+	if ((kind == ACT_KILL_UNIT || kind == ACT_REMOVE_UNIT) && direct_slot(player) && player >= PLAYER_SLOTS) {
+		snprintf(why, why_size, "%s of player slot %u", kind == ACT_KILL_UNIT ? "Kill Unit" : "Remove Unit",
+			(unsigned)player);
+		return why;
+	}
+	if (kind == ACT_SET_ALLIANCE && player == PLAYER_SLOTS) {
+		snprintf(why, why_size, "Set Alliance with player slot %u", (unsigned)player);
+		return why;
+	}
+	if (kind == ACT_SET_DEATHS && unit > UNIT_FACTORIES && !(direct_slot(player) && player >= 8)) {
+		snprintf(why, why_size, "Set Deaths of unit type %u", (unsigned)unit);
+		return why;
+	}
+	if ((kind == ACT_LB_CONTROL || kind == ACT_LB_KILLS || kind == ACT_LB_GOAL_CONTROL || kind == ACT_LB_GOAL_KILLS
+			|| ((kind == ACT_LB_CONTROL_AT || kind == ACT_LB_GOAL_CONTROL_AT) && located))
+		&& !counter_unit(unit)) {
+		snprintf(why, why_size, "a leaderboard of unit type %u", (unsigned)unit);
+		return why;
+	}
+	if ((kind == ACT_CREATE_UNIT || kind == ACT_CREATE_UNIT_WITH_PROPERTIES) && located && unit == UNIT_FLAG) {
+		snprintf(why, why_size, "a Flag (unit %d) is outside the V1 profile", UNIT_FLAG);
+		return why;
+	}
+	return NULL;
+}
 
 /* scdata/analyze/triggers.py validate: what the original's tables would index past (a reachable condition above type
  * 23, an action above 59, an Order past the 255 locations, a Move Unit to location 256) and what the V1 profile has no
- * handler for (Opponents; Modify Unit Resource Amount and Hangar Count). Entries the runners never reach are left. */
+ * handler for (Opponents; Modify Unit Resource Amount and Hangar Count); and what the runtime stops the game at
+ * (condition_stops, action_stops). Entries the runners never reach are left. */
 static int validate_triggers(const uint8_t *trig, uint32_t size, char *err, size_t err_size)
 {
 	uint32_t t, j;
+	char why[KP_ERROR_SIZE];
 	if (size % TRIGGER_SIZE) {
 		snprintf(err, err_size, "TRIG: trigger payload of %u bytes is not a multiple of %d", (unsigned)size, TRIGGER_SIZE);
 		return -1;
 	}
 	for (t = 0; t < size / TRIGGER_SIZE; t++) {
 		const uint8_t *base = trig + (size_t)t * TRIGGER_SIZE;
-		uint32_t end = ACTION_COUNT;
+		uint32_t end = actions_end(base);
 		for (j = 0; j < CONDITION_COUNT; j++) { /* the evaluated ones: ignored skipped, the first type 0 ends them */
 			const uint8_t *c = base + j * CONDITION_SIZE;
 			if (c[CONDITION_FLAGS] & ENTRY_IGNORED) continue;
@@ -216,15 +323,15 @@ static int validate_triggers(const uint8_t *trig, uint32_t size, char *err, size
 					(unsigned)j);
 				return -1;
 			}
-		}
-		for (j = 0; j < ACTION_COUNT && end == ACTION_COUNT; j++) { /* the first type 0 not ignored ends them */
-			const uint8_t *a = base + ACTIONS_OFFSET + j * ACTION_SIZE;
-			if (a[ACTION_TYPE] == 0 && !(a[ACTION_FLAGS] & ENTRY_IGNORED)) end = j;
+			if (condition_stops(c, why, sizeof why)) {
+				snprintf(err, err_size, "TRIG: trigger %u condition %u: %s", (unsigned)t, (unsigned)j, why);
+				return -1;
+			}
 		}
 		for (j = 0; j < end; j++) {
 			const uint8_t *a = base + ACTIONS_OFFSET + j * ACTION_SIZE;
 			uint32_t kind = a[ACTION_TYPE], number = kp_le_u32(a + ACTION_NUMBER);
-			if (kind == 0 || (a[ACTION_FLAGS] & ENTRY_IGNORED)) continue;
+			if (!action_runs(a)) continue;
 			if (kind >= ACTION_TYPES) {
 				snprintf(err, err_size, "TRIG: trigger %u action %u: type %u (the table has %d)", (unsigned)t, (unsigned)j,
 					(unsigned)kind, ACTION_TYPES);
@@ -246,6 +353,76 @@ static int validate_triggers(const uint8_t *trig, uint32_t size, char *err, size
 			if (kind == ACTION_MOVE_UNIT && kp_le_u32(a + ACTION_LOCATION) && number && !(number & 0xff)) {
 				snprintf(err, err_size, "TRIG: trigger %u action %u: Move Unit to location 256 (number %u)", (unsigned)t,
 					(unsigned)j, (unsigned)number);
+				return -1;
+			}
+			if (action_stops(a, why, sizeof why)) {
+				snprintf(err, err_size, "TRIG: trigger %u action %u: %s", (unsigned)t, (unsigned)j, why);
+				return -1;
+			}
+		}
+	}
+	return 0;
+}
+
+/* The map strings as kp_map_string reads them for any consumer (the triggers, the briefing, the map's and the forces'
+ * names, the interface): every id up to STR's count whose offset slot is inside STR names a string terminated inside
+ * it (the stop "map string N is not terminated inside STR", kp_triggers.c). */
+static int validate_strings(const uint8_t *strs, uint32_t size, char *err, size_t err_size)
+{
+	uint32_t count, n, last;
+	if (size < 2) return 0;
+	for (last = size; last > 0 && strs[last - 1] != 0; last--) {
+	}
+	count = kp_le_u16(strs);
+	for (n = 1; n <= count && 2 * n + 2 <= size; n++) {
+		uint32_t offset = kp_le_u16(strs + 2 * n);
+		if (offset >= last) { /* no terminator at or after the offset */
+			snprintf(err, err_size, "STR: string %u at offset %u is not terminated inside STR", (unsigned)n,
+				(unsigned)offset);
+			return -1;
+		}
+	}
+	return 0;
+}
+
+/* The preplaced units the start stops at (ADR 0023): a start location of a slot past the players (kp_start.c
+ * load_units) and a Flag (outside the V1 profile, kp_powerup.c). */
+static int validate_units(const uint8_t *units, uint32_t size, char *err, size_t err_size)
+{
+	uint32_t i;
+	for (i = 0; i + UNIT_RECORD <= size; i += UNIT_RECORD) {
+		uint32_t type = kp_le_u16(units + i + UNIT_RECORD_TYPE), owner = units[i + UNIT_RECORD_OWNER];
+		if (type == UNIT_START_LOCATION && owner >= PLAYER_SLOTS) {
+			snprintf(err, err_size, "UNIT: unit %u: a start location of player %u", (unsigned)(i / UNIT_RECORD),
+				(unsigned)owner);
+			return -1;
+		}
+		if (type == UNIT_FLAG) {
+			snprintf(err, err_size, "UNIT: unit %u: a Flag (unit %d) is outside the V1 profile",
+				(unsigned)(i / UNIT_RECORD), UNIT_FLAG);
+			return -1;
+		}
+	}
+	return 0;
+}
+
+int kp_mission_check_ai(const KpMission *m, const KpAiBins *b, KpError *err)
+{
+	uint32_t checked[ACTION_COUNT], count = 0, t, j, k;
+	char why[KP_ERROR_SIZE];
+	for (t = 0; t < m->triggers.size / TRIGGER_SIZE; t++) {
+		const uint8_t *base = m->triggers.data + (size_t)t * TRIGGER_SIZE;
+		uint32_t end = actions_end(base);
+		for (j = 0; j < end; j++) {
+			const uint8_t *a = base + ACTIONS_OFFSET + j * ACTION_SIZE;
+			uint32_t id = kp_le_u32(a + ACTION_NUMBER);
+			if (!action_runs(a) || (a[ACTION_TYPE] != ACT_RUN_AI_SCRIPT && a[ACTION_TYPE] != ACT_RUN_AI_SCRIPT_AT)) continue;
+			for (k = 0; k < count && checked[k] != id; k++) {
+			}
+			if (k < count) continue;
+			if (count < ACTION_COUNT) checked[count++] = id;
+			if (kp_aiscript_check(b, id, why, sizeof why) != 0) {
+				snprintf(err->msg, sizeof err->msg, "TRIG: trigger %u action %u: %s", (unsigned)t, (unsigned)j, why);
 				return -1;
 			}
 		}
@@ -457,7 +634,9 @@ int kp_mission_from_chk(KpMission *m, const KpFiles *f, uint8_t *chk_bytes, size
 		fail(err, name, why);
 		goto done;
 	}
-	if (validate_triggers(s[TRIG]->data, s[TRIG]->size, why, sizeof why) != 0) {
+	if (validate_triggers(s[TRIG]->data, s[TRIG]->size, why, sizeof why) != 0
+		|| validate_strings(s[STR]->data, s[STR]->size, why, sizeof why) != 0
+		|| validate_units(s[UNIT]->data, s[UNIT]->size, why, sizeof why) != 0) {
 		fail(err, name, why);
 		goto done;
 	}

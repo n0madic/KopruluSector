@@ -74,7 +74,7 @@ Plan §10 allows 4 ms per simulation step on the target mobile device, where Lua
   - debug builds check record indices with assertions;
   - desktop CI runs every scenario and all 64 missions under AddressSanitizer and UndefinedBehaviorSanitizer (`kp_replay`);
   - the step has no allocation and no pointers to freed memory.
-- **An unported branch of the original** (now `error("... not ported")`) becomes `kp_fail(game, ...)`. It unwinds to the step boundary, marks the game failed, and the binding raises a Lua error with the same text. A failed game is not stepped again.
+- **An unported branch of the original** (now `error("... not ported")`) becomes `kp_fail(game, ...)`. It unwinds to the step boundary, marks the game failed, and the binding raises a Lua error with the same text. A failed game is not stepped again. Since ADR 0023 the stops a scenario's bytes decide (its triggers' players and unit types, its strings, its preplaced units, its AI scripts' reachable opcodes) are refused when its mission loads or before its game starts.
 - **A divergence from the original** is caught by the same oracle (golden data per step) and, until N.6, by the per-step comparison with the Lua core.
 - **The build server is unavailable:** only engine builds stop. Local builds, tests and device benchmarks go on.
 

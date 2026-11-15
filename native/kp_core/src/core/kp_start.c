@@ -323,6 +323,7 @@ static void load_units(KpGame *g, const KpBytes *s, Relation *nydus, Relation *a
 		size_t a = i * UNIT_RECORD;
 		int64_t type = u16_at(s, a + 8), owner = u8_at(s, a + 16), controller;
 		if (type == KP_TYPE_START_LOCATION) { /* a start location creates no unit; its owner's position (0x46a280) */
+			/* kp_mission_from_chk refuses such a scenario first (validate_units) */
 			if (owner >= KP_PLAYERS) kp_game_fail(g, "start: a start location of player %lld", (long long)owner);
 			g->players.start_x[owner] = u16_at(s, a + 4);
 			g->players.start_y[owner] = u16_at(s, a + 6);
@@ -518,6 +519,7 @@ KpGame *kp_start(const KpStartInput *in, KpError *err)
 	}
 	if (set_tileset(g, in->cv5, in->cv5_size, in->vf4, in->vf4_size, err) != 0) goto failed;
 	if (kp_rules_effects(effects, m, in->dat, in->expansion != 0, err) != 0) goto failed;
+	if (in->ai_bins && kp_mission_check_ai(m, in->ai_bins, err) != 0) goto failed;
 	kp_images_begin(w, &t);
 	if (setjmp(t.buf)) {
 		kp_images_end(w, &t);

@@ -482,11 +482,159 @@ static void stock_defense_types_have_strength(KpT *T)
 	kp_t_eq(T, g->strength[0][32], 0, "a gg entry without air strength, the Firebat: the direction matters");
 }
 
+/* kp_aiscript_ported is the interpreter's: a script of one opcode (every other byte a stop, so its operands read
+ * 0x24 and its jumps and return land on a stop) stops the game with "ai: opcode 0xNN, <name>" exactly when the opcode is not
+ * ported. */
+/* Script s run once; a failure ends it with the game's error set (no local of the caller lives across the setjmp). */
+static void execute_once(KpGame *g, int64_t s)
+{
+	KpTry t;
+	kp_images_begin(g->w, &t);
+	if (setjmp(t.buf)) {
+		kp_images_end(g->w, &t);
+		return;
+	}
+	kp_aiscript_execute(g, s);
+	kp_images_end(g->w, &t);
+}
+
+static void ported_opcodes_are_the_interpreters(KpT *T)
+{
+	static uint8_t code[0x2500];
+	int op, mismatches = 0;
+	if (!kp_t_ready(T, "test_aiscript", FILES)) return;
+	for (op = 0; op <= 0x72; op++) {
+		KpOracleGame *og = new_game(T);
+		KpGame *g = og->g;
+		int64_t s;
+		char want[32];
+		int stopped;
+		memset(code, 0x24, sizeof code);
+		code[0] = (uint8_t)op;
+		program(T, g, code, sizeof code, code, sizeof code);
+		s = kp_aiscript_create(g, 0, 0, NULL, 0);
+		g->scripts.ret = 1; /* return lands on a stop too */
+		execute_once(g, s);
+		snprintf(want, sizeof want, "ai: opcode 0x%02x, ", (unsigned)op);
+		stopped = strncmp(g->w->error, want, strlen(want)) == 0;
+		if (stopped == kp_aiscript_ported(op)) {
+			kp_t_ok(T, 0, "opcode 0x%02x: ported %d, the interpreter: %s", (unsigned)op, kp_aiscript_ported(op),
+				g->w->error[0] ? g->w->error : "runs");
+			mismatches++;
+		}
+		kp_t_game_free(T, og);
+		if (mismatches > 4) break;
+	}
+}
+
+/* Binaries of one script each: aiscript.bin's directory (16-byte records) at 64 names 'Tst1'..'Tst5', bwscript.bin's
+ * (8-byte records) at 32 names 'Bpan'. */
+#define CHECK_AI_SIZE 176
+#define CHECK_BW_SIZE 48
+static void check_bins(KpT *T, KpAiBins *b, uint8_t *ai, uint8_t *bw)
+{
+	static const struct {
+		const char *id;
+		uint32_t offset;
+	} AI[] = { { "Tst1", 4 }, { "Tst2", 16 }, { "Tst3", 24 }, { "Tst4", 30 }, { "Tst5", 40 } };
+	const KpDefsTable *t = kp_defs_table(kp_defs_profile("bw-1.17.0.1"), "AIOP");
+	size_t k;
+	memset(ai, 0, CHECK_AI_SIZE);
+	memset(bw, 0, CHECK_BW_SIZE);
+	kp_le_put32(ai, 64);
+	for (k = 0; k < sizeof AI / sizeof AI[0]; k++) {
+		memcpy(ai + 64 + 16 * k, AI[k].id, 4);
+		kp_le_put32(ai + 64 + 16 * k + 4, AI[k].offset);
+	}
+	/* Tst1: goto 10; at 7 race_jump (never reached); at 10 stop */
+	ai[4] = 0x00, kp_le_put16(ai + 5, 10), ai[7] = 0x39, ai[10] = 0x24;
+	/* Tst2: random_jump 128 to 7 (race_jump), then stop */
+	ai[16] = 0x30, ai[17] = 128, kp_le_put16(ai + 18, 7), ai[20] = 0x24;
+	/* Tst3: goto 0x7fff, outside */
+	ai[24] = 0x00, kp_le_put16(ai + 25, 0x7fff);
+	/* Tst4: call 36, then an ordinal past the table (freed as stop); at 36 return */
+	ai[30] = 0x40, kp_le_put16(ai + 31, 36), ai[33] = 0x71, ai[36] = 0x41;
+	/* Tst5: wait_secure (0x0f), not ported */
+	ai[40] = 0x0f;
+	/* Bpan: panic 7 (the panic block runs from aiscript.bin, where 7 is race_jump), then stop */
+	kp_le_put32(bw, 32);
+	memcpy(bw + 32, "Bpan", 4);
+	kp_le_put32(bw + 36, 4);
+	bw[4] = 0x44, kp_le_put16(bw + 5, 7), bw[7] = 0x24;
+	memset(b, 0, sizeof *b);
+	b->bin[0] = ai;
+	b->bin_size[0] = CHECK_AI_SIZE;
+	b->bin[1] = bw;
+	b->bin_size[1] = CHECK_BW_SIZE;
+	kp_t_ok(T, t != NULL, "the profile's AIOP");
+	b->operands = t ? t->data : NULL;
+	b->operands_size = t ? t->size : 0;
+}
+
+static uint32_t script_id(const char *id) { return kp_le_u32((const uint8_t *)id); }
+
+/* kp_aiscript_check over synthetic binaries: what the closure reaches is checked, what it does not is left. */
+static void scripts_are_checked_before_a_game(KpT *T)
+{
+	static const struct {
+		const char *id;
+		const char *want; /* NULL: passes */
+	} CHECKS[] = {
+		{ "Tst1", NULL },
+		{ "Tst2", "AI script 'Tst2' reaches opcode 0x39, race_jump, at aiscript.bin+0x7" },
+		{ "Tst3", "AI script 'Tst3' reads PC 0x7fff outside aiscript.bin" },
+		{ "Tst4", NULL },
+		{ "Tst5", "reaches opcode 0x0f, wait_secure" },
+		{ "Bpan", "AI script 'Bpan' reaches opcode 0x39, race_jump, at aiscript.bin+0x7" },
+		{ "None", NULL }, /* no binary has it: the launch does nothing */
+	};
+	uint8_t ai[CHECK_AI_SIZE], bw[CHECK_BW_SIZE], trig[2400];
+	KpAiBins b;
+	KpMission m;
+	KpError err;
+	char why[KP_ERROR_SIZE];
+	size_t k;
+	check_bins(T, &b, ai, bw);
+	for (k = 0; k < sizeof CHECKS / sizeof CHECKS[0]; k++) {
+		int rc = kp_aiscript_check(&b, script_id(CHECKS[k].id), why, sizeof why);
+		if (CHECKS[k].want) kp_t_ok(T, rc == -1 && strstr(why, CHECKS[k].want) != NULL, "%s: %s", CHECKS[k].id, why);
+		else kp_t_eq(T, rc, 0, "%s: %s", CHECKS[k].id, why);
+	}
+	/* a truncated operand at the end of the binary */
+	ai[CHECK_AI_SIZE - 2] = 0x00, ai[CHECK_AI_SIZE - 1] = 0x01;
+	kp_le_put32(ai + 64 + 4, CHECK_AI_SIZE - 2);
+	kp_t_ok(T, kp_aiscript_check(&b, script_id("Tst1"), why, sizeof why) == -1 && strstr(why, "outside aiscript.bin"),
+		"a truncated goto: %s", why);
+	b.operands_size--;
+	kp_t_ok(T, kp_aiscript_check(&b, script_id("Tst4"), why, sizeof why) == -1 && strstr(why, "(AIOP) is damaged"),
+		"a damaged table: %s", why);
+	/* the mission's Run AI Script actions that run (action 0 of trigger 0) */
+	check_bins(T, &b, ai, bw);
+	memset(&m, 0, sizeof m);
+	memset(trig, 0, sizeof trig);
+	m.triggers.data = trig;
+	m.triggers.size = sizeof trig;
+	trig[320 + 0x1a] = 15; /* Run AI Script */
+	kp_le_put32(trig + 320 + 0x14, script_id("Tst2"));
+	kp_t_ok(T, kp_mission_check_ai(&m, &b, &err) == -1 && strstr(err.msg, "TRIG: trigger 0 action 0: AI script 'Tst2'"),
+		"Run AI Script: %s", err.msg);
+	trig[320 + 0x1a] = 16; /* Run AI Script At */
+	kp_t_eq(T, kp_mission_check_ai(&m, &b, &err), -1, "Run AI Script At");
+	trig[320 + 0x1c] = 0x02; /* ignored */
+	kp_t_eq(T, kp_mission_check_ai(&m, &b, &err), 0, "an ignored action: %s", err.msg);
+	trig[320 + 0x1c] = 0;
+	memcpy(trig + 320 + 2 * 32, trig + 320, 32); /* after the first action of type 0: never run */
+	memset(trig + 320, 0, 32);
+	kp_t_eq(T, kp_mission_check_ai(&m, &b, &err), 0, "an action after the end: %s", err.msg);
+}
+
 static const KpTest TESTS[] = {
 	{ "vm_equals_the_original", vm_equals_the_original, 0 },
 	{ "launch_gate", launch_gate, 0 },
 	{ "small_binaries_hold_no_scripts", small_binaries_hold_no_scripts, 0 },
 	{ "lost_roster_entry_reads_the_next_column", lost_roster_entry_reads_the_next_column, 0 },
 	{ "stock_defense_types_have_strength", stock_defense_types_have_strength, 0 },
+	{ "ported_opcodes_are_the_interpreters", ported_opcodes_are_the_interpreters, 0 },
+	{ "scripts_are_checked_before_a_game", scripts_are_checked_before_a_game, 0 },
 };
 KP_SUITE(kp_suite_aiscript, "test_aiscript", TESTS);

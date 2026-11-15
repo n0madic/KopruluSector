@@ -55,6 +55,24 @@ class ScriptsTest(unittest.TestCase):
             scripts.ai_directory(ai_bin([(b"Bad!", 10_000)], 16), 16)
 
     @unittest.skipIf(not ORIGINAL, "KOPRULU_ORIGINAL not set")
+    def test_ai_operand_section(self):
+        """AIOP (kp_aiscript_check's table): every ordinal from 0 with its terminator flag and operand widths."""
+        from scdata.analyze import ai
+
+        table = ai.Table.load()
+        data = ai.section(table)
+        assert data[0] == len(table.opcodes) == 0x71
+        at = 1
+        for code in range(data[0]):
+            op = table.opcodes[code]
+            flags, count = data[at], data[at + 1]
+            assert bool(flags & ai.TERMINATOR) == (op.name in table.terminators), op.name
+            widths = data[at + 2 : at + 2 + count]
+            assert [w & 0x7F for w in widths] == [w for _, w in op.operands], op.name
+            assert [i for i, w in enumerate(widths) if w & ai.ADDRESS] == list(op.targets), op.name
+            at += 2 + count
+        assert at == len(data)
+
     def test_original_scripts(self):
         from scdata.mpq.profile import Resolver
 

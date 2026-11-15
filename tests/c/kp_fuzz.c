@@ -262,7 +262,9 @@ static int run_chk(const uint8_t *d, size_t size)
 		KpError err;
 		uint8_t *copy = (uint8_t *)malloc(size ? size : 1);
 		if (copy && size) memcpy(copy, d, size);
-		(void)kp_mission_from_chk(&m, &data->files, copy, size, "fuzz", NULL, NULL, 0, &err);
+		if (kp_mission_from_chk(&m, &data->files, copy, size, "fuzz", NULL, NULL, 0, &err) == 0) {
+			(void)kp_mission_check_ai(&m, &data->shared.data.ai, &err);
+		}
 		kp_mission_free(&m);
 	}
 	return 0;

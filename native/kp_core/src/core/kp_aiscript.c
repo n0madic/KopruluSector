@@ -114,6 +114,7 @@ int kp_ai_bins_from_files(KpAiBins *b, const KpFiles *f, KpError *err)
 	static const uint32_t STRIDES[KP_AI_BINS] = { AI_RECORD, BW_RECORD };
 	uint8_t *bin[KP_AI_BINS] = { NULL, NULL };
 	size_t size[KP_AI_BINS] = { 0, 0 };
+	const KpDefsTable *operands;
 	int k, rc = -1;
 	memset(b, 0, sizeof *b);
 	for (k = 0; k < KP_AI_BINS; k++) {
@@ -135,6 +136,12 @@ int kp_ai_bins_from_files(KpAiBins *b, const KpFiles *f, KpError *err)
 	b->bin[1] = b->blob + size[0];
 	b->bin_size[0] = (uint32_t)size[0];
 	b->bin_size[1] = (uint32_t)size[1];
+	if (!(operands = f->profile ? kp_defs_table(f->profile, "AIOP") : NULL)) {
+		fail(err, "the profile has no opcode table (AIOP)");
+		goto done;
+	}
+	b->operands = operands->data;
+	b->operands_size = operands->size;
 	rc = 0;
 done:
 	free(bin[0]);
@@ -182,6 +189,10 @@ int kp_aiscript_program(KpGame *g, const uint8_t *ai, size_t ai_size, const uint
 	b->bin_size[0] = (uint32_t)ai_size;
 	b->bin[1] = b->blob + ai_size;
 	b->bin_size[1] = (uint32_t)bw_size;
+	if (g->ai_game_bins) {
+		b->operands = g->ai_game_bins->operands;
+		b->operands_size = g->ai_game_bins->operands_size;
+	}
 	g->ai_bins = b;
 	return 0;
 }
@@ -569,11 +580,184 @@ static int64_t script_town(KpGame *g, int64_t s, int64_t op)
 	return g->scripts.town[s];
 }
 
-/* An opcode only the melee scripts use (StartCustomLevelAIScripts 0x4486a0's), whose helper is not ported.
+/* The opcodes only the melee scripts use (StartCustomLevelAIScripts 0x4486a0's), whose helpers are not ported: the
+ * interpreter stops the game at one, and kp_aiscript_check refuses a script that reaches one.
  * TODO: the melee AI's opcodes (outside V1). */
-static void unported(KpGame *g, int64_t op, unsigned helper, const char *what)
+static const struct {
+	uint8_t op;
+	unsigned helper;
+	const char *name;
+} UNPORTED[] = {
+	{ OP_WAIT_SECURE, 0x482470, "wait_secure" }, { OP_BUILD_BUNKERS, 0x4ade10, "build_bunkers" },
+	{ OP_WAIT_BUNKERS, 0x4b05c0, "wait_bunkers" }, { OP_DEBUG, 0x46a860, "debug" },
+	{ OP_FATAL_ERROR, 0x4cc190, "fatal_error" }, { OP_BUILD_TURRETS, 0x4aded0, "build_turrets" },
+	{ OP_WAIT_TURRETS, 0x4b0600, "wait_turrets" }, { OP_HARASS_FACTOR, 0x483830, "harass_factor" },
+	{ OP_RACE_JUMP, 0x486c50, "race_jump" }, { OP_REGION_SIZE, 0x4877f0, "region_size" },
+	{ OP_GET_OLDPEONS, 0x486480, "get_oldpeons" }, { OP_GROUNDMAP_JUMP, 0x486410, "groundmap_jump" },
+	{ OP_GUARD_RESOURCES, 0x493790, "guard_resources" }, { OP_EVAL_HARASS, 0x4af5b0, "eval_harass" },
+	{ OP_WAIT_UPGRADES, 0x483200, "wait_upgrades" }, { OP_RUSH, 0x4ad550, "rush" },
+	{ OP_MAKE_PATROL, 0x4b0f10, "make_patrol" }, { OP_ENTER_TRANSPORT, 0x4af520, "enter_transport" },
+	{ OP_EXIT_TRANSPORT, 0x4af6d0, "exit_transport" }, { OP_IMPLODE, 0x4ad430, "implode" }
+};
+
+static int unported_index(int op)
 {
-	kp_game_fail(g, "ai: opcode 0x%02llx, %s (0x%x)", (long long)op, what, helper);
+	size_t k;
+	for (k = 0; k < sizeof UNPORTED / sizeof UNPORTED[0]; k++) {
+		if (UNPORTED[k].op == op) return (int)k;
+	}
+	return -1;
+}
+
+int kp_aiscript_ported(int op) { return op > LAST_OPCODE || unported_index(op) < 0; }
+
+static void unported(KpGame *g, int64_t op)
+{
+	int k = unported_index((int)op);
+	kp_game_fail(g, "ai: opcode 0x%02llx, %s (0x%x)", (long long)op, k < 0 ? "unknown" : UNPORTED[k].name,
+		k < 0 ? 0x494a98u : UNPORTED[k].helper);
+}
+
+/* ---- The check before a game (kp_aiscript_check) ---- */
+
+#define AIOP_TERMINATOR 0x01 /* the AIOP flags (scdata/analyze/ai.py section) */
+#define AIOP_ADDRESS 0x80
+#define AIOP_WIDTH 0x7f
+#define CHECK_STACK 64
+
+typedef struct {
+	uint32_t pc;
+	uint8_t bin;
+} CheckEntry;
+
+typedef struct {
+	const KpAiBins *b;
+	uint32_t at[LAST_OPCODE + 1]; /* each ordinal's flags byte in b->operands */
+	uint8_t *seen[KP_AI_BINS];
+	CheckEntry *work;
+	size_t top, cap;
+	char id[16];
+} Check;
+
+static void script_name(char out[16], uint32_t id)
+{
+	int k, printable = 1;
+	for (k = 0; k < 4; k++) {
+		uint8_t c = (uint8_t)(id >> (8 * k));
+		if (c < 0x20 || c > 0x7e) printable = 0;
+	}
+	if (printable) snprintf(out, 16, "'%c%c%c%c'", (char)id, (char)(id >> 8), (char)(id >> 16), (char)(id >> 24));
+	else snprintf(out, 16, "0x%08x", (unsigned)id);
+}
+
+/* The AIOP table's ordinals: each one's flags byte, its operand count and widths inside the table. */
+static int index_operands(Check *c)
+{
+	const uint8_t *t = c->b->operands;
+	uint32_t size = c->b->operands_size, at = 1, k;
+	if (!t || size < 1 || t[0] != LAST_OPCODE + 1) return -1;
+	for (k = 0; k <= LAST_OPCODE; k++) {
+		uint32_t n, i;
+		if (at + 2 > size) return -1;
+		c->at[k] = at;
+		n = t[at + 1];
+		if (at + 2 + n > size) return -1;
+		for (i = 0; i < n; i++) {
+			uint8_t w = t[at + 2 + i] & AIOP_WIDTH;
+			if (w != 1 && w != 2 && w != 4) return -1;
+		}
+		at += 2 + n;
+	}
+	return at == size ? 0 : -1;
+}
+
+static int push(Check *c, int bin, uint32_t pc)
+{
+	if (c->top == c->cap) {
+		size_t cap = c->cap ? 2 * c->cap : CHECK_STACK;
+		CheckEntry *w = (CheckEntry *)realloc(c->work, cap * sizeof *w);
+		if (!w) return -1;
+		c->work = w;
+		c->cap = cap;
+	}
+	c->work[c->top].pc = pc;
+	c->work[c->top].bin = (uint8_t)bin;
+	c->top++;
+	return 0;
+}
+
+/* The run of instructions from (bin, pc) up to a terminator or one already seen; the address operands pushed. */
+static int check_run(Check *c, int bin, uint32_t pc, char *why, size_t why_size)
+{
+	static const char *const BINS[KP_AI_BINS] = { "aiscript.bin", "bwscript.bin" };
+	const uint8_t *code = c->b->bin[bin], *t = c->b->operands;
+	uint32_t size = c->b->bin_size[bin];
+	for (;;) {
+		uint32_t at, n, i, next;
+		uint8_t op;
+		if (pc >= size) {
+			snprintf(why, why_size, "AI script %s reads PC 0x%x outside %s", c->id, (unsigned)pc, BINS[bin]);
+			return -1;
+		}
+		if (c->seen[bin][pc >> 3] & (1u << (pc & 7))) return 0;
+		c->seen[bin][pc >> 3] |= (uint8_t)(1u << (pc & 7));
+		op = code[pc];
+		if (op > LAST_OPCODE) return 0; /* freed as stop does */
+		if (!kp_aiscript_ported(op)) {
+			snprintf(why, why_size, "AI script %s reaches opcode 0x%02x, %s, at %s+0x%x", c->id, (unsigned)op,
+				UNPORTED[unported_index(op)].name, BINS[bin], (unsigned)pc);
+			return -1;
+		}
+		at = c->at[op];
+		n = t[at + 1];
+		next = pc + 1;
+		for (i = 0; i < n; i++) {
+			uint8_t d = t[at + 2 + i];
+			uint32_t w = d & AIOP_WIDTH, value = 0, k;
+			if (next > size || size - next < w) {
+				snprintf(why, why_size, "AI script %s reads PC 0x%x outside %s", c->id, (unsigned)size, BINS[bin]);
+				return -1;
+			}
+			for (k = 0; k < w; k++) value |= (uint32_t)code[next + k] << (8 * k);
+			next += w;
+			/* the panic block runs from aiscript.bin whichever binary set it (kp_ai_town.c, 0x494e80) */
+			if ((d & AIOP_ADDRESS) && push(c, op == OP_PANIC ? 0 : bin, value) != 0) {
+				snprintf(why, why_size, "out of memory");
+				return -1;
+			}
+		}
+		if (t[at] & AIOP_TERMINATOR) return 0;
+		pc = next;
+	}
+}
+
+int kp_aiscript_check(const KpAiBins *b, uint32_t id, char *why, size_t why_size)
+{
+	Check c;
+	int bin, k, rc = 0;
+	uint32_t entry = kp_ai_bins_find(b, id, &bin);
+	if (entry == 0) return 0;
+	memset(&c, 0, sizeof c);
+	c.b = b;
+	script_name(c.id, id);
+	if (index_operands(&c) != 0) {
+		snprintf(why, why_size, "the profile's opcode table (AIOP) is damaged");
+		return -1;
+	}
+	for (k = 0; k < KP_AI_BINS; k++) {
+		if (!(c.seen[k] = (uint8_t *)calloc((size_t)b->bin_size[k] / 8 + 1, 1))) rc = -1;
+	}
+	if (rc != 0 || push(&c, bin, entry) != 0) {
+		snprintf(why, why_size, "out of memory");
+		rc = -1;
+	}
+	while (rc == 0 && c.top > 0) {
+		CheckEntry e = c.work[--c.top];
+		rc = check_run(&c, e.bin, e.pc, why, why_size);
+	}
+	for (k = 0; k < KP_AI_BINS; k++) free(c.seen[k]);
+	free(c.work);
+	return rc;
 }
 
 /* ExecuteAiScript 0x493a60 */
@@ -588,6 +772,7 @@ void kp_aiscript_execute(KpGame *g, int64_t s)
 			kp_aiscript_free(g, s);
 			return;
 		}
+		if (!kp_aiscript_ported((int)op)) unported(g, op);
 		switch (op) {
 		case OP_GOTO:
 			sc->pc[s] = read_word(g, s);
@@ -839,10 +1024,6 @@ void kp_aiscript_execute(KpGame *g, int64_t s)
 			retry(g, s, pc);
 			return;
 		}
-		case OP_RACE_JUMP: unported(g, op, 0x486c50, "race_jump"); break;
-		case OP_REGION_SIZE: unported(g, op, 0x4877f0, "region_size"); break;
-		case OP_GET_OLDPEONS: unported(g, op, 0x486480, "get_oldpeons"); break;
-		case OP_GROUNDMAP_JUMP: unported(g, op, 0x486410, "groundmap_jump"); break;
 		case OP_ALLIES_WATCH: /* a free area is reserved for a script there */
 			a = read_byte(g, s);
 			b = read_word(g, s);
@@ -868,7 +1049,6 @@ void kp_aiscript_execute(KpGame *g, int64_t s)
 				if (area != 0) kp_aiscript_spawn_area_town(g, p, (int)kp_band(sc->flags[s], KP_AI_SCRIPT_BW), area, b);
 			}
 			break;
-		case OP_GUARD_RESOURCES: unported(g, op, 0x493790, "guard_resources"); break;
 		case OP_PLACE_GUARD: { /* PlaceTownGuard 0x4b27f0: a guard of the type waits at the selected place */
 			int64_t x, y;
 			b = read_word(g, s);
@@ -897,7 +1077,6 @@ void kp_aiscript_execute(KpGame *g, int64_t s)
 			a = read_word(g, s);
 			kp_ai_town_tech_request(g, script_town(g, s, op), a, read_byte(g, s));
 			break;
-		case OP_WAIT_UPGRADES: unported(g, op, 0x483200, "wait_upgrades"); break;
 		case OP_ATTACK_PREPARE:
 			kp_ai_prepare_attack(g, p, sc->x[s], sc->y[s], 1, 0); /* PrepareAttack 0x4af300 */
 			break;
@@ -913,12 +1092,7 @@ void kp_aiscript_execute(KpGame *g, int64_t s)
 			if (!kp_ai_attack_active(g, p)) break; /* HasActiveAttackRegion 0x4ab5d0 */
 			retry(g, s, pc);
 			return;
-		case OP_WAIT_SECURE: unported(g, op, 0x482470, "wait_secure"); break;
 		case OP_CAPT_EXPAND: kp_ai_captain_expand(g, p); break; /* CaptainExpand 0x4ad310 */
-		case OP_BUILD_BUNKERS: unported(g, op, 0x4ade10, "build_bunkers"); break;
-		case OP_WAIT_BUNKERS: unported(g, op, 0x4b05c0, "wait_bunkers"); break;
-		case OP_BUILD_TURRETS: unported(g, op, 0x4aded0, "build_turrets"); break;
-		case OP_WAIT_TURRETS: unported(g, op, 0x4b0600, "wait_turrets"); break;
 		case OP_SEND_SUICIDE: /* the attack roster cleared, then SendSuicide 0x4b11b0 and a grouping of 5 */
 			a = read_byte(g, s);
 			kp_ai_attack_clear(g, p, 1); /* ClearAttackRoster 0x483770 */
@@ -936,12 +1110,6 @@ void kp_aiscript_execute(KpGame *g, int64_t s)
 			for (a = g->player_units[p]; a != 0; a = g->u.player_next[a]) kp_ai_building_region_state(g, p, a);
 			break;
 		case OP_HELP_IFTROUBLE: help_allies(g, p); break;
-		case OP_HARASS_FACTOR: unported(g, op, 0x483830, "harass_factor"); break;
-		case OP_EVAL_HARASS: unported(g, op, 0x4af5b0, "eval_harass"); break;
-		case OP_RUSH: unported(g, op, 0x4ad550, "rush"); break;
-		case OP_IMPLODE: unported(g, op, 0x4ad430, "implode"); break;
-		case OP_ENTER_TRANSPORT: unported(g, op, 0x4af520, "enter_transport"); break;
-		case OP_EXIT_TRANSPORT: unported(g, op, 0x4af6d0, "exit_transport"); break;
 		case OP_JUNKYARD_DOG: { /* IssueOrderToPlayerUnitsInRect 0x4b0ec0: the player's units in the rectangle */
 			int count, k;
 			int64_t *found;
@@ -953,7 +1121,6 @@ void kp_aiscript_execute(KpGame *g, int64_t s)
 			kp_query_release(g, found);
 			break;
 		}
-		case OP_MAKE_PATROL: unported(g, op, 0x4b0f10, "make_patrol"); break;
 		case OP_NUKE_LOCATION: case OP_NUKE_POS: { /* a ready Ghost paints a nuke with a ready Silo's missile: at the
 			                                            * location's best enemy, else its centre, or at the point */
 			int64_t ghost, silo, target = 0, x = 0, y = 0;
@@ -996,9 +1163,7 @@ void kp_aiscript_execute(KpGame *g, int64_t s)
 			}
 			break;
 		/* outside the campaigns' scripts */
-		case OP_DEBUG: unported(g, op, 0x46a860, "debug"); break;
-		case OP_FATAL_ERROR: unported(g, op, 0x4cc190, "fatal_error"); break;
-		default: unported(g, op, 0x494a98, "unknown"); break;
+		default: unported(g, op); break; /* none: the opcodes not ported stop above, the others have a case */
 		}
 	}
 }

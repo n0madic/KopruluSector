@@ -20,6 +20,8 @@ typedef struct {
 	size_t size;
 	const uint8_t *bin[KP_AI_BINS];
 	uint32_t bin_size[KP_AI_BINS];
+	const uint8_t *operands; /* the profile's opcode table (AIOP, tools/defs_c.py from defs/ai): kp_aiscript_check's */
+	uint32_t operands_size;
 } KpAiBins;
 
 /* aiscript.bin and bwscript.bin read directly (ADR 0018, stage D3), their directories checked as the converter does. */
@@ -29,6 +31,16 @@ void kp_ai_bins_free(KpAiBins *b);
 /* FindAiScriptOffset 0x494d20: the offset of script `id` (its four bytes little-endian) in aiscript.bin's directory
  * (16-byte records) when it has a nonzero one, else in bwscript.bin's (8-byte records, *bin = 1); 0 when neither. */
 uint32_t kp_ai_bins_find(const KpAiBins *b, uint32_t id, int *bin);
+
+/* Whether the interpreter runs opcode `op` (an ordinal past the dispatcher's table frees the script as stop does);
+ * the others stop the game (the melee scripts' opcodes whose helpers are not ported). */
+int kp_aiscript_ported(int op);
+
+/* Script `id` checked before a game starts (ADR 0023): the conservative closure of scdata/analyze/ai.py from its
+ * entry, every address operand and the fallthrough up to a terminator, over b->operands. 0 when no instruction in it
+ * stops the game, or no binary has the id (the launch does nothing); -1 with why set when one reads outside its binary
+ * or is an opcode not ported. */
+int kp_aiscript_check(const KpAiBins *b, uint32_t id, char *why, size_t why_size);
 
 #ifdef __cplusplus
 }
