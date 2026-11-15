@@ -863,7 +863,7 @@ static void dump_cover_game(KpT *T, DumpGroups *gs, const char *path)
 	KpGame *g;
 	KpSnapshotField *fields;
 	uint8_t *at_point[DUMP_COVER_POINTS], *mix, *back;
-	size_t size, other, nfields, j, k;
+	size_t size = 0, other = 0, nfields, j, k;
 	uint64_t base;
 	KpError err;
 	DumpProbe probe;

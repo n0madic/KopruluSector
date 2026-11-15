@@ -1,6 +1,6 @@
 # ADR 0022: The turn source and fuzzing
 
-Status: accepted (phase T, 2026-11-15). The user approved the design of phase T inline on 2026-11-15, with stage T3 first ([ADR 0021](0021-state-walk-and-saves.md#addition-the-dumps-coverage-stage-t3)). Stage T1, the turn source, is built; stage T2, the fuzzing, is planned and gets its section here when it is built. Stages and their state: [docs/phase-turns.md](../phase-turns.md).
+Status: accepted (phase T, 2026-11-15). The user approved the design of phase T inline on 2026-11-15, with stage T3 first ([ADR 0021](0021-state-walk-and-saves.md#addition-the-dumps-coverage-stage-t3)). Stage T1, the turn source, and stage T2, the fuzzing ([below](#stage-t2-fuzzing)), are built. Stages and their state: [docs/phase-turns.md](../phase-turns.md).
 
 ## Context
 
@@ -23,3 +23,38 @@ Each step of the session (`kp_session_step`) gathered its own commands. They cam
 - The tests that bind the behaviour to the original are unchanged and pass: the 65 replays against the original's playback at every step, every golden scenario, play and idle run recorded and played back (`test_session.replay_*_play_back`), the three records byte for byte (`session_replay_records_as_the_original`), the product scripts.
 - `test_session.turns_local_queue_and_recording` and `turns_replay_feed_and_live_commands` test the source without a game: the queue's order, players and limits; the recording's seats and the split of a buffer; the feed's Storm ID map with the player kept for an unknown ID; the filter; the end given once.
 - A command a playback does not let through is refused when it is submitted instead of taking a place in the queue until the step. The interface ignores the refusal, as it ignored the drop.
+
+## Stage T2: fuzzing
+
+### Context
+
+Every replay, save and map a player opens is untrusted, and so is every frame of a network game ([replay-network-notes.md](../research/replay-network-notes.md#design-questions-the-original-leaves-open), item 6). The readers are bounds-checked and the game stops itself on a state it cannot hold (`kp_game_fail` under the session's guard), but nothing searched for the inputs those checks miss.
+
+### Decision
+
+1. **Four targets, one entry each** (`tests/c/kp_fuzz.{h,c}`). libFuzzer's drivers (`tests/fuzz/kp_fuzz_main.c`, one executable `fuzz_<target>` a target) and the suites (`test_fuzz`) call the same entries:
+   - `rep`: `kp_rep_read`, `kp_session_replay_start` and the turn source's feed of every frame (at most 30,000); a file read is written back and must read again (a property: its failure is a finding);
+   - `chk`: `kp_chk_read` with and without the expansion, and `kp_mission_from_chk` when the game's data is present;
+   - `save`: the first byte's low bit picks the form. A save file: its KPF's CRC-32s made right, `kp_save_check`, then `kp_save_load` into a recorded session. A native save: edits of the game's own save (below), its hash table made right, then `kp_load` into the game;
+   - `commands`: the first byte picks one of three scenarios (workers and buildings, a fight, a computer's spells); then chunks {u8 player | steps << 3, u8 n, n bytes}, whose bytes `kp_record_split` walks into commands of players 0-7, each chunk followed by its steps (at most 8 in all).
+   The games start once a process; each input begins from their snapshot (`kp_restore`, the turn source's queue and the game's events emptied).
+2. **A save's hash table made right by the harness** (`kp_save_seal`, `kp_game.h`). The table detects damage and authenticates nothing, so anyone can remake it; without that, every mutation stops at the table and the fuzzer never reaches the walk's own checks.
+3. **A native save as edits by section.** A native save is 8 MB, past libFuzzer's inputs (1 MB by default). The input is edits {u8 section, u24 offset, u8 n, n bytes} of the game's own save, the section taken modulo the count and the offset modulo its size (`kp_save_sections`, `kp_game.h`: the sections kp_load's dry walk finds). A small section's counts are hit as often as a large one's arrays.
+4. **The build:** the CMake option `KP_FUZZ` (clang with libFuzzer, LLVM's: Apple's has none; with `KP_SANITIZE`), `-fsanitize=fuzzer-no-link` on every C and C++ source and `-fsanitize=fuzzer` on the drivers. `tools/fuzz.sh` builds `build/cmake-fuzz` with `KOPRULU_CLANG` (else Homebrew's llvm), makes the seeds and runs each target `KOPRULU_FUZZ_TIME` seconds (default 60). The targets that need the game's data (`save`, `commands`) are skipped without it.
+5. **Seeds** (`kp_fuzz_seeds [--synthetic] DIR`):
+   - the synthetic ones are committed in `tests/fuzz/seeds/`: a replay of a made-up header, record and map, a CHK of the sections every version requires (its VCOD zeros: the reader refuses it at that digest, Blizzard's bytes stay out of the repository), and plain orders for the three scenarios;
+   - the ones made from the data go to `build/fuzz/seeds/` on each run and are never committed: the CHKs of four campaign missions and three scenarios, the save target's game as a file and as native edits at three points, the replay of a recorded game, commands on each scenario's own units, and an order past orders.dat.
+6. **What counts as a finding:** a crash, an ASan or UBSan report, a leak, an input that runs 30 s, or a failed property. A game the game's own checks stop is a refusal: counted by its reason (its numbers masked, a command's id kept) and reported, not a finding.
+7. **The findings kept:** minimized into `tests/fuzz/regress/<target>/`, or `koprulu-private/fuzz/regress/<target>/` when they hold the data's bytes (a save, a mission's CHK, a recorded replay). `test_fuzz` runs the committed seeds and the kept findings through the entries in every build (the host, ASan/UBSan, wasm): `kept_*_inputs`. `data_seeds_run` makes the data's seeds and runs them too: every save the game made loads in both forms, and the three orders past orders.dat are refused and nothing else is. `seal_makes_the_hash_table` checks the seal.
+8. **CI:** the full mode (`KOPRULU_FULL`) runs `tools/fuzz.sh` after the LLVM sanitizer step, with that clang. The pass is never remembered: each run searches on from the corpus the last one left in `build/fuzz/corpus/`. The step is skipped when the clang links no libFuzzer (the script's exit 3).
+
+### Consequences
+
+- **The first runs found no crash, sanitizer report, leak or hang** (five minutes a target, the corpus kept from shorter runs before: [phase-turns.md](../phase-turns.md#t2-verification)).
+- **The refusals the fuzzer reaches are known ones:**
+  - the commands no game played alone sends: shared vision 0x0d, alliance 0x0e, 0x1d, 0x38-0x3b, leave game 0x57 and chat 0x5c (`kp_commands.c`'s handler table says why each has no sender offline);
+  - a targeted order 0x15 past orders.dat (order 0xff). The original reads its tables past their end (`ExecTargetedOrder` 0x472270, tech `0x51b800[order]`). Koprulu's DAT read gives `KP_NIL` there, and the requirements' range check stops the game.
+  A network game must decide what a seat does with such a command (its turn source's TODO).
+- A save made by the game loads after `kp_save_seal` exactly as before: a save sealed again is the same bytes. The seal changes no save format and no `KP_SAVE_VERSION`.
+- Running a game on after a fuzzed load is not covered: the save target loads and goes back to its snapshot. A loaded state the walk accepts may still hold values the simulation never makes. `kp_load` checks the indexes and the lists' links it reads, but not every value's range (a TODO in `kp_fuzz.c`).
+

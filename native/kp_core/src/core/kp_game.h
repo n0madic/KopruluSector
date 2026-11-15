@@ -989,6 +989,20 @@ const KpDumpField *kp_dump_fields(int *count);
 #define KP_SAVE_NAME 256
 int kp_save(KpGame *g, const char *mission, const char *data, uint8_t **out, size_t *size, KpError *err);
 int kp_load(KpGame *g, const uint8_t *bytes, size_t size, const char *mission, const char *data, KpError *err);
+/* A save's hash table made right for its bytes, as anyone can make it (the table detects damage, it does not
+ * authenticate): the sections found by kp_load's dry walk over g (a game of the save's mission), the bytes up to the
+ * table copied and the table written after them into *out (malloc'd). -1 when the dry walk refuses the bytes (kp_load
+ * then refuses them too) or out of memory. The fuzz harness's (tests/c/kp_fuzz.c): kp_load's walk must hold for any
+ * bytes. */
+int kp_save_seal(KpGame *g, const uint8_t *bytes, size_t size, uint8_t **out, size_t *out_size);
+/* A save's sections as kp_load's dry walk over g finds them: each one's tag (its four characters, the first in the low
+ * byte) and its bytes after the tag (up to the next tag, the last up to the hash table). Their count (at most max
+ * written), or -1 when the walk refuses the bytes. The fuzz harness edits a save by its sections. */
+typedef struct {
+	uint32_t tag;
+	size_t start, size;
+} KpSaveSection;
+int kp_save_sections(KpGame *g, const uint8_t *bytes, size_t size, KpSaveSection *out, int max);
 /* The fingerprint of the save's walk: its sections, the kinds and the counts of what it visits (a zeroed game's, the
  * same on every platform); 0 out of memory. It does not see two visits of the same kind and count swapped within a
  * section: such a change must raise KP_SAVE_VERSION by hand. */

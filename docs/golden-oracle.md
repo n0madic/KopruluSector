@@ -56,10 +56,11 @@ C failure fails its test (the game's failure handler is the test's). The suites:
 `test_initial_state`, `test_scenarios`, `test_damage_table`, `test_save`, `test_references`, `test_orders_native`,
 `test_requirements`, `test_aiscript`, `test_campaign`, `test_images` with the IScript goldens), the loaders over the
 fixtures and the data (`test_data`, `test_ui_data`), the core (`test_kp_core`, `test_fog`), the interface
-(`test_kp_ui`, `test_hud`), the presentation (`test_present`) and the application's session (`test_session`). The
+(`test_kp_ui`, `test_hud`), the presentation (`test_present`), the application's session (`test_session`) and the
+fuzzing's kept inputs (`test_fuzz`: the entries of `tests/c/kp_fuzz.c` over `tests/fuzz/`, ADR 0022). The
 build: `CMakeLists.txt` (`cmake -S . -B build/cmake -G Ninja && cmake --build build/cmake`; `-DKP_SANITIZE=ON` ASan
-and UBSan; `emcmake` for wasm under node with the host's files, `NODERAWFS`), every source also checked as C++11
-(ADR 0008).
+and UBSan; `-DKP_FUZZ=ON` libFuzzer's targets with an LLVM clang, `tools/fuzz.sh`; `emcmake` for wasm under node with
+the host's files, `NODERAWFS`), every source also checked as C++11 (ADR 0008).
 
 # Golden oracle: M0E reference cases
 

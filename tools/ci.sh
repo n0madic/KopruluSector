@@ -20,7 +20,8 @@
 #   KOPRULU_FULL=1 and KOPRULU_NO_CACHE=1 (above);
 #   KOPRULU_CLANG=<clang 17 or later, not Apple's, with its clang++ beside it> for the LLVM sanitizer step (one that
 #     does not qualify stops the run; default: Homebrew's llvm, or a clang on the PATH that qualifies; the step is
-#     skipped without one);
+#     skipped without one) and, in the full mode, the fuzzing's (tools/fuzz.sh; skipped when it has no libFuzzer);
+#   KOPRULU_FUZZ_TIME=<seconds> each fuzz target runs in the full mode (default 60);
 #   KOPRULU_ORIGINAL=<dir with StarCraft.exe and the profile MPQs> enables the tests that read original data,
 #     kp_convert manifest --check (the input manifest is what the runtime's loaders read from the install; ADR 0019),
 #     kp_convert verify's read of every manifest file through StormLib (ADR 0018; KOPRULU_SCR: kp_convert digests'
@@ -507,6 +508,22 @@ if [ -n "$LLVM_CLANG" ]; then
     ASAN_OPTIONS=detect_leaks=1:strict_string_checks=1:detect_stack_use_after_return=1:check_initialization_order=1 \
     KP_TEST_GLSLANG=1 KP_TEST_LOGS=build/c-tests-asan-llvm "$RES_ORIGINAL" "$RES_SCR"
   build/cmake-asan-llvm/kp_hd_phone --selftest | tail -1 # the codecs without the ASTC encoder
+fi
+# The fuzzing (ADR 0022, stage T2): the full mode's, libFuzzer's four targets KOPRULU_FUZZ_TIME seconds each (default
+# 60) under ASan and UBSan with the LLVM clang. Never remembered: each run searches on from the corpus it left in
+# build/fuzz/corpus. A finding stops the run (build/fuzz/<target>/, tools/fuzz.sh tells what to do with it).
+if [ "$CI_MODE" = full ] && [ -n "$LLVM_CLANG" ]; then
+  step "libFuzzer's targets, ${KOPRULU_FUZZ_TIME:-60}s each, with $LLVM_CLANG (tools/fuzz.sh)"
+  fuzz_status=0
+  KOPRULU_CLANG="$LLVM_CLANG" tools/fuzz.sh >build/fuzz-ci.log 2>&1 || fuzz_status=$?
+  if [ "$fuzz_status" = 3 ]; then
+    tail -n 1 build/fuzz-ci.log # this clang has no libFuzzer
+  elif [ "$fuzz_status" != 0 ]; then
+    tail -n 40 build/fuzz-ci.log >&2
+    exit "$fuzz_status"
+  else
+    grep -E '^(fuzz_|  refused)' build/fuzz-ci.log
+  fi
 fi
 if command -v emcmake >/dev/null && command -v node >/dev/null; then
   # the jobs are wasm's under node, their dispatch the host's runner

@@ -1120,6 +1120,67 @@ int kp_load(KpGame *g, const uint8_t *bytes, size_t size, const char *mission, c
 	return 0;
 }
 
+static void put_le(uint8_t *p, uint64_t v, int bytes)
+{
+	int k;
+	for (k = 0; k < bytes; k++) p[k] = (uint8_t)(v >> (8 * k));
+}
+
+/* kp_load's dry walk over bytes (its header read, as kp_load reads it): 0 with the sections in c, or -1. */
+static int walk_dry(Codec *c, KpGame *g, const uint8_t *bytes, size_t size)
+{
+	char m[KP_SAVE_NAME] = "", d[KP_SAVE_NAME] = "";
+	uint32_t version = 0;
+	memset(c, 0, sizeof *c);
+	c->reading = 1;
+	c->buf = (uint8_t *)bytes;
+	c->size = size;
+	header(c, &version, m, d); /* not dry: its names' lengths are read (a dry walk reads no values) */
+	c->dry = 1;
+	if (!c->failed) walk(c, g);
+	return c->failed ? -1 : 0;
+}
+
+int kp_save_seal(KpGame *g, const uint8_t *bytes, size_t size, uint8_t **out, size_t *out_size)
+{
+	Codec c;
+	uint64_t total = HASH_SEED;
+	uint8_t *o, *t;
+	int k;
+	*out = NULL;
+	*out_size = 0;
+	if (walk_dry(&c, g, bytes, size) != 0) return -1;
+	if (!(o = (uint8_t *)malloc(c.at + 4 + (size_t)c.sections * 12 + 8))) return -1;
+	memcpy(o, bytes, c.at);
+	t = o + c.at;
+	put_le(t, (uint64_t)c.sections, 4);
+	t += 4;
+	for (k = 0; k < c.sections; k++) {
+		uint64_t h = section_hash(&c, bytes, k, c.at);
+		total = mix(total, h);
+		put_le(t, c.section_tag[k], 4);
+		put_le(t + 4, h, 8);
+		t += 12;
+	}
+	put_le(t, finish(total, (uint64_t)c.sections), 8);
+	*out = o;
+	*out_size = c.at + 4 + (size_t)c.sections * 12 + 8;
+	return 0;
+}
+
+int kp_save_sections(KpGame *g, const uint8_t *bytes, size_t size, KpSaveSection *out, int max)
+{
+	Codec c;
+	int k;
+	if (walk_dry(&c, g, bytes, size) != 0) return -1;
+	for (k = 0; k < c.sections && k < max; k++) {
+		out[k].tag = c.section_tag[k];
+		out[k].start = c.section_start[k];
+		out[k].size = (k + 1 < c.sections ? c.section_start[k + 1] - 4 : c.at) - c.section_start[k];
+	}
+	return c.sections;
+}
+
 /* --- the state hash and the schema --- */
 
 int kp_state_hash(KpGame *g, KpSectionHash each, void *ud, uint64_t *total)

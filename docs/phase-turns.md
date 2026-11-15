@@ -5,7 +5,7 @@ The user approved the design on 2026-11-15, with stage T3 first; T1 and T2 follo
 | Stage | What | State |
 |---|---|---|
 | T1 | The turn source: the session's commands, a replay's feed and the recorder behind one source of turns | done 2026-11-15 |
-| T2 | Fuzzing of the untrusted inputs (saves, replays, commands) by libFuzzer, the findings kept as regression inputs | planned |
+| T2 | Fuzzing of the untrusted inputs (replays, maps, saves, commands) by libFuzzer, the findings kept as regression inputs | done 2026-11-15 |
 | T3 | The dump's coverage: names of the walk's visits, `test_save.dump_shows_the_saved_state`, `kp_dump_fields()`, the state the oracle did not read added as new categories, the plays' fingerprint fixed at the first version | done 2026-11-15 |
 
 ## T1 as built
@@ -20,6 +20,32 @@ The user approved the design on 2026-11-15, with stage T3 first; T1 and T2 follo
 - `test_session` (35 tests, with the two new ones and the replays of every golden scenario, play and idle run recorded and played back), `test_scenarios` (the 65 replays against the original at every step), `test_kp_rep`, `test_flow`, `test_script` passed.
 - The new tests fail on a broken source: a playback's filter that lets a select through, a recording under the wrong Storm ID.
 - The full `tools/ci.sh` (`KOPRULU_FULL`, both installs, the macOS product) passed: 631 C tests on the host, under ASan/UBSan and in wasm; the product scripts, `tests/scripts/replay.kps` among them, 0 failures.
+
+## T2 as built
+
+- **The entries** (`tests/c/kp_fuzz.{h,c}`, the static library `kp_fuzz_lib`): `rep`, `chk`, `save` (a save file, or edits by section of the game's own native save), `commands` (chunks of a player's command bytes and steps on one of three scenarios). `kp_fuzz_init` starts what a target needs (the data, the games and their snapshots), `kp_fuzz_run` takes one input, `kp_fuzz_stats` counts the inputs, the refusals by reason and the saves loaded.
+- **The core's two calls for the harness** (`kp_game.h`, `kp_save.c`): `kp_save_seal`, a save's hash table remade for its bytes, and `kp_save_sections`, the sections kp_load's dry walk finds. Both share kp_load's dry walk (`walk_dry`).
+- **libFuzzer's drivers** (`tests/fuzz/kp_fuzz_main.c`; CMake `KP_FUZZ`: `fuzz_rep`, `fuzz_chk`, `fuzz_save`, `fuzz_commands`), each printing its counts and refusals at the end. **`tools/fuzz.sh`** builds them with an LLVM clang and runs them, the corpora and findings under `build/fuzz/`.
+- **The seeds** (`kp_fuzz_seeds`, `tests/fuzz/kp_fuzz_seeds.c`): `--synthetic` writes the five committed ones (`tests/fuzz/seeds/`); without it, with the data, 27 (`build/fuzz/seeds/`, never committed).
+- **`test_fuzz`** (6 tests): the committed seeds and kept findings of each target (`kept_*_inputs`; the save target has no synthetic seed, a save is a game's), `data_seeds_run` (the data's seeds: every save loads in both forms, only the orders past orders.dat are refused), `seal_makes_the_hash_table`.
+- **CI:** `tools/ci.sh`'s full mode runs `tools/fuzz.sh` (`KOPRULU_FUZZ_TIME`, 60 s a target) with the LLVM sanitizer step's clang.
+
+## T2 verification
+
+- `test_fuzz` passed on the host, under ASan, LeakSanitizer and UBSan (LLVM clang 23.1) and in wasm under node.
+- **The fuzzing**, five minutes a target under ASan and UBSan (LLVM clang 23.1, the M-series Mac, the corpus kept from shorter runs before), found no crash, sanitizer report, leak or hang:
+
+  | Target | Inputs | Inputs a second | Coverage (edges) | What the games did |
+  |---|---|---|---|---|
+  | `rep` | 1,896,534 | 6,300 | 388 | — |
+  | `chk` (with the data) | 70,867 | 235 | 1,152 | — |
+  | `save` | 12,771 | 42 | 525 | 1,672 saves loaded |
+  | `commands` | 132,422 | 439 | 5,782 | 15,984 games refused |
+
+  The refusals of a two-minute run after the reasons were told apart (`commands`, 5,944 of 48,424 inputs): shared vision 0x0d 3,035, alliance 0x0e 2,298, 0x38-0x3b 487, leave game 0x57 38, 0x1d 53, chat 0x5c 1 (the commands no game played alone sends, [ADR 0022](adr/0022-turn-source-and-fuzzing.md#consequences-1)), and 32 targeted orders past orders.dat (the requirements' range check on `KP_NIL`).
+- The first runs showed that the native save, 8 MB, never reached `kp_load` as libFuzzer's input (cut at 1 MB): the native form became edits of the game's own save by section.
+- GCC builds everything and `test_fuzz` passes on Linux (GCC 15.2, the Docker image) and on Windows (mingw-w64 GCC 16.2 under Wine). The synthetic seeds are the same bytes on Windows. GCC also found a size read before it was set in `test_save.dump_shows_the_saved_state` (T3's), now set: the hosted Linux job would have failed on it.
+- The full `tools/ci.sh` (`KOPRULU_FULL`, both installs, the macOS product) passed in 1329 s: 637 C tests on the host, under ASan, LSan and UBSan and in wasm; the fuzzing step's four targets 60 s each with no finding; the product scripts 0 failures.
 
 ## T3 as built
 

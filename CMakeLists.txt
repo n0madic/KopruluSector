@@ -7,6 +7,7 @@
 #   cmake -S . -B build/cmake-asan -G Ninja -DKP_SANITIZE=ON && cmake --build build/cmake-asan
 #   emcmake cmake -S . -B build/cmake-wasm -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build/cmake-wasm
 #     (kp_test.js and kp_oracle.js under node, the host's files through NODERAWFS)
+#   tools/fuzz.sh   (build/cmake-fuzz: -DKP_SANITIZE=ON -DKP_FUZZ=ON with an LLVM clang, libFuzzer's targets; ADR 0022)
 cmake_minimum_required(VERSION 3.20)
 project(KopruluSector C CXX)
 
@@ -14,6 +15,7 @@ option(KP_SANITIZE "Build with AddressSanitizer and UndefinedBehaviorSanitizer" 
 option(KP_CXX_CHECK "Check the C sources as C++11 (they stay in the common subset of C and C++, ADR 0008)" ON)
 option(KP_APP "Build the product: kp_app over SDL 3.4 and SDL3_mixer, kp_gfx (plan phase S, stage S5)" OFF)
 option(KP_TOOLS "Build the tools and the C suites" ON)
+option(KP_FUZZ "Build libFuzzer's targets fuzz_rep, fuzz_chk, fuzz_save, fuzz_commands (clang with libFuzzer, with KP_SANITIZE; tools/fuzz.sh, ADR 0022)" OFF)
 option(KP_ASTC "Build the phones' HD sets in ASTC (kp_convert, kp_hd_phone) over the Arm ASTC encoder (tools/toolchain/fetch.sh astc; ADR 0013)" OFF)
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
@@ -51,6 +53,13 @@ if(KP_SANITIZE)
 	endif()
 	add_compile_options("$<$<COMPILE_LANGUAGE:C,CXX>:${KP_SANITIZE_COMPILE}>")
 	add_link_options(${KP_SANITIZE_FLAGS})
+endif()
+if(KP_FUZZ)
+	if(NOT CMAKE_C_COMPILER_ID MATCHES "Clang" OR NOT KP_SANITIZE OR NOT KP_TOOLS)
+		message(FATAL_ERROR "KP_FUZZ needs clang with libFuzzer (LLVM's, not Apple's), KP_SANITIZE and KP_TOOLS")
+	endif()
+	# libFuzzer's coverage of everything the targets run; the targets link libFuzzer's main (-fsanitize=fuzzer)
+	add_compile_options("$<$<COMPILE_LANGUAGE:C,CXX>:-fsanitize=fuzzer-no-link>")
 endif()
 
 # One main-thread stack everywhere, macOS's and Linux's 8 MB. The wasm builds set theirs: the suites under node prove the
@@ -212,12 +221,34 @@ add_executable(kp_oracle ${KP_TOOLS_DIR}/kp_oracle_main.c ${KP_TOOLS_DIR}/kp_ora
 kp_target(kp_oracle CXX)
 target_link_libraries(kp_oracle PRIVATE kp_oracle_lib)
 
+# --- the fuzz targets' entries (tests/c/kp_fuzz.c): test_fuzz's kept inputs, kp_fuzz_seeds, libFuzzer's targets ---
+add_library(kp_fuzz_lib STATIC ${KP_TESTS_DIR}/kp_fuzz.c)
+kp_target(kp_fuzz_lib CXX)
+target_include_directories(kp_fuzz_lib PUBLIC ${KP_TESTS_DIR})
+target_link_libraries(kp_fuzz_lib PUBLIC kp_oracle_lib)
+add_executable(kp_fuzz_seeds ${CMAKE_CURRENT_SOURCE_DIR}/tests/fuzz/kp_fuzz_seeds.c)
+kp_target(kp_fuzz_seeds CXX)
+target_link_libraries(kp_fuzz_seeds PRIVATE kp_fuzz_lib)
+if(KP_FUZZ)
+	foreach(target rep chk save commands)
+		string(TOUPPER ${target} upper)
+		add_executable(fuzz_${target} ${CMAKE_CURRENT_SOURCE_DIR}/tests/fuzz/kp_fuzz_main.c)
+		kp_target(fuzz_${target})
+		target_compile_definitions(fuzz_${target} PRIVATE KP_FUZZ_TARGET=KP_FUZZ_${upper})
+		target_link_libraries(fuzz_${target} PRIVATE kp_fuzz_lib)
+		target_link_options(fuzz_${target} PRIVATE -fsanitize=fuzzer)
+	endforeach()
+endif()
+
 # --- kp_test: the C suites (tests/c) ---
 file(GLOB KP_TEST_SOURCES CONFIGURE_DEPENDS ${KP_TESTS_DIR}/*.c)
+list(REMOVE_ITEM KP_TEST_SOURCES ${KP_TESTS_DIR}/kp_fuzz.c)
 add_executable(kp_test ${KP_TEST_SOURCES})
 kp_target(kp_test CXX)
 target_include_directories(kp_test PRIVATE ${KP_TESTS_DIR})
-target_link_libraries(kp_test PRIVATE kp_oracle_lib kp_gfx_passes) # kp_app_core (zlib for test_original's PNGs too) through the oracle's
+# kp_oracle_lib through kp_fuzz_lib (named twice, Apple's linker warns), kp_app_core (zlib for test_original's PNGs
+# too) through the oracle's
+target_link_libraries(kp_test PRIVATE kp_fuzz_lib kp_gfx_passes)
 if(KP_ENCODERS) # test_encoders, test_convert: kp_vpx is the build with VP9's encoder then
 	target_compile_definitions(kp_test PRIVATE KP_ENCODERS=1)
 	target_link_libraries(kp_test PRIVATE kp_convert_lib)
