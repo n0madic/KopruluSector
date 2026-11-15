@@ -1639,10 +1639,15 @@ static void refresh_replays_at(KpUi *ui, const char *select)
 		int at;
 		if (e->kind == KP_UI_REPLAY_ENTRY_UP) {
 			snprintf(e->label, sizeof e->label, "[%s]", (const char *)kp_ui_tbl(ui, KP_UI_GLUALL, STR_UP_ONE_LEVEL));
-		} else if (e->kind == KP_UI_REPLAY_ENTRY_FOLDER) {
-			snprintf(e->label, sizeof e->label, "[%s]", e->file);
 		} else {
-			snprintf(e->label, sizeof e->label, "%s", e->file);
+			/* "[folder]" or the file: lengths and memmove, not snprintf, as both buffers are the entry's, which
+			 * GCC's -Wrestrict takes for an overlap under the sanitizers and _FORTIFY_SOURCE (GCC 13 to 15) */
+			size_t b = e->kind == KP_UI_REPLAY_ENTRY_FOLDER, f = strlen(e->file);
+			if (f + 2 * b >= sizeof e->label) f = sizeof e->label - 1 - 2 * b;
+			if (b) e->label[0] = '[';
+			memmove(e->label + b, e->file, f);
+			if (b) e->label[b + f] = ']';
+			e->label[2 * b + f] = 0;
 		}
 		at = kp_ui_list_add(ui, m->replay_list, (const uint8_t *)e->label, 3);
 		if (at != KP_UI_LIST_NONE) kp_ui_list_set_data(ui, m->replay_list, at, (uint32_t)k);
