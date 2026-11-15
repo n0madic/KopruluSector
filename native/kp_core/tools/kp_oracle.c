@@ -140,7 +140,7 @@ uint32_t kp_state_crc(const KpStateCrcs *c, const char *category, int *found)
 
 static int by_name(const void *a, const void *b) { return strcmp(*(const char *const *)a, *(const char *const *)b); }
 
-/* The categories the fingerprint covers: those of the oracle's first version, in name order (tools/state_check.py
+/* The categories the fingerprint covers: those of the oracle's first version (tools/state_check.py
  * FINGERPRINT_CATEGORIES, the same list). The plays' goldens keep only the fingerprint at most steps and their raw
  * dumps are gone, so a category added later stays out of it and those goldens stand; the later fingerprint covers the
  * rest. */
@@ -153,8 +153,11 @@ static const char *const FINGERPRINT_CATEGORIES[] = {
 
 static int first_version(const char *category)
 {
-	return bsearch(&category, FINGERPRINT_CATEGORIES, sizeof FINGERPRINT_CATEGORIES / sizeof *FINGERPRINT_CATEGORIES,
-		sizeof *FINGERPRINT_CATEGORIES, by_name) != NULL;
+	size_t k;
+	for (k = 0; k < sizeof FINGERPRINT_CATEGORIES / sizeof *FINGERPRINT_CATEGORIES; k++) {
+		if (strcmp(category, FINGERPRINT_CATEGORIES[k]) == 0) return 1;
+	}
+	return 0;
 }
 
 /* The fingerprint of the first version's categories (later 0) or of the others (later 1). */

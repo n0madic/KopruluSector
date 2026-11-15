@@ -61,12 +61,13 @@ static int live_in_replay(uint8_t id)
 int kp_turns_submit(KpTurns *t, const uint8_t *bytes, size_t size, int64_t player)
 {
 	KpQueuedCommand *c;
-	if (t->pending_count >= KP_TURNS_PENDING || size > KP_TURNS_COMMAND_BYTES) return -1;
-	if (t->kind == KP_TURNS_REPLAY && (size == 0 || !live_in_replay(bytes[0]))) return -1;
+	if (t->pending_count >= KP_TURNS_PENDING || size == 0 || size > KP_TURNS_COMMAND_BYTES) return -1;
+	if (player < 0 || player >= KP_TURNS_SLOTS) return -1; /* the dispatcher's players: a seat's, 0..7 */
+	if (t->kind == KP_TURNS_REPLAY && !live_in_replay(bytes[0])) return -1;
 	c = &t->pending[t->pending_count++];
 	c->player = player;
 	c->size = (uint16_t)size;
-	if (size) memcpy(c->bytes, bytes, size);
+	memcpy(c->bytes, bytes, size);
 	return 0;
 }
 

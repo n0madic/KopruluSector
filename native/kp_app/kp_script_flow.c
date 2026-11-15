@@ -583,7 +583,7 @@ int kp_script_flow_value(const KpFlow *f, const KpScriptRun *run, const KpScript
 	case V_SIM_CRC: {
 		uint32_t folded = 0;
 		if (kp_dump_crcs(g, 0, fold_crc, &folded) != 0) {
-			snprintf(why, size, "no state's CRC (out of memory)");
+			snprintf(why, size, "no state's CRC: %s", g->w->error);
 			return -1;
 		}
 		*out = folded;
@@ -1193,7 +1193,7 @@ int kp_script_flow_state(const KpFlow *f, KpDumpLine emit, void *ud, char *why, 
 	KpGame *g = game_of(f, why, size);
 	if (!g) return -1;
 	if (kp_dump(g, 1, emit, ud) != 0) {
-		snprintf(why, size, "out of memory");
+		snprintf(why, size, "%s", g->w->error);
 		return -1;
 	}
 	return 0;

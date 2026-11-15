@@ -19,7 +19,6 @@
 #include <string.h>
 
 #define MAGIC "KPSV"
-#define SECTIONS_MAX 64
 /* The hash: 64-bit words through a multiply-xorshift, a section's seeded with its tag and closed with its length
  * (murmur3's finaliser); "kphash" and the hash's version as the seed. */
 #define HASH_SEED (0x6b70686173680000ULL | (uint64_t)KP_HASH_VERSION)
@@ -52,8 +51,8 @@ typedef struct {
 	char error[KP_ERROR_SIZE];
 	/* BYTES and HASH: the sections walked; BYTES also where each one's bytes start (after its tag) */
 	int sections;
-	uint32_t section_tag[SECTIONS_MAX];
-	size_t section_start[SECTIONS_MAX];
+	uint32_t section_tag[KP_SAVE_SECTIONS_MAX];
+	size_t section_start[KP_SAVE_SECTIONS_MAX];
 	/* HASH: the open section's state, partial word (fill bytes) and length; the sections' fold */
 	uint64_t h, word, total;
 	unsigned fill;
@@ -456,7 +455,7 @@ static void section(Codec *c, const char *tag)
 		put_bytes(c, tag, 4);
 	}
 	if (c->mode == MODE_BYTES && !c->failed) {
-		if (c->sections == SECTIONS_MAX) {
+		if (c->sections == KP_SAVE_SECTIONS_MAX) {
 			fail(c, "save: too many sections");
 			return;
 		}
@@ -988,11 +987,15 @@ static void header(Codec *c, uint32_t *version, char *mission, char *data)
 }
 
 /* Section k's bytes (after its tag, up to the next tag or, for the last, to end) hashed. */
+/* Section k's bytes after its tag: up to the next section's tag, the last one's up to end (the hash table's start). */
+static size_t section_size(const Codec *c, int k, size_t end)
+{
+	return (k + 1 < c->sections ? c->section_start[k + 1] - 4 : end) - c->section_start[k];
+}
+
 static uint64_t section_hash(const Codec *c, const uint8_t *bytes, int k, size_t end)
 {
-	size_t start = c->section_start[k];
-	size_t stop = k + 1 < c->sections ? c->section_start[k + 1] - 4 : end;
-	return hash_bytes(c->section_tag[k], bytes + start, stop - start);
+	return hash_bytes(c->section_tag[k], bytes + c->section_start[k], section_size(c, k, end));
 }
 
 /* The hash table after the sections: u32 their count, per section its tag and u64 hash, then u64 the total (the
@@ -1176,7 +1179,7 @@ int kp_save_sections(KpGame *g, const uint8_t *bytes, size_t size, KpSaveSection
 	for (k = 0; k < c.sections && k < max; k++) {
 		out[k].tag = c.section_tag[k];
 		out[k].start = c.section_start[k];
-		out[k].size = (k + 1 < c.sections ? c.section_start[k + 1] - 4 : c.at) - c.section_start[k];
+		out[k].size = section_size(&c, k, c.at);
 	}
 	return c.sections;
 }

@@ -73,9 +73,9 @@ int kp_turns_ended(const KpTurns *t);
 /* The header's frame count of the replay; 0 for LOCAL. */
 uint32_t kp_turns_frames(const KpTurns *t);
 
-/* A command of player for the next step: 0, or -1 when the queue is full, it is too long, or the playback does not let
- * it through (REPLAY: the keep-alive, restart, pause and resume, the sync, the network's 0x37-0x3b, latency and the
- * replay speed only, ExecuteTurnCommands 0x475d30's replay filter). */
+/* A command of player (0..7) for the next step: 0, or -1 when the queue is full, it is empty or too long, the player is
+ * none of the seats, or the playback does not let it through (REPLAY: the keep-alive, restart, pause and resume, the
+ * sync, the network's 0x37-0x3b, latency and the replay speed only, ExecuteTurnCommands 0x475d30's replay filter). */
 int kp_turns_submit(KpTurns *t, const uint8_t *bytes, size_t size, int64_t player);
 /* The commands of game frame `frame` in *list (owned by t, valid until kp_turns_done; the queued ones point into
  * the queue) and their count: KP_TURNS_READY, KP_TURNS_ENDED or KP_TURNS_NO_MEMORY (*count 0). */

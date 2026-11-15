@@ -959,9 +959,11 @@ static void dump_shows_the_saved_state(KpT *T)
 	for (k = 0; k < gs.n; k++) {
 		const DumpGroup *d = &gs.g[k];
 		const KpDumpField *row = dump_row(d->name);
+		size_t same = 0;
 		if (row) used[row - rows] = 1;
-		if (k > 0 && strcmp(d->name, gs.g[k - 1].name) == 0) {
-			kp_buf_printf(bad, "\n  %s: walked at lines %d and %d under one name", d->name, gs.g[k - 1].line, d->line);
+		while (same < k && strcmp(d->name, gs.g[same].name) != 0) same++; /* an earlier group of its name */
+		if (same < k) {
+			kp_buf_printf(bad, "\n  %s: walked at lines %d and %d under one name", d->name, gs.g[same].line, d->line);
 		} else if (d->rebuilt) {
 			kp_buf_printf(bad, "\n  %s: the restore derives it, so it need not be saved", d->name);
 		} else if (row && row->klass == KP_DUMP_SHOWN) {

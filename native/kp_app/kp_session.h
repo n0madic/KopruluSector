@@ -125,8 +125,8 @@ int kp_session_start(KpSession *s, const KpSessionStart *start);
 const KpMission *kp_session_mission(const KpSession *s);
 const KpGrpMeta *kp_session_grp(const KpSession *s);
 void kp_session_free(KpSession *s);
-/* Queues a command of player (-1: the local player) for the next step; -1 when the queue is full, it is too long or a
- * playback does not let it through (kp_turns_submit). */
+/* Queues a command of player (-1: the local player) for the next step; -1 when the queue is full, it is empty or too
+ * long, the player is none of the seats or a playback does not let it through (kp_turns_submit). */
 int kp_session_command(KpSession *s, const uint8_t *bytes, size_t size, int64_t player);
 /* A replay's playback; whether it passed the header's frame count (0x480e00, the victory dialog); that count (0 when
  * not playing). */

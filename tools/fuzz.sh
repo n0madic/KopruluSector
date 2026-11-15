@@ -4,7 +4,9 @@
 # (default 60) under ASan and UBSan.
 #   tools/fuzz.sh [rep|chk|save|commands ...]   (no target: all four)
 # The targets' entries are tests/c/kp_fuzz.c's (kp_fuzz.h tells what each feeds). Their corpora:
-#   build/fuzz/corpus/<target>   what the fuzzer found, kept between runs (the first directory: new inputs go there)
+#   build/fuzz/corpus/<target>   what the fuzzer found, kept between runs (the first directory: new inputs go there;
+#                                TODO: merge it (-merge=1) once it grows: each run replays it whole before searching,
+#                                and the slow targets' (chk, save: tens of inputs a second) eats their time)
 #   tests/fuzz/seeds/<target>    the synthetic seeds, committed (kp_fuzz_seeds --synthetic tests/fuzz/seeds)
 #   build/fuzz/seeds/<target>    the seeds made from the game's data, made anew each run (Blizzard's bytes: never
 #                                committed); save and commands need the data and are skipped without it
@@ -74,12 +76,14 @@ for t in "${TARGETS[@]}"; do
   done
   before="$(ls "build/fuzz/$t" | wc -l)"
   status=0
-  build/cmake-fuzz/fuzz_$t -max_total_time="$TIME" -timeout="$HANG_SECONDS" -print_final_stats=1 \
-    -artifact_prefix="build/fuzz/$t/" "${corpora[@]}" >"build/fuzz/$t.log" 2>&1 || status=$?
+  # -report_slow_units: libFuzzer writes an input slower than it as an artifact too (slow-unit-*, default 10 s), and
+  # a new artifact is a finding: only a hang is one
+  build/cmake-fuzz/fuzz_$t -max_total_time="$TIME" -timeout="$HANG_SECONDS" -report_slow_units="$HANG_SECONDS" \
+    -print_final_stats=1 -artifact_prefix="build/fuzz/$t/" "${corpora[@]}" >"build/fuzz/$t.log" 2>&1 || status=$?
   after="$(ls "build/fuzz/$t" | wc -l)"
   if [ "$status" != 0 ] || [ "$after" != "$before" ]; then
     echo "fuzz_$t: FINDING (exit $status; build/fuzz/$t.log, build/fuzz/$t/)"
-    grep -E 'ERROR|SUMMARY|fuzz_'"$t"':|runtime error|Test unit written' "build/fuzz/$t.log" | head -n 12
+    grep -E 'ERROR|SUMMARY|fuzz_'"$t"':|runtime error|Test unit written' "build/fuzz/$t.log" | head -n 12 || true
     found=1
   else
     echo "$(grep -E '^fuzz_'"$t"':' "build/fuzz/$t.log" | tail -n 1) in ${TIME}s; $(grep -E '[[:space:]]DONE[[:space:]]' "build/fuzz/$t.log" | sed 's/^#[0-9]*[[:space:]]*DONE[[:space:]]*//')"

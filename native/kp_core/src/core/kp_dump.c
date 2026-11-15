@@ -1733,23 +1733,29 @@ static void later_lines(Dump *d, KpGame *g)
 #undef PREVS
 
 
+#define DUMP_NO_MEMORY "dump: out of memory"
+
 /* A dump of g's lines: emit (the text) or the hash into *hash; -1 out of memory, or when the state is one the dump
- * cannot read (a failure of the game's accessors, its message in g->w->error: a state no game reaches, such as the
- * mixed ones of test_save.dump_shows_the_saved_state). The dump's own memory is freed then; in the text's modes a line
- * being built keeps its buffer. */
+ * cannot read (a failure of the game's accessors: a state no game reaches, such as the mixed ones of
+ * test_save.dump_shows_the_saved_state), the reason in g->w->error. The dump's own memory is freed then; in the text's
+ * modes a line being built keeps its buffer. */
 static int run_dump(KpGame *g, int drawn, KpDumpLine emit, void *ud, uint64_t *hash)
 {
 	Dump *d = (Dump *)calloc(1, sizeof *d);
 	KpTry t;
+	volatile int caught = 0; /* set after the longjmp */
 	int failed, k;
-	if (!d) return -1;
+	if (!d) {
+		snprintf(g->w->error, sizeof g->w->error, DUMP_NO_MEMORY);
+		return -1;
+	}
 	d->emit = emit;
 	d->ud = ud;
 	d->drawn = drawn;
 	d->hash = hash != NULL;
 	kp_images_begin(g->w, &t);
 	if (setjmp(t.buf)) {
-		d->failed = 1;
+		d->failed = caught = 1; /* the accessor's message is in g->w->error */
 	} else {
 		dump_lines(d, g);
 		later_lines(d, g);
@@ -1767,6 +1773,7 @@ static int run_dump(KpGame *g, int drawn, KpDumpLine emit, void *ud, uint64_t *h
 	}
 	for (k = 0; k < d->spare_count; k++) free(d->spares[k]);
 	free(d);
+	if (failed && !caught) snprintf(g->w->error, sizeof g->w->error, DUMP_NO_MEMORY);
 	return failed ? -1 : 0;
 }
 
@@ -1823,11 +1830,15 @@ int kp_dump_crcs(KpGame *g, int drawn, KpCategoryCrc each, void *ud)
 {
 	Crcs *o = (Crcs *)calloc(1, sizeof *o);
 	int r;
-	if (!o) return -1;
+	if (!o) {
+		snprintf(g->w->error, sizeof g->w->error, DUMP_NO_MEMORY);
+		return -1;
+	}
 	o->each = each;
 	o->ud = ud;
 	r = kp_dump(g, drawn, crcs_line, o);
 	if (r == 0 && !o->failed) crcs_flush(o);
+	if (r == 0 && o->failed) snprintf(g->w->error, sizeof g->w->error, "dump: a category's lines not in one run");
 	r = r != 0 || o->failed ? -1 : 0;
 	free(o);
 	return r;

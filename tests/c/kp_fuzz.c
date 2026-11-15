@@ -2,6 +2,7 @@
 #include "kp_fuzz.h"
 
 #include <errno.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -27,15 +28,18 @@
 #define SAVE_MAP "scenarios/build_terran"
 #define SAVE_STEPS 24             /* the save target's game at its snapshot */
 #define SEED_FILE_MAX (1u << 20)  /* a CHK seed's bytes, at most */
-#define SAVE_SECTIONS 64          /* a native save's sections, at most (kp_save.c's SECTIONS_MAX) */
 #define EDIT_HEADER 5             /* a save edit's {u8 section, u24 offset, u8 n} before its n bytes */
 #define EDIT_SEED_MAX (256u << 10) /* a native save seed's edits, at most */
+#define SAVE_SEED_STEPS 20        /* the steps between the save target's seed points (KP_FUZZ_SAVE_SEED_POINTS) */
 
 /* the commands target's scenarios (the first byte picks one): workers and buildings, a fight, a computer's spells */
 static const char *const COMMAND_MAPS[] = { "scenarios/build_terran", "scenarios/bench_combat", "scenarios/ai_queen" };
 #define COMMAND_MAP_COUNT ((int)(sizeof COMMAND_MAPS / sizeof COMMAND_MAPS[0]))
 
 static const char *const NAMES[KP_FUZZ_TARGETS] = { "rep", "chk", "save", "commands" };
+
+/* the seeds' plain orders: stop and hold position */
+static const uint8_t STOP[2] = { 0x1a, 0 }, HOLD[2] = { 0x2b, 0 };
 
 static KpFuzzStats stats;
 
@@ -52,12 +56,18 @@ static FuzzGame save_game, command_games[COMMAND_MAP_COUNT];
 /* the save target's game's own native save at its snapshot and its sections: what a native input edits */
 static uint8_t *save_base;
 static size_t save_base_size;
-static KpSaveSection save_sections[SAVE_SECTIONS];
+static KpSaveSection save_sections[KP_SAVE_SECTIONS_MAX];
 static int save_section_count;
 
-static int failed(char *why, size_t size, const char *fmt, const char *a, const char *b)
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((format(printf, 3, 4)))
+#endif
+static int failed(char *why, size_t size, const char *fmt, ...)
 {
-	snprintf(why, size, fmt, a, b);
+	va_list ap;
+	va_start(ap, fmt);
+	vsnprintf(why, size, fmt, ap);
+	va_end(ap);
 	return -1;
 }
 
@@ -100,7 +110,7 @@ static int need_data(char *why, size_t size)
 {
 	KpError err;
 	if (data) return 0;
-	if (!(data = kp_oracle_data(ROOT, &err))) return failed(why, size, "the game's data: %s%s", err.msg, "");
+	if (!(data = kp_oracle_data(ROOT, &err))) return failed(why, size, "the game's data: %s", err.msg);
 	kp_save_identity(&identity, &data->files, &data->dat);
 	return 0;
 }
@@ -114,7 +124,7 @@ static int game_start(FuzzGame *fg, const char *key, int record, int steps, char
 	int k;
 	if (fg->s) return 0;
 	if (need_data(why, size) != 0) return -1;
-	if (!(fg->s = (KpSession *)calloc(1, sizeof *fg->s))) return failed(why, size, "out of memory%s%s", "", "");
+	if (!(fg->s = (KpSession *)calloc(1, sizeof *fg->s))) return failed(why, size, "out of memory");
 	if (!kp_oracle_mission(ROOT, key, &m, &err)) {
 		game_free(fg);
 		return failed(why, size, "%s: %s", key, err.msg);
@@ -143,7 +153,7 @@ static int game_start(FuzzGame *fg, const char *key, int record, int steps, char
 	fg->snap_size = kp_snapshot_size(fg->s->g);
 	if (!(fg->snap = (uint8_t *)malloc(fg->snap_size)) || kp_snapshot(fg->s->g, fg->snap, fg->snap_size, &err) != 0) {
 		game_free(fg);
-		return failed(why, size, "%s: no snapshot%s", key, "");
+		return failed(why, size, "%s: no snapshot", key);
 	}
 	return 0;
 }
@@ -154,7 +164,7 @@ static int game_reset(FuzzGame *fg, char *why, size_t size)
 	KpSession *s = fg->s;
 	KpEvent e;
 	KpError err;
-	if (kp_restore(s->g, fg->snap, fg->snap_size, &err) != 0) return failed(why, size, "the snapshot's restore: %s%s", err.msg, "");
+	if (kp_restore(s->g, fg->snap, fg->snap_size, &err) != 0) return failed(why, size, "the snapshot's restore: %s", err.msg);
 	s->failed = 0;
 	s->error[0] = 0;
 	kp_turns_done(&s->turns);
@@ -174,11 +184,11 @@ static int save_start(char *why, size_t size)
 	if (kp_save(s->g, s->host.name, s->host.identity, &save_base, &save_base_size, &err) != 0) {
 		return failed(why, size, "%s: %s", SAVE_MAP, err.msg);
 	}
-	save_section_count = kp_save_sections(s->g, save_base, save_base_size, save_sections, SAVE_SECTIONS);
-	if (save_section_count <= 0 || save_section_count > SAVE_SECTIONS) {
+	save_section_count = kp_save_sections(s->g, save_base, save_base_size, save_sections, KP_SAVE_SECTIONS_MAX);
+	if (save_section_count <= 0 || save_section_count > KP_SAVE_SECTIONS_MAX) {
 		free(save_base);
 		save_base = NULL;
-		return failed(why, size, "%s: its own save's sections not found%s", SAVE_MAP, "");
+		return failed(why, size, "%s: its own save's sections not found", SAVE_MAP);
 	}
 	return 0;
 }
@@ -195,7 +205,7 @@ int kp_fuzz_init(int target, char *why, size_t why_size)
 			if (game_start(&command_games[k], COMMAND_MAPS[k], 0, 0, why, why_size) != 0) return -1;
 		}
 		return 0;
-	default: return failed(why, why_size, "no target %s%s", "", "");
+	default: return failed(why, why_size, "no target %d", target);
 	}
 }
 
@@ -230,7 +240,7 @@ static int run_rep(const uint8_t *d, size_t size, char *why, size_t why_size)
 	/* a file read is written back, and that reads again */
 	if (kp_rep_write(&rep, &out, &out_size, &err) == 0) {
 		memset(&back, 0, sizeof back);
-		if (kp_rep_read(&back, out, out_size, NULL, &err) != 0) rc = failed(why, why_size, "a replay written back does not read: %s%s", err.msg, "");
+		if (kp_rep_read(&back, out, out_size, NULL, &err) != 0) rc = failed(why, why_size, "a replay written back does not read: %s", err.msg);
 		kp_rep_free(&back);
 		free(out);
 	}
@@ -430,7 +440,7 @@ int kp_fuzz_run(int target, const uint8_t *d, size_t size, char *why, size_t why
 	case KP_FUZZ_CHK: return run_chk(d, size);
 	case KP_FUZZ_SAVE: return run_save(d, size, why, why_size);
 	case KP_FUZZ_COMMANDS: return run_commands(d, size, why, why_size);
-	default: return failed(why, why_size, "no target %s%s", "", "");
+	default: return failed(why, why_size, "no target %d", target);
 	}
 }
 
@@ -522,7 +532,7 @@ static uint8_t *synthetic_chk(size_t *size)
  * of the commands target (stop, hold, the speed, a cheat, a pause and resume). */
 static void synthetic_seeds(Seeds *sd)
 {
-	static const uint8_t STOP[2] = { 0x1a, 0 }, HOLD[2] = { 0x2b, 0 }, SPEED[2] = { 0x0f, 3 };
+	static const uint8_t SPEED[2] = { 0x0f, 3 };
 	static const uint8_t SELECT_NONE[2] = { 0x09, 0 }, PAUSE[1] = { 0x10 }, RESUME[1] = { 0x11 };
 	static const uint8_t CHEAT[5] = { 0x12, 0x01, 0, 0, 0 }, RIGHT_CLICK[10] = { 0x14, 0x40, 0, 0x40, 0, 0, 0, 0xe4, 0, 0 };
 	uint8_t buf[256], *map;
@@ -594,9 +604,8 @@ static void synthetic_seeds(Seeds *sd)
  * DAT read gives KP_NIL and the requirements' range check stops the game, a refusal (test_fuzz.data_seeds_run). */
 static void unit_seeds(Seeds *sd, int map)
 {
-	static const uint8_t STOP[2] = { 0x1a, 0 }, HOLD[2] = { 0x2b, 0 };
 	KpGame *g = command_games[map].s->g;
-	uint8_t buf[256], select[2 + 2 * 12], click[10] = { 0x14, 0, 0, 0, 0, 0, 0, 0xe4, 0, 0 };
+	uint8_t buf[256], select[2 + 2 * KP_SLOTS], click[10] = { 0x14, 0, 0, 0, 0, 0, 0, 0xe4, 0, 0 };
 	uint8_t past[11] = { 0x15, 0, 0, 0, 0, 0, 0, 0xe4, 0, 0xff, 0 };
 	int64_t p, n;
 	int first = 1;
@@ -604,7 +613,7 @@ static void unit_seeds(Seeds *sd, int map)
 		int count = 0;
 		size_t at;
 		char name[48];
-		for (n = g->lists[KP_LIST_ACTIVE].head; n != 0 && count < 12; n = g->u.next[n]) {
+		for (n = g->lists[KP_LIST_ACTIVE].head; n != 0 && count < KP_SLOTS; n = g->u.next[n]) {
 			if (g->u.owner[n] != p) continue;
 			kp_le_put16(select + 2 + 2 * count, (uint16_t)kp_unit_ref(g, n));
 			count++;
@@ -637,10 +646,10 @@ static void unit_seeds(Seeds *sd, int map)
  * memory. */
 static uint8_t *save_edits(KpGame *g, const uint8_t *save, size_t size, size_t *out_size)
 {
-	KpSaveSection secs[SAVE_SECTIONS];
+	KpSaveSection secs[KP_SAVE_SECTIONS_MAX];
 	uint8_t *e;
 	size_t at = 0;
-	int k, count = kp_save_sections(g, save, size, secs, SAVE_SECTIONS);
+	int k, count = kp_save_sections(g, save, size, secs, KP_SAVE_SECTIONS_MAX);
 	if (count != save_section_count || !(e = (uint8_t *)malloc(EDIT_SEED_MAX))) return NULL;
 	for (k = 0; k < count; k++) {
 		const uint8_t *a = save_base + save_sections[k].start, *b = save + secs[k].start;
@@ -672,14 +681,13 @@ static uint8_t *save_edits(KpGame *g, const uint8_t *save, size_t size, size_t *
  * steps on; and the replay of a recorded game with commands. */
 static void game_seeds(Seeds *sd)
 {
-	static const uint8_t STOP[2] = { 0x1a, 0 }, HOLD[2] = { 0x2b, 0 };
 	KpSession *s = save_game.s;
 	KpError err;
 	uint8_t *out;
 	size_t size;
 	int k, at;
 	char why[KP_ERROR_SIZE];
-	for (at = 0; at < 3; at++) {
+	for (at = 0; at < KP_FUZZ_SAVE_SEED_POINTS; at++) {
 		char name[48];
 		if (kp_save_encode(s, &identity, NULL, NULL, &out, &size, &err) == 0) {
 			snprintf(name, sizeof name, "file-%d.kpsave", at);
@@ -697,7 +705,7 @@ static void game_seeds(Seeds *sd)
 			free(out);
 		}
 		(void)kp_session_command(s, at == 0 ? STOP : HOLD, 2, -1);
-		for (k = 0; k < 20; k++) (void)kp_session_step(s, NULL);
+		for (k = 0; k < SAVE_SEED_STEPS; k++) (void)kp_session_step(s, NULL);
 	}
 	{
 		KpRep rep;
@@ -737,14 +745,15 @@ int kp_fuzz_write_seeds(const char *dir, int with_data, char *why, size_t why_si
 	int k;
 	memset(&sd, 0, sizeof sd);
 	sd.dir = dir;
-	if (make_dir(dir) != 0) return failed(why, why_size, "%s: cannot be made%s", dir, "");
+	if (make_dir(dir) != 0) return failed(why, why_size, "%s: cannot be made", dir);
 	synthetic_seeds(&sd);
-	if (with_data && !sd.failed && need_data(why, why_size) == 0 && kp_fuzz_init(KP_FUZZ_SAVE, why, why_size) == 0
-		&& kp_fuzz_init(KP_FUZZ_COMMANDS, why, why_size) == 0) {
+	/* without the data, the synthetic seeds only; with it, a game that does not start fails (no silent skip) */
+	if (with_data && !sd.failed && need_data(why, why_size) == 0) {
+		if (kp_fuzz_init(KP_FUZZ_SAVE, why, why_size) != 0 || kp_fuzz_init(KP_FUZZ_COMMANDS, why, why_size) != 0) return -1;
 		game_seeds(&sd);
 		for (k = 0; k < COMMAND_MAP_COUNT; k++) unit_seeds(&sd, k);
 		chk_seeds(&sd);
 	}
-	if (sd.failed) return failed(why, why_size, "%s%s", sd.why, "");
+	if (sd.failed) return failed(why, why_size, "%s", sd.why);
 	return sd.count;
 }

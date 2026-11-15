@@ -56,7 +56,9 @@ const KpFuzzStats *kp_fuzz_stats(void);
 /* The seeds into dir/<target>/: the synthetic ones (a replay and a CHK of made-up bytes, commands' plain orders; the
  * committed tests/fuzz/seeds) and, with_data and the data present, the ones made from it (the campaign's and the
  * scenarios' CHKs, the games' saves and replays, commands on the games' own units: Blizzard's bytes, never committed).
- * Their count, or -1 with the reason. */
+ * The save target's game gives a save file and a native save at each of KP_FUZZ_SAVE_SEED_POINTS points. Their
+ * count, or -1 with the reason (a seed not written, or the data present and its games not starting). */
+#define KP_FUZZ_SAVE_SEED_POINTS 3
 int kp_fuzz_write_seeds(const char *dir, int with_data, char *why, size_t why_size);
 
 /* Releases the games and zeroes the counts (a process's end under LeakSanitizer, a test's). */

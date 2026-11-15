@@ -346,6 +346,9 @@ static void turns_local_queue_and_recording(KpT *T)
 	kp_t_eq(T, kp_turns_submit(t, TWO, sizeof TWO, 2), 0, NULL);
 	kp_t_eq(T, kp_turns_submit(t, TURN_SELECT, sizeof TURN_SELECT, 2), 0, "any command");
 	kp_t_eq(T, kp_turns_submit(t, long_command, sizeof long_command, 2), -1, "too long");
+	kp_t_eq(T, kp_turns_submit(t, TURN_STOP, 0, 2), -1, "empty");
+	kp_t_eq(T, kp_turns_submit(t, TURN_STOP, sizeof TURN_STOP, KP_TURNS_SLOTS), -1, "a player past the seats");
+	kp_t_eq(T, kp_turns_submit(t, TURN_STOP, sizeof TURN_STOP, -1), -1, "no player");
 	kp_t_eq(T, kp_turns_frame(t, 7, &list, &count), KP_TURNS_READY, NULL);
 	kp_t_eq(T, count, 4, "the queued buffers, whole");
 	kp_t_ok(T, list[0].player == 2 && list[0].size == 2 && list[0].bytes[0] == 0x1a, "the first");
@@ -517,8 +520,34 @@ static void session_a_loaded_save_continues_as_the_saved_game(KpT *T)
 	same_crcs(T, &before, &got, "unchanged");
 }
 
+/* A copy of a save with one byte of its CMDS section changed, the section's CRC-32 made right (a container that
+ * parses: what follows checks the queue itself). */
+static uint8_t *queue_byte_changed(KpT *T, const uint8_t *save, size_t size, size_t at, uint8_t value)
+{
+	KpKpf c;
+	KpError err;
+	uint8_t *copy = (uint8_t *)malloc(size);
+	int k, changed = 0;
+	kp_t_ok(T, copy != NULL, "out of memory");
+	kp_t_defer(T, free, copy);
+	memcpy(copy, save, size);
+	kp_t_ok(T, kp_kpf_parse(&c, copy, size, "save", 1, &err) == 0, "%s", err.msg);
+	for (k = 0; k < c.section_count; k++) {
+		const KpKpfSection *sec = &c.sections[k];
+		uint8_t *data = copy + (sec->data - copy);
+		if (strcmp(sec->fourcc, "CMDS") != 0 || at >= sec->size) continue;
+		data[at] = value;
+		kp_le_put32(copy + KP_KPF_HEADER_SIZE + (size_t)KP_KPF_ENTRY_SIZE * (size_t)k + 20, kp_crc32(data, sec->size));
+		changed = 1;
+	}
+	kp_kpf_free(&c);
+	kp_t_ok(T, changed, "the save's queue has a byte %lu", (unsigned long)at);
+	return copy;
+}
+
 /* A game save keeps the commands queued for the next step, the campaign and the presentation's state; its load runs
- * on with them as the saved game would have, and refuses a save of another data set before the game changes. */
+ * on with them as the saved game would have, and refuses a save of another data set, or whose queue holds a command
+ * the queue does not take (a player past the seats, an empty one), before the game changes. */
 static void session_a_game_save_keeps_the_queued_commands_and_the_campaign(KpT *T)
 {
 	KpSession *m, *other;
@@ -571,10 +600,21 @@ static void session_a_game_save_keeps_the_queued_commands_and_the_campaign(KpT *
 	kp_t_ok(T, kp_save_encode(m, &id, &got, NULL, &b, &bs, &err) == 0, "%s", err.msg);
 	kp_t_defer(T, free, b);
 	kp_t_ok(T, as == bs && memcmp(a, b, as) == 0, "the same save again");
+	/* CMDS: u32 the count (1), then the command's u8 player and u16 size */
+	kp_t_ok(T, kp_save_load(other, queue_byte_changed(T, bytes, size, 4, 0), size, &id, NULL, NULL, &err) == 0,
+		"a queued command of player 0 loads: %s", err.msg);
 	crcs(T, other, &before);
 	wrong = id;
 	memset(wrong.source_hash, 'x', sizeof wrong.source_hash);
 	kp_t_ok(T, kp_save_load(other, bytes, size, &wrong, NULL, NULL, &err) != 0, "a save of another data set is refused");
+	kp_t_ok(T, kp_save_load(other, queue_byte_changed(T, bytes, size, 4, KP_TURNS_SLOTS), size, &id, NULL, NULL, &err) != 0
+		&& strstr(err.msg, "bad commands") != NULL, "a queued command of player %d is refused: %s", KP_TURNS_SLOTS, err.msg);
+	{
+		uint8_t *empty = queue_byte_changed(T, bytes, size, 5, 0);
+		empty = queue_byte_changed(T, empty, size, 6, 0);
+		kp_t_ok(T, kp_save_load(other, empty, size, &id, NULL, NULL, &err) != 0 && strstr(err.msg, "bad commands") != NULL,
+			"an empty queued command is refused: %s", err.msg);
+	}
 	memcpy(bytes + size - 8, "damaged!", 8);
 	kp_t_ok(T, kp_save_load(other, bytes, size, &id, NULL, NULL, &err) != 0, "a damaged save is refused");
 	crcs(T, other, &after);

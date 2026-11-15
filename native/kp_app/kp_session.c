@@ -977,8 +977,9 @@ int kp_save_load(KpSession *s, const uint8_t *save, size_t size, const KpSaveIde
 	}
 	for (k = 0; k < count; k++) {
 		uint32_t n;
+		/* each as the queue takes it (kp_turns_submit): a seat's player, 1 to KP_TURNS_COMMAND_BYTES bytes */
 		if (at + 3 > p.cmds->size || at + 3 + (n = kp_le_u16(p.cmds->data + at + 1)) > p.cmds->size
-			|| n > KP_TURNS_COMMAND_BYTES) {
+			|| n == 0 || n > KP_TURNS_COMMAND_BYTES || p.cmds->data[at] >= KP_TURNS_SLOTS) {
 			err_msg(err, "save: bad commands");
 			goto failed;
 		}

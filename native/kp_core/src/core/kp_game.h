@@ -962,7 +962,7 @@ int kp_dump_crcs(KpGame *g, int drawn, KpCategoryCrc each, void *ud);
 /* A 64-bit hash of the same state lines without their text, for comparing two of Koprulu's games in one process (a
  * recording and its playback): it changes when any line would, but it is no CRC of the original's, so it is never
  * compared with a golden. -1 when out of memory. Each of the three also gives -1 for a state its lines cannot read
- * (the accessor's message in g->w->error). */
+ * (the accessor's message), and each failure's reason is in g->w->error. */
 int kp_dump_hash(KpGame *g, int drawn, uint64_t *out);
 /* The dump's coverage of the saved state: the saved fields (named as kp_snapshot_fields names them; a name ending in
  * '*' covers every name it begins) whose changes the dump's lines do not show, each with its reason, and those it shows
@@ -998,6 +998,7 @@ int kp_save_seal(KpGame *g, const uint8_t *bytes, size_t size, uint8_t **out, si
 /* A save's sections as kp_load's dry walk over g finds them: each one's tag (its four characters, the first in the low
  * byte) and its bytes after the tag (up to the next tag, the last up to the hash table). Their count (at most max
  * written), or -1 when the walk refuses the bytes. The fuzz harness edits a save by its sections. */
+#define KP_SAVE_SECTIONS_MAX 64 /* a save's sections, at most */
 typedef struct {
 	uint32_t tag;
 	size_t start, size;

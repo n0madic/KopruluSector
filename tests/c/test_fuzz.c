@@ -81,8 +81,9 @@ static void kept_command_inputs(KpT *T) { kept_inputs(T, KP_FUZZ_COMMANDS); }
  * targets: none fails, every save the game made loads (both forms), and each target has the seeds it should. */
 static void data_seeds_run(KpT *T)
 {
-	/* rep: + recorded; chk: + 7 maps; save: 3 x 2; commands: + a player's units and an order past orders.dat a map */
-	static const int AT_LEAST[KP_FUZZ_TARGETS] = { 2, 8, 6, 9 };
+	/* rep: + recorded; chk: + 7 maps; save: a file and a native save a point; commands: + a player's units and an
+	 * order past orders.dat a map */
+	static const int AT_LEAST[KP_FUZZ_TARGETS] = { 2, 8, 2 * KP_FUZZ_SAVE_SEED_POINTS, 9 };
 	const char *root;
 	char why[KP_ERROR_SIZE];
 	int target, written;
@@ -137,7 +138,7 @@ static void seal_makes_the_hash_table(KpT *T)
 	kp_t_ok(T, sealed_size == size && memcmp(sealed, save, size) == 0, "a save sealed again is the same bytes");
 	free(sealed);
 	/* the table at the end: u32 its count n, n * (tag, hash), the total */
-	for (table = 0, k = 1; k < 64 && !table; k++) {
+	for (table = 0, k = 1; k <= KP_SAVE_SECTIONS_MAX && !table; k++) {
 		size_t t = 4 + (size_t)k * 12 + 8;
 		if (t < size && kp_le_u32(save + size - t) == (uint32_t)k) table = t;
 	}
