@@ -116,7 +116,7 @@ static void options_menu_handler(KpUi *ui, int32_t dialog);
 static void init_menu(KpUi *ui, int32_t dialog)
 {
 	/* InitMenuDialog 0x47b7f0 (single player: the abort menu keeps its buttons, the game menu its Save and Load) */
-	static KpUiInteract buttons[MENU_BUTTONS];
+	KpUiInteract buttons[MENU_BUTTONS]; /* kp_ui_bind_interacts copies them */
 	int k;
 	for (k = 0; k < MENU_BUTTONS; k++) buttons[k] = kp_ui_menu_button_proc;
 	menu_frame(ui, dialog);

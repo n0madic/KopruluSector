@@ -200,7 +200,7 @@ static void draw_text(KpUi *ui, KpUiControl *c, uint32_t glow)
 	(void)kp_ui_text_select_font(t, NULL, 0);
 }
 
-static void draw_button(KpUi *ui, KpUiControl *c, int32_t x, int32_t y, const int16_t clip[4])
+void kp_ui_flc_draw_button(KpUi *ui, KpUiControl *c, int32_t x, int32_t y, const int16_t clip[4])
 {
 	/* DrawFlcButton 0x4c8150 */
 	int hover = hovered_on_screen(ui, c);
@@ -256,7 +256,7 @@ static void init_button(KpUi *ui, KpUiControl *c)
 		if (f->name[0] != 0) open_clip(ui, f);
 	}
 	c->text_format = (uint8_t)(c->flags >> 20);
-	c->draw = draw_button;
+	c->draw = kp_ui_flc_draw_button;
 	kp_ui_mark_dirty(ui, self_of(ui, c));
 }
 

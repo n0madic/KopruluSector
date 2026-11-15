@@ -401,20 +401,19 @@ int kp_ui_credits_epilog_close(KpUi *ui)
 	return finish(ui);
 }
 
-const char *kp_ui_establishing_text(KpUi *ui, uint16_t mission, int finale)
+const char *kp_ui_establishing_text(KpUi *ui, uint16_t mission, int finale, char name[KP_UI_ESTABLISHING_NAME])
 {
 	/* ShowMissionEstablishingText 0x414f70 / ShowMissionFinaleText 0x414fc0: the table's entry of the mission key */
 	const uint8_t *p = ui->establishing;
 	size_t at = 1;
 	int n, k;
-	static char name[64];
 	if (p == NULL || mission == 0) return NULL;
 	n = p[0];
 	for (k = 0; k < n && at < ui->establishing_size; k++) {
 		size_t len = p[at];
 		uint16_t key = (uint16_t)(p[at + 1 + len] | p[at + 2 + len] << 8);
 		int is_finale = k == n - 1;
-		if (is_finale == (finale != 0) && key == mission && len < sizeof name) {
+		if (is_finale == (finale != 0) && key == mission && len < KP_UI_ESTABLISHING_NAME) {
 			memcpy(name, p + at + 1, len);
 			name[len] = 0;
 			return name;

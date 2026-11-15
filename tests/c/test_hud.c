@@ -968,6 +968,7 @@ static void key_characters_follow_translated_keys(KpT *T)
 	Hud *H;
 	KpUi *ui;
 	const char *name = NULL;
+	char found[KP_UI_ESTABLISHING_NAME];
 	const uint8_t *text;
 	int32_t edit, credits;
 	uint16_t mission;
@@ -984,7 +985,7 @@ static void key_characters_follow_translated_keys(KpT *T)
 	kp_hud_key(ui, 0, 'A', 0);
 	text = kp_ui_edit_buffer(ui, edit);
 	kp_t_eq_str(T, text ? (const char *)text : "(none)", "", "a letter's press brings no character");
-	for (mission = 1; mission < 64 && name == NULL; mission++) name = kp_ui_establishing_text(ui, mission, 0);
+	for (mission = 1; mission < 64 && name == NULL; mission++) name = kp_ui_establishing_text(ui, mission, 0, found);
 	kp_t_ok(T, name != NULL, "an establishing text");
 	credits = kp_ui_credits_open(ui, name);
 	kp_t_ok(T, credits >= 0 && ui->open == credits, "the credits screen over the console");
@@ -4286,6 +4287,35 @@ static int fake_replays(void *host, KpUi *ui)
 	return 2;
 }
 
+/* Two interfaces in one process keep each its own screens' controls (ADR 0023: no static state in the native core):
+ * Load Replay opened on one glue, then on another whose controls a loaded dialog already takes (so its screen is
+ * another control), each keeps its own dialog and list while both run. */
+static void two_interfaces_keep_their_own_screens(KpT *T)
+{
+	enum { ID_LIST = 5 };
+	Glue *A, *B;
+	int j;
+	if (!kp_t_ready(T, "test_hud.two_interfaces_keep_their_own_screens", GLUE_FILES)) return;
+	A = glue_bare(T);
+	B = glue_bare(T);
+	A->ui->list_replays = B->ui->list_replays = fake_replays;
+	kp_glue_menus(A->glue, KP_GLUE_LOAD_REPLAY);
+	wait_for(A, "rez\\glucustm.bin", 2000);
+	kp_t_ok(T, kp_ui_load_dialog(B->ui, "rez\\glucmpgn.bin") >= 0, "a dialog loaded on the second");
+	kp_glue_menus(B->glue, KP_GLUE_LOAD_REPLAY);
+	wait_for(B, "rez\\glucustm.bin", 2000);
+	for (j = 0; j < 10; j++) {
+		glue_frame(A);
+		glue_frame(B);
+	}
+	kp_t_ok(T, A->ui->open >= 0 && B->ui->open >= 0 && A->ui->open != B->ui->open,
+		"the screens are other controls (%d, %d)", (int)A->ui->open, (int)B->ui->open);
+	kp_t_eq(T, A->ui->menus.replay_dialog, A->ui->open, "the first's dialog");
+	kp_t_eq(T, B->ui->menus.replay_dialog, B->ui->open, "the second's dialog");
+	kp_t_eq(T, A->ui->menus.replay_list, child_of(A->ui, A->ui->open, ID_LIST), "the first's list");
+	kp_t_eq(T, B->ui->menus.replay_list, child_of(B->ui, B->ui->open, ID_LIST), "the second's list");
+}
+
 /* Load Replay's folders (BuildMapList 0x45ba40, OnCreateGameOk 0x455240's 0x8000000b): a folder is listed as
  * "[name]", Ok on it enters it (the folder label its name, "[Up One Level]" first), and Ok on that goes back to the
  * root's list and label; the screen stays. */
@@ -5131,6 +5161,7 @@ static const KpTest TESTS[] = {
 	{ "main_menu_buttons_the_remake_lacks_are_inert", main_menu_buttons_the_remake_lacks_are_inert, 0 },
 	{ "campaign_menu_buttons_the_remake_lacks_are_inert", campaign_menu_buttons_the_remake_lacks_are_inert, 0 },
 	{ "load_replay_enters_folders_and_goes_up", load_replay_enters_folders_and_goes_up, 0 },
+	{ "two_interfaces_keep_their_own_screens", two_interfaces_keep_their_own_screens, 0 },
 	{ "load_replay_imports_and_exports_through_the_host", load_replay_imports_and_exports_through_the_host, 0 },
 	{ "show_credits_begins_with_the_remake", show_credits_begins_with_the_remake, 0 },
 	{ "campaign_epilog_runs_its_text_then_its_credits", campaign_epilog_runs_its_text_then_its_credits, 0 },

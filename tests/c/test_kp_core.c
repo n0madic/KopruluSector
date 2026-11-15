@@ -597,6 +597,44 @@ static void creep_tiles_count_the_map(KpT *T)
 	kp_t_eq(T, receding, 1, "one receding");
 }
 
+/* KP_CREEP_BORDER_RANKS against BuildCreepShapeTable 0x4bff60 and BuildCreepShapeRanks 0x4c0010 as the original builds
+ * them on first use: the shape of each of 512 neighbour masks (0x7f past 255), then a rank to each shape that occurs,
+ * in shape order. */
+static void creep_border_ranks_are_the_original_tables(KpT *T)
+{
+	int64_t shape[512], rank[128], counter = 0;
+	uint8_t present[128] = { 0 };
+	int u, v, k;
+	for (u = 0; u < 512; u++) {
+		int64_t b = 0;
+#define BIT(k) ((u >> (k)) & 1)
+		if (u >= 256) {
+			b = 0x7f;
+		} else {
+			if (BIT(4)) b |= 9;
+			if (BIT(3)) b |= 0x24;
+			if (BIT(6)) b |= 2;
+			if (BIT(1)) b |= 0x10;
+			if (BIT(6) && BIT(7)) b |= 1;
+			if (BIT(5) && BIT(6)) b |= 4;
+			if (BIT(1) && BIT(2)) b |= 8;
+			if (BIT(0) && BIT(1)) b |= 0x20;
+			if ((b & 0x21) == 0x21 || (b & 0xc) == 0xc) b |= 0x40;
+		}
+#undef BIT
+		shape[u] = b;
+		present[b] = 1;
+	}
+	for (v = 0; v < 128; v++) rank[v] = present[v] ? counter++ % 256 : 0;
+	for (k = 0; k < 256; k++) {
+		if (KP_CREEP_BORDER_RANKS[k] != rank[shape[k]]) {
+			kp_t_ok(T, 0, "mask %d: rank %d, the original's %lld", k, KP_CREEP_BORDER_RANKS[k], (long long)rank[shape[k]]);
+			return;
+		}
+	}
+	kp_t_ok(T, 1, "the 256 ranks");
+}
+
 static void placement_ghosts(KpT *T)
 {
 	const char *terran02 = "missions/terran/terran02", *terran09 = "missions/terran/terran09";
@@ -822,6 +860,7 @@ static const KpTest TESTS[] = {
 	{ "unit_sounds", unit_sounds, 0 },
 	{ "core_failures_leave_the_game_usable", core_failures_leave_the_game_usable, 0 },
 	{ "creep_tiles_count_the_map", creep_tiles_count_the_map, 0 },
+	{ "creep_border_ranks_are_the_original_tables", creep_border_ranks_are_the_original_tables, 0 },
 	{ "placement_ghosts", placement_ghosts, 0 },
 	{ "dump_hash_follows_the_lines", dump_hash_follows_the_lines, 0 },
 };

@@ -1,5 +1,6 @@
 /* A WebM movie's frames as RGBA, and libvpx's pictures' colours (kp_webm.h). */
 #include "kp_webm.h"
+#include "kp_ogg_crc_table.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -425,20 +426,9 @@ static void put32(Buf *b, uint32_t v)
 /* Ogg's CRC: polynomial 0x04c11db7, most significant bit first, no reflection, starting at 0 */
 static uint32_t ogg_crc(const uint8_t *p, size_t n)
 {
-	static uint32_t table[256];
-	static int ready;
 	uint32_t crc = 0;
 	size_t i;
-	if (!ready) {
-		uint32_t k, j;
-		for (k = 0; k < 256; k++) {
-			uint32_t r = k << 24;
-			for (j = 0; j < 8; j++) r = (r & 0x80000000u) ? (r << 1) ^ 0x04c11db7u : r << 1;
-			table[k] = r;
-		}
-		ready = 1;
-	}
-	for (i = 0; i < n; i++) crc = (crc << 8) ^ table[((crc >> 24) ^ p[i]) & 0xff];
+	for (i = 0; i < n; i++) crc = (crc << 8) ^ KP_OGG_CRC_TABLE[((crc >> 24) ^ p[i]) & 0xff];
 	return crc;
 }
 

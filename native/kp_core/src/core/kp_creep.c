@@ -57,45 +57,28 @@ static int is_large(int64_t t)
 /* M.LARGE_COMPLETED: Hatchery, Creep Colony. */
 static int is_large_completed(int64_t t) { return t == KP_TYPE_HATCHERY || t == KP_TYPE_CREEP_COLONY; }
 
-/* BuildCreepShapeTable 0x4bff60 and BuildCreepShapeRanks 0x4c0010 (M.SHAPE, M.RANK), built on first use. */
-static int64_t SHAPE[512], RANK[128];
-static int shapes_built;
-
-static int has_bit(int64_t u, int k) { return kp_band(u, (int64_t)1 << k) != 0; }
-
-static void build_shapes(void)
-{
-	int64_t u, v, counter = 0;
-	uint8_t present[128];
-	for (u = 0; u <= 511; u++) {
-		int64_t b;
-		if (u >= 256) {
-			b = 0x7f;
-		} else {
-			b = 0;
-			if (has_bit(u, 4)) b = kp_bor(b, 9);
-			if (has_bit(u, 3)) b = kp_bor(b, 0x24);
-			if (has_bit(u, 6)) b = kp_bor(b, 2);
-			if (has_bit(u, 1)) b = kp_bor(b, 0x10);
-			if (has_bit(u, 6) && has_bit(u, 7)) b = kp_bor(b, 1);
-			if (has_bit(u, 5) && has_bit(u, 6)) b = kp_bor(b, 4);
-			if (has_bit(u, 1) && has_bit(u, 2)) b = kp_bor(b, 8);
-			if (has_bit(u, 0) && has_bit(u, 1)) b = kp_bor(b, 0x20);
-			if (kp_band(b, 0x21) == 0x21 || kp_band(b, 0xc) == 0xc) b = kp_bor(b, 0x40);
-		}
-		SHAPE[u] = b;
-	}
-	for (v = 0; v < 128; v++) present[v] = 0;
-	for (u = 0; u <= 511; u++) present[SHAPE[u]] = 1;
-	for (v = 0; v <= 127; v++) {
-		RANK[v] = 0;
-		if (present[v]) {
-			RANK[v] = kp_mod(counter, 256);
-			counter = counter + 1;
-		}
-	}
-	shapes_built = 1;
-}
+/* BuildCreepShapeTable 0x4bff60 and BuildCreepShapeRanks 0x4c0010 (M.SHAPE, M.RANK), which the original builds on
+ * first use, folded into the rank of each neighbour mask (RANK[SHAPE[mask]]): only masks 0..255 index them, and the
+ * shapes of 256..511 (0x7f) add no rank, as mask 0xff makes 0x7f too. tests/c/test_kp_core.c rebuilds both tables
+ * as the original does and compares. */
+const uint8_t KP_CREEP_BORDER_RANKS[256] = {
+	0, 0, 7, 18, 0, 0, 12, 22, 16, 16, 20, 20, 16, 16, 34, 34,
+	5, 5, 13, 32, 5, 5, 13, 32, 28, 28, 35, 35, 28, 28, 35, 35,
+	0, 0, 7, 18, 0, 0, 12, 22, 16, 16, 20, 20, 16, 16, 34, 34,
+	5, 5, 13, 32, 5, 5, 13, 32, 28, 28, 35, 35, 28, 28, 35, 35,
+	1, 1, 8, 19, 1, 1, 14, 23, 17, 17, 21, 21, 17, 17, 36, 36,
+	6, 6, 15, 33, 6, 6, 15, 33, 29, 29, 37, 37, 29, 29, 37, 37,
+	3, 3, 10, 21, 3, 3, 25, 36, 17, 17, 21, 21, 17, 17, 36, 36,
+	24, 24, 26, 37, 24, 24, 26, 37, 29, 29, 37, 37, 29, 29, 37, 37,
+	0, 0, 7, 18, 0, 0, 12, 22, 16, 16, 20, 20, 16, 16, 34, 34,
+	5, 5, 13, 32, 5, 5, 13, 32, 28, 28, 35, 35, 28, 28, 35, 35,
+	0, 0, 7, 18, 0, 0, 12, 22, 16, 16, 20, 20, 16, 16, 34, 34,
+	5, 5, 13, 32, 5, 5, 13, 32, 28, 28, 35, 35, 28, 28, 35, 35,
+	2, 2, 9, 30, 2, 2, 15, 33, 27, 27, 31, 31, 27, 27, 37, 37,
+	6, 6, 15, 33, 6, 6, 15, 33, 29, 29, 37, 37, 29, 29, 37, 37,
+	4, 4, 11, 31, 4, 4, 26, 37, 27, 27, 31, 31, 27, 27, 37, 37,
+	24, 24, 26, 37, 24, 24, 26, 37, 29, 29, 37, 37, 29, 29, 37, 37,
+};
 
 /* The index x + map_w * y of a tile array; an index outside the arrays fails. */
 static int64_t tile_index(KpGame *g, int64_t x, int64_t y)
@@ -273,8 +256,7 @@ void kp_creep_apply(KpGame *g, int64_t x, int64_t y, int64_t mode, int64_t arg)
 		t->raw_tiles[i] = t->creep_backup[i];
 		t->creep_backup[i] = 0;
 	} else {
-		if (!shapes_built) build_shapes();
-		t->creep_border[i] = RANK[SHAPE[kp_band(arg, 0xff)]];
+		t->creep_border[i] = KP_CREEP_BORDER_RANKS[kp_band(arg, 0xff)];
 	}
 	if (t->has_terrain_changed) t->terrain_changed[i] = 1;
 	tile_changed(g, x, y, mode, t->raw_tiles[i]);

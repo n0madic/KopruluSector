@@ -104,6 +104,7 @@ void kp_begin_cloak(struct KpGame *g, int64_t n, int64_t sound);
 void kp_decloak(struct KpGame *g, int64_t n, int64_t sound);
 
 /* kp_creep.c */
+extern const uint8_t KP_CREEP_BORDER_RANKS[256]; /* a creep border's rank by its neighbour mask */
 void kp_creep_init(struct KpGame *g);
 void kp_creep_recede_tick(struct KpGame *g);
 void kp_receding_neighbours(struct KpGame *g, int64_t x, int64_t y);

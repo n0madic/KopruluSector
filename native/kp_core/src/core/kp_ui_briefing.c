@@ -767,6 +767,7 @@ int kp_ui_ready_room_open(KpUi *ui, int race)
 	 * the noglues cheat, a campaign mission's), then the room (kp_ui_ready_room_continue) */
 	KpUiBriefing *b = br(ui);
 	const char *text = NULL;
+	char name[KP_UI_ESTABLISHING_NAME];
 	if (race < 0 || race > 2) return -1;
 	b->race = race;
 	b->dialog = -1;
@@ -779,7 +780,7 @@ int kp_ui_ready_room_open(KpUi *ui, int race)
 	kp_ui_music_play(ui, MUSIC[race]);
 	if (ui->game != NULL && !(kp_scalar(ui->game, KP_CHEATS) & CHEAT_NOGLUES)) {
 		int64_t key = kp_scalar(ui->game, KP_MISSION_INDEX);
-		if (key != KP_NIL) text = kp_ui_establishing_text(ui, (uint16_t)key, 0);
+		if (key != KP_NIL) text = kp_ui_establishing_text(ui, (uint16_t)key, 0, name);
 	}
 	if (text != NULL && kp_ui_credits_open(ui, text) >= 0) {
 		b->stage = KP_UI_ROOM_TEXT;

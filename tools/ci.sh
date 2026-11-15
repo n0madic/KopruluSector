@@ -310,8 +310,10 @@ if [ -z "$PUBLIC" ]; then
   "$PYTHON" tools/oracle/export_emulator_traces.py --check
 fi
 
-step "kp_core's generated CRC-32 tables are current"
+step "the generated CRC tables are current (tools/native/crc32_table.py: kp_kpf.c's CRC-32, kp_webm.c's Ogg CRC)"
 "$PYTHON" tools/native/crc32_table.py --check
+step "the native core's boundaries (tools/boundaries.sh: no mutable static state, ADR 0023)"
+tools/boundaries.sh
 step "kp_core's defs tables are current (tools/defs_c.py: the profile and its input manifest, ADR 0018)"
 "$PYTHON" tools/defs_c.py --check
 step "native build (CMake): kp_core, its tools and the C suites, checked as C and C++"

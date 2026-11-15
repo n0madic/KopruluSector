@@ -400,7 +400,9 @@ typedef struct DataRoot {
 	uint64_t clock;
 } DataRoot;
 
-static DataRoot *roots; /* the roots opened, kept for the process */
+/* the roots opened, kept for the process; like speech_files' sources, a cache for one thread (kp_test runs its jobs as
+ * processes). TODO: a lock around both caches once tests or tools run games on threads. */
+static DataRoot *roots;
 
 static DataRoot *root_of(const char *root)
 {

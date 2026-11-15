@@ -912,9 +912,15 @@ typedef struct {
 	int action;                      /* what the ended screen leaves the host (KP_UI_MENU_*) */
 	uint16_t mission, cinematic;     /* KP_UI_MENU_MISSION's, KP_UI_MENU_CINEMATIC's (0x526524, 0x50e0d0) */
 	int32_t screen;                  /* the screen's dialog (-1 none) */
-	struct { int32_t dialog; KpUiModalDone done; int32_t saved_result; int suspended; } modal[KP_UI_MODALS];
+	struct { int32_t dialog; KpUiModalDone done; int suspended; } modal[KP_UI_MODALS];
 	int modal_count;
 	int32_t popup;                   /* 0x66b0d8 */
+	KpUiInteract popup_procs[8];     /* the popups' procedure arrays (0x508288, 0x5082b0, 0x5082a4, 0x5082b8, 0x5082dc) */
+	int popup_proc_count;
+	int32_t saved_result;            /* the interface's result a game mode or language popup keeps while it runs */
+	/* the screens' dialogs, lists and choices, set as each screen opens (0 before, Load Replay's -1): login, campaign
+	 * (its episode button kept across the history's OK popup), load, Load Replay */
+	int32_t login_dialog, login_list, campaign_dialog, episode_result, load_dialog, load_list, replay_dialog, replay_list;
 	char popup_text[KP_UI_POPUP_TEXT], popup_text2[KP_UI_POPUP_TEXT], edit_text[KP_UI_POPUP_TEXT]; /* 0x66b0f8, 0x66b1f8, 0x66b2f8 */
 	const uint8_t *edit_extra;       /* 0x66b400 */
 	int edit_max;
@@ -1812,6 +1818,7 @@ void kp_ui_text_opacity_row(const KpUi *ui, uint8_t out[8], const uint8_t row[8]
 /* The flic buttons (kp_ui_flc.c): FlcButtonProc 0x4c82f0, the text button's 0x4c83b0, FlcAnimationProc 0x4c82b0,
  * StartDialogFlcTimers 0x4c84f0, StopDialogFlcTimers 0x4c84c0. */
 int kp_ui_flc_button_proc(KpUi *ui, KpUiControl *c, KpUiEvent *e);
+void kp_ui_flc_draw_button(KpUi *ui, KpUiControl *c, int32_t x, int32_t y, const int16_t clip[4]); /* 0x4c8150 */
 int kp_ui_text_button_proc(KpUi *ui, KpUiControl *c, KpUiEvent *e);
 int kp_ui_flc_animation_proc(KpUi *ui, KpUiControl *c, KpUiEvent *e);
 void kp_ui_flc_start_timers(KpUi *ui, int32_t dialog);
@@ -1867,7 +1874,9 @@ int32_t kp_ui_credits_epilog_open(KpUi *ui, int expansion);
 /* Each frame of the epilog: the credits once the text ended; 1 once they ended (the dialog destroyed, the music
  * stopped), 0 while it runs. */
 int kp_ui_credits_epilog_close(KpUi *ui);
-const char *kp_ui_establishing_text(KpUi *ui, uint16_t mission, int finale);
+#define KP_UI_ESTABLISHING_NAME 64
+/* The establishing (or the finale's) text file of a mission key, written to name; NULL when the table has none. */
+const char *kp_ui_establishing_text(KpUi *ui, uint16_t mission, int finale, char name[KP_UI_ESTABLISHING_NAME]);
 void kp_ui_credits_free(KpUi *ui);
 /* The title screen (kp_ui_title.c). CreateTitleScreen 0x4b5570: rez\titledlg.bin over glue\title\title.pcx with its
  * palette, tFont.pcx's colour rows, the title's music, the cursor hidden, the loading text shown and its 500 ms

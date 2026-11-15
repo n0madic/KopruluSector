@@ -262,6 +262,7 @@ KpUi *kp_ui_new_data(const KpUiData *d, char *err, size_t err_size)
 	for (i = 0; i < KP_UI_EVENT_TYPES; i++) ui->capture[i] = -1;
 	ui->modeless = -1;
 	ui->menus.popup = ui->menus.screen = -1;
+	ui->menus.replay_dialog = ui->menus.replay_list = -1;
 	ui->score.dialog = -1;
 	for (i = 0; i < 4; i++) ui->press[i].control = -1;
 	for (i = 0; i < KP_UI_EDITS; i++) ui->edits[i].control = -1;
