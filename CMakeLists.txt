@@ -1,5 +1,5 @@
-# The native build (plan phase S, ADR 0012): the simulation core kp_core (C99 in the common subset of C and C++,
-# ADR 0008), the presentation kp_present, the headless application kp_app_core, the command-line tools (kp_replay,
+# The native build (plan phase S, ADR 0012): the native core (C99 in the common subset of C and C++, ADR 0008) as the
+# simulation kp_sim and the interface kp_ui over it (ADR 0023), the presentation kp_present, the headless application kp_app_core, the command-line tools (kp_replay,
 # kp_bench, kp_oracle), the C test runner kp_test (tests/c) and, with KP_APP, the product (kp_app over
 # SDL 3.4 with kp_gfx; tools/product.sh builds it for each platform).
 #
@@ -85,15 +85,23 @@ if(EMSCRIPTEN AND KP_TOOLS)
 	add_link_options(${KP_NODE_LINK})
 endif()
 
-# --- kp_core: the simulation and the interface rules ---
-# src/defs: the tables of defs/ in C (tools/defs_c.py, ADR 0018)
-file(GLOB KP_CORE_SOURCES CONFIGURE_DEPENDS ${KP_CORE_DIR}/src/core/*.c ${KP_CORE_DIR}/src/defs/*.c)
-add_library(kp_core STATIC ${KP_CORE_SOURCES})
-kp_target(kp_core CXX)
-target_include_directories(kp_core PUBLIC ${KP_CORE_DIR}/src/core ${KP_CORE_DIR}/src/defs)
+# --- kp_sim: the simulation (src/core) and the tables of defs/ in C (src/defs: tools/defs_c.py, ADR 0018) ---
+# It does not see src/ui: an include of the interface from the simulation fails to compile (ADR 0023).
+file(GLOB KP_SIM_SOURCES CONFIGURE_DEPENDS ${KP_CORE_DIR}/src/core/*.c ${KP_CORE_DIR}/src/defs/*.c)
+add_library(kp_sim STATIC ${KP_SIM_SOURCES})
+kp_target(kp_sim CXX)
+target_include_directories(kp_sim PUBLIC ${KP_CORE_DIR}/src/core ${KP_CORE_DIR}/src/defs)
 if(NOT WIN32)
-	target_link_libraries(kp_core PUBLIC m)
+	target_link_libraries(kp_sim PUBLIC m)
 endif()
+
+# --- kp_ui: the interface rules over the simulation (src/ui: the dialogs, the console, the menus, the portraits'
+# movies, the fog's view) ---
+file(GLOB KP_UI_SOURCES CONFIGURE_DEPENDS ${KP_CORE_DIR}/src/ui/*.c)
+add_library(kp_ui STATIC ${KP_UI_SOURCES})
+kp_target(kp_ui CXX)
+target_include_directories(kp_ui PUBLIC ${KP_CORE_DIR}/src/ui)
+target_link_libraries(kp_ui PUBLIC kp_sim)
 
 # --- kp_present: the presentation in plain C (no SDL, no GL; plan phase S, stage S2) ---
 set(KP_PRESENT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/native/kp_present)
@@ -128,7 +136,7 @@ file(GLOB KP_PRESENT_SOURCES CONFIGURE_DEPENDS ${KP_PRESENT_DIR}/*.c)
 add_library(kp_present STATIC ${KP_PRESENT_SOURCES})
 kp_target(kp_present CXX)
 target_include_directories(kp_present PUBLIC ${KP_PRESENT_DIR})
-target_link_libraries(kp_present PUBLIC kp_core PRIVATE kp_stb)
+target_link_libraries(kp_present PUBLIC kp_ui PRIVATE kp_stb)
 
 # --- kp_gfx_passes: kp_gfx's passes and shaders over its narrow backend (kp_gfx_internal.h; no SDL, no GL): kp_gfx
 # implements the backend over GL, the C suites record it ---
@@ -203,7 +211,7 @@ set(KP_ORACLE_SOURCES
 add_library(kp_oracle_lib STATIC ${KP_ORACLE_SOURCES})
 kp_target(kp_oracle_lib CXX)
 target_include_directories(kp_oracle_lib PUBLIC ${KP_TOOLS_DIR})
-target_link_libraries(kp_oracle_lib PUBLIC kp_core kp_present kp_app_core kp_json) # kp_data: the original data the tools play from
+target_link_libraries(kp_oracle_lib PUBLIC kp_ui kp_present kp_app_core kp_json) # kp_data: the original data the tools play from
 
 # --- the tools ---
 foreach(tool kp_replay kp_bench)
@@ -258,7 +266,7 @@ endif()
 
 # --- the C++11 check of everything above (a stamp per run of the check, redone when a source changes) ---
 if(KP_CXX_CHECK AND KP_TOOLS)
-	file(GLOB KP_CXX_HEADERS CONFIGURE_DEPENDS ${KP_CORE_DIR}/src/core/*.h ${KP_CORE_DIR}/src/defs/*.h ${KP_PRESENT_DIR}/*.h ${KP_APP_DIR}/*.h ${KP_TOOLS_DIR}/*.h
+	file(GLOB KP_CXX_HEADERS CONFIGURE_DEPENDS ${KP_CORE_DIR}/src/core/*.h ${KP_CORE_DIR}/src/ui/*.h ${KP_CORE_DIR}/src/defs/*.h ${KP_PRESENT_DIR}/*.h ${KP_APP_DIR}/*.h ${KP_TOOLS_DIR}/*.h
 		${KP_TESTS_DIR}/*.h ${KP_GFX_DIR}/kp_gfx.h ${KP_GFX_DIR}/kp_gfx_internal.h ${CMAKE_CURRENT_SOURCE_DIR}/native/kp_convert/*.h)
 	get_property(KP_CXX_SOURCES GLOBAL PROPERTY KP_CXX_SOURCES)
 	set(KP_CXX_STAMP ${CMAKE_BINARY_DIR}/kp_cxx_check.stamp)
@@ -269,7 +277,7 @@ if(KP_CXX_CHECK AND KP_TOOLS)
 	endif()
 	add_custom_command(OUTPUT ${KP_CXX_STAMP}
 		COMMAND ${CMAKE_CXX_COMPILER} -std=c++11 -fsyntax-only -x c++ ${KP_WARNINGS} -DKP_CPP_CHECK ${KP_CXX_HOST_DEFS}
-			-I${KP_CORE_DIR}/src/core -I${KP_CORE_DIR}/src/defs -I${KP_PRESENT_DIR} -I${KP_APP_DIR} -I${KP_TOOLS_DIR} -I${KP_TESTS_DIR} -I${KP_GFX_DIR}
+			-I${KP_CORE_DIR}/src/core -I${KP_CORE_DIR}/src/ui -I${KP_CORE_DIR}/src/defs -I${KP_PRESENT_DIR} -I${KP_APP_DIR} -I${KP_TOOLS_DIR} -I${KP_TESTS_DIR} -I${KP_GFX_DIR}
 			-I${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb -isystem ${KP_STORM_DIR}/src -isystem ${KP_ZLIB_DIR} -isystem ${KP_VPX_DIR} -isystem ${KP_NESTEGG_DIR}/include ${KP_CXX_ASTC_INCLUDE} ${KP_CXX_ENCODERS_INCLUDE} ${KP_CXX_SOURCES}
 		COMMAND ${CMAKE_COMMAND} -E touch ${KP_CXX_STAMP}
 		DEPENDS ${KP_CXX_SOURCES} ${KP_CXX_HEADERS}

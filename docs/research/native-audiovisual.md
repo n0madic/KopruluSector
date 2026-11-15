@@ -362,7 +362,7 @@ real clock cadence and audiovisual synchronization remain unexecuted.
 ## Later evidence: the console's portrait, pings and repaint in the full game (phase 9B)
 
 The full-game emulator (`tools/research/sc_emulator`, real `storm.dll` and `Smackw32.dll`) closes several of the
-boundaries above; the hooks are in `uilog.py` and the port in `native/kp_core/src/core/kp_ui_*.c`.
+boundaries above; the hooks are in `uilog.py` and the port in `native/kp_core/src/ui/kp_ui_*.c`.
 
 - **Movie cadence.** `SVidPlayContinueSingle` (Storm 457) decodes the next frame only when `SmackWait`
   (`Smackw32` `0x10007720`) says it is due: `now = timeGetTime() * 100`; the first wait sets `next = now + period`;

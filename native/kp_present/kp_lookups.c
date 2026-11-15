@@ -10,6 +10,7 @@
  * unrelated heap memory past the decoded rows; identity keeps the destination); then the shadow row (dark.pcx row 18).
  */
 #include "kp_present_internal.h"
+#include "kp_ui_data.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -47,7 +48,7 @@ int kp_palettes_from_files(KpPalettes *p, const KpFiles *files, KpError *err)
 		for (k = 0; k < KP_REMAP_TABLES; k++) {
 			int32_t w;
 			snprintf(path, sizeof path, "tileset\\%s\\%s.pcx", KP_TILESET_NAMES[t], REMAP_NAMES[k]);
-			if (!(tables[t][k] = kp_files_pcx(files, path, &w, &heights[t][k], err))) goto done;
+			if (!(tables[t][k] = kp_ui_pcx_file(files, path, &w, &heights[t][k], err))) goto done;
 			if (w != 256 || heights[t][k] >= 0xffff) {
 				snprintf(err->msg, sizeof err->msg, "%s is %d x %d; the game's table is 256 wide", path, (int)w,
 					(int)heights[t][k]);
@@ -69,16 +70,16 @@ int kp_palettes_from_files(KpPalettes *p, const KpFiles *files, KpError *err)
 			at += ((size_t)heights[t][k] + 1) * 256;
 		}
 		snprintf(path, sizeof path, "tileset\\%s\\dark.pcx", KP_TILESET_NAMES[t]);
-		if (kp_files_pcx_prefix(files, path, p->owned + at, KP_DARK_SIZE, err) != 0) goto done;
+		if (kp_ui_pcx_prefix(files, path, p->owned + at, KP_DARK_SIZE, err) != 0) goto done;
 		p->tilesets[t].dark = p->owned + at;
 		at += KP_DARK_SIZE;
 		snprintf(path, sizeof path, "tileset\\%s\\shift.pcx", KP_TILESET_NAMES[t]);
-		if (kp_files_pcx_prefix(files, path, p->owned + at, 256, err) != 0) goto done;
+		if (kp_ui_pcx_prefix(files, path, p->owned + at, 256, err) != 0) goto done;
 		p->tilesets[t].shift = p->owned + at;
 		at += 256;
 	}
 	for (k = 0; k < GAME_TABLES; k++) {
-		if (kp_files_pcx_prefix(files, GAME_TABLE_FILES[k].path, p->owned + at, GAME_TABLE_FILES[k].size, err) != 0) goto done;
+		if (kp_ui_pcx_prefix(files, GAME_TABLE_FILES[k].path, p->owned + at, GAME_TABLE_FILES[k].size, err) != 0) goto done;
 		*game[k] = p->owned + at;
 		*game_size[k] = GAME_TABLE_FILES[k].size;
 		at += GAME_TABLE_FILES[k].size;

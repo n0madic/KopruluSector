@@ -4,6 +4,8 @@
 
 Status: accepted (phase 9, 2026-10-24). The user chose to keep the interface's rules in `kp_core` (inline design document, 2026-10-24). Evidence: the full-game emulator's interface input log (`tools/research/sc_emulator/uilog.py`, `input.jsonl`) replayed through `kp_ui`.
 
+Since [ADR 0023](0023-core-boundaries.md) the interface is its own library, `kp_ui` (`native/kp_core/src/ui`), linked over the simulation's `kp_sim`, which cannot include it.
+
 ## Context
 
 Plan phase 9 builds the original's interface: the command card, selection by click and box, the status panel, the console portrait, unit responses, the channel manager, the briefing. Many of its rules read the game's state, and some draw from the game's generators:

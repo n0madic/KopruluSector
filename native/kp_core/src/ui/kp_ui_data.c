@@ -554,9 +554,9 @@ static int file_lists(KpUiData *d, const KpFiles *f, KpError *err)
 			size_t n;
 			int32_t w, h;
 			snprintf(path, sizeof path, "glue\\%.*s\\tFont.pcx", (int)t.n, (const char *)t.p);
-			if (kp_files_pcx_prefix(f, path, tfnt + (size_t)k * THEME_FONT_ROWS, THEME_FONT_ROWS, err) != 0) return -1;
+			if (kp_ui_pcx_prefix(f, path, tfnt + (size_t)k * THEME_FONT_ROWS, THEME_FONT_ROWS, err) != 0) return -1;
 			snprintf(path, sizeof path, "glue\\%.*s\\tEffect.pcx", (int)t.n, (const char *)t.p);
-			if (!(px = kp_files_pcx(f, path, &w, &h, err))) return -1;
+			if (!(px = kp_ui_pcx_file(f, path, &w, &h, err))) return -1;
 			n = (size_t)w * (size_t)h;
 			if (k == 0) {
 				effect = n;
@@ -668,11 +668,11 @@ static int fonts(KpUiData *d, const KpFiles *f, KpError *err)
 		d->fonts[k].size = size + 1;
 	}
 	if (!(rows = (uint8_t *)own(d, malloc(KP_UI_FONT_COLOUR_ROWS)))) return fail(err, "out of memory");
-	if (kp_files_pcx_prefix(f, "game\\tFontGam.pcx", rows, KP_UI_FONT_COLOUR_ROWS, err) != 0) return -1;
+	if (kp_ui_pcx_prefix(f, "game\\tFontGam.pcx", rows, KP_UI_FONT_COLOUR_ROWS, err) != 0) return -1;
 	d->font_rows.data = rows;
 	d->font_rows.size = KP_UI_FONT_COLOUR_ROWS;
 	if (!(rows = (uint8_t *)own(d, malloc(KP_UI_TITLE_FONT_ROWS)))) return fail(err, "out of memory");
-	if (kp_files_pcx_prefix(f, "glue\\title\\tFont.pcx", rows, KP_UI_TITLE_FONT_ROWS, err) != 0) return -1;
+	if (kp_ui_pcx_prefix(f, "glue\\title\\tFont.pcx", rows, KP_UI_TITLE_FONT_ROWS, err) != 0) return -1;
 	d->title_font_rows.data = rows;
 	d->title_font_rows.size = KP_UI_TITLE_FONT_ROWS;
 	return 0;

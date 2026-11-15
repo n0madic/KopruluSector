@@ -8,7 +8,7 @@
 #define KP_ORACLE_UI_H
 
 #include "kp_oracle.h"
-#include "../src/core/kp_ui.h"
+#include "../src/ui/kp_ui.h"
 #include "kp_present.h"
 
 #ifdef __cplusplus

@@ -135,6 +135,13 @@ KpUi *kp_ui_new_data(const KpUiData *d, char *err, size_t err_size);
  * is copied): 0, or -1 with ui->error. */
 int kp_ui_set_sound_records(KpUi *ui, const uint8_t *sfx, size_t size, const uint8_t *musl, size_t musl_size);
 int kp_ui_set_portrait_parts(KpUi *ui, const uint8_t *rows, size_t rows_size, const KpUiFile *files, int count);
+/* A PCX's pixels (w * h palette indices, malloc'd, kp_ui_pcx): NULL when it is not one the game reads. */
+uint8_t *kp_ui_pcx_pixels(const uint8_t *data, size_t size, int32_t *w, int32_t *h);
+/* A PCX the data needs, its pixels decoded, malloc'd, *w by *h: NULL with the reason. */
+uint8_t *kp_ui_pcx_file(const KpFiles *f, const char *name, int32_t *w, int32_t *h, KpError *err);
+/* SBmpLoadImage into a `want`-byte buffer (kpd._pcx_prefix): a PCX's first `want` pixel bytes, row-major, into out; 0,
+ * or -1 with the reason (a PCX of fewer pixels too). */
+int kp_ui_pcx_prefix(const KpFiles *f, const char *name, uint8_t *out, size_t want, KpError *err);
 
 #ifdef __cplusplus
 }

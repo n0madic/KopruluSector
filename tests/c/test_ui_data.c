@@ -14,9 +14,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "../../native/kp_core/src/core/kp_smk.h"
-#include "../../native/kp_core/src/core/kp_ui.h"
-#include "../../native/kp_core/src/core/kp_ui_text.h"
+#include "../../native/kp_core/src/ui/kp_smk.h"
+#include "../../native/kp_core/src/ui/kp_ui.h"
+#include "../../native/kp_core/src/ui/kp_ui_text.h"
 #include "kp_webm.h"
 
 #define DIR KP_T_FIXTURES

@@ -24,7 +24,7 @@
 
 #include "kp_oracle_cli.h"
 #include "kp_present.h"
-#include "../src/core/kp_fog_view.h"
+#include "../src/ui/kp_fog_view.h"
 
 #define RESULT_LIMIT 100000 /* the steps a run "until the result" may take */
 

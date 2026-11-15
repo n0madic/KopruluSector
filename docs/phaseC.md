@@ -562,7 +562,7 @@ run again once the screen is on.
   first since stage D8c: `bench_200` equal to the original at all 761 steps, mean 0.096 ms, max 0.961 ms.
 - **The consoles' art from an install: 164 to 81 ms.** Most of it was `art_cells`' nearest-colour search over the 127
   colours for each cell; a mean colour seen before now takes its answer from a small table (`nearest`, 4,096 entries),
-  and the console's SD PCX is read once (`kp_files_pcx_pixels`). `CONW` stays equal to the converter's
+  and the console's SD PCX is read once (`kp_ui_pcx_pixels`). `CONW` stays equal to the converter's
   (`test_hd.ui_equals_the_converters`). What is left is reading the DDS files (about 43 ms) and decoding them.
 - **`kp_convert` writes the movies and the HD sets on Linux and Windows too.** Each repacked the 1.17 install and
   Remastered (`--hd hd2,hd,hd2-astc,hd2-etc2 --locales none`) with a cache of its own; the listings compared with

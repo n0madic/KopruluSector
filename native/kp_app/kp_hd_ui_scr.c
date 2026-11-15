@@ -944,7 +944,7 @@ uint8_t *kp_hd_ui_scr_console(KpRes *r, KpResReader *h, const KpFiles *sd, size_
 		}
 		/* its colours: the most used indices of its PCX but 0, by count (then index) */
 		if (!(raw = kp_files_need(sd, path, &i, err))) goto failed;
-		pixels = kp_scr_pcx_palette(raw, i, palette) == 0 ? kp_files_pcx_pixels(raw, i, &pw, &ph) : NULL;
+		pixels = kp_scr_pcx_palette(raw, i, palette) == 0 ? kp_ui_pcx_pixels(raw, i, &pw, &ph) : NULL;
 		free(raw);
 		if (!pixels) {
 			fail(err, path, "not a PCX with a palette");

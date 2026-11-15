@@ -1,4 +1,4 @@
-/* The fog of war of the presentation (kp_fog_view.h, native/kp_core/src/core/kp_fog_view.c) on synthetic tile flags
+/* The fog of war of the presentation (kp_fog_view.h, native/kp_core/src/ui/kp_fog_view.c) on synthetic tile flags
  * (plan phase S, stage S7). The original's own fog passes are the oracle of tools/fog_check.py (the emulator's
  * captures); these cases keep the rules that need no capture: the levels of seen, explored and unexplored tiles, the
  * blur at an edge between them, the uniform and black blocks of the darkening, the blocks a dirty update reports, and
@@ -7,7 +7,7 @@
 
 #include <string.h>
 
-#include "../../native/kp_core/src/core/kp_fog_view.h"
+#include "../../native/kp_core/src/ui/kp_fog_view.h"
 
 #define LOCAL 0 /* the local player's bit */
 #define NOT_SEEN (1 << LOCAL)

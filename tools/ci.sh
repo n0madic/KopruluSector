@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Local/CI check (plan phase S, ADR 0012): the Python tests, the goldens' currency, the native build
-# (CMakeLists.txt: kp_core, kp_present, kp_app_core, the tools and the C suites, checked as C and C++), the C suites
+# (CMakeLists.txt: kp_sim, kp_ui, kp_present, kp_app_core, the tools and the C suites, checked as C and C++), the C suites
 # on the host, under ASan and UBSan (with an LLVM clang 17 or later: -fsanitize=function and leaks; else with the default
 # compiler, whose build otherwise only checks the tools), and in wasm under node when emcmake is on the PATH (the HTML5
 # proxy), the loaders over the converted data and the replays of every scenario.
@@ -316,7 +316,7 @@ step "the native core's boundaries (tools/boundaries.sh: no mutable static state
 tools/boundaries.sh
 step "kp_core's defs tables are current (tools/defs_c.py: the profile and its input manifest, ADR 0018)"
 "$PYTHON" tools/defs_c.py --check
-step "native build (CMake): kp_core, its tools and the C suites, checked as C and C++"
+step "native build (CMake): kp_sim, kp_ui, their tools and the C suites, checked as C and C++"
 cmake -S . -B build/cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DKP_ASTC=ON >/dev/null
 logged build/native_build.log 0 cmake --build build/cmake
 if [ -n "${KOPRULU_SCR:-}" ]; then

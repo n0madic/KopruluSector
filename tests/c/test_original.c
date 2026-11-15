@@ -11,7 +11,7 @@
 #include "kp_ui_data.h"
 #include "../../native/kp_core/src/core/kp_dat.h"
 #include "../../native/kp_core/src/core/kp_mission.h"
-#include "../../native/kp_core/src/core/kp_smk.h"
+#include "../../native/kp_core/src/ui/kp_smk.h"
 
 static int bytes_eq(const uint8_t *a, size_t an, const uint8_t *b, size_t bn)
 {

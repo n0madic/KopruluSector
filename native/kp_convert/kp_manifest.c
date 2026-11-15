@@ -16,6 +16,7 @@
 #include "kp_present.h"
 #include "kp_sha256.h"
 #include "kp_smk.h"
+#include "kp_ui_data.h"
 
 #define HEX (2 * KP_SHA256_SIZE + 1)
 #define MESSAGE 512
@@ -164,7 +165,7 @@ static void plane_hash(int32_t w, int32_t h, const uint8_t *plane, size_t size, 
 static int describe_pcx(Entry *e, const uint8_t *data, size_t size, char *err, size_t err_size)
 {
 	int32_t w, h;
-	uint8_t *px = kp_files_pcx_pixels(data, size, &w, &h), *rgb = NULL, digest[KP_SHA256_SIZE];
+	uint8_t *px = kp_ui_pcx_pixels(data, size, &w, &h), *rgb = NULL, digest[KP_SHA256_SIZE];
 	size_t k, n;
 	if (!px || size < PALETTE + 1 || data[size - PALETTE - 1] != PCX_PALETTE_MARKER || w > 0xffff || h > 0xffff) {
 		snprintf(err, err_size, "%s: not an 8-bit PCX with its palette", e->name);

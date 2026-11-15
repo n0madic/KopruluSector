@@ -228,7 +228,7 @@ The section contents follow the native loaders. Original data was checked for:
 
 ## `fonts.kpd` (schema 1)
 
-- **Reader:** `native/kp_core/src/core/kp_ui_core.c`.
+- **Reader:** `native/kp_core/src/ui/kp_ui_core.c`.
 - **Glyph atlas:** `kp_ui_core.c` (the Python converter's `emit/fonts.py` until stage C2).
 - **Tests:**
   - `tools/research/scdata/tests/test_fonts.py`.
@@ -286,7 +286,7 @@ The console's shape on a screen other than the original's ([ADR 0011](../adr/001
 
 ## `ui.kpd` (schema 4)
 
-- **Reader:** `native/kp_core/src/core/kp_ui_core.c` (`kp_ui_new_data` over a `KpUiData`; a language's parts, `kp_ui_set_locale`).
+- **Reader:** `native/kp_core/src/ui/kp_ui_core.c` (`kp_ui_new_data` over a `KpUiData`; a language's parts, `kp_ui_set_locale`).
 - **Parser and fixup model:** `tools/research/scdata/formats/dialog.py`.
 - **Tests:**
   - `tools/research/scdata/tests/test_ui.py`;
@@ -356,7 +356,7 @@ The console's shape on a screen other than the original's ([ADR 0011](../adr/001
 
 ## `sounds.kpd` (schema 2)
 
-- **Reader:** `native/kp_core/src/core/kp_ui_sound.c`.
+- **Reader:** `native/kp_core/src/ui/kp_ui_sound.c`.
 - **Tests:**
   - `tools/research/scdata/tests/test_sounds.py`.
 
@@ -394,7 +394,7 @@ The portrait variant table lives in `portraits.kpd` with the portrait palettes.
 
 ## `portraits.kpd` (schema 2)
 
-- **Reader:** `native/kp_core/src/core/kp_ui_portrait.c`.
+- **Reader:** `native/kp_core/src/ui/kp_ui_portrait.c`.
 - **Atlases:** the runtime's (`kp_ui_portrait.c`; the Python converter's `emit/portraits.py` until stage C2).
 - **Tests:**
   - `tools/research/scdata/tests/test_portraits.py`.

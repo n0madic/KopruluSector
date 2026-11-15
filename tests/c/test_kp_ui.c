@@ -7,7 +7,7 @@
 #include "kp_kpf.h"
 #include "kp_text.h"
 
-#include "../../native/kp_core/src/core/kp_ui_text.h"
+#include "../../native/kp_core/src/ui/kp_ui_text.h"
 
 #define TERRAN01 "missions/terran/terran01"
 

@@ -417,7 +417,7 @@ static int pcx_entry(Table *t, const char *path, const char *file, int picture)
 	if (!(raw_sd = kp_files_need(t->sd, path, &sd_size, t->err))) return -1;
 	has_palette = kp_scr_pcx_palette(raw_sd, sd_size, palette) == 0;
 	free(raw_sd);
-	if (!(pixels = kp_files_pcx(t->sd, path, &sw, &sh, t->err)) || !(hd = raw(t, file, &hd_size))) goto done;
+	if (!(pixels = kp_ui_pcx_file(t->sd, path, &sw, &sh, t->err)) || !(hd = raw(t, file, &hd_size))) goto done;
 	if (!(rgba = kp_hd_ui_scr_dds_rgba(hd, hd_size, &w, &h))) {
 		fail(t->err, file, "not a DDS image of BC1, BC3 or RGBA");
 		goto done;

@@ -1975,3 +1975,40 @@ int kp_ui_pcx(const uint8_t *data, size_t size, int32_t *w, int32_t *h, uint8_t 
 	}
 	return out == total ? 0 : -1;
 }
+
+uint8_t *kp_ui_pcx_pixels(const uint8_t *data, size_t size, int32_t *w, int32_t *h)
+{
+	uint8_t *px = NULL;
+	if (kp_ui_pcx(data, size, w, h, NULL, 0) != 0 || *w <= 0 || *h <= 0
+		|| !(px = (uint8_t *)malloc((size_t)*w * (size_t)*h))
+		|| kp_ui_pcx(data, size, w, h, px, (size_t)*w * (size_t)*h) != 0) {
+		free(px);
+		return NULL;
+	}
+	return px;
+}
+
+uint8_t *kp_ui_pcx_file(const KpFiles *f, const char *name, int32_t *w, int32_t *h, KpError *err)
+{
+	size_t size;
+	uint8_t *data = kp_files_need(f, name, &size, err), *px;
+	if (!data) return NULL;
+	if (!(px = kp_ui_pcx_pixels(data, size, w, h))) snprintf(err->msg, sizeof err->msg, "%s: not a PCX the game reads", name);
+	free(data);
+	return px;
+}
+
+int kp_ui_pcx_prefix(const KpFiles *f, const char *name, uint8_t *out, size_t want, KpError *err)
+{
+	int32_t w, h;
+	uint8_t *px = kp_ui_pcx_file(f, name, &w, &h, err);
+	if (!px) return -1;
+	if ((size_t)w * (size_t)h < want) {
+		snprintf(err->msg, sizeof err->msg, "%s: %d pixels, the game's buffer takes %u", name, (int)(w * h), (unsigned)want);
+		free(px);
+		return -1;
+	}
+	memcpy(out, px, want);
+	free(px);
+	return 0;
+}
