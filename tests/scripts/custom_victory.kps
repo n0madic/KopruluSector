@@ -6,8 +6,10 @@
 # SaveReplayButtonProc 0x4620c0) opens the save-replay dialog over it: the run's replays folder lists nothing (the
 # dialog leaves LastReplay out), a typed name, OK copies LastReplay.rep to it and the button is disabled. The score's
 # Ok leads to the campaign menu (a custom game has no next scenario). Load Replay lists the saved replay first (before
-# LastReplay) and plays it: the same state at the marked step, and the replay's end where the game ended. tools/ci.sh
-# runs it with --data on a 1.17 install that has its maps folder and wants exit code 0 and "0 failures".
+# LastReplay) and plays it: the same state at the marked step, and the replay's end where the game ended. Text input
+# (its IME) is on only while an edit box has the focus, as SetKoreanImeEnabled 0x43f3f0 turns a Korean IME on around
+# the text dialogs and off for play: the name's, the message line's, Save Replay's. tools/ci.sh runs it with --data on
+# a 1.17 install that has its maps folder and wants exit code 0 and "0 failures".
 options originals
 clock fixed
 
@@ -16,9 +18,12 @@ click control glumain.single
 wait dialog gluGameMode and still
 click control glugamemode.original
 wait dialog gluPEdit and still
+expect text.input == 1
 text "Script"
 click control gluPEdit.1
 wait screen gluLogin
+wait frames 2
+expect text.input == 0
 click control glulogin.ok
 wait screen gluCmpgn
 click control glucmpgn.custom
@@ -37,7 +42,7 @@ wait seconds 0.5
 click control glucustm.ok
 wait game
 wait frames 30
-expect units:0 > 0 and units:1 > 0 and creep.tiles == 0
+expect units:0 > 0 and units:1 > 0 and creep.tiles == 0 and text.input == 0
 wait tick >= 160
 pause
 mark played
@@ -47,10 +52,12 @@ resume
 # the victory by the cheat: the message line opened, its text, Return
 key Return
 wait frames 10
+expect text.input == 1
 text "there is no cow level"
 wait frames 10
 key Return
 wait dialog
+expect text.input == 0
 mark won
 log won tick
 key Return
@@ -61,9 +68,12 @@ wait dialog savegame
 wait frames 10
 expect list.count == 0
 click control savegame.name
+expect text.input == 1
 text "Custom win"
 click control ok
 wait nodialog and score
+wait frames 2
+expect text.input == 0
 click control gluscore.ok
 wait screen gluCmpgn
 

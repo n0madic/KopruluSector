@@ -52,6 +52,57 @@ def norm(path: str) -> str:
     return (drive or "C:") + "\\" + "\\".join(parts)
 
 
+def upcase_unit(c: int) -> int:
+    """A UTF-16 unit in upper case as NTFS's $UpCase table has it, for the scripts of the languages: ASCII, Latin-1,
+    Latin Extended-A, Greek and Cyrillic; any other unit as it is (Koprulu's kp_compare_ntfs, kp_session.c)."""
+    if ord("a") <= c <= ord("z"):
+        return c - 32
+    if c < 0xE0:
+        return 0x39C if c == 0xB5 else c  # the micro sign: Greek Mu
+    if c <= 0xFE:
+        return c if c == 0xF7 else c - 32  # but the division sign
+    if c == 0xFF:
+        return 0x178
+    if c == 0x131:
+        return ord("I")
+    if c == 0x17F:
+        return ord("S")
+    if 0x100 <= c <= 0x137 or 0x14A <= c <= 0x177:
+        return c & ~1  # pairs from an even capital
+    if 0x139 <= c <= 0x148 or 0x179 <= c <= 0x17E:
+        return c if c & 1 else c - 1  # from an odd one
+    if c == 0x3C2:
+        return 0x3A3  # final sigma
+    if 0x3B1 <= c <= 0x3C1 or 0x3C3 <= c <= 0x3CB:
+        return c - 32
+    if c == 0x3AC:
+        return 0x386
+    if 0x3AD <= c <= 0x3AF:
+        return c - 37
+    if c == 0x3CC:
+        return 0x38C
+    if c in (0x3CD, 0x3CE):
+        return c - 63
+    if 0x430 <= c <= 0x44F:
+        return c - 32
+    if 0x450 <= c <= 0x45F:
+        return c - 80
+    if c == 0x4CF:
+        return 0x4C0
+    if 0x460 <= c <= 0x481 or 0x48A <= c <= 0x4BF or 0x4D0 <= c <= 0x52F:
+        return c & ~1
+    if 0x4C1 <= c <= 0x4CE:
+        return c if c & 1 else c - 1
+    return c
+
+
+def ntfs_key(name: str) -> tuple[int, ...]:
+    """The order in which NTFS keeps a directory's names, so FindFirstFile's: their UTF-16 units after its upper case
+    ('_' after the letters, a character past the Basic Multilingual Plane by its surrogates)."""
+    b = name.encode("utf-16-le", "surrogatepass")
+    return tuple(upcase_unit(b[k] | b[k + 1] << 8) for k in range(0, len(b), 2))
+
+
 @dataclass
 class OpenFile:
     path: str
@@ -243,6 +294,5 @@ class FileSystem:
             if key.startswith(prefix) and "\\" not in key[len(prefix):]:
                 names[key] = (self.overlay_names[key].rsplit("\\", 1)[1], False, len(data))
         out = [v for v in names.values() if fnmatch.fnmatch(v[0].lower(), pat_l.replace("*.*", "*"))]
-        # TODO: NTFS orders by its upper case (kp_compare_ntfs), so '_' and the like sort after the letters there
-        out.sort(key=lambda e: e[0].lower())
+        out.sort(key=lambda e: ntfs_key(e[0]))
         return [d for d in dots if fnmatch.fnmatch(d[0], pat_l.replace("*.*", "*"))] + out

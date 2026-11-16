@@ -7,6 +7,7 @@
 #include <string.h>
 
 #include "kp_casc.h"
+#include "kp_host.h"
 #include "kp_mpq.h"
 #include "kp_res_scr.h"
 #include "kp_sha256.h"
@@ -775,6 +776,26 @@ KpResSourceKind kp_res_install(const KpRes *r) { return r->install; }
 KpResSourceKind kp_res_origin(const KpRes *r) { return r->repack_count > 0 ? r->origin : r->install; }
 int kp_res_repacks(const KpRes *r) { return r->repack_count; }
 const KpDefsProfile *kp_res_profile(const KpRes *r) { return r->profile; }
+
+uint8_t *kp_res_executable(KpRes *r, size_t *size, char *err, size_t err_size)
+{
+	char path[KP_RES_PATH], hex[2 * KP_SHA256_SIZE + 1];
+	uint8_t digest[KP_SHA256_SIZE], *exe;
+	if (err_size) err[0] = 0;
+	if (r->install != KP_RES_SOURCE_MPQ || !r->profile->executable_sha256) return NULL;
+	if (!find_file(r->install_dir, r->profile->executable, path, sizeof path) || !(exe = kp_read_file(path, size))) {
+		snprintf(err, err_size, "%s: no %s", r->install_dir, r->profile->executable);
+		return NULL;
+	}
+	kp_sha256(exe, *size, digest);
+	kp_sha256_hex(digest, hex);
+	if (*size != r->profile->executable_size || strcmp(hex, r->profile->executable_sha256) != 0) {
+		snprintf(err, err_size, "%s is not the profile's (%lu bytes, SHA-256 %s)", path, (unsigned long)*size, hex);
+		free(exe);
+		return NULL;
+	}
+	return exe;
+}
 
 /* --- reading --- */
 

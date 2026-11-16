@@ -491,9 +491,16 @@ void kp_input_event(KpApp *a, const SDL_Event *e);
  * (a script's mouse events). */
 void kp_input_window_point(const KpApp *a, int32_t lx, int32_t ly, float *wx, float *wy);
 void kp_input_focus(KpApp *a, int active);
-/* The phones' soft keyboard follows the interface's focused edit control (a frame's end); a tap on it brings the
- * keyboard back after the user dismissed it. The desktops type with the hardware keyboard: no-op. */
+/* Text input follows the interface's focused edit control (a frame's end): on while one has the focus, off for play.
+ * Its IME with it, as SetKoreanImeEnabled 0x43f3f0 turns a Korean system's IME on around the text dialogs and off for
+ * play (a composition would take the hotkeys' letters); the phones' soft keyboard with it, a tap on the edit control
+ * bringing the keyboard back after the user dismissed it. */
 void kp_input_text_sync(KpApp *a, int tapped);
+/* A key's character while text input is off (kp_input_text_sync), as TranslateMessage's WM_CHAR: the layout's under
+ * Shift and Caps Lock, none under Alt, Ctrl or Command, through the text events' path (kp_hud_text_key: outside an edit
+ * box a letter of another script is the key's Latin one). SDL's key events after kp_input_event; a script gives its
+ * own text (kp_app_script.c). */
+void kp_input_key_text(KpApp *a, const SDL_KeyboardEvent *k);
 /* A mouse event at the logical screen's point (the checks' input too). */
 void kp_input_mouse(KpApp *a, int event, int32_t lx, int32_t ly);
 /* The mouse wheel's whole rows at the logical screen's point, > 0 away from the user (a finger's list drag too):

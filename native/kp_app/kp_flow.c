@@ -981,13 +981,9 @@ static void load_entry(void *host, KpUi *ui, int index)
 	e->humans = h.humans;
 	memcpy(e->user_select, h.user_select, sizeof e->user_select);
 	e->first_human = h.first_human;
-	/* TODO: the map's class. OpenMapArchive 0x469de0 keeps the class of a condition file the archive holds
-	 * (ProbeConditionFile 0x469650 over the table 0x4f1020: Ladder_*.cnd, Tourn_1.cnd, ...) only when VerifyMapSignature
-	 * 0x46b0d0 finds the map signed (SHA-1 under RSA-2048 with e = 65537 and Blizzard's modulus, 0x4eec90 in the 1.17
-	 * executable). Only the Ladder, Tournament and Server templates read it (ValidateGameTemplate 0x45b700), and none is
-	 * offered offline (FillGameTypeList 0x456910), so every map is 0, an ordinary one, until a network lobby offers
-	 * them; the modulus would then be read from the player's install, never committed. */
-	e->map_class = 0;
+	/* OpenMapArchive 0x469de0's class: a signed map's certificate (kp_map_class.h). Only templates no offline game
+	 * offers read it (ValidateGameTemplate 0x45b700's Ladder, Tournament and Server). */
+	e->map_class = kp_map_class(path, f->data->has_map_key ? f->data->map_key : NULL);
 	e->status = 0;
 }
 

@@ -116,6 +116,10 @@ KpResSourceKind kp_res_origin(const KpRes *r);
 int kp_res_repacks(const KpRes *r);
 /* The profile the sources are read by. */
 const KpDefsProfile *kp_res_profile(const KpRes *r);
+/* The 1.17 install's executable (the profile's, checked by its size and SHA-256), malloc'd: the data only it holds
+ * (the maps' signature key, kp_map_class.h). NULL with the reason in err, or err empty without a 1.17 install (a
+ * repack, Remastered). */
+uint8_t *kp_res_executable(KpRes *r, size_t *size, char *err, size_t err_size);
 
 /* A malloc'd copy of a file's bytes (NUL terminated past size) and its status, or NULL: err empty when no source has
  * it (missing, absent), the reason otherwise (a refused copy, a failed read: a damaged copy). */

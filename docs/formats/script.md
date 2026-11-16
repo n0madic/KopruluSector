@@ -159,6 +159,7 @@ Names are in any case. A value read where what it is read from is missing has no
 | `mouse.x`, `mouse.y` | the host | The mouse's last logical point; none before the mouse was seen |
 | `music.playing`, `music.track` | the host | The music plays; its track |
 | `sounds.started`, `sounds.streamed` | the host | The sounds the mixer started; streamed |
+| `text.input` | the host | 1 while the window's text input is on (its IME, a phone's soft keyboard): while an edit box has the focus (`kp_input_text_sync`) |
 
 ### The conditions
 

@@ -408,10 +408,11 @@ void kp_input_focus(KpApp *a, int active)
 
 void kp_input_text_sync(KpApp *a, int tapped)
 {
-#if defined(SDL_PLATFORM_ANDROID) || defined(SDL_PLATFORM_IOS)
 	int want = a->flow.ui != NULL && kp_ui_edit_focused(a->flow.ui);
 	int active = SDL_TextInputActive(a->window);
-	if (want && (!active || (tapped && !SDL_ScreenKeyboardShown(a->window)))) {
+	/* a tap brings back the soft keyboard the user dismissed (a hardware keyboard's text input stays as it is) */
+	int reshow = tapped && SDL_HasScreenKeyboardSupport() && !SDL_ScreenKeyboardShown(a->window);
+	if (want && (!active || reshow)) {
 		/* a name or a message: no capitals and no corrections of the soft keyboard's own */
 		SDL_PropertiesID props = SDL_CreateProperties();
 		SDL_SetNumberProperty(props, SDL_PROP_TEXTINPUT_TYPE_NUMBER, SDL_TEXTINPUT_TYPE_TEXT);
@@ -423,10 +424,43 @@ void kp_input_text_sync(KpApp *a, int tapped)
 	} else if (!want && active) {
 		SDL_StopTextInput(a->window);
 	}
+}
+
+/* A keypad key's character as TranslateMessage gives it (SDL's keycodes for the keypad are no characters): its digits
+ * and point with Num Lock on, or always on a Mac, whose keypad has no Num Lock; its operators always. 0 none. */
+static SDL_Keycode keypad_char(const SDL_KeyboardEvent *k)
+{
+#ifdef SDL_PLATFORM_MACOS
+	int digits = 1;
 #else
-	(void)a;
-	(void)tapped;
+	int digits = (k->mod & SDL_KMOD_NUM) != 0;
 #endif
+	if (k->scancode >= SDL_SCANCODE_KP_1 && k->scancode <= SDL_SCANCODE_KP_9) {
+		return digits ? (SDL_Keycode)('1' + (k->scancode - SDL_SCANCODE_KP_1)) : 0;
+	}
+	switch (k->scancode) {
+	case SDL_SCANCODE_KP_0: return digits ? '0' : 0;
+	case SDL_SCANCODE_KP_PERIOD: return digits ? '.' : 0;
+	case SDL_SCANCODE_KP_DIVIDE: return '/';
+	case SDL_SCANCODE_KP_MULTIPLY: return '*';
+	case SDL_SCANCODE_KP_MINUS: return '-';
+	case SDL_SCANCODE_KP_PLUS: return '+';
+	default: return 0;
+	}
+}
+
+void kp_input_key_text(KpApp *a, const SDL_KeyboardEvent *k)
+{
+	SDL_Keycode c;
+	char utf8[5];
+	if (k->type != SDL_EVENT_KEY_DOWN || SDL_TextInputActive(a->window) || kp_app_cine_active(a)) return;
+	/* Alt's and Ctrl's characters are WM_SYSCHAR's and control characters, Command's none */
+	if (k->mod & (SDL_KMOD_ALT | SDL_KMOD_CTRL | SDL_KMOD_GUI | SDL_KMOD_MODE)) return;
+	c = keypad_char(k);
+	if (c == 0) c = SDL_GetKeyFromScancode(k->scancode, k->mod, false); /* the layout's own, Shift and Caps Lock applied */
+	if (c < 0x20 || c == 0x7f || c >= 0x10000) return; /* no character, or a key with none (SDLK_SCANCODE_MASK) */
+	*SDL_UCS4ToUTF8((Uint32)c, utf8) = 0;
+	text(a, utf8);
 }
 
 static int cine_key(const KpApp *a, SDL_Scancode s)

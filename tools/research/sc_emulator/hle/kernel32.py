@@ -1223,7 +1223,7 @@ def _find_first(m, pattern, buf, wide):
 
 @api(K, 2)
 def FindFirstFileA(m, pattern, buf):
-    """Lists the virtual directory (host directory merged with overlay), sorted by name."""
+    """Lists the virtual directory (host directory merged with overlay), in NTFS's order (vfs.ntfs_key)."""
     return _find_first(m, m.cstr(pattern).decode("latin-1"), buf, False)
 
 

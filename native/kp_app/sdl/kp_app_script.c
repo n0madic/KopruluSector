@@ -143,10 +143,10 @@ static SDL_Scancode key_scancode(const char *w)
 	return SDL_SCANCODE_UNKNOWN;
 }
 
-/* The host's own values (the world's art, the HD interface, the cursor, the mouse, the sound), ids from
+/* The host's own values (the world's art, the HD interface, the cursor, the mouse, the sound, text input), ids from
  * KP_SCRIPT_FLOW_HOST. */
 enum { H_ART_SCALE, H_ART_LIT, H_ART_LIT_PAGES, H_ART_FX, H_HD_UI, H_CURSOR_SHOWN, H_MOUSE_X, H_MOUSE_Y, H_MUSIC_PLAYING,
-	H_MUSIC_TRACK, H_SOUNDS_STARTED, H_SOUNDS_STREAMED, H_COUNT };
+	H_MUSIC_TRACK, H_SOUNDS_STARTED, H_SOUNDS_STREAMED, H_TEXT_INPUT, H_COUNT };
 static const char *const HOST_VALUES[H_COUNT] = {
 	"art.scale",        /* the world's HD pixels a logical pixel (2 HD2, 4 HD), 0 the original's art */
 	"art.lit",          /* the HD sprites drawn lit */
@@ -160,6 +160,7 @@ static const char *const HOST_VALUES[H_COUNT] = {
 	"music.track",
 	"sounds.started",   /* the sounds the mixer started */
 	"sounds.streamed",
+	"text.input",       /* the window's text input (its IME, a phone's soft keyboard) on: kp_input_text_sync */
 };
 
 static int host_name(void *ud, KpScriptKind kind, const char *word, KpScriptName *out)
@@ -246,6 +247,7 @@ static int host_value(void *ud, const KpScriptRun *run, const KpScriptRef *ref, 
 	case H_MUSIC_TRACK: *out = a->audio.track; break;
 	case H_SOUNDS_STARTED: *out = a->audio.started; break;
 	case H_SOUNDS_STREAMED: *out = a->audio.streamed; break;
+	case H_TEXT_INPUT: *out = SDL_TextInputActive(a->window); break;
 	default:
 		snprintf(why, size, "no value %d", (int)ref->id);
 		return -1;

@@ -238,6 +238,7 @@ Phases 2 and 4 check runtime code against the original 1.17 functions running in
 | `iscript/cases.json` | `tools/research/probe_native_iscript_117.py` | `tests/c/test_images.c` (`scenario_matches_probe`, `every_animation_equals_original`, `synthetic_programs_equal_original`) | Per image animation of the retail script (2,917) and per synthetic program: completed frames and the hash of the image, sprite, RNG and event state after each of 80 frames of `UpdateThingies` |
 | `health_bar/cases.json` | `tools/research/probe_native_health_bar_117.py` | `tests/c/test_present.c` (`health_bars_equal_original`) | Per unit type with a health bar (207): the maximum energy from `0x434940` and one hash over its cases (hit point, shield, energy and timer levels, owners, hallucination, crops: 13,846) of the bitmap `DrawHealthBar 0x464d20` leaves |
 | `damage_table.json` | `tools/research/probe_damage_table_117.py` (on the DAT of an expansion game's state dump, `--state`) | `tests/c/test_damage_table.c` | Per upgrade level of the target's owner (0 and 3) and unit type (228): the CRC-32 of the hit points and shields `WeaponDamage 0x41dfc0` takes from a target of that type, for each of the 130 weapons at its base damage |
+| `map_classes.json` | `tools/research/probe_map_class.py` (the full-game emulator: `OpenMapArchiveWithCondition` `0x469560` called for each map) | `tests/c/test_res.c` (`map_classes_are_the_originals`, with `KP_TEST_ORIGINAL`, an install with its `maps` folder) | Per map of the 1.17 install's `maps` folder (211), by its path: the class the original gives it (a signed map's certificate, 0 for the rest; [phase M](phase-multiplayer.md#offline-gaps-closed-after-phase-m-2026-11-16)) |
 
 Both tests need the original data (a repack or an install, `kp_t_data`) and skip without it.
 
@@ -247,6 +248,7 @@ Both tests need the original data (a repack or an install, `kp_t_data`) and skip
 python tools/research/probe_native_iscript_117.py --data DIR --golden tests/golden/oracle/iscript/cases.json --evidence docs/research/evidence/native-iscript-probes.json
 python tools/research/probe_native_health_bar_117.py --data DIR --golden tests/golden/oracle/health_bar/cases.json
 python tools/research/probe_damage_table_117.py --exe DIR/StarCraft.exe --state EMU/scenarios/medic_heal/states/s00001.state --out tests/golden/oracle/damage_table.json
+python tools/research/probe_map_class.py --data DIR --out tests/golden/oracle/map_classes.json
 ```
 
 `--rows FILE` (damage table) writes the uncompressed rows; `--case IMAGE ANIM` (IScript) and `--type T` (health bars) print the per-frame values or per-case hashes of one case for debugging.

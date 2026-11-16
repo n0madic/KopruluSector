@@ -17,6 +17,7 @@
 #include "kp_campaign.h"
 #include "kp_dat.h"
 #include "kp_host.h"
+#include "kp_map_class.h"
 #include "kp_mission.h"
 #include "kp_present.h"
 #include "kp_res.h"
@@ -58,6 +59,8 @@ typedef struct {
 	KpCampaign campaign;
 	KpUiData ui;
 	KpTemplates templates;   /* the game templates (templates.lst and its .got files; ADR 0024) */
+	uint8_t map_key[KP_MAP_KEY_SIZE]; /* the maps' signature key, from a 1.17 install's executable (kp_map_class.h) */
+	int has_map_key;                  /* 0 without one (a repack, Remastered): every map's class 0 */
 	KpDataMission missions[KP_DATA_MISSIONS];
 	int mission_count;
 } KpData;

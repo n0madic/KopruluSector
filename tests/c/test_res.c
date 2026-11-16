@@ -1,6 +1,8 @@
 /* The reading of the original data (ADR 0018): the SHA-256 the input manifest's digests are checked with, kp_res's
  * sources over archives the tests write with StormLib (a 1.17 install of a test profile, repacks), its Remastered
- * rules, and with KP_TEST_ORIGINAL and KP_TEST_SCR the real installs. */
+ * rules, and with KP_TEST_ORIGINAL and KP_TEST_SCR the real installs. The maps' class (kp_map_class.h): SHA-1, the
+ * strong signature under a key of the test's own, the certificates, the key's place in the executable; with
+ * KP_TEST_ORIGINAL and the emulator's golden (tools/research/probe_map_class.py) every install map's class. */
 #include "kp_test_app.h"
 
 #include <errno.h>
@@ -10,6 +12,7 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "kp_map_class.h"
 #include "kp_mpq.h"
 #include "kp_res.h"
 #include "kp_sha256.h"
@@ -1182,6 +1185,224 @@ static void res_build_info_text_locale(KpT *T)
 	kp_t_eq_str(T, out, "", "no room for a locale");
 }
 
+/* --- the maps' class --- */
+
+static const char *sha1_hex(KpT *T, const void *data, size_t size, const void *more, size_t more_size)
+{
+	static const char DIGITS[] = "0123456789abcdef";
+	uint8_t d[KP_SHA1_SIZE];
+	char hex[2 * KP_SHA1_SIZE + 1];
+	int k;
+	kp_sha1(data, size, more, more_size, d);
+	for (k = 0; k < KP_SHA1_SIZE; k++) {
+		hex[2 * k] = DIGITS[d[k] >> 4];
+		hex[2 * k + 1] = DIGITS[d[k] & 15];
+	}
+	hex[2 * KP_SHA1_SIZE] = 0;
+	return kp_t_strdup(T, hex);
+}
+
+/* FIPS 180-1's examples; the name hashed after the data as one message (HashDataAndName 0x49d370) */
+static void sha1_vectors(KpT *T)
+{
+	static const char LONG[] = "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq";
+	char *million = (char *)malloc(1000000);
+	kp_t_ok(T, million != NULL, "out of memory");
+	kp_t_defer(T, free, million);
+	memset(million, 'a', 1000000);
+	kp_t_eq_str(T, sha1_hex(T, "", 0, NULL, 0), "da39a3ee5e6b4b0d3255bfef95601890afd80709", "empty");
+	kp_t_eq_str(T, sha1_hex(T, "abc", 3, NULL, 0), "a9993e364706816aba3e25717850c26c9cd0d89d", "abc");
+	kp_t_eq_str(T, sha1_hex(T, LONG, strlen(LONG), NULL, 0), "84983e441c3bd26ebaae4aa1f95129e5e54670f1", "448 bits");
+	kp_t_eq_str(T, sha1_hex(T, million, 1000000, NULL, 0), "34aa973cd4c4daa4f61eeb2bdbad27316534016f", "a million a");
+	kp_t_eq_str(T, sha1_hex(T, LONG, 30, LONG + 30, strlen(LONG) - 30), "84983e441c3bd26ebaae4aa1f95129e5e54670f1",
+		"in two pieces");
+}
+
+/* A key of the test's own (two 1024-bit primes made with Python's pow, not Blizzard's) and its signature of
+ * SIGNED_DATA for SIGNED_NAME: SHA-1 of the data and the upper-cased name over 0xbb bytes ending 0x0b, to the private
+ * exponent, every number's bytes the least significant first. */
+#define SIGNED_DATA "Koprulu's test map: any bytes stand before the tag."
+#define SIGNED_NAME "(2)Test Map.scm"
+static const char TEST_KEY[] =
+	"098f44172eb7628367645c5d4a5ad8961a25bd65e469df1e08d395c78a765768a5f9b5892190b90b105a38571309baab"
+	"498a8a647578e868744c8bf22b4f64f44aa6091240976f46e413b211e7152788b7527bc51c42ae992c49a50fe2cf48ba"
+	"8127aa11a1816d3bb211a8a511808eb2ea24bbe80d0b533ea596961cb8d3d22d7107ee56b8cc0ab3f64a03224ec47093"
+	"57e2714c6c21c78298747cec42fcdba9f177bce1d46e980a9b038d66ddbb80205bdd9f8a375520e9fe1b982e84332249"
+	"5843e52b9edea0ea42b18a0090c365005b24b5806991f7c3dc4336c70100c88b3a699b11c61426290cff9b75c0f93033"
+	"3fdeace7be7ec35f431b3fff1bbc5dab";
+static const char TEST_SIGNATURE[] =
+	"99e92d47562460b362831db65c2d23ff6287883bbcce8ac06e7ea30d7680d416a476f406a23f546fb87de66178e0ce45"
+	"4e18fcb7097dc1e92be67e46d87c17eefad6bdab1a081090eff6af57a797f0725847b3aee5147df067fbd0e219c5d665"
+	"1cc931c56a256cadd340ed223fbfacd559f28a1268951ab267f40e0d2ac5f0d10984fb698e041368fa3af36e4d6ce9a4"
+	"6cfa5c6a12c03947a6de94ce6800a40af05a3bb985e90189fd5a3540f9945e21234e8c0f761ec4a90cc77b18d4c79dbb"
+	"67830933f350fd93c78479723f9c175202b4b5fb91039fab9edf43ea3ac30c70104c26b1aac37b8f65758858d6a5dc35"
+	"53f06a76d3900e17a1af7c3782a32600";
+
+/* SIGNED_DATA, its tag and signature (malloc'd, freed at the end) and the test's key */
+static uint8_t *signed_map(KpT *T, size_t *size, uint8_t key[KP_MAP_KEY_SIZE])
+{
+	size_t n = strlen(SIGNED_DATA);
+	uint8_t *b = (uint8_t *)malloc(n + 4 + KP_MAP_KEY_SIZE);
+	kp_t_ok(T, b != NULL, "out of memory");
+	kp_t_defer(T, free, b);
+	memcpy(b, SIGNED_DATA, n);
+	memcpy(b + n, "NGIS", 4);
+	kp_t_eq(T, kp_hex_decode(TEST_SIGNATURE, b + n + 4, KP_MAP_KEY_SIZE), 0, "the signature");
+	kp_t_eq(T, kp_hex_decode(TEST_KEY, key, KP_MAP_KEY_SIZE), 0, "the key");
+	*size = n + 4 + KP_MAP_KEY_SIZE;
+	return b;
+}
+
+/* VerifyNgisSignature 0x49d460: the bytes before the tag and the file's name (its last component, any case) */
+static void map_signature_checks_the_bytes_and_the_name(KpT *T)
+{
+	uint8_t key[KP_MAP_KEY_SIZE], even[KP_MAP_KEY_SIZE];
+	size_t size;
+	uint8_t *b = signed_map(T, &size, key);
+	kp_t_ok(T, kp_map_signature_valid(SIGNED_NAME, b, size, key), "signed");
+	kp_t_ok(T, kp_map_signature_valid("C:\\StarCraft\\maps\\(2)TEST MAP.SCM", b, size, key), "a path's name, upper-cased");
+	kp_t_ok(T, kp_map_signature_valid("maps/x\\y/(2)test map.scm", b, size, key), "either separator");
+	kp_t_ok(T, !kp_map_signature_valid("(2)Test Map2.scm", b, size, key), "another name");
+	b[0] ^= 1;
+	kp_t_ok(T, !kp_map_signature_valid(SIGNED_NAME, b, size, key), "a byte changed");
+	b[0] ^= 1;
+	b[size - 1] ^= 1;
+	kp_t_ok(T, !kp_map_signature_valid(SIGNED_NAME, b, size, key), "the signature changed");
+	b[size - 1] ^= 1;
+	b[strlen(SIGNED_DATA)] = 'n';
+	kp_t_ok(T, !kp_map_signature_valid(SIGNED_NAME, b, size, key), "no tag");
+	b[strlen(SIGNED_DATA)] = 'N';
+	kp_t_ok(T, !kp_map_signature_valid(SIGNED_NAME, b, KP_MAP_KEY_SIZE + 3, key), "too short for one");
+	memcpy(even, key, sizeof even);
+	even[0] &= 0xfe;
+	kp_t_ok(T, !kp_map_signature_valid(SIGNED_NAME, b, size, even), "no odd modulus, no check");
+	kp_t_ok(T, kp_map_signature_valid(SIGNED_NAME, b, size, key), "signed again");
+}
+
+/* an archive of the given (empty) files written to path */
+static void cnd_mpq(KpT *T, const char *path, const char *const *names)
+{
+	char err[512];
+	KpMpq *m = kp_mpq_create(path, 16, err, sizeof err);
+	int k;
+	kp_t_ok(T, m != NULL, "%s", err);
+	kp_t_ok(T, kp_mpq_add(m, "staredit\\scenario.chk", "VER ", 4, KP_MPQ_STORE, err, sizeof err) == 0, "%s", err);
+	for (k = 0; names[k]; k++) kp_t_ok(T, kp_mpq_add(m, names[k], "", 0, KP_MPQ_STORE, err, sizeof err) == 0, "%s", err);
+	kp_t_eq(T, kp_mpq_close(m), 0, "%s written", path);
+}
+
+/* ScanMapCertificates 0x4c1350: the highest kind present wins; kind 5 (Tourn_1.cnd) wants League_0.cnd too */
+static void map_certificate_takes_the_highest_kind(KpT *T)
+{
+	static const char *const NONE[] = { NULL }, *const BLIZZARD[] = { "Blizzard_2.cnd", NULL },
+		*const LADDER[] = { "Blizzard_2.cnd", "Ladder_4.cnd", "PGL_2.cnd", NULL }, *const TOURNAMENT[] = { "Tourn_1.cnd", NULL },
+		*const LEAGUE[] = { "Tourn_1.cnd", "League_0.cnd", "KBK_2.cnd", NULL }, *const WGT[] = { "WGT_1.cnd", "Tourn_1.cnd", "League_0.cnd", NULL };
+	static const struct {
+		const char *const *names;
+		uint32_t kind;
+	} CASES[] = { { NONE, 0 }, { BLIZZARD, 1 }, { LADDER, 3 }, { TOURNAMENT, 0 }, { LEAGUE, 5 }, { WGT, 6 } };
+	Dir *d = dir_new(T);
+	uint8_t key[KP_MAP_KEY_SIZE];
+	size_t k, size;
+	(void)signed_map(T, &size, key);
+	for (k = 0; k < sizeof CASES / sizeof CASES[0]; k++) {
+		char name[32], err[512];
+		const char *path;
+		KpMpq *m;
+		snprintf(name, sizeof name, "(2)Case %d.scm", (int)k);
+		path = dir_path(T, d, name);
+		cnd_mpq(T, path, CASES[k].names);
+		m = kp_mpq_open(path, 0, err, sizeof err);
+		kp_t_ok(T, m != NULL, "%s", err);
+		kp_t_eq(T, kp_map_certificate(m), CASES[k].kind, "%s", name);
+		kp_mpq_close(m);
+		kp_t_eq(T, kp_map_class(path, key), 0, "%s: no signature, no class", name);
+	}
+	kp_t_eq(T, kp_map_class(dir_path(T, d, "missing.scm"), key), 0, "no file");
+}
+
+/* The modulus at KP_MAP_KEY_VA through the executable's sections */
+static void map_key_comes_from_the_executables_section(KpT *T)
+{
+	enum { PE = 0x40, OPTIONAL_SIZE = 0xe0, BASE = 0x400000, SECTION_VA = 0xee000, RAW = 0x200, RAW_SIZE = 0x1000 };
+	uint8_t exe[RAW + RAW_SIZE], key[KP_MAP_KEY_SIZE];
+	size_t at = RAW + (KP_MAP_KEY_VA - BASE - SECTION_VA), table = PE + 4 + 20 + OPTIONAL_SIZE;
+	int k;
+	memset(exe, 0, sizeof exe);
+	exe[0] = 'M';
+	exe[1] = 'Z';
+	exe[0x3c] = PE;
+	memcpy(exe + PE, "PE\0\0", 4);
+	exe[PE + 4 + 2] = 1;             /* one section */
+	exe[PE + 4 + 16] = OPTIONAL_SIZE;
+	exe[PE + 24 + 28 + 2] = BASE >> 16;
+	exe[table + 12 + 1] = (SECTION_VA >> 8) & 0xff;
+	exe[table + 12 + 2] = SECTION_VA >> 16;
+	exe[table + 16 + 1] = RAW_SIZE >> 8;
+	exe[table + 20 + 1] = RAW >> 8;
+	for (k = 0; k < KP_MAP_KEY_SIZE; k++) exe[at + (size_t)k] = (uint8_t)(k + 1);
+	kp_t_ok(T, kp_map_key_from_executable(exe, sizeof exe, key), "found");
+	kp_t_ok(T, key[0] == 1 && key[KP_MAP_KEY_SIZE - 1] == 0, "its bytes");
+	kp_t_ok(T, !kp_map_key_from_executable(exe, at + 100, key), "a file cut short");
+	exe[table + 16 + 1] = 0x0c; /* the section ends before the key's end */
+	kp_t_ok(T, !kp_map_key_from_executable(exe, sizeof exe, key), "outside the section");
+	exe[0] = 'X';
+	kp_t_ok(T, !kp_map_key_from_executable(exe, sizeof exe, key), "no executable");
+}
+
+/* The 1.17 executable only from a 1.17 install, checked by the profile's size and digest */
+static void res_executable_is_the_profiles(KpT *T)
+{
+	Profile p;
+	Dir *d;
+	KpRes *r;
+	size_t size = 0;
+	char err[512];
+	uint8_t *exe;
+	const char *dirs[1];
+	profile_init(T, &p);
+	d = test_install(T);
+	dirs[0] = d->dir;
+	r = open_res(T, &p, dirs, 1);
+	kp_t_ok(T, kp_res_executable(r, &size, err, sizeof err) == NULL && !err[0], "a profile without its digest: %s", err);
+	p.profile.executable_size = 2;
+	p.profile.executable_sha256 = hex_of(T, "MZ", 2);
+	exe = kp_res_executable(r, &size, err, sizeof err);
+	kp_t_ok(T, exe != NULL && size == 2 && memcmp(exe, "MZ", 2) == 0, "Game.exe: %s", err);
+	free(exe);
+	p.profile.executable_sha256 = hex_of(T, "MZ!", 3);
+	kp_t_ok(T, kp_res_executable(r, &size, err, sizeof err) == NULL && strstr(err, "is not the profile's") != NULL,
+		"another copy refused: %s", err);
+}
+
+/* Every install map's class equals the original's (OpenMapArchiveWithCondition 0x469560 run in the emulator) */
+static void map_classes_are_the_originals(KpT *T)
+{
+	const char *root = getenv("KP_TEST_ORIGINAL");
+	KpRes *r = kp_t_install(T, "KP_TEST_ORIGINAL");
+	const KpJson *maps = kp_json_get(kp_t_golden(T, "tests/golden/oracle/map_classes.json"), "maps");
+	KpBuf *bad = kp_t_buf(T);
+	uint8_t key[KP_MAP_KEY_SIZE];
+	size_t size = 0;
+	char err[512];
+	int k, classed = 0;
+	uint8_t *exe = kp_res_executable(r, &size, err, sizeof err);
+	kp_t_ok(T, exe != NULL, "the executable: %s", err);
+	kp_t_defer(T, free, exe);
+	kp_t_ok(T, kp_map_key_from_executable(exe, size, key), "its key");
+	kp_t_ok(T, kp_json_len(maps) > 0, "the golden's maps");
+	for (k = 0; k < kp_json_len(maps); k++) {
+		char path[1024];
+		uint32_t want = (uint32_t)kp_json_int(maps->items[k], -1), got;
+		snprintf(path, sizeof path, "%s/%s", root, maps->keys[k]);
+		got = kp_map_class(path, key);
+		classed += got != 0;
+		if (got != want) kp_buf_printf(bad, "%s: %u, the original's %u; ", maps->keys[k], (unsigned)got, (unsigned)want);
+	}
+	kp_t_ok(T, bad->size == 0, "%s", kp_buf_text(bad));
+	kp_t_ok(T, classed > 0, "some maps of a class");
+}
+
 static const KpTest TESTS[] = {
 	{ "sha256_vectors", sha256_vectors, 0 },
 	{ "sha256_pieces", sha256_pieces, 0 },
@@ -1207,5 +1428,11 @@ static const KpTest TESTS[] = {
 	{ "res_build_info_text_locale", res_build_info_text_locale, 0 },
 	{ "res_reads_the_1_17_install", res_reads_the_1_17_install, 0 },
 	{ "res_reads_the_remastered_install", res_reads_the_remastered_install, 0 },
+	{ "sha1_vectors", sha1_vectors, 0 },
+	{ "map_signature_checks_the_bytes_and_the_name", map_signature_checks_the_bytes_and_the_name, 0 },
+	{ "map_certificate_takes_the_highest_kind", map_certificate_takes_the_highest_kind, 0 },
+	{ "map_key_comes_from_the_executables_section", map_key_comes_from_the_executables_section, 0 },
+	{ "res_executable_is_the_profiles", res_executable_is_the_profiles, 0 },
+	{ "map_classes_are_the_originals", map_classes_are_the_originals, 0 },
 };
 KP_SUITE(kp_suite_res, "test_res", TESTS);
