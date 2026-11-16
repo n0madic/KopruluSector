@@ -737,7 +737,7 @@ static int eval_rush(KpGame *g, int64_t p, int64_t kind, int64_t x, int64_t y)
 static int64_t nearest_enemy_race(KpGame *g, int64_t k)
 {
 	int64_t n = nearest_enemy_building(g, g->towns.owner[k], kp_s16v(g->towns.x[k]), kp_s16v(g->towns.y[k]));
-	return n != 0 ? g->players.race[g->u.owner[n]] : KP_RACE_TERRAN;
+	return n != 0 ? g->players.race[g->u.owner[n]] : (int64_t)KP_RACE_TERRAN;
 }
 
 /* MeasureTownRegionSize 0x4877f0: the tiles of the regions a breadth-first walk from town k's region reaches over

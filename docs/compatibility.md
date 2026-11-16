@@ -100,7 +100,7 @@ Scripted wins: 64 of 64 playable rows.
 
 ## Custom games (phase M)
 
-The games of the original's Play Custom screen against computers ([phase M](phase-multiplayer.md)), each started from its lobby's setup on the install's map and equal to the original's at every step its golden holds, with the computers' AI trace (`test_scenarios`); `test_seats` plays each again with every other player as a seat.
+The games of the original's Play Custom screen against computers ([phase M](phase-multiplayer.md)), each started from its lobby's setup on the install's map and equal to the original's at every step its golden holds, with the computers' AI trace (`test_scenarios`); `test_seats` plays each again with every other player as a seat. Their Play Custom screens at Ok equal the original's pixel for pixel outside the cursor, and their lists and lobby records equal its records (`test_flow.play_custom_screens_are_the_originals`).
 
 | Game | Map | Game type | Steps equal | AI trace |
 |---|---|---|---|---|

@@ -3064,6 +3064,43 @@ static void save_replay_dialog_names_a_replay(KpT *T)
 	kp_t_eq(T, r.copies + r.deletes, 3 + 2, "nothing more asked of the host");
 }
 
+
+/* The HD interface draws the save-replay dialog's race frame with dlgs\\tile.grp's HD art, the file it was made from
+ * (StarCraft: Remastered has no glue\\pal<r><d|v>\\tile.grp): its tiles are images of that path over the dialog's
+ * picture, the repeated ones tiled. */
+static void save_replay_frame_is_dlgs_tiles_in_hd(KpT *T)
+{
+	KpOracleUi *u;
+	KpOracleGame *game;
+	KpUi *ui;
+	Replays r;
+	Clock c;
+	const uint8_t *picture;
+	int32_t k, images = 0, tiled = 0;
+	if (!kp_t_ready(T, "test_kp_ui.save_replay_frame_is_dlgs_tiles_in_hd", GAME_FILES)) return;
+	u = kp_t_ui(T, KP_ORACLE_UI_STRINGS);
+	ui = u->ui;
+	game = terran01(T);
+	hud(T, ui, game->g);
+	kp_ui_end_game(ui);
+	memset(&r, 0, sizeof r);
+	ui->list_replays = test_list_replays;
+	ui->host = &r;
+	custom_score(T, ui, game->g, &c, 0, 0, 0);
+	ui->hd = 1;
+	dialog_click(T, &c, SCORE_SAVE_REPLAY);
+	picture = ui->controls[ui->open].image;
+	kp_t_ok(T, picture != NULL, "the dialog's picture");
+	for (k = 0; k < ui->image_log.count; k++) {
+		const KpUiImage *im = &ui->image_log.images[k];
+		if (im->surface != picture) continue;
+		kp_t_ok(T, im->path && im->path_len == sizeof "dlgs\\tile.grp" - 1 && memcmp(im->path, "dlgs\\tile.grp", im->path_len) == 0,
+			"of dlgs\\tile.grp");
+		images++;
+		tiled += im->tiled;
+	}
+	kp_t_ok(T, images > 0 && tiled > 0, "the frame's images, its edges and centre tiled (%d, %d)", images, tiled);
+}
 /* glue\pal<r><d|v>\tile.grp from dlgs\tile.grp: only the frames' pixels of colours 42 and 41 change, to the background's
  * two colours (Zd 160 and 151, Pv 145 and 134); the header and the line offsets stay. */
 static void glue_tile_grp_recolours_the_frame(KpT *T)
@@ -3088,7 +3125,7 @@ static void glue_tile_grp_recolours_the_frame(KpT *T)
 			if (out[k] == tile->data[k]) continue;
 			changed++;
 			kp_t_ok(T, (tile->data[k] == 42 && out[k] == TO[b][0]) || (tile->data[k] == 41 && out[k] == TO[b][1]),
-				"byte %zu: %d to %d", k, tile->data[k], out[k]);
+				"byte %lu: %d to %d", (unsigned long)k, tile->data[k], out[k]);
 		}
 		kp_t_ok(T, changed > 0, "background %d: pixels recoloured", BACKGROUNDS[b]);
 		kp_t_ok(T, memcmp(out, tile->data, 6 + 8 * (size_t)kp_le_u16(tile->data)) == 0, "the header and frames' records");
@@ -4075,6 +4112,7 @@ static const KpTest TESTS[] = {
 	{ "save_dialog_reports_a_file_that_stays", save_dialog_reports_a_file_that_stays, 0 },
 	{ "save_replay_is_a_custom_games", save_replay_is_a_custom_games, 0 },
 	{ "save_replay_dialog_names_a_replay", save_replay_dialog_names_a_replay, 0 },
+	{ "save_replay_frame_is_dlgs_tiles_in_hd", save_replay_frame_is_dlgs_tiles_in_hd, 0 },
 	{ "glue_tile_grp_recolours_the_frame", glue_tile_grp_recolours_the_frame, 0 },
 	{ "glue_tile_grps_equal_the_originals", glue_tile_grps_equal_the_originals, 0 },
 	{ "load_dialog_refuses_a_save_that_does_not_load", load_dialog_refuses_a_save_that_does_not_load, 0 },

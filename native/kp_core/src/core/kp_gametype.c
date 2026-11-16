@@ -474,7 +474,7 @@ static int64_t start_y(KpGame *g, int64_t p) { return kp_s16v(g->players.start_y
  * under its footprint killed first; a Zerg's creep and two larvae. */
 static void start_town_hall(KpGame *g, int64_t race, int64_t p)
 {
-	int64_t t = race >= 0 && race < 3 ? TOWN_HALLS[race] : KP_TYPE_NONE, n, hw, hh, x, y, s;
+	int64_t t = race >= 0 && race < 3 ? TOWN_HALLS[race] : (int64_t)KP_TYPE_NONE, n, hw, hh, x, y, s;
 	int64_t units[KP_UNITS];
 	int count, i;
 	hw = kp_s16v(KP_DAT(g, units, staredit_placement_size, t * 2)) / 2;
@@ -557,7 +557,7 @@ static void team_start_units(KpGame *g)
 			int64_t at = base + k % team_size(g), n, worker;
 			race = at < 8 ? s->race_summary[at] : s->race_summary[base + 1];
 			if (mode != 1 && mode != 2) continue;
-			worker = race >= 0 && race < 3 ? WORKERS[race] : KP_TYPE_NONE;
+			worker = race >= 0 && race < 3 ? WORKERS[race] : (int64_t)KP_TYPE_NONE;
 			n = kp_unit_create(g, worker, start_x(g, p), start_y(g, p), p);
 			if (n != 0) (void)kp_unit_complete(g, n);
 		}
@@ -609,7 +609,7 @@ void kp_gametype_start_units(KpGame *g)
 			start_town_hall(g, race, p);
 			if (race == KP_RACE_ZERG) start_overlord(g, p);
 		}
-		worker = race >= 0 && race < 3 ? WORKERS[race] : KP_TYPE_NONE;
+		worker = race >= 0 && race < 3 ? WORKERS[race] : (int64_t)KP_TYPE_NONE;
 		for (k = 0; k < START_WORKERS; k++) {
 			int64_t n = kp_unit_create(g, worker, start_x(g, p), start_y(g, p), p);
 			if (n != 0) (void)kp_unit_complete(g, n);

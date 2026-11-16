@@ -1739,7 +1739,7 @@ static int started_as_the_lobby(const KpGameSetup *started, const KpGameSetup *l
 		|| started->slots != lobby->slots)
 		return 0;
 	for (p = 0; p < KP_SETUP_SLOTS; p++) {
-		int64_t type = lobby->type[p] == KP_CTRL_LOBBY_COMPUTER ? KP_CTRL_COMPUTER
+		int64_t type = lobby->type[p] == KP_CTRL_LOBBY_COMPUTER ? (int64_t)KP_CTRL_COMPUTER
 			: lobby->type[p] == KP_CTRL_OPEN || lobby->type[p] == KP_CTRL_CLOSED ? 0 : lobby->type[p];
 		if (started->type[p] != type || started->storm[p] != lobby->storm[p] || strcmp(started->name[p], lobby->name[p]) != 0)
 			return 0;

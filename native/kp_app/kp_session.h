@@ -258,12 +258,19 @@ int kp_write_file_atomic(const char *path, const uint8_t *data, size_t size, KpE
 
 /* Two names in kp_list_files' order: the ASCII letters folded, the bytes compared (<0, 0, >0). */
 int kp_compare_nocase(const char *a, const char *b);
-/* The files of dir whose name ends in ext (compared without case), folders and hidden files left out, sorted without
- * case (BuildMapList 0x45ba40's order); NULL with count 0 when the folder cannot be read or memory runs out. */
+/* The files of dir whose name ends in ext (compared without case), folders and hidden files left out (on Windows by
+ * their attribute, as ScanMapDirectory 0x45c9a0; elsewhere those starting with '.'), sorted without case (BuildMapList
+ * 0x45ba40's order); NULL with count 0 when the folder cannot be read or memory runs out. */
 char **kp_list_files(const char *dir, const char *ext, int *count);
-/* The folders of dir, hidden ones and those starting with '.' left out, sorted as kp_list_files' (freed by
- * kp_list_files_free). */
+/* The folders of dir, hidden ones left out (on Windows by their attribute, elsewhere those starting with '.'), sorted
+ * as kp_list_files' (freed by kp_list_files_free). */
 char **kp_list_folders(const char *dir, int *count);
+/* Two names in NTFS's order (its directories' B-tree: the UTF-16 units compared after its upper case), the order the
+ * original's FindFirstFileA enumerates a folder in (<0, 0, >0). */
+int kp_compare_ntfs(const char *a, const char *b);
+/* The .rep files of dir as EnumerateReplayFiles 0x4803d0 finds them: on Windows none hidden or of the system, elsewhere
+ * none starting with '.'; in NTFS's order (kp_compare_ntfs). NULL with count 0 as kp_list_files'. */
+char **kp_list_replays(const char *dir, int *count);
 void kp_list_files_free(char **names, int count);
 
 /* --- the profile: the login's IDs with their campaign progress, the logged-in ID, the saved games, the video options,

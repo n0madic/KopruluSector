@@ -16,6 +16,7 @@
 #include "kp_ids.h"
 #include "kp_sha256.h"
 #include "kp_text.h"
+#include "kp_utf8.h"
 #include "zlib.h"
 
 #include <setjmp.h>
@@ -1229,8 +1230,10 @@ void kp_list_files_free(char **names, int count)
 	free(names);
 }
 
-/* The files of dir ending in ext, or with folders set its folders (ext unused) */
-static char **list_dir(const char *dir, const char *ext, int folders, int *count)
+/* The files of dir ending in ext, or with folders set its folders (ext unused), as FindFirstFileA finds them: on
+ * Windows those with none of the attributes skip (FILE_ATTRIBUTE_*), elsewhere those whose name does not start with
+ * '.' (the file systems' hidden ones); unsorted. */
+static char **list_dir(const char *dir, const char *ext, int folders, unsigned skip, int *count)
 {
 	char **names = NULL;
 	int cap = 0, failed = 0;
@@ -1243,8 +1246,8 @@ static char **list_dir(const char *dir, const char *ext, int folders, int *count
 	if ((h = FindFirstFileA(pattern, &found)) == INVALID_HANDLE_VALUE) return NULL;
 	do {
 		const char *name = found.cFileName;
-		if (found.dwFileAttributes & FILE_ATTRIBUTE_HIDDEN) continue;
-		if (name[0] == '.' || !(found.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != !folders) continue;
+		if ((found.dwFileAttributes & skip) || strcmp(name, ".") == 0 || strcmp(name, "..") == 0) continue;
+		if (!(found.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != !folders) continue;
 #else
 	DIR *d = opendir(dir);
 	struct dirent *e;
@@ -1254,6 +1257,7 @@ static char **list_dir(const char *dir, const char *ext, int folders, int *count
 		const char *name = e->d_name;
 		char path[1100];
 		struct stat st;
+		(void)skip;
 		if (name[0] == '.') continue; /* hidden, as ScanMapDirectory 0x45c9a0 skips the hidden files */
 		snprintf(path, sizeof path, "%s/%s", dir, name);
 		if (stat(path, &st) != 0 || !S_ISDIR(st.st_mode) != !folders) continue;
@@ -1285,13 +1289,105 @@ static char **list_dir(const char *dir, const char *ext, int folders, int *count
 		*count = 0;
 		return NULL;
 	}
-	if (*count > 0) qsort(names, (size_t)*count, sizeof *names, compare_names);
 	return names;
 }
 
-char **kp_list_files(const char *dir, const char *ext, int *count) { return list_dir(dir, ext, 0, count); }
+#ifdef _WIN32
+#define HIDDEN_FILES FILE_ATTRIBUTE_HIDDEN
+#define HIDDEN_REPLAYS (FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM)
+#else
+#define HIDDEN_FILES 0u
+#define HIDDEN_REPLAYS 0u
+#endif
 
-char **kp_list_folders(const char *dir, int *count) { return list_dir(dir, NULL, 1, count); }
+/* list_dir's names sorted by compare */
+static char **list_sorted(const char *dir, const char *ext, int folders, unsigned skip,
+	int (*compare)(const void *, const void *), int *count)
+{
+	char **names = list_dir(dir, ext, folders, skip, count);
+	if (*count > 0) qsort(names, (size_t)*count, sizeof *names, compare);
+	return names;
+}
+
+char **kp_list_files(const char *dir, const char *ext, int *count)
+{
+	return list_sorted(dir, ext, 0, HIDDEN_FILES, compare_names, count);
+}
+
+char **kp_list_folders(const char *dir, int *count) { return list_sorted(dir, NULL, 1, HIDDEN_FILES, compare_names, count); }
+
+/* A UTF-16 unit in upper case as NTFS's $UpCase table has it, for the scripts of the languages: ASCII, Latin-1,
+ * Latin Extended-A, Greek and Cyrillic; any other unit as it is. */
+static uint32_t upcase_unit(uint32_t c)
+{
+	if (c >= 'a' && c <= 'z') return c - 32;
+	if (c < 0xe0) return c == 0xb5 ? 0x39c : c; /* the micro sign: Greek Mu */
+	if (c <= 0xfe) return c == 0xf7 ? c : c - 32; /* but the division sign */
+	if (c == 0xff) return 0x178;
+	if (c == 0x131) return 'I';
+	if (c == 0x17f) return 'S';
+	if ((c >= 0x100 && c <= 0x137) || (c >= 0x14a && c <= 0x177)) return c & ~1u; /* pairs from an even capital */
+	if ((c >= 0x139 && c <= 0x148) || (c >= 0x179 && c <= 0x17e)) return c & 1u ? c : c - 1; /* from an odd one */
+	if (c == 0x3c2) return 0x3a3; /* final sigma */
+	if ((c >= 0x3b1 && c <= 0x3c1) || (c >= 0x3c3 && c <= 0x3cb)) return c - 32;
+	if (c == 0x3ac) return 0x386;
+	if (c >= 0x3ad && c <= 0x3af) return c - 37;
+	if (c == 0x3cc) return 0x38c;
+	if (c == 0x3cd || c == 0x3ce) return c - 63;
+	if (c >= 0x430 && c <= 0x44f) return c - 32;
+	if (c >= 0x450 && c <= 0x45f) return c - 80;
+	if (c == 0x4cf) return 0x4c0;
+	if ((c >= 0x460 && c <= 0x481) || (c >= 0x48a && c <= 0x4bf) || (c >= 0x4d0 && c <= 0x52f)) return c & ~1u;
+	if (c >= 0x4c1 && c <= 0x4ce) return c & 1u ? c : c - 1;
+	return c;
+}
+
+/* A name's UTF-16 units, one by one (a character past the Basic Multilingual Plane its two surrogates, a byte that is
+ * no UTF-8 itself). */
+typedef struct {
+	const uint8_t *s;
+	size_t n, at;
+	uint32_t low; /* the second surrogate still to come, or 0 */
+} Units;
+
+static uint32_t next_unit(Units *u)
+{
+	int32_t cp;
+	size_t from = u->at;
+	if (u->low) {
+		cp = (int32_t)u->low;
+		u->low = 0;
+		return (uint32_t)cp;
+	}
+	if (u->at >= u->n) return 0;
+	if ((cp = kp_utf8_next(u->s, u->n, &u->at)) < 0) {
+		u->at = from + 1;
+		return u->s[from];
+	}
+	if (cp < 0x10000) return (uint32_t)cp;
+	u->low = 0xdc00 + ((uint32_t)(cp - 0x10000) & 0x3ff);
+	return 0xd800 + ((uint32_t)(cp - 0x10000) >> 10);
+}
+
+int kp_compare_ntfs(const char *a, const char *b)
+{
+	Units x = { (const uint8_t *)a, strlen(a), 0, 0 }, y = { (const uint8_t *)b, strlen(b), 0, 0 };
+	for (;;) {
+		uint32_t p = upcase_unit(next_unit(&x)), q = upcase_unit(next_unit(&y));
+		if (p != q) return p < q ? -1 : 1;
+		if (p == 0) return 0;
+	}
+}
+
+static int compare_ntfs_names(const void *a, const void *b)
+{
+	return kp_compare_ntfs(*(const char *const *)a, *(const char *const *)b);
+}
+
+char **kp_list_replays(const char *dir, int *count)
+{
+	return list_sorted(dir, ".rep", 0, HIDDEN_REPLAYS, compare_ntfs_names, count);
+}
 
 /* --- the profile --- */
 

@@ -147,6 +147,12 @@ void kp_hud_place_camera(KpHud *h, int64_t *x, int64_t *y)
 	*y = h->start_y;
 }
 
+void kp_hud_shown(KpHud *h)
+{
+	h->has_composed = 0;
+	if (h->canvas) h->canvas->resized = 1; /* the whole canvas changed (the host's texture holds another's) */
+}
+
 void kp_hud_free(KpHud *h)
 {
 	free(h->pad.pixels);

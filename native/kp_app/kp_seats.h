@@ -29,6 +29,10 @@ typedef struct {
 	int64_t checked;                  /* the last frame whose hashes were compared, -1 none */
 	int stopped;                      /* a seat failed or the seats diverged: nothing steps or compares again */
 	char report[KP_SEATS_REPORT];
+	/* a hidden seat's frame after its steps (the flow's: its console without the window), or NULL: its events
+	 * dropped */
+	void (*hidden)(void *ud, int seat, int steps);
+	void *hidden_ud;
 } KpSeats;
 
 /* A lobby's setup (kp_setup_lobby's, not started) for n seats (2..KP_HUB_SEATS): its human (Storm ID 0) and its first
@@ -38,8 +42,9 @@ int kp_seats_setup(KpGameSetup *setup, int n, char *why, size_t why_size);
 /* After the seats' sessions started over the hub (KpSessionStart's hub, seat and Storm ID): every seat sends its first
  * turns and runs its first (kp_hub_begin, kp_session_seat_begin). -1 with the report. */
 int kp_seats_begin(KpSeats *s);
-/* The hidden seats stepped to the shown seat's frame, then, when every seat stands at it, their shared hashes
- * compared: 0, or -1 with the report when a seat failed or the hashes differ (s->stopped). */
+/* The hidden seats stepped to the shown seat's frame and given their frame (s->hidden), then, when every seat stands
+ * at it, their shared hashes compared: 0, or -1 with the report when a seat failed or the hashes differ
+ * (s->stopped). */
 int kp_seats_frame(KpSeats *s);
 /* The report of the first difference between two seats' games (the frame, the walk's sections, kp_dump's categories)
  * into out. */

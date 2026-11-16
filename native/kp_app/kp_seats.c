@@ -60,7 +60,7 @@ int kp_seats_begin(KpSeats *s)
 	return 0;
 }
 
-/* The game's events of a hidden seat dropped (its interface is none). */
+/* The game's events of a hidden seat with no frame of its own dropped. */
 static void drop_events(KpSession *ss)
 {
 	KpEvent e;
@@ -202,23 +202,34 @@ int kp_seats_frame(KpSeats *s)
 {
 	KpSession *shown;
 	int64_t frame;
-	int k, progress;
+	int k, progress, steps[KP_HUB_SEATS];
 	uint64_t want = 0;
 	if (s->stopped || s->count == 0) return s->stopped ? -1 : 0;
 	shown = s->session[s->shown];
 	if (shown->failed) return stop(s, "seats: the shown seat %d stopped: %s", s->shown, shown->error);
 	frame = kp_scalar(shown->g, KP_FRAME);
 	/* each hidden seat to the shown seat's frame; a seat waiting for another's turn steps again once that one did */
+	memset(steps, 0, sizeof steps);
 	do {
 		progress = 0;
 		for (k = 0; k < s->count; k++) {
 			KpSession *ss = s->session[k];
 			if (k == s->shown) continue;
-			while (kp_scalar(ss->g, KP_FRAME) < frame && kp_session_step(ss, NULL)) progress = 1;
+			while (kp_scalar(ss->g, KP_FRAME) < frame && kp_session_step(ss, NULL)) {
+				progress = 1;
+				steps[k]++;
+			}
 			if (ss->failed) return stop(s, "seats: seat %d stopped: %s", k, ss->error);
-			drop_events(ss);
 		}
 	} while (progress);
+	/* each hidden seat's frame, as its own machine runs one each pass of its loop, a step or none */
+	for (k = 0; k < s->count; k++) {
+		KpSession *ss = s->session[k];
+		if (k == s->shown) continue;
+		if (s->hidden) s->hidden(s->hidden_ud, k, steps[k]);
+		else drop_events(ss);
+		if (ss->failed) return stop(s, "seats: seat %d's frame: %s", k, ss->error);
+	}
 	for (k = 0; k < s->count; k++) {
 		if (kp_scalar(s->session[k]->g, KP_FRAME) != frame) return 0; /* the shown seat waits for this one's turn */
 	}

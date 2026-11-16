@@ -177,17 +177,13 @@ static void layout(KpFlow *f)
 	}
 }
 
-void kp_flow_clamp_camera(KpFlow *f)
+/* A view's top-left (*x, *y) kept on map m: with a console, the interface's limits. */
+static void clamp_view(const KpFlow *f, const KpMission *m, int console, int64_t *x, int64_t *y)
 {
-	int64_t max_x, max_y, mw, mh;
-	const KpMission *m;
-	if (!f->world) return;
-	m = kp_session_mission(f->session);
-	mw = m->width;
-	mh = m->height;
+	int64_t max_x, max_y, mw = m->width, mh = m->height;
 	max_x = mw * KP_WORLD_TILE - f->world_w;
 	max_y = mh * KP_WORLD_TILE - f->world_h;
-	if (f->playing && f->hud_on) {
+	if (console) {
 		/* the interface's view limits (InitScreenScroll's (W - 20) * 32 and (H - 12) * 32 + 8 for the original's
 		 * 640 x 400 view, kept for a wider view of the same height), on its 8-pixel grid */
 		int32_t vw, vh;
@@ -201,10 +197,16 @@ void kp_flow_clamp_camera(KpFlow *f)
 	}
 	if (max_x < 0) max_x = 0;
 	if (max_y < 0) max_y = 0;
-	if (f->cam_x > max_x) f->cam_x = max_x;
-	if (f->cam_y > max_y) f->cam_y = max_y;
-	if (f->cam_x < 0) f->cam_x = 0;
-	if (f->cam_y < 0) f->cam_y = 0;
+	if (*x > max_x) *x = max_x;
+	if (*y > max_y) *y = max_y;
+	if (*x < 0) *x = 0;
+	if (*y < 0) *y = 0;
+}
+
+void kp_flow_clamp_camera(KpFlow *f)
+{
+	if (!f->world) return;
+	clamp_view(f, kp_session_mission(f->session), f->playing && f->hud_on, &f->cam_x, &f->cam_y);
 }
 
 /* --- the scene --- */
@@ -331,6 +333,8 @@ static void save_last_replay(KpFlow *f)
 	f->host.sync_files(f->host.ctx);
 }
 
+static void free_seat_views(KpFlow *f);
+
 static void destroy_scene(KpFlow *f)
 {
 	save_last_replay(f);
@@ -345,6 +349,7 @@ static void destroy_scene(KpFlow *f)
 		free(f->session);
 		f->session = NULL;
 	}
+	free_seat_views(f);
 	kp_seats_free(&f->seats); /* the hidden seats' sessions and the turn hub */
 	if (f->ui) f->ui->game = NULL; /* a ready room's game too */
 	f->result = 0;
@@ -430,7 +435,7 @@ static int has_replay_ext(const char *name);
 static int prefix_nocase(const char *s, const char *prefix)
 {
 	size_t n = strlen(prefix);
-	char head[64];
+	char head[ENTRY_PATH];
 	if (strlen(s) < n || n >= sizeof head) return 0;
 	memcpy(head, s, n);
 	head[n] = 0;
@@ -515,6 +520,74 @@ static void custom_close(KpFlow *f)
 	f->has_custom_setup = 0;
 }
 
+/* The last part of a path or a URI after '/', '\\' or ':' (an Android document's "primary:Download/x.rep"). */
+static const char *last_part(const char *s)
+{
+	const char *at = s, *p;
+	for (p = s; *p; p++) {
+		if (*p == '/' || *p == '\\' || *p == ':') at = p + 1;
+	}
+	return at;
+}
+
+static int file_there(const char *path)
+{
+	FILE *fp = fopen(path, "rb");
+	if (!fp) return 0;
+	fclose(fp);
+	return 1;
+}
+
+/* The maps' folders: the user's maps folder, then each data folder's Maps (in the case its file system has), as the
+ * original's user base before the install (ScanMapDirectory 0x45c9a0, ResolveGameFile 0x45cb90). Their count. */
+static int map_roots(const KpFlow *f, char roots[CUSTOM_BASES][ENTRY_PATH])
+{
+	int n = 0, k;
+	pref_path(f, MAP_DIR, roots[n++], ENTRY_PATH);
+	for (k = 0; f->flags && k < f->flags->res_dir_count && n < CUSTOM_BASES; k++) {
+		char **folders;
+		int nf = 0, j;
+		folders = kp_list_folders(f->flags->res_dirs[k], &nf);
+		for (j = 0; j < nf; j++) {
+			if (kp_compare_nocase(folders[j], MAP_DIR) == 0) {
+				snprintf(roots[n++], ENTRY_PATH, "%s/%s", f->flags->res_dirs[k], folders[j]);
+				break;
+			}
+		}
+		kp_list_files_free(folders, nf);
+	}
+	return n;
+}
+
+/* A custom map's saves' name: "maps/" and its path below a folder of map_roots (compared without case), else its
+ * file's name (StripKnownDirectoryFromMapPath 0x49a130 of the install's and the user's bases). */
+static void map_save_name(const KpFlow *f, const char *path, char *out, size_t size)
+{
+	char roots[CUSTOM_BASES][ENTRY_PATH];
+	const char *rest = last_part(path);
+	int n = map_roots(f, roots), k;
+	for (k = 0; k < n; k++) {
+		size_t r = strlen(roots[k]);
+		if (prefix_nocase(path, roots[k]) && (path[r] == '/' || path[r] == '\\') && path[r + 1]) {
+			rest = path + r + 1;
+			break;
+		}
+	}
+	snprintf(out, size, MAP_DIR "/%s", rest);
+}
+
+/* The file of a custom map's saves' name (its part after "maps/") as a load finds it (ResolveGameFile 0x45cb90): in
+ * the first folder of map_roots that has it, else in the last one (the original keeps the install's path). */
+static void map_saved_path(const KpFlow *f, const char *rest, char *out, size_t size)
+{
+	char roots[CUSTOM_BASES][ENTRY_PATH];
+	int n = map_roots(f, roots), k;
+	for (k = 0; k < n; k++) {
+		snprintf(out, size, "%s/%s", roots[k], rest);
+		if (file_there(out)) return;
+	}
+}
+
 /* The custom map the next game plays (ADR 0024): its scenario (malloc'd, taken also on failure) under name, read for
  * load; its entry's key "maps/<name>" names its saves. 0, or -1 with why. */
 static int custom_from_chk(KpFlow *f, uint8_t *chk, size_t size, const char *name, KpChkLoad load, char *why,
@@ -538,6 +611,7 @@ static int custom_from_chk(KpFlow *f, uint8_t *chk, size_t size, const char *nam
 	snprintf(f->custom_entry.key, sizeof f->custom_entry.key, "maps/%s", name);
 	f->custom_load = load;
 	f->custom_path[0] = 0;
+	snprintf(f->custom_key, sizeof f->custom_key, MAP_DIR "/%s", name);
 	return 0;
 }
 
@@ -578,6 +652,38 @@ static int custom_from_file(KpFlow *f, const char *path, const char *name, KpChk
 	snprintf(f->custom_entry.key, sizeof f->custom_entry.key, "maps/%s", name);
 	f->custom_load = load;
 	snprintf(f->custom_path, sizeof f->custom_path, "%s", path);
+	map_save_name(f, path, f->custom_key, sizeof f->custom_key);
+	return 0;
+}
+
+/* A save's custom map (its MAPC, named mission: "maps/" and its path) as the next game's: the file the name resolves to
+ * (map_saved_path) when its scenario is the save's, for its sounds (OpenMapArchive 0x469de0 of the restored path),
+ * else the save's scenario alone, its path kept for the next scenario (CreateNextScenarioGame 0x4bb360 takes the
+ * restored path's folder). map's scenario is taken. 0, or -1 with why. */
+static int custom_from_save(KpFlow *f, const char *mission, KpSaveMap *map, char *why, size_t why_size)
+{
+	const char *rest = strncmp(mission, MAP_DIR "/", sizeof MAP_DIR) == 0 ? mission + sizeof MAP_DIR : mission;
+	char path[ENTRY_PATH];
+	uint8_t *chk = NULL;
+	size_t size = 0;
+	KpError e;
+	map_saved_path(f, rest, path, sizeof path);
+	if (custom_from_file(f, path, last_part(rest), map->load, why, why_size) == 0
+		&& (chk = kp_data_map_chk(f->custom_map, &size, &e)) != NULL && size == map->chk_size
+		&& memcmp(chk, map->chk, size) == 0) {
+		free(chk);
+		free(map->chk);
+		map->chk = NULL;
+	} else {
+		free(chk);
+		if (custom_from_chk(f, map->chk, map->chk_size, last_part(rest), map->load, why, why_size) != 0) {
+			map->chk = NULL;
+			return -1;
+		}
+		map->chk = NULL;
+		snprintf(f->custom_path, sizeof f->custom_path, "%s", path);
+	}
+	snprintf(f->custom_key, sizeof f->custom_key, "%s", mission);
 	return 0;
 }
 
@@ -644,19 +750,10 @@ static int entry_bases(const KpFlow *f, const KpUiMenus *m, char bases[CUSTOM_BA
 		snprintf(bases[n++], ENTRY_PATH, rest[0] ? "%s/%s" : "%s%s", root, rest);
 		return n;
 	}
-	pref_path(f, MAP_DIR, root, sizeof root);
-	snprintf(bases[n++], ENTRY_PATH, dir[0] ? "%s/%s" : "%s%s", root, dir);
-	for (k = 0; f->flags && k < f->flags->res_dir_count && n < CUSTOM_BASES; k++) {
-		char **folders;
-		int nf = 0, j;
-		folders = kp_list_folders(f->flags->res_dirs[k], &nf);
-		for (j = 0; j < nf; j++) { /* the install's Maps, in the case its file system has */
-			if (kp_compare_nocase(folders[j], MAP_DIR) == 0) {
-				snprintf(bases[n++], ENTRY_PATH, dir[0] ? "%s/%s/%s" : "%s/%s%s", f->flags->res_dirs[k], folders[j], dir);
-				break;
-			}
-		}
-		kp_list_files_free(folders, nf);
+	n = map_roots(f, bases);
+	for (k = 0; dir[0] && k < n; k++) {
+		snprintf(root, sizeof root, "%s", bases[k]);
+		snprintf(bases[k], ENTRY_PATH, "%s/%s", root, dir);
 	}
 	return n;
 }
@@ -884,8 +981,12 @@ static void load_entry(void *host, KpUi *ui, int index)
 	e->humans = h.humans;
 	memcpy(e->user_select, h.user_select, sizeof e->user_select);
 	e->first_human = h.first_human;
-	/* TODO: the map class of a signed condition file (OpenMapArchive 0x469de0's probe 0x469560): every map is 0, an
-	 * ordinary one, offline no selectable template needs another */
+	/* TODO: the map's class. OpenMapArchive 0x469de0 keeps the class of a condition file the archive holds
+	 * (ProbeConditionFile 0x469650 over the table 0x4f1020: Ladder_*.cnd, Tourn_1.cnd, ...) only when VerifyMapSignature
+	 * 0x46b0d0 finds the map signed (SHA-1 under RSA-2048 with e = 65537 and Blizzard's modulus, 0x4eec90 in the 1.17
+	 * executable). Only the Ladder, Tournament and Server templates read it (ValidateGameTemplate 0x45b700), and none is
+	 * offered offline (FillGameTypeList 0x456910), so every map is 0, an ordinary one, until a network lobby offers
+	 * them; the modulus would then be read from the player's install, never committed. */
 	e->map_class = 0;
 	e->status = 0;
 }
@@ -1030,16 +1131,6 @@ static int hex_digit(char c)
 	return -1;
 }
 
-/* The last part of a path or a URI after '/', '\\' or ':' (an Android document's "primary:Download/x.rep"). */
-static const char *last_part(const char *s)
-{
-	const char *at = s, *p;
-	for (p = s; *p; p++) {
-		if (*p == '/' || *p == '\\' || *p == ':') at = p + 1;
-	}
-	return at;
-}
-
 /* The name a stem, a copy's number and ext give, the stem cut at a character's start until the whole name fits out and
  * its legacy form is below the original's 32 bytes (the legacy form leaves out what windows-1252 lacks, so a long stem
  * of such characters is short there alone). */
@@ -1107,14 +1198,6 @@ void kp_flow_replay_import_name(const char *source, char *out, size_t size)
 	char stem[KP_UI_MAP_FILE];
 	(void)import_stem(source, REPLAY_EXTS, 1, IMPORT_REPLAY_DEFAULT, stem, sizeof stem);
 	import_candidate(stem, 1, REPLAY_EXT, out, size);
-}
-
-static int file_there(const char *path)
-{
-	FILE *fp = fopen(path, "rb");
-	if (!fp) return 0;
-	fclose(fp);
-	return 1;
 }
 
 /* The folder an import copies into, made level by level below the preferences' folder: the listed folder's user base
@@ -1298,7 +1381,7 @@ static int replay_path(const KpFlow *f, const char *name, char *path, size_t siz
 
 static void list_replays(void *host, KpUi *ui)
 {
-	/* EnumerateReplayFiles 0x4803d0: the folder made, its .rep files (kp_list_files' order, not the file system's) */
+	/* EnumerateReplayFiles 0x4803d0: the folder made, its .rep files in NTFS's order (kp_list_replays) */
 	KpFlow *f = (KpFlow *)host;
 	char dir[ENTRY_PATH];
 	char **names;
@@ -1308,7 +1391,7 @@ static void list_replays(void *host, KpUi *ui)
 		say(f, "save replay: cannot create %s: %s", dir, strerror(errno));
 		return;
 	}
-	names = kp_list_files(dir, REPLAY_EXT, &count);
+	names = kp_list_replays(dir, &count);
 	for (k = 0; k < count; k++) kp_ui_replay_listed(ui, names[k]);
 	kp_list_files_free(names, count);
 }
@@ -1434,46 +1517,79 @@ static KpUi *new_interface(KpFlow *f, char *why, size_t why_size)
 	return kp_interface_new_data(&f->data->ui, &f->locale, why, why_size);
 }
 
-static int start_hud(KpFlow *f, int from_save, char *err, size_t err_size)
+/* The logical screen a game gets on this window (a game may narrow where a glue screen keeps 640 x 480). */
+static void console_screen(const KpFlow *f, int32_t *w, int32_t *h)
 {
-	KpHudMap m;
-	int32_t min_w, min_h, w, h;
+	int32_t min_w, min_h;
 	double scale;
 	int mode;
+	kp_layout_minimum(f->safe_w, f->safe_h, 0, &min_w, &min_h);
+	kp_layout_screen(f->safe_w, f->safe_h, f->flags->scale_mode, 0, min_w, min_h, &mode, &scale, w, h);
+}
+
+/* A game's own interface (without the glue each game's console has one): the console's art, the host's calls, the
+ * options. */
+static KpUi *game_interface(KpFlow *f, char *err, size_t err_size)
+{
+	char why[256];
+	KpUi *ui = new_interface(f, why, sizeof why);
+	if (!ui) {
+		snprintf(err, err_size, "%s", why);
+		return NULL;
+	}
+	console_art(f, ui);
+	interface_host(f, ui);
+	kp_flow_video_to_ui(f, ui);
+	options_to_ui(f, ui);
+	return ui;
+}
+
+/* The console of game g over ui, on the shared canvas (the glue's) or its own, with the in-game save dialogs' list. */
+static int console_init(KpFlow *f, KpHud *hud, KpUi *ui, KpCanvas *shared, KpGame *g, int from_save, char *err,
+	size_t err_size)
+{
+	KpHudMap m;
+	int32_t w, h;
 	memset(&m, 0, sizeof m);
 	f->host.hud_map(f->host.ctx, &m);
-	m.player_colors = f->session->g->setup.color; /* the game's colours (0x5264fc) */
-	/* the logical screen a game gets on this window (a game may narrow where a glue screen keeps 640 x 480) */
-	kp_layout_minimum(f->safe_w, f->safe_h, 0, &min_w, &min_h);
-	kp_layout_screen(f->safe_w, f->safe_h, f->flags->scale_mode, 0, min_w, min_h, &mode, &scale, &w, &h);
+	m.player_colors = g->setup.color; /* the game's colours (0x5264fc) */
+	console_screen(f, &w, &h);
+	if (kp_hud_init(hud, ui, shared, g, &m, now_ms(f), w, h, from_save) != 0) {
+		snprintf(err, err_size, "the console: %s", ui->error);
+		kp_hud_free(hud); /* its own canvas */
+		return -1;
+	}
+	kp_glue_saves(ui, f->profile);
+	return 0;
+}
+
+static int seat_consoles(KpFlow *f, int from_save, char *err, size_t err_size);
+
+static int start_hud(KpFlow *f, int from_save, char *err, size_t err_size)
+{
 	if (!f->glue_on) { /* without the glue each game's console has an interface of its own */
-		char why[256];
-		KpUi *ui = new_interface(f, why, sizeof why);
-		if (!ui) {
-			snprintf(err, err_size, "%s", why);
-			return -1;
-		}
-		console_art(f, ui);
+		KpUi *ui = game_interface(f, err, err_size);
+		if (!ui) return -1;
 		f->host.interface(f->host.ctx, ui);
 		if (f->ui) sounds(f); /* the old interface's last commands (its music's stop at the game's end) before it goes */
 		kp_ui_free(f->ui);
 		f->ui = ui;
-		interface_host(f, ui);
-		kp_flow_video_to_ui(f, ui);
-		options_to_ui(f, ui);
 	}
-	if (kp_hud_init(&f->hud, f->ui, f->glue_on ? &f->glue.canvas : NULL, f->session->g, &m, now_ms(f), w, h, from_save)
+	if (console_init(f, &f->hud, f->ui, f->glue_on ? &f->glue.canvas : NULL, f->session->g, from_save, err, err_size)
 		!= 0) {
-		snprintf(err, err_size, "the console: %s", f->ui->error);
-		kp_hud_free(&f->hud); /* its own canvas */
 		return -1;
 	}
 	f->hud_on = 1;
 	/* the game's palette from its console's first frame (a glue screen's stays until then) */
 	if (f->has_screen_palette) f->host.palette(f->host.ctx, kp_palette_rgb(&f->screen_palette));
-	kp_glue_saves(f->ui, f->profile); /* the in-game save dialogs' list */
 	f->game_started_at = now(f);
-	return 0;
+	return f->seats.count ? seat_consoles(f, from_save, err, err_size) : 0;
+}
+
+/* The name a game's saves carry (their native save's mission): a custom map's, else the mission's key. */
+static const char *save_name(const KpFlow *f, const KpDataMission *entry)
+{
+	return entry == &f->custom_entry ? f->custom_key : entry->key;
 }
 
 /* The session of a mission (ADR 0018): its mission built from its files (kp_data_mission: a campaign mission's
@@ -1510,7 +1626,7 @@ static KpSession *new_session(KpFlow *f, const KpDataMission *entry, char *err, 
 		snprintf(err, err_size, "out of memory");
 		return NULL;
 	}
-	if (kp_session_load_from(s, &f->data->shared, &f->data->dat, &m, entry->key, files) != 0) {
+	if (kp_session_load_from(s, &f->data->shared, &f->data->dat, &m, save_name(f, entry), files) != 0) {
 		snprintf(err, err_size, "play %s: %s", entry->name, s->error);
 		kp_session_free(s);
 		free(s);
@@ -1568,6 +1684,99 @@ static int seats_start(KpFlow *f, const KpDataMission *entry, const KpSessionSta
 	}
 	say(f, "seats: %d seats, %d frames a turn", s->count, s->hub->frames_per_turn);
 	return 0;
+}
+
+/* Each draw refreshes the remembered terrain in its view at (cam_x, cam_y) (RefreshRememberedTerrainOnscreen
+ * 0x40b220). */
+static void view_terrain(const KpFlow *f, KpGame *g, int64_t cam_x, int64_t cam_y)
+{
+	int64_t x0 = cam_x / KP_WORLD_TILE, y0 = cam_y / KP_WORLD_TILE;
+	kp_refresh_terrain_onscreen(g, x0, y0, (cam_x + f->world_w + KP_WORLD_TILE - 1) / KP_WORLD_TILE - x0,
+		(cam_y + f->world_h + KP_WORLD_TILE - 1) / KP_WORLD_TILE - y0);
+}
+
+typedef struct {
+	KpFlow *f;
+	int seat, steps, moved, released;
+} SeatFrame;
+
+/* A hidden seat's frame under its game's failure handler: the pass of the game loop its own machine runs, without the
+ * window. The remembered terrain in its view, its events to its console (its saves, loads and result are not the
+ * flow's: the profile's saves and the game's end are the shown seat's), its images' bounds (RefreshAllSpriteBounds
+ * 0x415700), its console's frame with no pointer (UpdateGameUi 0x445020, the canvas composed but not shown). */
+static void seat_frame_call(void *ud)
+{
+	SeatFrame *s = (SeatFrame *)ud;
+	KpFlow *f = s->f;
+	KpGame *g = f->seats.session[s->seat]->g;
+	KpEvent e;
+	view_terrain(f, g, f->seat_views[s->seat].cam_x, f->seat_views[s->seat].cam_y);
+	while (kp_event_take(g, &e)) kp_hud_event(&f->seat_views[s->seat].hud, &e);
+	if (s->steps > 0) kp_images_refresh_bounds(g->w);
+	kp_hud_frame(&f->seat_views[s->seat].hud, f->world_w, f->world_h, now_ms(f), s->steps, KP_HUD_POINTER_NONE, 0, 0,
+		&f->seat_views[s->seat].cam_x, &f->seat_views[s->seat].cam_y, &s->moved, &s->released);
+}
+
+/* kp_seats_frame's frame of hidden seat after its steps; a failure stops the seats. */
+static void seat_frame(void *ud, int seat, int steps)
+{
+	KpFlow *f = (KpFlow *)ud;
+	KpSession *ss = f->seats.session[seat];
+	KpUiSoundCommand c[KP_UI_SOUND_COMMANDS];
+	SeatFrame s;
+	if (!f->seat_views[seat].hud_on) { /* no console yet (the game's start waits for it): nothing to tell */
+		KpEvent e;
+		while (kp_event_take(ss->g, &e)) {
+		}
+		return;
+	}
+	memset(&s, 0, sizeof s);
+	s.f = f;
+	s.seat = seat;
+	s.steps = steps;
+	if (kp_session_guard(ss, seat_frame_call, &s) != 0) return;
+	if (s.moved) clamp_view(f, kp_session_mission(ss), 1, &f->seat_views[seat].cam_x, &f->seat_views[seat].cam_y);
+	if (s.released) kp_session_release_wait(ss);
+	kp_hud_take_commands(f->seat_views[seat].ui, ss);
+	while (kp_ui_take_sound_commands(f->seat_views[seat].ui, c, KP_UI_SOUND_COMMANDS) != 0) {
+	} /* a hidden seat is not heard */
+}
+
+/* The hidden seats' interfaces and consoles, each its own as each machine of a network game has its own: started with
+ * the shown seat's, at their start locations' views. */
+static int seat_consoles(KpFlow *f, int from_save, char *err, size_t err_size)
+{
+	int k;
+	for (k = 0; k < f->seats.count; k++) {
+		if (k == f->seats.shown || f->seat_views[k].ui) continue;
+		f->seat_views[k].ui = game_interface(f, err, err_size);
+		if (!f->seat_views[k].ui) return -1;
+		if (console_init(f, &f->seat_views[k].hud, f->seat_views[k].ui, NULL, f->seats.session[k]->g, from_save, err,
+			err_size) != 0) {
+			return -1;
+		}
+		f->seat_views[k].hud_on = 1;
+	}
+	f->seats.hidden = seat_frame;
+	f->seats.hidden_ud = f;
+	return 0;
+}
+
+/* The hidden seats' consoles ended as the game ends (EndGame 0x443db0), while their games still stand. */
+static void free_seat_views(KpFlow *f)
+{
+	int k;
+	for (k = 0; k < KP_HUB_SEATS; k++) {
+		KpSession *ss = f->seats.session[k];
+		if (f->seat_views[k].hud_on) {
+			if (ss && ss->g && kp_session_guard(ss, end_game, f->seat_views[k].ui) != 0) {
+				say(f, "seats: seat %d's console end failed: %s", k, ss->error);
+			}
+			kp_hud_free(&f->seat_views[k].hud);
+		}
+		kp_ui_free(f->seat_views[k].ui);
+		memset(&f->seat_views[k], 0, sizeof f->seat_views[k]);
+	}
 }
 
 /* After the shown seat's steps: the others to its frame and the shared hashes compared; a difference stops the game. */
@@ -1834,14 +2043,13 @@ static int start_saved_game(KpFlow *f, const char *name, int other_only, char *w
 		snprintf(why, why_size, "%s", err.msg);
 		return -1;
 	}
-	if (other_only && current_entry(f) && strcmp(current_entry(f)->key, mission) == 0) {
+	if (other_only && current_entry(f) && strcmp(save_name(f, current_entry(f)), mission) == 0) {
 		free(map.chk);
 		snprintf(why, why_size, "the save is this mission's");
 		return -1;
 	}
 	if (rc == 1) { /* a custom map's game: its map from the save, started as it started, the save loaded then */
-		const char *map_name = strncmp(mission, "maps/", 5) == 0 ? mission + 5 : mission;
-		if (custom_from_chk(f, map.chk, map.chk_size, map_name, map.load, why, why_size) != 0) return -1;
+		if (custom_from_save(f, mission, &map, why, why_size) != 0) return -1;
 		f->has_custom_setup = 1;
 		f->custom_setup = map.setup;
 		snprintf(f->load_on_start, sizeof f->load_on_start, "%s", name);
@@ -1964,6 +2172,8 @@ int kp_flow_show_seat(KpFlow *f, int seat, char *why, size_t why_size)
 {
 	KpSeats *s = &f->seats;
 	KpSession *old = f->session;
+	KpHud hud;
+	KpUi *ui;
 	int64_t x, y;
 	if (!s->count) {
 		snprintf(why, why_size, "no seats (--seats)");
@@ -1978,23 +2188,42 @@ int kp_flow_show_seat(KpFlow *f, int seat, char *why, size_t why_size)
 		return -1;
 	}
 	if (seat == s->shown) return 0;
+	if (!f->seat_views[seat].hud_on) {
+		snprintf(why, why_size, "seat %d has no console", seat);
+		return -1;
+	}
 	kp_hud_take_commands(f->ui, old); /* the seat's commands its interface still holds */
-	end_hud(f);
+	sounds(f);                        /* and its last sounds */
 	f->host.world_free(f->host.ctx);
 	f->world = 0;
+	/* each seat keeps its interface, console and view: the one hidden goes on with them (seat_frame) */
+	ui = f->seat_views[seat].ui;
+	hud = f->seat_views[seat].hud;
+	x = f->seat_views[seat].cam_x;
+	y = f->seat_views[seat].cam_y;
+	f->seat_views[s->shown].ui = f->ui;
+	f->seat_views[s->shown].hud = f->hud;
+	f->seat_views[s->shown].hud_on = 1;
+	f->seat_views[s->shown].cam_x = f->cam_x;
+	f->seat_views[s->shown].cam_y = f->cam_y;
+	memset(&f->seat_views[seat], 0, sizeof f->seat_views[seat]);
+	f->ui = ui;
+	f->hud = hud;
+	f->cam_x = x;
+	f->cam_y = y;
 	s->shown = seat;
 	f->session = s->session[seat];
 	f->loads = f->session->loads;
 	/* its clock from now, paused as the seat's before was (a hidden seat's stepped without it) */
 	kp_session_resume(f->session);
 	if (old->clock.paused) kp_session_pause(f->session);
+	f->host.interface(f->host.ctx, ui);
+	kp_flow_video_to_ui(f, ui); /* the options as they are now (a hidden console's dialogs changed none) */
+	options_to_ui(f, ui);
+	kp_hud_shown(&f->hud);
 	layout(f);
 	if (f->host.world_build(f->host.ctx, why, why_size) != 0) return -1;
 	f->world = 1;
-	if (start_hud(f, 1, why, why_size) != 0) return -1;
-	x = kp_scalar(f->session->g, KP_SCREEN_X);
-	y = kp_scalar(f->session->g, KP_SCREEN_Y);
-	kp_hud_place_camera(&f->hud, &x, &y);
 	say(f, "seats: seat %d shown", seat);
 	return 0;
 }
@@ -2121,9 +2350,12 @@ static void start_glue_game(KpFlow *f, int64_t key, int state)
 	kp_glue_menus(&f->glue, KP_GLUE_MAIN);
 }
 
+/* A game's end: its scene, and a custom map's archive closed as EndGame 0x443db0 closes it (CloseMapArchive
+ * 0x469440; the file is free again, which Windows needs to replace it). */
 static void leave_game(KpFlow *f)
 {
 	destroy_scene(f);
+	custom_close(f);
 	f->playing = 0;
 	f->playing_replay = 0;
 }
@@ -2147,9 +2379,9 @@ static void continue_with_next(KpFlow *f)
 /* A custom game's end (CreateNextScenarioGame 0x4bb360): without a next scenario the campaign menu (22 with the
  * expansion, else 6); otherwise <the map's folder>/<the next scenario> created with the Use Map Settings template
  * (LoadUseMapSettingsTemplate 0x447b90, CreateGameFromMapPath 0x45c510: the map's races as they are) from the ready
- * room of the player's race. A failure (no folder: a replay's or a save's map; a name that is no file of the folder,
- * Koprulu's: the original appends any name; a map that does not load or has no open slot; a race of none) reports
- * network.tbl's 0x6a and opens the campaign menu. */
+ * room of the player's race (a loaded save's folder is its map's as the load resolved it: custom_from_save). A failure
+ * (no folder: a replay's map; a name that is no file of the folder, Koprulu's: the original appends any name; a map
+ * that does not load or has no open slot; a race of none) reports network.tbl's 0x6a and opens the campaign menu. */
 static void custom_next(KpFlow *f)
 {
 	char path[ENTRY_PATH], why[KP_ERROR_SIZE];
@@ -2161,8 +2393,6 @@ static void custom_next(KpFlow *f)
 		return;
 	}
 	why[0] = 0;
-	/* TODO: a loaded save's game has no map folder (custom_path ""), so its next scenario fails with 0x6a; how the
-	 * original finds the folder after a load (0x5264c3's restore) is not traced */
 	if (slash == NULL
 		|| snprintf(path, sizeof path, "%.*s/%s", (int)(slash - f->custom_path), f->custom_path, f->custom_next)
 			>= (int)sizeof path) {
@@ -2661,12 +2891,7 @@ static void game_frame(KpFlow *f)
 			if (ticks < 1) ticks = 1;
 		}
 	}
-	/* each draw refreshes the remembered terrain in view (RefreshRememberedTerrainOnscreen 0x40b220) */
-	{
-		int64_t x0 = f->cam_x / KP_WORLD_TILE, y0 = f->cam_y / KP_WORLD_TILE;
-		kp_refresh_terrain_onscreen(s->g, x0, y0, (f->cam_x + f->world_w + KP_WORLD_TILE - 1) / KP_WORLD_TILE - x0,
-			(f->cam_y + f->world_h + KP_WORLD_TILE - 1) / KP_WORLD_TILE - y0);
-	}
+	view_terrain(f, s->g, f->cam_x, f->cam_y);
 	game_events(f);
 	/* a game's draw refreshes the bounds of its images, as the original's redraw does (RefreshAllSpriteBounds
 	 * 0x415700): the steps move the sprites, not their bounds, and the draw list reads the bounds */

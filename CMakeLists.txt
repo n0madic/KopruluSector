@@ -371,3 +371,22 @@ if(KP_APP)
 		target_link_libraries(koprulu PRIVATE GL)
 	endif()
 endif()
+
+# Windows: every executable's manifest sets the UTF-8 code page (native/windows/utf8.manifest; Windows 10 1903 and
+# later), so the C library's paths and the A functions take the UTF-8 names the core, SDL and the profile keep: a
+# replay, a save or a map named outside ASCII, a profile folder under a user name outside it. mingw links no manifest
+# of its own; MSVC's linker writes one, so its builds leave this out.
+if(WIN32 AND NOT MSVC)
+	enable_language(RC)
+	set(KP_WINDOWS_MANIFEST ${CMAKE_CURRENT_SOURCE_DIR}/native/windows/utf8.manifest)
+	set(KP_WINDOWS_MANIFEST_RC ${CMAKE_CURRENT_BINARY_DIR}/utf8.rc)
+	file(WRITE ${KP_WINDOWS_MANIFEST_RC} "1 24 \"${KP_WINDOWS_MANIFEST}\"\n") # CREATEPROCESS_MANIFEST_RESOURCE_ID, RT_MANIFEST
+	set_source_files_properties(${KP_WINDOWS_MANIFEST_RC} PROPERTIES OBJECT_DEPENDS ${KP_WINDOWS_MANIFEST})
+	get_property(KP_TARGETS DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+	foreach(target ${KP_TARGETS})
+		get_target_property(type ${target} TYPE)
+		if(type STREQUAL "EXECUTABLE")
+			target_sources(${target} PRIVATE ${KP_WINDOWS_MANIFEST_RC})
+		endif()
+	endforeach()
+endif()

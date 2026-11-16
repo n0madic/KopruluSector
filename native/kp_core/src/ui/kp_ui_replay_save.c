@@ -371,5 +371,10 @@ int32_t kp_ui_replay_save_open(KpUi *ui, int race, int victory)
 	memset(&ui->replay_save.tile_file, 0, sizeof ui->replay_save.tile_file);
 	ui->replay_save.tile_file.data = ui->replay_save.tile;
 	ui->replay_save.tile_file.size = n;
+	if (tile != NULL) { /* drawn as the file it was made from: the HD interface's art of dlgs\tile.grp (Remastered has
+	                     * no race frames) */
+		ui->replay_save.tile_file.path = tile->path;
+		ui->replay_save.tile_file.path_len = tile->path_len;
+	}
 	return kp_ui_modal(ui, "rez\\savegame.bin", dialog_proc, dialog_done);
 }

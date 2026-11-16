@@ -59,6 +59,53 @@ def _write(path: Path, header: dict, blobs: list[tuple[str, bytes]]) -> None:
             f.write(data)
 
 
+def track_surface(session, st: dict | None = None) -> dict:
+    """UnlockPrimarySurface's lock kept in st["surface"] (pixels, pitch): the 8-bit surface the glue's screens and the
+    console's dialogs are drawn into (the screen bitmap holds the game view only)."""
+    from unicorn import x86_const as X
+    st = {} if st is None else st
+    m = session.m
+
+    def on_unlock():
+        lock = m.reg(X.UC_X86_REG_ECX)
+        st["surface"] = (m.r32(lock + 0xC), m.r32(lock + 8))
+
+    session.hook(UNLOCK_PRIMARY, on_unlock)
+    return st
+
+
+def _pixels(m, st: dict, header: dict) -> tuple[int, int, bytes, bytes]:
+    """The screen's size, indices and palette: the surface's when it was unlocked (its address kept in the header),
+    else the screen bitmap's."""
+    w, h, pixels, palette = render.screen_bitmap(m)
+    if st.get("surface"):
+        ptr, pitch = st["surface"]
+        header["surface"] = [f"{ptr:#x}", pitch]
+        pixels = b"".join(m.read(ptr + y * pitch, w) for y in range(h))
+    return w, h, pixels, palette
+
+
+def _dialogs(m, names) -> list[dict]:
+    found, p = [], m.r32(DIALOG_LIST)
+    while p and len(found) < MAX_DIALOGS:
+        left, top, right, bottom = struct.unpack("<4h", m.read(p + 4, 8))
+        found.append({"ref": names(p) if names else f"{p:#x}", "rect": [left, top, right, bottom],
+                      "flags": m.r32(p + 0x18)})
+        p = m.r32(p)
+    return found
+
+
+def capture_screen(m, st: dict, path: Path, header: dict, names=None) -> None:
+    """The screen now (track_surface's st: the surface the last present drew; between two presents the cursor stays
+    on it, at the header's cursor rectangle, layer 0's), its palette and the open dialogs, as a glue capture: a
+    driver's own moment (custom.py's screen at Ok), not a change of the glue's screen."""
+    w, h, pixels, palette = _pixels(m, st, header)
+    enabled, _, x, y, cw, ch = struct.unpack("<BBhhhh", m.read(LAYER0, 10))
+    header.update(size=[w, h], cursor={"enabled": enabled, "rect": [x, y, cw, ch]}, dialogs=_dialogs(m, names),
+                  mode=m.r16(uilog.GAME_MODE), glue=m.r32(uilog.GLUE_STATE), clock_ms=m.clock_us // 1000)
+    _write(path, header, [("pixels", zlib.compress(pixels, 6)), ("palette", palette)])
+
+
 def install(session, out: Path, frames: tuple[int, ...] = (), glue_ms: int = 0, names=None,
             debug_png: bool = False, modeless: bool | None = None) -> dict:
     """`names(pointer)` gives a dialog's [BIN, index] (the input log's dialog table), else its address is kept;
@@ -72,31 +119,12 @@ def install(session, out: Path, frames: tuple[int, ...] = (), glue_ms: int = 0, 
     offsets = sorted(glue_ms) if isinstance(glue_ms, (tuple, list)) else ((glue_ms,) if glue_ms else ())
     capture_modeless = bool(offsets) if modeless is None else modeless
 
-    def dialogs() -> list[dict]:
-        found, p = [], m.r32(DIALOG_LIST)
-        while p and len(found) < MAX_DIALOGS:
-            left, top, right, bottom = struct.unpack("<4h", m.read(p + 4, 8))
-            flags = m.r32(p + 0x18)
-            found.append({"ref": names(p) if names else f"{p:#x}", "rect": [left, top, right, bottom],
-                          "flags": flags})
-            p = m.r32(p)
-        return found
-
-    def on_unlock():
-        lock = m.reg(X.UC_X86_REG_ECX)
-        st["surface"] = (m.r32(lock + 0xC), m.r32(lock + 8))
-
-
     def capture(path: Path, header: dict, under: bool = False) -> None:
-        w, h, pixels, palette = render.screen_bitmap(m)
+        w, h, pixels, palette = _pixels(m, st, header)
         blobs = [("under", zlib.compress(st["under"], 6))] if under and st.get("under") else []
-        if st.get("surface"):
-            ptr, pitch = st["surface"]
-            header["surface"] = [f"{ptr:#x}", pitch]
-            pixels = b"".join(m.read(ptr + y * pitch, w) for y in range(h))
         enabled, flags, x, y, cw, ch = struct.unpack("<BBhhhh", m.read(LAYER0, 10))
         t_enabled, _, tx, ty, tw, th = struct.unpack("<BBhhhh", m.read(LAYER1, 10))
-        header.update(pixels_at=f"{m.r32(render.SCREEN_BITMAP + 4):#x}", size=[w, h], cursor={"enabled": enabled, "rect": [x, y, cw, ch]}, dialogs=dialogs(),
+        header.update(pixels_at=f"{m.r32(render.SCREEN_BITMAP + 4):#x}", size=[w, h], cursor={"enabled": enabled, "rect": [x, y, cw, ch]}, dialogs=_dialogs(m, names),
                       tooltip={"visible": m.r32(TOOLTIP_VISIBLE), "enabled": t_enabled, "rect": [tx, ty, tw, th]},
                       mode=m.r16(uilog.GAME_MODE), glue=m.r32(uilog.GLUE_STATE), clock_ms=m.clock_us // 1000)
         _write(path, header, [("pixels", zlib.compress(pixels, 6)), ("palette", palette)] + blobs)
@@ -152,9 +180,8 @@ def install(session, out: Path, frames: tuple[int, ...] = (), glue_ms: int = 0, 
     def on_open_modeless():
         st["opened"] += 1
 
-    from unicorn import x86_const as X
     session.hook(OPEN_MODELESS, on_open_modeless)
-    session.hook(UNLOCK_PRIMARY, on_unlock)
+    track_surface(session, st)
     session.hook(COMPOSITE_CALL, on_composite)
     session.hook(PRESENTED, on_presented)
     return st

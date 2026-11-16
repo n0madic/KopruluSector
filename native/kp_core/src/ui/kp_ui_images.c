@@ -189,6 +189,8 @@ static const KpUiFile *file_of(const KpUi *ui, const uint8_t *data)
 	for (k = 0; k < ui->pcx_count; k++) {
 		if (ui->pcx[k].data == data) return &ui->pcx[k];
 	}
+	/* a GRP made from one of the files above, under that file's path (the save-replay dialog's race frame) */
+	if (data != NULL && data == ui->replay_save.tile_file.data && ui->replay_save.tile_file.path) return &ui->replay_save.tile_file;
 	return NULL;
 }
 

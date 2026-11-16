@@ -18,7 +18,8 @@ Written to <out>: `trace.jsonl` (the frame digest of every frame), `setup.json` 
 template 0x67293d..0x67295c,
 the player records 0x6726c8 at StartGame 0x443f40's entry and after the first frame, the single-player custom races
 0x5264c3/0x526546.., each drop-down's items and selection as set), `custom.json` (the screens visited, the presses, the
-result), the oracle's logs (scenario.install_logs: commands.jsonl, ui.jsonl, triggers.jsonl, ai.jsonl, ...) and with
+result), `play_custom.cap` (the screen at Ok, uiscreen.capture_screen: the 640x480 indices with the cursor still
+drawn, its layer-0 rectangle in the header, the palette, the open dialogs), the oracle's logs (scenario.install_logs: commands.jsonl, ui.jsonl, triggers.jsonl, ai.jsonl, ...) and with
 `state_steps` the state dumps of those object steps (state.install) in states/.
 """
 from __future__ import annotations
@@ -29,7 +30,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import game, process, render, vfs
+from . import game, process, render, uiscreen, vfs
 from .inputs import MK_LBUTTON, VK_RETURN, WM_LBUTTONDOWN, WM_LBUTTONUP, Input
 from .session import Session, write_json
 
@@ -196,6 +197,7 @@ def run_custom(out: Path, spec: CustomSpec, frames: int = 2000, max_wall: float 
         s.hook(START_GAME, on_start_game)
         from . import scenario
         logs = scenario.install_logs(s, out)
+        surface = uiscreen.track_surface(s)
         s.start()
         t0 = time.time()
         campaign = 22 if spec.expansion else 6
@@ -259,6 +261,8 @@ def run_custom(out: Path, spec: CustomSpec, frames: int = 2000, max_wall: float 
                                    for i in (CTRL_GAME_TYPE, CTRL_SUBTYPE, *range(20, 36))
                                    if (c := ctl.find(i))}
                 render.save_primary_surface(m, out / "play_custom.png")
+                uiscreen.capture_screen(m, surface, out / "play_custom.cap", {"glue_state": 11},
+                                        names=logs["uilog"]["dialog_ref"])
                 ev("ok")
                 inp.key(ord("O"))
                 if not wait_for(lambda: m.r16(game.GAME_MODE) == 3 or m.r32(game.GLUE_STATE) in (7, 8, 9)
@@ -269,7 +273,10 @@ def run_custom(out: Path, spec: CustomSpec, frames: int = 2000, max_wall: float 
                     wait_for(lambda: m.clock_us - ready_at > 2_000_000, 300)
                     ev("ready_room_start", glue=m.r32(game.GLUE_STATE))
                     inp.key(ord("S"))
-                    if not wait_for(lambda: m.r16(game.GAME_MODE) == 3 and m.r32(game.FRAME_COUNTER) > 0, 900):
+                    def started():
+                        return m.r16(game.GAME_MODE) == 3 and m.r32(game.FRAME_COUNTER) > 0
+                    # A run of --frames 1 stops in the frame hook inside this wait: the game started all the same.
+                    if not wait_for(started, 900) and not started():
                         finished = "the game did not start from the ready room"
             if finished is None:
                 wait_for(lambda: st["last_frame"] >= frames or m.r16(game.GAME_MODE) != 3, max_wall)

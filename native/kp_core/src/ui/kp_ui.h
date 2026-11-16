@@ -1268,7 +1268,8 @@ struct KpUi {
 	struct { uint8_t index; char name[KP_UI_SAVE_NAME]; } save; /* 0x6a5e9e, 0x6a5e80: the save dialog's remembered row and name */
 	/* The save-replay dialog (kp_ui_replay_save.c, RunSaveReplayDialog 0x4809d0): its remembered row and name, the race
 	 * and victory of its frame, the frame's GRP (0x67cc98's glue\pal<r><d|v>\tile.grp, made from dlgs\tile.grp; size 0
-	 * none), the list being filled and the name its Delete asks about (Koprulu's) */
+	 * none; its path dlgs\tile.grp's, whose HD art the HD interface draws), the list being filled and the name its Delete
+	 * asks about (Koprulu's) */
 	struct {
 		uint8_t index;               /* 0x67cf19 */
 		char name[KP_UI_SAVE_NAME];  /* 0x67cf1c */

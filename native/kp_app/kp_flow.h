@@ -200,6 +200,14 @@ typedef struct KpFlow {
 	/* the game */
 	KpSession *session;
 	KpSeats seats;         /* --seats: every seat's session over the turn hub, the shown one's the session's */
+	/* --seats: each hidden seat's interface, console and view, kept while another seat is shown (the shown seat's are
+	 * ui, hud and cam_x/cam_y) */
+	struct {
+		KpUi *ui;
+		KpHud hud;
+		int hud_on;
+		int64_t cam_x, cam_y;
+	} seat_views[KP_HUB_SEATS];
 	int world;             /* the host's world stands */
 	int64_t loads;         /* the session's loads the world has shown */
 	int current;           /* the mission shown, -1 none, KP_FLOW_CUSTOM the custom map's (custom_entry) */
@@ -249,10 +257,12 @@ typedef struct KpFlow {
 	KpChkLoad custom_load;
 	int has_custom_setup;
 	KpGameSetup custom_setup;
-	/* the custom map's file (GetCurrentMapPath 0x46b0b0; "" for a replay's or a save's map) and the next scenario its
-	 * game's triggers named when it ended (0x526526, UTF-8; "" none): a Play Custom game's end goes on to it
-	 * (CreateNextScenarioGame 0x4bb360) */
+	/* the custom map's file (GetCurrentMapPath 0x46b0b0; "" for a replay's map; a save's resolved again, as
+	 * ResolveGameFile 0x45cb90 does, whether or not it is there), its saves' name ("maps/" and the path below the maps'
+	 * folder, StripKnownDirectoryFromMapPath 0x49a130) and the next scenario its game's triggers named when it ended
+	 * (0x526526, UTF-8; "" none): a Play Custom game's end goes on to it (CreateNextScenarioGame 0x4bb360) */
 	char custom_path[KP_FLOW_MAP_PATH];
+	char custom_key[KP_SAVE_NAME];
 	char custom_next[2 * KP_NEXT_SCENARIO];
 	/* the gluCustm screen's list: each entry's folder among the listed folder's bases (entry_bases: the user's, then the
 	 * data folders') */

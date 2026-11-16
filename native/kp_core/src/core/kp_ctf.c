@@ -29,7 +29,7 @@ static void message(KpGame *g, int64_t p, int64_t string, int sound)
 	if (!kp_setup_ctf(&g->setup)) return;
 	if (sound) {
 		/* 0x5264c2 (InitLocalPlayerAndChatTargets 0x443be0): the seat's lobby race, its own record's */
-		race = g->w->replay ? KP_RACE_TERRAN : g->players.race[g->local_record];
+		race = g->w->replay ? (int64_t)KP_RACE_TERRAN : g->players.race[g->local_record];
 		kp_unit_sound(g, SOUND_FLAG + race, 0, KP_SOUND_ON, 0, KP_TALK_NONE, 0, 0);
 	}
 	p = kp_band(p, 0xff);

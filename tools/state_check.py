@@ -200,13 +200,42 @@ def custom_setup(d: Path) -> dict:
 
 
 def custom_lobby(d: Path) -> dict:
-    """The Play Custom screen of a custom game (setup.json's "combos", the driver's choices in order, and "screen",
-    each combo box's items, selection and usability at Ok), a custom golden's "lobby": the lobby that Koprulu's screen
-    builds from the same choices is compared with the original's records (test_flow.play_custom_screens_are_the_originals,
-    stage M4)."""
+    """The Play Custom screen of a custom game (setup.json's "combos", the driver's choices in order, "screen", each
+    combo box's items, selection and usability at Ok, and "capture", the CRCs of the screen at Ok), a custom golden's
+    "lobby": the lobby and the screen that Koprulu's screen builds from the same choices are compared with the
+    original's (test_flow.play_custom_screens_are_the_originals, stage M4)."""
     setup = json.loads((d / "setup.json").read_text())
-    return {"combos": [{k: c[k] for k in ("control", "selected")} for c in setup.get("combos", [])],
-            "screen": setup.get("screen", {})}
+    lobby = {"combos": [{k: c[k] for k in ("control", "selected")} for c in setup.get("combos", [])],
+             "screen": setup.get("screen", {})}
+    capture = d / "play_custom.cap"
+    if capture.is_file():
+        lobby["capture"] = screen_crcs(capture)
+    return lobby
+
+
+CAPTURE_BAND = 16  # a screen capture's rows per band CRC (480 / 16 = 30 bands)
+
+
+def screen_crcs(path: Path) -> dict:
+    """A screen capture's CRC-32 of its 640x480 indices and of each band of CAPTURE_BAND rows (where a screen
+    differs), not the pixels: the captures stay private (custom.py's play_custom.cap, the Play Custom screen at Ok).
+    The cursor's rectangle ("cursor": x, y, w, h, clipped to the screen), which a capture between two presents still
+    has, is 0 in both."""
+    from sc_emulator.uiscreen import ScreenCapture
+    cap = ScreenCapture(path)
+    pixels = bytearray(cap.pixels)
+    out: dict = {"band_rows": CAPTURE_BAND}
+    cursor = cap.header.get("cursor", {})
+    if cursor.get("enabled"):
+        x, y, w, h = cursor["rect"]
+        x0, y0, x1, y1 = max(x, 0), max(y, 0), min(x + w, cap.width), min(y + h, cap.height)
+        for row in range(y0, y1):
+            pixels[row * cap.width + x0:row * cap.width + x1] = bytes(max(x1 - x0, 0))
+        out["cursor"] = [x0, y0, max(x1 - x0, 0), max(y1 - y0, 0)]
+    row = cap.width * CAPTURE_BAND
+    out["crc"] = zlib.crc32(pixels)
+    out["bands"] = [zlib.crc32(pixels[k:k + row]) for k in range(0, len(pixels), row)]
+    return out
 
 
 def public_replay(d: Path) -> Path:

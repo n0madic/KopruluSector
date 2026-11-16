@@ -423,6 +423,10 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
 		return SDL_APP_FAILURE;
 	}
 #if !defined(SDL_PLATFORM_ANDROID) && !defined(SDL_PLATFORM_IOS)
+	/* TODO: SetKoreanImeEnabled 0x43f3f0 turns a Korean system's IME (language ID 0x412 only) on around the text
+	 * dialogs (the save dialogs, Save Replay, chat) and off for play. Desktops keep text input on, since the hotkeys
+	 * come from its text events (kp_hud_text_key, kp_ui_window_char); following the edit focus as the phones do needs
+	 * the hotkeys from key events first. */
 	SDL_StartTextInput(a->window); /* the phones' soft keyboard follows the focused edit control (kp_input_text_sync) */
 #endif
 #ifdef __EMSCRIPTEN__

@@ -109,6 +109,8 @@ The game's icon is StarCraft.exe's (the red Wraith, `RT_GROUP_ICON` 102: 16, 32,
 | Android | an adaptive icon (the art at 66% of a 108 dp foreground over a dark ground) and the legacy icons of the five densities, over the Gradle template's launcher icons (every `mipmap-*` directory reset to the template's first, so a build without the icon after one with it keeps no adaptive icon whose resources are gone) | `tools/native/android_app.sh` (`KOPRULU_ICON`) |
 | iOS | the loose icons 120, 180 (60 pt), 152 (76 pt) and 167 (83.5 pt) pixels, opaque (iOS takes no alpha: the art at 88% on the dark ground, which leaves its wing tips inside the corners the system rounds), named by `CFBundleIcons` | `CMakeLists.txt` (`KP_APP_ICONS`), `native/kp_app/ios/Info.plist.in`, `tools/product.sh ios` |
 
+**Windows file names (2026-11-16).** Every executable that mingw builds carries `native/windows/utf8.manifest` as its manifest resource (`CMakeLists.txt`, an `.rc` written at configure time). The manifest sets the process's code page to UTF-8 (Windows 10 1903 and later; earlier versions ignore it). The core, SDL and the profile keep names in UTF-8, and the C library's paths and the A functions now take them as they are: a replay, a save or a map named outside ASCII, a profile folder under such a user name. MSVC's linker writes a manifest of its own, so its builds would need the setting there. Under Wine the replay list's order test passes with Cyrillic file names.
+
 ## Review fixes
 
 A review of the new runtime found these, each fixed and checked (autotest, compose check, play checks 1–4 on macOS, play check 3 on the web, play check 1 on Linux, the C suites):

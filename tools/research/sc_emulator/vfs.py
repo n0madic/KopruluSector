@@ -160,7 +160,9 @@ class FileSystem:
             return ERROR_ALREADY_EXISTS
         if not self.parent_exists(path):
             return ERROR_PATH_NOT_FOUND
-        self.overlay_dirs.add(self._key(path))
+        k = self._key(path)
+        self.overlay_dirs.add(k)
+        self.dir_names.setdefault(k, norm(path).rsplit("\\", 1)[-1])  # the name as given, as Windows keeps it
         return 0
 
     def delete(self, path: str) -> int:
@@ -222,10 +224,13 @@ class FileSystem:
 
     # -- directory listing
     def listdir(self, pattern_path: str) -> list[tuple[str, bool, int]]:
-        """Entries (name, is_dir, size) matching a FindFirstFile pattern."""
+        """Entries (name, is_dir, size) matching a FindFirstFile pattern. A directory below a drive's root also has
+        "." and "..", first, as NTFS gives them: the original's map list makes its "[Up One Level]" from ".."
+        (AddFolderEntry 0x45b080)."""
         k = self._key(pattern_path)
         directory, pat = k.rsplit("\\", 1)
         pat_l = pat.lower()
+        dots = [(d, True, 0) for d in (".", "..")] if "\\" in directory and self.is_dir(directory) else []
         names: dict[str, tuple[str, bool, int]] = {}
         prefix = directory + "\\"
         for key, p in self.host_files.items():
@@ -238,5 +243,6 @@ class FileSystem:
             if key.startswith(prefix) and "\\" not in key[len(prefix):]:
                 names[key] = (self.overlay_names[key].rsplit("\\", 1)[1], False, len(data))
         out = [v for v in names.values() if fnmatch.fnmatch(v[0].lower(), pat_l.replace("*.*", "*"))]
+        # TODO: NTFS orders by its upper case (kp_compare_ntfs), so '_' and the like sort after the letters there
         out.sort(key=lambda e: e[0].lower())
-        return out
+        return [d for d in dots if fnmatch.fnmatch(d[0], pat_l.replace("*.*", "*"))] + out

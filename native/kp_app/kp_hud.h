@@ -160,6 +160,9 @@ int kp_hud_take_camera(KpUi *ui, int64_t *x, int64_t *y);
  * clamped to the map, aligned to 8 pixels; *x, *y become the placed view): the next frame's camera, as the start
  * location's is a new game's. */
 void kp_hud_place_camera(KpHud *h, int64_t *x, int64_t *y);
+/* A console shown again after another's canvas was on the screen (--seats): its canvas composed again and given whole
+ * to the host at its next frame. */
+void kp_hud_shown(KpHud *h);
 /* The window lost the mouse with a button down: no release comes (OnCaptureChanged 0x43f450). */
 void kp_hud_capture_lost(KpHud *h);
 /* The mouse state's button bits (0x6d315c) after a window event. */

@@ -15,6 +15,7 @@
 #include "kp_gametype.h"
 #include "kp_ids.h"
 #include "kp_mpq.h"
+#include "kp_oracle.h"
 #include "kp_rep.h"
 #include "kp_script_flow.h"
 
@@ -1320,6 +1321,45 @@ static void save_replay_writes_the_replays_folder(KpT *T)
 	kp_t_ok(T, kp_read_file(path, &k) == NULL, "no file");
 }
 
+/* The save-replay dialog's list in the order the original's FindFirstFileA enumerates the folder on NTFS
+ * (EnumerateReplayFiles 0x4803d0, kp_list_replays): the UTF-16 units after NTFS's upper case, so '_' after the letters
+ * and a character past the Basic Multilingual Plane (its surrogates) before U+E000; a name starting with '.' is listed
+ * only on Windows, where hidden is an attribute. */
+static void save_replay_lists_in_the_file_systems_order(KpT *T)
+{
+	static const char *const FILES[] = { "_under", "Zebra", "\xd0\xaf\xd1\x80\xd1\x83\xd1\x81", "apple",
+		"\xd1\x8f\xd0\xb1\xd0\xbb\xd0\xbe\xd0\xba\xd0\xbe", "old game", ".dot", "LastReplay" };
+	static const char *const LISTED[] = {
+#ifdef _WIN32
+		".dot",
+#endif
+		"apple", "old game", "Zebra", "_under", "\xd1\x8f\xd0\xb1\xd0\xbb\xd0\xbe\xd0\xba\xd0\xbe",
+		"\xd0\xaf\xd1\x80\xd1\x83\xd1\x81" };
+	static const uint8_t BYTES[] = "a replay";
+	Host *H = glue_host(T, 0);
+	KpUi *ui = H->f.ui;
+	char dir[400], path[400];
+	int list;
+	size_t k, n = sizeof LISTED / sizeof LISTED[0];
+	kp_t_ok(T, kp_compare_ntfs("_", "a") > 0 && kp_compare_nocase("_", "a") < 0, "NTFS's upper case, not lower");
+	kp_t_ok(T, kp_compare_ntfs("\xf0\x90\x90\x80", "\xee\x80\x80") < 0, "surrogates before U+E000");
+	kp_t_ok(T, kp_compare_ntfs("\xc3\xa9", "\xc3\x89") == 0 && kp_compare_ntfs("\xc3\x9f", "\xc3\x9e") > 0,
+		"Latin-1 folded, but the sharp s");
+	snprintf(dir, sizeof dir, "%sreplays", H->pref);
+	kp_t_ok(T, kp_t_mkdir(dir) == 0, "%s", dir);
+	for (k = 0; k < sizeof FILES / sizeof FILES[0]; k++) {
+		snprintf(path, sizeof path, "%s/%s.rep", dir, FILES[k]);
+		write_bytes(T, path, BYTES, sizeof BYTES);
+	}
+	kp_t_ok(T, kp_ui_replay_save_open(ui, 1, 1) >= 0, "the dialog over the main menu");
+	frames(H, 2);
+	list = kp_ui_find_control(ui, ui->open, 1);
+	kp_t_eq(T, kp_ui_list_count(ui, list), (int)n, "every replay but LastReplay");
+	for (k = 0; k < n && k < (size_t)kp_ui_list_count(ui, list); k++) {
+		kp_t_eq_str(T, (const char *)kp_ui_list_text(ui, list, (int)k), LISTED[k], "row %lu", (unsigned long)k);
+	}
+}
+
 /* Play Custom (glue state 11) against the original's screens (stage M0's custom goldens). Each game is its own
  * process's first in the emulator, so each gets a host of its own. The game's map is copied into the player's maps
  * folder under a name starting with '!', as the emulator's driver did: it sorts before the install's files, so the list
@@ -1413,6 +1453,67 @@ static void combo_pick(Host *H, int32_t c, int k)
 	frame(H);
 	kp_glue_input(&H->f.glue, KP_UI_LEFT_UP, x, ty);
 	frame(H);
+}
+
+/* The screen at Ok, the glue's screen with its popups composited as menus_replay composes it, against the original's
+ * capture there (the golden's lobby.capture: the CRC-32 of the 640 x 480 indices and of each band of rows, the
+ * cursor's rectangle 0 in both; the captures stay private). A golden recorded before the capture has none. */
+static void custom_screen_is_the_originals(KpUi *ui, const KpJson *capture, const char *name, KpBuf *bad)
+{
+	const KpJson *bands = kp_json_get(capture, "bands"), *cursor = kp_json_get(capture, "cursor");
+	const KpUiSurface *s;
+	uint8_t *pixels;
+	int32_t d, bottom = -1, y;
+	int rows = (int)kp_json_field_int(capture, "band_rows", 0), k, n;
+	size_t row, size;
+	if (!capture) return;
+	for (d = ui->open; d >= 0; d = ui->controls[d].next) bottom = d;
+	if (bottom < 0) {
+		kp_buf_printf(bad, "%s: no screen at Ok; ", name);
+		return;
+	}
+	kp_ui_add_dirty_rect(ui, 0, 0, KP_UI_SCREEN_W - 1, KP_UI_SCREEN_H - 1);
+	kp_ui_present(ui);
+	s = &ui->controls[bottom].bitmap;
+	if (!s->pixels || s->w != KP_UI_SCREEN_W || s->h != KP_UI_SCREEN_H || rows <= 0) {
+		kp_buf_printf(bad, "%s: no 640 x 480 screen at Ok; ", name);
+		return;
+	}
+	size = (size_t)s->w * (size_t)s->h;
+	pixels = (uint8_t *)malloc(size);
+	if (!pixels) {
+		kp_buf_printf(bad, "%s: out of memory; ", name);
+		return;
+	}
+	memcpy(pixels, s->pixels, size);
+	if (kp_json_len(cursor) == 4) { /* where the original's cursor was, 0 as in the golden */
+		int32_t cx = (int32_t)kp_json_int(kp_json_at(cursor, 0), 0), cy = (int32_t)kp_json_int(kp_json_at(cursor, 1), 0);
+		int32_t cw = (int32_t)kp_json_int(kp_json_at(cursor, 2), 0), ch = (int32_t)kp_json_int(kp_json_at(cursor, 3), 0);
+		for (y = cy; y < cy + ch && y < s->h; y++) {
+			if (cx >= 0 && cw > 0 && cx + cw <= s->w && y >= 0) memset(pixels + (size_t)y * (size_t)s->w + (size_t)cx, 0, (size_t)cw);
+		}
+	}
+	if (kp_crc32(pixels, size) != (uint32_t)kp_json_field_int(capture, "crc", -1)) {
+		kp_buf_printf(bad, "%s: the screen at Ok differs in rows", name);
+		row = (size_t)s->w * (size_t)rows;
+		n = kp_json_len(bands);
+		for (k = 0; k < n && (size_t)k * row < size; k++) {
+			if (kp_crc32(pixels + (size_t)k * row, row) != (uint32_t)kp_json_int(kp_json_at(bands, k), -1)) {
+				kp_buf_printf(bad, " %d-%d", k * rows, (k + 1) * rows - 1);
+			}
+		}
+		kp_buf_printf(bad, "; ");
+		if (getenv("KP_TEST_CUSTOM_SCREENS")) { /* Koprulu's screen as indices, to compare with the private capture */
+			char path[512];
+			FILE *out;
+			snprintf(path, sizeof path, "%s/%s.idx", getenv("KP_TEST_CUSTOM_SCREENS"), name);
+			if ((out = fopen(path, "wb")) != NULL) {
+				fwrite(pixels, 1, size, out);
+				fclose(out);
+			}
+		}
+	}
+	free(pixels);
 }
 
 /* The screen's list id against the golden's (its items, raw selection, visible and enabled). */
@@ -1520,6 +1621,7 @@ static void play_custom_screens_are_the_originals(KpT *T)
 		}
 		H = logged_in_host(T, CUSTOM_PROFILE);
 		ui = H->f.ui;
+		ui->import_file = NULL; /* Import is Koprulu's: the screen as a platform without a file picker shows it */
 		snprintf(H->flags.res_dirs[0], sizeof H->flags.res_dirs[0], "%s", root);
 		H->flags.res_dir_count = 1;
 		snprintf(path, sizeof path, "%s/%s", root, mission);
@@ -1534,6 +1636,11 @@ static void play_custom_screens_are_the_originals(KpT *T)
 		kp_t_ok(T, kp_write_file_atomic(copy, bytes, size, &err) == 0, "%s", err.msg);
 		free(bytes);
 		to_play_custom(H, expansion);
+		/* custom.py goes through the menus by keys, so its cursor is where the emulator starts it (GetCursorPos: the
+		 * screen's centre) until a drop-down is pressed; this test clicked, and a control under its pointer is lit */
+		kp_glue_input(&H->f.glue, KP_UI_MOUSE_MOVE, H->f.glue.place_x + KP_UI_SCREEN_W / 2,
+			H->f.glue.place_y + KP_UI_SCREEN_H / 2);
+		frame(H);
 		for (j = 0; j < kp_json_len(combos); j++) {
 			const KpJson *pick = kp_json_at(combos, j);
 			int32_t c = open_control(ui, (int)kp_json_field_int(pick, "control", -1));
@@ -1548,6 +1655,7 @@ static void play_custom_screens_are_the_originals(KpT *T)
 		custom_list_is_the_originals(ui, screen, CUSTOM_TYPE_LIST, name, bad);
 		custom_list_is_the_originals(ui, screen, CUSTOM_SUBTYPE_LIST, name, bad);
 		for (id = CUSTOM_FIRST_LIST; id <= CUSTOM_LAST_LIST; id++) custom_list_is_the_originals(ui, screen, id, name, bad);
+		custom_screen_is_the_originals(ui, kp_json_get(lobby, "capture"), name, bad);
 		click(H, CUSTOM_OK);
 		for (j = 0; j < END_FRAMES && !H->f.has_custom_setup; j++) frame(H);
 		custom_lobby_is_the_originals(H, kp_json_get(g, "setup"), name, bad);
@@ -1666,6 +1774,92 @@ static void custom_games_end_in_the_next_scenario_or_the_campaign_menu(KpT *T)
 	for (k = 0; k < END_FRAMES && H->f.glue.screen != KP_GLUE_MENUS; k++) frame(H);
 	in_menus(H, KP_GLUE_CAMPAIGN, "a next scenario out of the folder");
 	kp_t_eq(T, H->f.ui->menus.net_error, NET_NEXT_SCENARIO, "network.tbl's 0x6a deferred (%s)", H->last_log);
+	kp_t_eq(T, H->quits, 0, NULL);
+}
+
+/* A custom game's save names its map as StripKnownDirectoryFromMapPath 0x49a130 does: "maps/" and its path below the
+ * maps' folder. Its load finds the file again (ResolveGameFile 0x45cb90): the file's sounds when its scenario is the
+ * save's, and the game's end goes on to the next scenario of its folder (CreateNextScenarioGame 0x4bb360). A file
+ * changed since: the save's scenario alone, the next scenario still in the folder. */
+#define CUSTOM_SUB "sub/"
+
+/* The menus' load screen's Ok on the save of name (the logged-in ID's list), its game loaded in that frame. */
+static void glue_load(Host *H, const char *name)
+{
+	KpUiMenus *m = &H->f.ui->menus;
+	int k;
+	for (k = 0; k < m->save_count && strcmp(m->saves[k], name) != 0; k++) {}
+	kp_t_ok(H->T, k < m->save_count, "%s listed", name);
+	m->save_choice = k;
+	menus_end(H, KP_UI_MENU_LOAD_SAVE, m->state, 0, 0, 0);
+}
+
+static void custom_saves_find_their_maps_folder(KpT *T)
+{
+	Host *H = logged_in_host(T, "Fenix");
+	const KpDataMission *m = mission_entry(H, PROTOSS01);
+	static const uint8_t extra[8] = { 'X', 'T', 'R', 'A', 0, 0, 0, 0 }; /* a section no reader knows, empty */
+	char path[512], name[KP_SAVE_NAME], why[256];
+	uint8_t *chk, *changed, *bytes;
+	size_t size = 0, n = 0;
+	KpError err;
+	int k;
+	snprintf(path, sizeof path, "%s\\staredit\\scenario.chk", m->directory);
+	kp_t_ok(T, (chk = kp_files_need(&H->data->files, path, &size, &err)) != NULL, "%s", err.msg);
+	snprintf(path, sizeof path, "%smaps", H->pref);
+	kp_t_ok(T, kp_t_mkdir(path) == 0, "%s", path);
+	snprintf(path, sizeof path, "%smaps/" CUSTOM_SUB, H->pref);
+	kp_t_ok(T, kp_t_mkdir(path) == 0, "%s", path);
+	write_custom_map(H, CUSTOM_SUB NEXT_FIRST, chk, size);
+	write_custom_map(H, CUSTOM_SUB NEXT_SECOND, chk, size);
+	snprintf(path, sizeof path, "%smaps/" CUSTOM_SUB NEXT_FIRST, H->pref);
+	kp_t_eq(T, kp_flow_play_map(&H->f, path, TYPE_UMS_TEXT, why, sizeof why), 0, "%s", why);
+	for (k = 0; k < END_FRAMES && !H->f.hud_on; k++) frame(H);
+	kp_t_eq_str(T, H->f.custom_key, "maps/" CUSTOM_SUB NEXT_FIRST, "the saves' name: the path below the maps' folder");
+	save(H, "customsave");
+	save_path(H, "customsave", path, sizeof path);
+	kp_t_ok(T, (bytes = kp_read_file(path, &n)) != NULL, "%s", path);
+	kp_t_eq(T, kp_save_mission(bytes, n, H->f.identity, name, sizeof name, NULL, &err), 0, "%s", err.msg);
+	kp_t_eq_str(T, name, "maps/" CUSTOM_SUB NEXT_FIRST, "the native save's mission");
+	free(bytes);
+	game_event(H, KP_EVENT_GAME_EXIT, EXIT_QUIT_MISSION, NULL);
+	for (k = 0; k < END_FRAMES && H->f.glue.screen != KP_GLUE_MENUS; k++) frame(H);
+	frames(H, 2);
+	glue_load(H, "customsave");
+	kp_t_ok(T, H->f.session != NULL, "the saved game (%s)", H->last_log);
+	if (!H->f.session) return;
+	kp_t_eq(T, H->f.session->loads, 1, "the save loaded (%s)", H->last_log);
+	snprintf(path, sizeof path, "%smaps/" CUSTOM_SUB NEXT_FIRST, H->pref);
+	kp_t_eq_str(T, H->f.custom_path, path, "the file the save's name resolves to");
+	kp_t_ok(T, H->f.custom_map && H->f.custom_map->mpq, "the file's archive: its sounds");
+	custom_win(H, NEXT_SECOND);
+	for (k = 0; k < END_FRAMES && H->f.glue.screen != KP_GLUE_ROOM; k++) frame(H);
+	kp_t_eq(T, H->f.glue.screen, KP_GLUE_ROOM, "the next scenario's ready room after a load (%s)", H->last_log);
+	snprintf(path, sizeof path, "%smaps/" CUSTOM_SUB NEXT_SECOND, H->pref);
+	kp_t_eq_str(T, H->f.custom_path, path, "the next scenario of the loaded map's folder");
+	room_start(H);
+	/* a map changed since its save */
+	save(H, "customchanged");
+	game_event(H, KP_EVENT_GAME_EXIT, EXIT_QUIT_MISSION, NULL);
+	for (k = 0; k < END_FRAMES && H->f.glue.screen != KP_GLUE_MENUS; k++) frame(H);
+	frames(H, 2);
+	kp_t_ok(T, (changed = (uint8_t *)malloc(size + sizeof extra)) != NULL, NULL);
+	memcpy(changed, chk, size);
+	memcpy(changed + size, extra, sizeof extra);
+	write_custom_map(H, CUSTOM_SUB NEXT_SECOND, changed, size + sizeof extra);
+	free(changed);
+	glue_load(H, "customchanged");
+	kp_t_ok(T, H->f.session != NULL, "the saved game (%s)", H->last_log);
+	if (!H->f.session) return;
+	kp_t_eq(T, H->f.session->loads, 1, "the save loaded (%s)", H->last_log);
+	kp_t_ok(T, H->f.custom_map && !H->f.custom_map->mpq, "the save's scenario alone");
+	kp_t_eq_str(T, H->f.custom_path, path, "the file's path all the same");
+	custom_win(H, NEXT_FIRST);
+	for (k = 0; k < END_FRAMES && H->f.glue.screen != KP_GLUE_ROOM; k++) frame(H);
+	kp_t_eq(T, H->f.glue.screen, KP_GLUE_ROOM, "its next scenario's ready room (%s)", H->last_log);
+	snprintf(path, sizeof path, "%smaps/" CUSTOM_SUB NEXT_FIRST, H->pref);
+	kp_t_eq_str(T, H->f.custom_path, path, "in the same folder");
+	free(chk);
 	kp_t_eq(T, H->quits, 0, NULL);
 }
 
@@ -1792,6 +1986,86 @@ static void map_flag_plays_a_custom_map_without_the_glue(KpT *T)
 	kp_t_eq(T, computers, MAP_MELEE_SLOTS - 1, "a computer in each other slot");
 	frames(H, 100);
 	kp_t_ok(T, H->ticks > 0, "the game steps");
+}
+
+/* A seat's main image's bounds (img.x, img.y: the seat's redraw refreshes them). */
+static void unit_bounds(KpGame *g, int64_t unit, int32_t *x, int32_t *y)
+{
+	int32_t i = g->w->spr.main[g->u.sprite[unit]];
+	*x = g->w->img.x[i];
+	*y = g->w->img.y[i];
+}
+
+/* --seats: each hidden seat runs its machine's frame without the window (its console, its view's terrain, its images'
+ * bounds), and a seat shown again has the interface, console and view it had. */
+static void seats_keep_their_consoles(KpT *T)
+{
+	static const uint8_t RIGHT_CLICK[10] = { 0x14, 0x14, 0x05, 0x56, 0x04, 0, 0, 0xe4, 0, 0 }; /* to (1300, 1110) */
+	Host *H = new_host(T);
+	KpMission m;
+	KpError err;
+	KpUi *first, *second;
+	KpGame *g0, *g1;
+	char path[512], why[256], menu[128], name[128];
+	int64_t units[1], cam_x, cam_y;
+	int32_t x0, y0, x1, y1, start_x, start_y;
+	uint16_t ref;
+	uint8_t select[4];
+	if (!kp_oracle_mission(".", "scenarios/burrowed_computer", &m, &err)) kp_t_skip(T, "%s", err.msg);
+	snprintf(path, sizeof path, "%smaps", H->pref);
+	kp_t_ok(T, kp_t_mkdir(path) == 0, "%s", path);
+	write_custom_map(H, "seats.scm", m.blob, m.chk_size);
+	kp_mission_free(&m);
+	snprintf(H->flags.map, sizeof H->flags.map, "%smaps/seats.scm", H->pref);
+	snprintf(H->flags.map_template, sizeof H->flags.map_template, "use map settings");
+	H->flags.seats = 2;
+	init(H);
+	kp_t_ok(T, H->f.playing && H->f.hud_on && H->f.seats.count == 2, "two seats in play (%s)", H->last_log);
+	first = H->f.ui;
+	second = H->f.seat_views[1].ui;
+	kp_t_ok(T, second != NULL && second != first && H->f.seat_views[1].hud_on, "the hidden seat's own console");
+	g0 = H->f.seats.session[0]->g;
+	g1 = H->f.seats.session[1]->g;
+	kp_t_eq(T, kp_t_list_units(g0, KP_LIST_ACTIVE, units, 1), 1, "a unit");
+	unit_bounds(g1, units[0], &start_x, &start_y);
+	/* seat 0's Marine walks away; both seats run the order */
+	ref = kp_ui_unit_ref(g0, units[0]);
+	select[0] = 0x09;
+	select[1] = 1;
+	select[2] = (uint8_t)(ref & 0xff);
+	select[3] = (uint8_t)(ref >> 8);
+	kp_t_eq(T, kp_session_command(H->f.session, select, sizeof select, -1), 0, "the select queued");
+	kp_t_eq(T, kp_session_command(H->f.session, RIGHT_CLICK, sizeof RIGHT_CLICK, -1), 0, "the right click queued");
+	frames(H, 120);
+	kp_t_ok(T, !H->f.seats.stopped && kp_scalar(g1, KP_FRAME) == kp_scalar(g0, KP_FRAME),
+		"the seats at one frame: %s", H->f.seats.report);
+	unit_bounds(g0, units[0], &x0, &y0);
+	unit_bounds(g1, units[0], &x1, &y1);
+	kp_t_ok(T, x0 != start_x || y0 != start_y, "the Marine moved (%d,%d)", (int)x0, (int)y0);
+	kp_t_ok(T, x1 == x0 && y1 == y0, "the hidden seat's redraw refreshed its bounds: (%d,%d), shown (%d,%d)", (int)x1,
+		(int)y1, (int)x0, (int)y0);
+	kp_t_eq(T, second->now, first->now, "the hidden console's frame ran");
+	/* seat 1 shown: its own interface, its game menu open; seat 0 and back keeps it */
+	cam_x = H->f.seat_views[1].cam_x;
+	cam_y = H->f.seat_views[1].cam_y;
+	kp_t_eq(T, kp_flow_show_seat(&H->f, 1, why, sizeof why), 0, "%s", why);
+	kp_t_ok(T, H->f.ui == second && H->f.seat_views[0].ui == first && H->f.seat_views[1].ui == NULL, "the consoles swapped");
+	kp_t_ok(T, H->f.cam_x == cam_x && H->f.cam_y == cam_y, "the seat's view");
+	kp_hud_key(H->f.ui, 1, KP_HUD_VK_F10, 0);
+	kp_hud_key(H->f.ui, 0, KP_HUD_VK_F10, 0);
+	frames(H, SETTLE_FRAMES);
+	snprintf(menu, sizeof menu, "%s", top(H, name, sizeof name));
+	kp_t_eq_str(T, menu, "rez\\gamemenu.bin", "seat 1's game menu");
+	kp_t_eq(T, kp_flow_show_seat(&H->f, 0, why, sizeof why), 0, "%s", why);
+	kp_t_ok(T, H->f.ui == first, "seat 0's interface again");
+	kp_t_ok(T, strcmp(top(H, name, sizeof name), menu) != 0, "without seat 1's menu");
+	frames(H, 10);
+	kp_t_eq(T, kp_flow_show_seat(&H->f, 1, why, sizeof why), 0, "%s", why);
+	kp_t_eq_str(T, top(H, name, sizeof name), menu, "seat 1's menu kept");
+	frames(H, 10);
+	kp_t_ok(T, !H->f.seats.stopped, "no difference: %s", H->f.seats.report);
+	game_event(H, KP_EVENT_GAME_EXIT, EXIT_PROGRAM, NULL);
+	kp_t_eq(T, H->quits, 1, "Exit Program ends the program");
 }
 
 /* The in-game menus' Exit Program ends the program at once, or with exit_to_menu (the web's page) opens the main
@@ -3864,10 +4138,13 @@ static const KpTest TESTS[] = {
 	{ "load_replay_plays_a_custom_maps_replay", load_replay_plays_a_custom_maps_replay, 0 },
 	{ "load_replay_imports_and_exports", load_replay_imports_and_exports, 0 },
 	{ "save_replay_writes_the_replays_folder", save_replay_writes_the_replays_folder, 0 },
+	{ "save_replay_lists_in_the_file_systems_order", save_replay_lists_in_the_file_systems_order, 0 },
 	{ "play_custom_screens_are_the_originals", play_custom_screens_are_the_originals, 0 },
 	{ "custom_games_end_in_the_next_scenario_or_the_campaign_menu", custom_games_end_in_the_next_scenario_or_the_campaign_menu, 0 },
+	{ "custom_saves_find_their_maps_folder", custom_saves_find_their_maps_folder, 0 },
 	{ "play_custom_imports_a_map", play_custom_imports_a_map, 0 },
 	{ "map_flag_plays_a_custom_map_without_the_glue", map_flag_plays_a_custom_map_without_the_glue, 0 },
+	{ "seats_keep_their_consoles", seats_keep_their_consoles, 0 },
 	{ "exit_program_ends_the_program_or_opens_the_main_menu", exit_program_ends_the_program_or_opens_the_main_menu, 0 },
 	{ "glue_exit_ends_the_program_or_opens_the_main_menu", glue_exit_ends_the_program_or_opens_the_main_menu, 0 },
 	{ "languages_match_the_systems_names", languages_match_the_systems_names, 0 },
