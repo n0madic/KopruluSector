@@ -2,9 +2,9 @@
  *
  * The interface recognizes a typed cheat (ProcessCheatText 0x40dee0) and sends the whole new cheat word as command
  * 0x12 (SendCheatCommand 0x473d40); the game runs it at its turn. The word's other bits only persist for their
- * consumers (KP_CHEAT_* in kp_ids.h). A single-player game is never a multiplayer one (0x672664 = 0), so the
- * multiplayer exits of these functions do not apply. */
+ * consumers (KP_CHEAT_* in kp_ids.h). A network game (the multiplayer byte 0x672664) ignores every cheat. */
 #include "kp_game_internal.h"
+#include "kp_gametype.h"
 
 #define CHEAT_MONEY 10000        /* show me the money: minerals and gas */
 #define CHEAT_RESOURCE_GIFT 500  /* whats mine is mine (minerals), breathe deep (gas) */
@@ -66,8 +66,10 @@ static void apply_cheat_flags(KpGame *g, int64_t word)
 }
 
 /* ExecCheat 0x472530: when the game's template allows cheats (AreCheatsEnabled 0x447640, byte 0x67294e; 1 in every
- * campaign game, as the emulator's dumps show), apply the word. */
+ * campaign game, as the emulator's dumps show), apply the word; ApplyCheatFlags 0x40d9d0 does nothing in a network
+ * game. */
 void kp_exec_cheat(KpGame *g, int64_t word)
 {
+	if (!kp_setup_cheats(&g->setup) || g->setup.multiplayer != 0) return;
 	apply_cheat_flags(g, kp_u32v(word));
 }

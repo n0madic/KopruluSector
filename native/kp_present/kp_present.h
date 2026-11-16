@@ -181,6 +181,9 @@ typedef struct {
 	 * mode but the minimap's mode 2, where the viewer's, the allies' and the others' rows are the interface's (the
 	 * kp_ui_team_rows) */
 	uint8_t team_row[KP_LOOKUP_PLAYER_ROWS];
+	/* The tunit row each player row is, plus 1 (the map's colour slots and the game's colours, kp_ui_colour_rows); 0:
+	 * the player's own */
+	uint8_t colour_row[KP_LOOKUP_PLAYER_ROWS];
 } KpLookups;
 
 /* Builds the rows of tileset `tileset` over its palette rgb (768 bytes); -1 with err (a tunit colour inside the
@@ -197,6 +200,9 @@ int32_t kp_lookups_owner_wrapped(const KpLookups *l, int32_t owner, int32_t wrap
 /* Sets the player each number draws as (rows[KP_LOOKUP_PLAYER_ROWS] below KP_LOOKUP_PLAYER_ROWS; NULL: each its own).
  * Returns whether a row changed (the draw list's items must be built again). */
 int kp_lookups_set_player_rows(KpLookups *l, const uint8_t *rows);
+/* Sets the tunit row each player row draws (rows[KP_LOOKUP_PLAYER_ROWS] below KP_LOOKUP_PLAYER_ROWS; NULL: each its
+ * own). Returns whether a row changed. */
+int kp_lookups_set_colour_rows(KpLookups *l, const uint8_t *rows);
 int32_t kp_lookups_remap_code(const KpLookups *l, int32_t index);
 /* The remap/table row of an image by its draw method, parameter, sprite owner and trans50 colour owner (-1: the
  * rows unchanged); warp_frame is the warp texture's global frame for method 12. Returns -1 for

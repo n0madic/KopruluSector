@@ -11,6 +11,7 @@
 #include "kp_data.h"
 #include "kp_hud.h"
 #include "kp_locale.h"
+#include "kp_seats.h"
 #include "kp_session.h"
 
 #ifdef __cplusplus
@@ -19,6 +20,8 @@ extern "C" {
 
 #define KP_APP_SEED 0x12345678u
 #define KP_APP_STEP_CINEMATICS 16 /* the cinematic rows a campaign step passes before its mission or its end */
+#define KP_FLOW_CUSTOM (-2) /* KpFlow.current: the custom map's game */
+#define KP_FLOW_MAP_PATH 1100 /* a map file's path on the host (the listed folder's bases and a name) */
 #define KP_THROTTLE_FPS 60 /* the frames a second of the speed options' Enable CPU throttling */
 /* The original's cinematic numbers (0x508da8) the main menu's View Intro plays: Blizzard's logo, then the Brood War
  * intro (mode 0: 24 when the expansion's data is there, which the product's always is) */
@@ -35,6 +38,9 @@ typedef struct {
 	int res_dir_count;
 	char res_log[512];     /* --res-log PATH: the list of the original files read, written when the program ends */
 	char mission[64];      /* --mission NAME: a game of it at once (no glue) */
+	char map[KP_FLOW_MAP_PATH]; /* --map PATH: a custom map's game at once (no glue; ADR 0024) */
+	char map_template[32]; /* --map-template NAME: its game type, a templates.lst name ("": Melee) */
+	int seats;             /* --seats N: --map's game as a network game of N seats in one process (kp_seats.h), 0 none */
 	int play;              /* the mission in play mode (with the console) */
 	int scale_mode;        /* --scale-mode auto|integer|sharp */
 	int font_mode;         /* --font original|vector|auto (KP_VTEXT_*, KP_VIDEO_AUTO): the vector text of large scales */
@@ -126,12 +132,16 @@ typedef struct {
 	 * are, or nothing names them; 0 not yet, a group of the data names them (with fetch: on their way, the flow asks
 	 * again each frame); -1 they cannot be had (the reason in err); NULL: always there */
 	int (*language_files)(void *ctx, const char *locale, int fetch, char *err, size_t err_size);
-	/* Load Replay's Import and Export (NULL: no file picker on the platform, the buttons stay hidden): a picker for a
-	 * .rep to read, answered later by kp_flow_import_replay (or not at all when it is cancelled); a picker for where a
+	/* Import (Load Replay's and Play Custom's) and Load Replay's Export (NULL: no file picker on the platform, the
+	 * buttons stay hidden): a picker for a file of the kind (KP_FLOW_PICK_*: a .rep, an .scm or .scx) to read, answered
+	 * later by kp_flow_import_replay or kp_flow_import_map (or not at all when it is cancelled); a picker for where a
 	 * replay's bytes go, under its name (the host copies the bytes) */
-	void (*pick_replay)(void *ctx);
+	void (*pick_file)(void *ctx, int kind);
 	void (*export_replay)(void *ctx, const char *name, const uint8_t *bytes, size_t size);
 } KpFlowHost;
+
+/* The kinds of file Import picks: Load Replay's replays, Play Custom's maps. */
+enum { KP_FLOW_PICK_REPLAY = 1, KP_FLOW_PICK_MAP = 2 };
 
 typedef struct KpFlow {
 	KpFlowHost host;
@@ -189,9 +199,10 @@ typedef struct KpFlow {
 	uint8_t glue_rgb[768];
 	/* the game */
 	KpSession *session;
+	KpSeats seats;         /* --seats: every seat's session over the turn hub, the shown one's the session's */
 	int world;             /* the host's world stands */
 	int64_t loads;         /* the session's loads the world has shown */
-	int current;           /* the mission shown, -1 none */
+	int current;           /* the mission shown, -1 none, KP_FLOW_CUSTOM the custom map's (custom_entry) */
 	int waiting;           /* the mission current waits for its files (host.mission_files) before it starts */
 	int playing;
 	int result;            /* the game's result for the interface's result dialog, 0 none */
@@ -230,6 +241,25 @@ typedef struct KpFlow {
 	int replay_saved;
 	KpRep *replay_play;  /* Load Replay's file the next game plays (its bytes freed once the session has them) */
 	int playing_replay;  /* the game is a replay's playback (no campaign, no ready room, no LastReplay) */
+	/* the custom map played when current is KP_FLOW_CUSTOM (ADR 0024): its entry (row 0, no catalog, key "maps/<name>"),
+	 * its map (open while a game plays it: its sounds), the load its scenario is read for and the game's setup (a
+	 * replay's comes from its header) */
+	KpDataMission custom_entry;
+	KpDataMap *custom_map;
+	KpChkLoad custom_load;
+	int has_custom_setup;
+	KpGameSetup custom_setup;
+	/* the custom map's file (GetCurrentMapPath 0x46b0b0; "" for a replay's or a save's map) and the next scenario its
+	 * game's triggers named when it ended (0x526526, UTF-8; "" none): a Play Custom game's end goes on to it
+	 * (CreateNextScenarioGame 0x4bb360) */
+	char custom_path[KP_FLOW_MAP_PATH];
+	char custom_next[2 * KP_NEXT_SCENARIO];
+	/* the gluCustm screen's list: each entry's folder among the listed folder's bases (entry_bases: the user's, then the
+	 * data folders') */
+	uint8_t entry_base[KP_UI_MAP_ENTRIES];
+	/* the game RNG's state when the last game ended (0 before the process's first): a custom game's lobby resolves its
+	 * random races from it (SetLocalRaceAndResolve 0x479c90) */
+	uint32_t rng_state;
 } KpFlow;
 
 /* The flow over its host and data (set in f before): the interface and the video options; --mission's game, or the
@@ -243,6 +273,16 @@ int kp_flow_languages_ready(KpFlow *f);
 void kp_flow_frame(KpFlow *f);
 void kp_flow_free(KpFlow *f);
 int kp_flow_start_mission(KpFlow *f, int index, char *err, size_t err_size);
+/* The custom map's game (custom_map, custom_load, custom_setup set before; ADR 0024): 0, else -1 with err. */
+int kp_flow_start_custom(KpFlow *f, char *err, size_t err_size);
+/* --map's game: the map at path under the template named (templates.lst's, ASCII case folded; NULL or "": Melee), the
+ * player's slot and every other a melee template's map has a computer, all Random, as Play Custom's screen offers them
+ * (RefreshComputerSlots 0x456420, FillRaceList 0x456170); another template's slots as the map has them. Started at once,
+ * without a ready room. 0, else -1 with err. */
+int kp_flow_play_map(KpFlow *f, const char *path, const char *template_name, char *err, size_t err_size);
+/* --seats' seat shown (0 the player's, the others' as kp_seats_setup numbers them): its session's world and a console of
+ * its own, the view on its screen; the seat shown before keeps running without an interface. 0, else -1 with why. */
+int kp_flow_show_seat(KpFlow *f, int seat, char *why, size_t why_size);
 /* A saved game started from its file, as the glue's Load Saved starts it (0, else -1 with why). */
 int kp_flow_load_saved(KpFlow *f, const char *name, char *why, size_t why_size);
 /* Load Replay's Ok on the replays folder's file name (.rep added when it lacks it): its mission played from the file;
@@ -253,6 +293,11 @@ int kp_flow_play_replay(KpFlow *f, const char *name, char *why, size_t why_size)
  * kept or added, " (2)" and on for a name taken) and the list shows it selected; else Load Replay's popup refuses it.
  * The copy's name in out (NULL: not wanted), 0; or -1. */
 int kp_flow_import_replay(KpFlow *f, const char *name, const uint8_t *bytes, size_t size, char *out, size_t out_size);
+/* Play Custom's Import, the host's answer to pick_file's KP_FLOW_PICK_MAP: as kp_flow_import_replay, into the listed
+ * folder's user base (the user's maps folder, made as needed), ".scm" or ".scx" kept, else the screen's (".scx" with
+ * Brood War); the copy is read as the list reads a map (a file that is no map of the screen's is removed again, gluAll
+ * 63 or 60). The copy's name in out (NULL: not wanted), 0; or -1. */
+int kp_flow_import_map(KpFlow *f, const char *name, const uint8_t *bytes, size_t size, char *out, size_t out_size);
 /* A picked file's name as an import names its copy (kp_flow_import_replay without the free name's suffix). */
 void kp_flow_replay_import_name(const char *source, char *out, size_t size);
 void kp_flow_clamp_camera(KpFlow *f);

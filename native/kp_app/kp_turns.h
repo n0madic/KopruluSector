@@ -11,8 +11,11 @@
  * The recorder of a recorded game watches the executed list (kp_turns_record): the commands of the seats a person
  * plays, under their Storm IDs (a game played alone: the local player, ID 0, RecordCommand 0x478340's).
  *
- * TODO: a network game's source (a third kind): its frame can be not ready yet (the step waits, the clock keeps no
- * missed steps), and its seats are the session's players; a viewer is REPLAY over a growing record.
+ *   - SEATS, a seat of a network game (phase M, stage M6, ADR 0025): the turn hub's (kp_hub.h), whose frames run a
+ *     turn every frames per turn, between turns without one, or wait for a seat's turn (the step waits; the clock
+ *     keeps no missed steps); every seat's commands are recorded under its Storm ID.
+ *
+ * TODO: a viewer of a network game is REPLAY over a growing record.
  */
 #ifndef KP_TURNS_H
 #define KP_TURNS_H
@@ -21,6 +24,7 @@
 #include <stdint.h>
 
 #include "kp_game.h"
+#include "kp_hub.h"
 #include "kp_record.h"
 #include "kp_rep.h"
 
@@ -38,10 +42,11 @@ typedef struct {
 	uint8_t bytes[KP_TURNS_COMMAND_BYTES];
 } KpQueuedCommand;
 
-enum { KP_TURNS_LOCAL, KP_TURNS_REPLAY };
+enum { KP_TURNS_LOCAL, KP_TURNS_REPLAY, KP_TURNS_SEATS };
 /* kp_turns_frame's status: the frame's commands; the replay's end, given once at the frame its record passed the
- * header's frame count (the live commands still come); out of memory (no commands). */
-enum { KP_TURNS_READY, KP_TURNS_ENDED, KP_TURNS_NO_MEMORY };
+ * header's frame count (the live commands still come); out of memory (no commands); SEATS: a frame between turns
+ * (no turn, no commands), the seat waits for a turn (the frame does not run). */
+enum { KP_TURNS_READY, KP_TURNS_ENDED, KP_TURNS_NO_MEMORY, KP_TURNS_BETWEEN, KP_TURNS_WAIT };
 
 typedef struct {
 	int kind;
@@ -58,11 +63,16 @@ typedef struct {
 	int64_t feed_player;
 	KpCommand *list; /* owned: the frame's commands kp_turns_frame gave */
 	int list_cap;
+	/* SEATS: the hub (not owned) and the seat */
+	KpTurnHub *hub;
+	int seat;
 } KpTurns;
 
 /* A replay's source: its record loaded (BeginReplayPlayback 0x4789f0), its players' Storm IDs. t must be zeroed (a
  * zeroed KpTurns is a LOCAL source). -1 out of memory, t then LOCAL again. */
 int kp_turns_replay(KpTurns *t, const KpRep *rep);
+/* A network game's seat: its turns the hub's (kept until kp_turns_free; t zeroed). */
+void kp_turns_seats(KpTurns *t, KpTurnHub *hub, int seat);
 /* Once the game started: the local player, whom LOCAL's recording watches (Storm ID 0) and whom the feed's commands
  * run as until a Storm ID names a record. */
 void kp_turns_begin(KpTurns *t, int64_t local_player);
@@ -75,7 +85,8 @@ uint32_t kp_turns_frames(const KpTurns *t);
 
 /* A command of player (0..7) for the next step: 0, or -1 when the queue is full, it is empty or too long, the player is
  * none of the seats, or the playback does not let it through (REPLAY: the keep-alive, restart, pause and resume, the
- * sync, the network's 0x37-0x3b, latency and the replay speed only, ExecuteTurnCommands 0x475d30's replay filter). */
+ * sync, the network's 0x37-0x3b, latency and the replay speed only, ExecuteTurnCommands 0x475d30's replay filter).
+ * SEATS: the seat's command for its outgoing turn, whatever the player (kp_hub_submit). */
 int kp_turns_submit(KpTurns *t, const uint8_t *bytes, size_t size, int64_t player);
 /* The commands of game frame `frame` in *list (owned by t, valid until kp_turns_done; the queued ones point into
  * the queue) and their count: KP_TURNS_READY, KP_TURNS_ENDED or KP_TURNS_NO_MEMORY (*count 0). */

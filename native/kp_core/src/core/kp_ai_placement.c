@@ -698,3 +698,52 @@ void kp_ai_defense_anchors(KpGame *g, int64_t p, int64_t src, int64_t limit)
 		}
 	}
 }
+
+/* ---- a non-campaign town's territory and route cuts (docs/research/native-region-paths.md#route-cuts) ---- */
+
+#define TERRITORY_ANCHOR_CUTS 4
+#define TERRITORY_NEAR_DEPTH 2 /* the depth when no anchor cuts the routes */
+#define TERRITORY_REGIONS 2500 /* the original's visited array: DWORD[2500] on its stack */
+
+/* MarkRegionsWithinDepth 0x4956c0: region r and, depth first, its ground neighbours up to the limit's level are
+ * defended (MarkDefenseRegion 0x4b0030, not strong); a defense anchor is marked but not expanded. */
+static void mark_within(KpGame *g, int64_t p, int64_t r, int64_t level, uint8_t *visited, int64_t limit)
+{
+	const KpRegionGraph *rg = &g->pathing.rg;
+	int64_t j, k, at, n;
+	if (r == 0 || visited[r] != 0 || kp_u32v(level) > kp_u32v(limit)) return;
+	kp_ai_mark_defense_region(g, p, r, 0);
+	visited[r] = 1;
+	for (j = 0; j < g->ai.anchor_count; j++) {
+		if (g->ai.anchors[j] == r) return;
+	}
+	at = rg->nb_at[r];
+	n = rg->ground[r]; /* GetRegionGroundNeighbors 0x481ab0 */
+	for (k = 0; k < n; k++) mark_within(g, p, rg->neighbors[at + k], level + 1, visited, limit);
+}
+
+void kp_ai_claim_territory(KpGame *g, int64_t p, int64_t x, int64_t y, int64_t depth)
+{
+	uint8_t visited[TERRITORY_REGIONS];
+	int64_t r = kp_band(kp_region_at(g, x, y), 0xffff); /* RegionAt 0x481b10 */
+	kp_ai_defense_anchors(g, p, r, TERRITORY_ANCHOR_CUTS);
+	if (g->pathing.rg.count > TERRITORY_REGIONS) /* the original's marks would pass its array */
+		kp_game_fail(g, "ai: %lld regions pass the territory's %d (0x4979b0)", (long long)g->pathing.rg.count, TERRITORY_REGIONS);
+	memset(visited, 0, sizeof visited);
+	mark_within(g, p, r, 1, visited, g->ai.anchor_count != 0 ? depth : TERRITORY_NEAR_DEPTH);
+}
+
+void kp_ai_defend_route_cuts(KpGame *g, int64_t p, int64_t x, int64_t y)
+{
+	int64_t src = kp_band(kp_region_at(g, x, y), 0xffff), q; /* RegionAt 0x481b10 */
+	for (q = 0; q < KP_AI_PLAYERS; q++) {
+		int64_t t, max, count = 0, cuts[CUTS_KEPT], k, dst;
+		if (kp_alliance(g, p, q) != 0) continue;
+		t = nearest_hostile(g, p, q, x, y);
+		if (t == 0) continue;
+		dst = kp_band(kp_unit_region(g, t), 0xffff); /* 0x481ba0 */
+		for (max = CUT_MIN_INDEX; max <= CUT_MAX_INDEX && count == 0; max++) count = route_cuts(g, src, dst, max, CUT_MIN_INDEX, cuts);
+		/* each idle cut is defended strongly: the inline body equals MarkDefenseRegion 0x4b0030 with strong 1 */
+		for (k = 0; k < count; k++) kp_ai_mark_defense_region(g, p, cuts[k], 1);
+	}
+}

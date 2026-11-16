@@ -10,6 +10,7 @@
 #include "kp_files.h"
 #include "kp_game_data.h"
 #include "kp_game.h"
+#include "kp_template.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -26,6 +27,8 @@ typedef struct {
 	const KpCarry *carry;  /* what the game before left (kp_carry_take), or NULL */
 	int64_t speed;         /* the game speed byte 0x6d3130; KP_NIL: KP_DEFAULT_SPEED */
 	int replay;            /* a replay's playback (KpStartInput.replay) */
+	const KpGameSetup *setup; /* a custom game's setup (KpStartInput.setup); NULL: the campaign's from the map */
+	int64_t local_storm;   /* the local Storm ID a lobby's setup finds the local player by (0 a single player's) */
 } KpHostOpts;
 
 void kp_host_opts(KpHostOpts *o);
@@ -33,15 +36,17 @@ void kp_host_opts(KpHostOpts *o);
 /* The file at path (malloc'd, NUL terminated past its size), or NULL. */
 uint8_t *kp_read_file(const char *path, size_t *size);
 
-/* The data a process's games share (grpmeta, the iscript, the AI scripts) with their CRC-32s for the saves'
- * identity. It must outlive every game started over it. */
+/* The data a process's games share (grpmeta, the iscript, the AI scripts, the victory trigger files a custom game's
+ * start loads) with their CRC-32s for the saves' identity. It must outlive every game started over it. */
 typedef struct {
 	KpGameShared data;
+	KpVictoryFiles victory;
 	uint32_t grp_crc, script_crc, ai_crc;
 } KpHostShared;
 
 /* Built from the original files (ADR 0018, stage D5: kp_grpmeta_from_files over the data set's DAT,
- * kp_iscript_from_files, kp_ai_bins_from_files), the CRC-32s of the structures' blobs; -1 with the error, sh released. */
+ * kp_iscript_from_files, kp_ai_bins_from_files; ADR 0024: kp_victory_from_files), the CRC-32s of the structures'
+ * blobs; -1 with the error, sh released. */
 int kp_host_shared_from_files(KpHostShared *sh, const KpFiles *files, const KpDat *dat, KpError *err);
 void kp_host_shared_free(KpHostShared *sh);
 

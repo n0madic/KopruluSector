@@ -252,10 +252,10 @@ void kp_order_nuke_launch(KpGame *g, int64_t n)
 }
 
 /* ExecCancelNuke 0x4724f0 (command 0x2e): every selected Ghost lets go of its missile (0x435a40). */
-void kp_command_cancel_nuke(KpGame *g, int64_t player)
+void kp_command_cancel_nuke(KpGame *g)
 {
 	int64_t units[KP_SLOTS];
-	int count = kp_selected_units(g, player, units), k;
+	int count = kp_selected_units(g, g->command_record, units), k;
 	for (k = 0; k < count; k++) kp_ghost_release_nuke(g, units[k]);
 }
 

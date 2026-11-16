@@ -8,7 +8,10 @@ rebuilds what is derivable, and checks every result against the manifest `defs/s
 - `exact`: a CASC copy has the manifest's hash;
 - `derived`: rebuilt from a CASC file to the manifest's hash (a tileset's original prefix, `.vx4` from `.vx4ex`);
 - `differs`: no candidate reaches the hash; the first readable copy is used (an approximation);
-- `unlisted`: a name the manifest does not hold, read from CASC unchecked.
+- `unlisted`: a name the manifest does not hold, read from CASC unchecked;
+- `missing`: nothing to read. Its CASC name is the first candidate the root names that the install has not downloaded
+  (an install holds only its languages' files: the templates' `.got` files are only under the enUS locale), or empty
+  when the build names none.
 
 A name the manifest lists as absent stays absent, so the conversion sees the data set the 1.17 install has. `status` keeps each
 file's.
@@ -151,9 +154,11 @@ class ScrSource:
             return self._found(name, status, casc_name, data)
         expected = self.manifest.files.get(key)
         fallback = None
+        offline = ""  # the first candidate named in the root but not downloaded
         for casc_name in self._candidates(name):
             data = self._casc(casc_name)
             if data is None:
+                offline = offline or casc_name
                 continue
             if expected is None:
                 return self._found(name, "unlisted", casc_name, data)
@@ -176,7 +181,7 @@ class ScrSource:
                 return self._found(name, *made)
         if fallback is not None:
             return self._found(name, "differs", *fallback)
-        self.status[name] = ("missing", "")
+        self.status[name] = ("missing", offline)
         raise SourceError(f"{name} not found in StarCraft: Remastered {self.version}")
 
     def _casc(self, casc_name: str) -> bytes | None:

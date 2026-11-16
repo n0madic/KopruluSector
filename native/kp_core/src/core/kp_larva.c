@@ -220,11 +220,23 @@ void kp_order_larva(KpGame *g, int64_t n)
 	kp_request_move_to_point(g, n, nx, ny);
 }
 
+/* A Larva of hatchery p at (x, y), the tail SecondarySpawningLarva 0x43d0d0 and SpawnStartLarva 0x47e020 share. */
+static void create_larva(KpGame *g, int64_t p, int64_t x, int64_t y)
+{
+	KpUnits *u = &g->u;
+	int64_t n = kp_unit_create(g, KP_TYPE_LARVA, x, y, u->owner[p]);
+	if (n == 0) return;
+	kp_unit_complete_in_place(g, n);
+	u->connected[n] = p;
+	init_side(g, n, p);
+	if (u->ai[p] != 0) kp_ai_add_building(g, p, n); /* AddBuildingToBuilderTown 0x486200 */
+}
+
 /* SecondarySpawningLarva 0x43d0d0 (secondary order 78). */
 void kp_secondary_spawning_larva(KpGame *g, int64_t p)
 {
 	KpUnits *u = &g->u;
-	int64_t timer, x, y, n;
+	int64_t timer, x, y;
 	if (u->queue_timer[p] != 0 || u->owner[p] == KP_PLAYER_NEUTRAL || larvae(g, p) >= LARVA_LIMIT) return;
 	timer = kp_union_get(g, p, U_TIMER, 1);
 	if (timer != 0) {
@@ -236,12 +248,13 @@ void kp_secondary_spawning_larva(KpGame *g, int64_t p)
 		kp_union_set(g, p, U_TIMER, 1, LARVA_RETRY);
 		return;
 	}
-	n = kp_unit_create(g, KP_TYPE_LARVA, x, y, u->owner[p]);
-	if (n == 0) return;
-	kp_unit_complete_in_place(g, n);
-	u->connected[n] = p;
-	init_side(g, n, p);
-	if (u->ai[p] != 0) kp_ai_add_building(g, p, n); /* AddBuildingToBuilderTown 0x486200 */
+	create_larva(g, p, x, y);
+}
+
+void kp_larva_spawn_start(KpGame *g, int64_t hatchery)
+{
+	int64_t x, y;
+	if (spawn_point(g, hatchery, &x, &y)) create_larva(g, hatchery, x, y);
 }
 
 /* CopyStatusEffects 0x434880: the timed statuses (+0x110..+0x12f) of src, their overlays and the speed they give. */

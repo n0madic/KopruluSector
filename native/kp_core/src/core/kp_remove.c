@@ -5,7 +5,6 @@
 
 #define SPRITE_SELECTED 0x08
 #define SPRITE_HIDDEN 0x20
-#define SPRITE_DASHED 0x06
 #define DAT_BUILDING 0x01
 #define DAT_FLYING_BUILDING 0x20
 #define DAT_WORKER 0x08
@@ -61,9 +60,7 @@ void kp_remove_from_selections(KpGame *g, int64_t n)
 			row[count - 1] = 0;
 		}
 	}
-	if (kp_band(g->w->spr.flags[kp_unit_sprite(g, n)], SPRITE_DASHED) != 0) {
-		kp_game_fail(g, "remove: dashed selection circles of a team game (0x416cd0)");
-	}
+	(void)kp_sprite_remove_ally_circles(g->w, kp_unit_sprite(g, n)); /* ClearDashed 0x4230f0 */
 	kp_event(g, KP_EVENT_SELECTION_GONE, n, 0, 0, NULL);
 }
 

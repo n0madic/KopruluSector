@@ -9,10 +9,12 @@
 #include <string.h>
 
 #include "kp_game_internal.h"
+#include "kp_gametype.h"
 
 #define CHK_HUMAN 6
 #define CHK_COMPUTER 5
 #define FORCES 4
+#define PAUSES_PER_GAME 3 /* ResetPauseCounts 0x47cb90 */
 #define FORCE_ALLIED 0x2
 #define FORCE_ALLIED_VICTORY 0x4
 #define FORCE_VISION 0x8
@@ -31,39 +33,71 @@
 #define INITIAL_LOW_WORD 0xffff
 /* the mission's UNIT records */
 #define UNIT_RECORD 36
+#define MUSIC_TRACKS 3 /* a race's in-game tracks, the rotation's period (0x443680) */
 
 static int64_t u8_at(const KpBytes *b, size_t at) { return b->data[at]; }
 static int64_t u16_at(const KpBytes *b, size_t at) { return (int64_t)kp_le_u16(b->data + at); }
 static int64_t u32_at(const KpBytes *b, size_t at) { return (int64_t)kp_le_u32(b->data + at); }
 
-/* The players: the CHK owners become runtime controllers (human 2, computer 1, others unchanged); the
- * local player is the human slot. */
-static int64_t players(KpGame *g, const KpMission *m)
+const uint8_t KP_TEMPLATE_UMS[KP_TEMPLATE_SIZE] = { 0x0a, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 1, 3, 1, 0, 1 };
+
+int kp_template_ums(const uint8_t *t)
 {
-	KpPlayers *pl = &g->players;
-	int64_t local_player = -1;
-	int p;
-	for (p = 0; p < KP_PLAYERS; p++) {
-		int64_t owner = m->owners[p], controller = owner, force = 0;
+	return t[KP_TEMPLATE_VICTORY] == 0 && t[KP_TEMPLATE_STARTING_UNITS] == 0 && t[KP_TEMPLATE_TOURNAMENT] == 0;
+}
+
+/* A campaign mission's setup, as started: the Use Map Settings template, the CHK owners as the slots (human 2,
+ * computer 1, others unchanged), the local human's Storm ID 0 and the others' -1 (the replay header's), no names (the
+ * session names the players), the colours 0..7. */
+static void campaign_setup(KpGameSetup *s, const KpMission *m)
+{
+	int p, local = -1;
+	memset(s, 0, sizeof *s);
+	memcpy(s->template_record, KP_TEMPLATE_UMS, KP_TEMPLATE_SIZE);
+	s->slots = 1;
+	s->started = 1;
+	for (p = 0; p < KP_SETUP_SLOTS; p++) {
+		int64_t owner = m->owners[p], type = owner;
 		if (owner == CHK_HUMAN) {
-			controller = KP_CTRL_HUMAN;
-			if (local_player < 0) local_player = p;
+			type = KP_CTRL_HUMAN;
+			if (local < 0) local = p;
 		} else if (owner == CHK_COMPUTER) {
-			controller = KP_CTRL_COMPUTER;
+			type = KP_CTRL_COMPUTER;
 		}
-		if (p >= 8) controller = 0;
+		s->type[p] = p < 8 ? type : 0;
+		s->race[p] = m->races[p];
+		s->storm[p] = p == local ? 0 : -1;
 		/* The player record's force byte is the FORC entry plus one (LoadForceChunk 0x443320) for the slots in the
 		 * game; empty slots keep force 0. */
-		if (p < 8 && controller != 0) force = (m->force_player[p] + 1) % 256;
+		s->force[p] = p < 8 && s->type[p] != 0 ? (m->force_player[p] + 1) % 256 : 0;
+	}
+	for (p = 0; p < 8; p++) s->color[p] = p;
+}
+
+/* The players from the started records (g->setup): slots 8..11 have none. The seat's record is the human of the
+ * local Storm ID in a lobby's game (RebuildStormSlotMaps 0x4793b0, SetupTeamGameSlots 0x4b2db0), else the first
+ * human; the local player is the game player it plays as. */
+static int64_t players(KpGame *g, const KpMission *m, int lobby, int64_t local_storm)
+{
+	const KpGameSetup *s = &g->setup;
+	KpPlayers *pl = &g->players;
+	int64_t local_player = lobby ? kp_setup_storm_slot(s, local_storm) : -1;
+	int p;
+	for (p = 0; p < KP_PLAYERS; p++) {
+		int64_t controller = p < 8 ? s->type[p] : 0;
+		if (!lobby && controller == KP_CTRL_HUMAN && local_player < 0) local_player = p;
 		pl->controller[p] = controller;
-		pl->race[p] = m->races[p];
-		pl->force[p] = force;
+		pl->race[p] = s->race[p];
+		pl->force[p] = s->force[p]; /* an empty slot keeps its record's (a lobby's open slot its force) */
 	}
 	for (p = 0; p < 4; p++) pl->force_name[p] = m->force_name[p];
 	return local_player < 0 ? 0 : local_player;
 }
 
-/* InitAlliancesAndVision 0x477610 for a single-player game with the map's force settings. */
+
+/* InitAlliancesAndVision 0x477610: each player allied with itself and player 11, the computers with each other when
+ * the template allows alliances, rescuable and neutral players with everyone; in Use Map Settings the map's forces'
+ * alliances and vision among their humans; in Top vs Bottom each side's players. */
 static void init_alliances(KpGame *g, const KpMission *m)
 {
 	KpPlayers *pl = &g->players;
@@ -72,6 +106,7 @@ static void init_alliances(KpGame *g, const KpMission *m)
 	for (p = 0; p <= 7; p++) pl->alliance[p][p] = ALLIED;
 	for (p = 11; p >= 0; p--) {
 		pl->alliance[11][p] = pl->alliance[p][11] = ALLIED;
+		if (!kp_setup_alliances_allowed(&g->setup)) continue;
 		for (q = 7; q >= 0; q--) {
 			if (q != p && pl->controller[p] == KP_CTRL_COMPUTER && pl->controller[q] == KP_CTRL_COMPUTER) {
 				pl->alliance[p][q] = pl->alliance[q][p] = ALLIED_COMPUTERS;
@@ -85,7 +120,7 @@ static void init_alliances(KpGame *g, const KpMission *m)
 			for (q = 0; q <= 11; q++) pl->alliance[p][q] = pl->alliance[q][p] = ALLIED;
 		}
 	}
-	for (f = 1; f <= FORCES; f++) {
+	for (f = 1; f <= FORCES && kp_setup_ums(&g->setup); f++) {
 		int64_t flags = m->force_flags[f - 1], allied = 0, members[8];
 		int count = 0, a, b;
 		if ((flags & FORCE_ALLIED) != 0) allied = (flags & FORCE_ALLIED_VICTORY) != 0 ? 2 : 1;
@@ -103,6 +138,16 @@ static void init_alliances(KpGame *g, const KpMission *m)
 				if (pa == qb) continue;
 				if ((flags & FORCE_VISION) != 0) pl->shared_vision[pa] = kp_bor(pl->shared_vision[pa], (int64_t)1 << qb);
 				else pl->shared_vision[pa] = kp_band(pl->shared_vision[pa], kp_bnot((int64_t)1 << qb));
+			}
+		}
+	}
+	if (kp_setup_top_vs_bottom(&g->setup)) {
+		/* the loops stop before slot 11 (0x67285e) */
+		for (p = 0; p <= 10; p++) {
+			for (q = 0; q <= 10; q++) {
+				if (g->setup.type[p] == 0 || g->setup.type[q] == 0) continue;
+				pl->alliance[p][q] = g->setup.force[p] == g->setup.force[q] ? ALLIED_COMPUTERS : 0;
+				if (g->setup.force[p] == g->setup.force[q]) pl->shared_vision[p] = kp_bor(pl->shared_vision[p], (int64_t)1 << q);
 			}
 		}
 	}
@@ -312,8 +357,7 @@ static void resolve_relations(KpGame *g, Relation *nodes, int count, int kind)
 	}
 }
 
-/* LoadUnitSection 0x468f30 (the melee filter and the user-select gate pass every record of a
- * campaign game: melee 0, no user-select slots). */
+/* LoadUnitSection 0x468f30 with the melee filter and the user-select gate (kp_gametype_unit_excluded). */
 static void load_units(KpGame *g, const KpBytes *s, Relation *nydus, Relation *addons)
 {
 	size_t count = s->size / UNIT_RECORD, i;
@@ -338,7 +382,8 @@ static void load_units(KpGame *g, const KpBytes *s, Relation *nydus, Relation *a
 			continue;
 		}
 		controller = owner <= 7 ? g->players.controller[owner] : 0;
-		if (owner > 7 || (controller != 0 && (controller < 5 || controller == KP_CTRL_NEUTRAL))) {
+		if ((owner > 7 || (controller != 0 && (controller < 5 || controller == KP_CTRL_NEUTRAL)))
+			&& !kp_gametype_unit_excluded(g, type, owner)) {
 			n = kp_create_map_unit(g, type, u16_at(s, a + 4), u16_at(s, a + 6), owner);
 			if (n != 0) {
 				KpUnitRecord r;
@@ -375,18 +420,36 @@ static void load_units(KpGame *g, const KpBytes *s, Relation *nydus, Relation *a
 	kp_scalar_set(g, KP_POWER_DIRTY, 1);
 }
 
+/* LoadConsoleSkinAndPickMusic 0x443680 (StartGame 0x443f40's step 8, after the seeds of step 7): outside the campaign
+ * (row 0) the music's rotation 0x503354 advances, the session's first (-1) drawn as rand() % 3 of the CRT generator,
+ * whose next draws are the start units' creep variants. A campaign row picks its track by its key and draws nothing. */
+static void music_rotation(KpGame *g, const KpStartInput *in)
+{
+	g->music_rotation = in->carry ? in->carry->music_rotation - 1 : -1;
+	if (in->mission_index != 0) return;
+	if (g->music_rotation < 0) {
+		if (!g->crt) kp_game_fail(g, "start: the music's first rotation without the crt generator");
+		g->music_rotation = (int64_t)kp_rng_crt_rand(g->crt) % MUSIC_TRACKS;
+	}
+	g->music_rotation = (g->music_rotation + 1) % MUSIC_TRACKS;
+}
+
 /* The steps of the start after kp_game_new, under the game's failure handler. */
 static void start_steps(KpGame *g, const KpStartInput *in, const KpRuleEffects *effects, Relation *nydus, Relation *addons)
 {
 	const KpMission *m = in->mission;
+	int64_t p;
+	kp_gametype_resources(g); /* ResetPerGameState 0x444230: 0x448420, then 0x477610 and 0x47cb90 */
 	init_alliances(g, m);
+	for (p = 0; p < 8; p++) g->pauses[p] = PAUSES_PER_GAME;
 	kp_selection_init(g);
 	kp_step_init(g);
 	kp_scalar_set(g, KP_TURN, in->turn);
 	kp_triggers_init(g, m, in->carry);
 	kp_ai_init(g);
-	/* SetupVictoryConditions 0x448530: a campaign (not melee) game marks every player's AI as campaign AI. */
-	kp_ai_regions_init(g, 1);
+	/* SetupVictoryConditions 0x448530: a game without the melee AI marks every player's AI as campaign AI (0x482ee0;
+	 * kp_start_victory starts the melee AI's scripts) */
+	kp_ai_regions_init(g, !kp_setup_melee_ai(&g->setup));
 	if (in->carry) memcpy(g->ai_reach_source, in->carry->ai_reach_source, sizeof g->ai_reach_source);
 	kp_guard_init(g);
 	kp_fog_init(g);
@@ -417,6 +480,7 @@ static void start_steps(KpGame *g, const KpStartInput *in, const KpRuleEffects *
 		none.size = 0;
 		load_units(g, &none, nydus, addons);
 	}
+	kp_gametype_start_units(g); /* CreateStartingUnitsAndView 0x469e90 */
 	kp_ai_areas_generate(g); /* FinishAiMapSetup 0x48dd80 (its InitAiRegions 0x4b0640 mode 1 copies, no state) */
 }
 
@@ -451,7 +515,17 @@ KpGame *kp_start(const KpStartInput *in, KpError *err)
 	KpGame *volatile g = NULL;
 	KpTry t;
 	int64_t local_player;
+	int lobby;
 	size_t records = m->units.size / UNIT_RECORD + 1;
+	if (in->setup && kp_setup_team_game(in->setup) && kp_setup_team_size(in->setup) < 0) {
+		snprintf(err->msg, sizeof err->msg, "start: %d teams (error 0x5d, network.tbl 0x49)",
+			in->setup->template_record[KP_TEMPLATE_TEAMS]);
+		return NULL;
+	}
+	if (in->setup && !kp_setup_colours_valid(in->setup)) {
+		snprintf(err->msg, sizeof err->msg, "start: a setup's colours are not the eight rows");
+		return NULL;
+	}
 	effects = (KpRuleEffects *)malloc(sizeof *effects);
 	nydus = (Relation *)malloc(records * sizeof *nydus);
 	addons = (Relation *)malloc(records * sizeof *addons);
@@ -471,7 +545,25 @@ KpGame *kp_start(const KpStartInput *in, KpError *err)
 	g->crt = in->crt;
 	g->ai_bins = g->ai_game_bins = in->ai_bins;
 	if (kp_game_use_dat(g, in->dat, err) != 0) goto failed;
-	local_player = players(g, m);
+	if (in->setup)
+		g->setup = *in->setup;
+	else
+		campaign_setup(&g->setup, m);
+	lobby = !g->setup.started;
+	g->briefing_player = lobby ? kp_setup_storm_slot(&g->setup, in->local_storm) : -1;
+	if (lobby) {
+		/* StartGame 0x443f40's step 6 draws the slots from the game seed, then step 7 seeds the game RNG and the CRT's
+		 * again with it */
+		kp_gametype_slots(g, m, in->rng);
+		kp_rng_game_seed(in->rng, in->rng->initial_seed);
+		kp_rng_crt_init(in->crt, in->rng->initial_seed);
+	}
+	g->local_record = g->command_record = players(g, m, lobby, in->local_storm); /* 0x443be0: 0x508d48 = 0x508d54 */
+	local_player = kp_setup_record_player(&g->setup, g->local_record);
+	if (local_player < 0 || local_player >= 8) {
+		snprintf(err->msg, sizeof err->msg, "start: the seat's record %lld plays as no player", (long long)g->local_record);
+		goto failed;
+	}
 	g->map_w = m->width;
 	g->map_h = m->height;
 	g->map_w_px = g->map_w * 32;
@@ -480,6 +572,7 @@ KpGame *kp_start(const KpStartInput *in, KpError *err)
 	g->map_rect[2] = kp_mod(g->map_w_px, 65536);
 	g->map_rect[3] = kp_mod(g->map_h_px, 65536);
 	g->local_player = local_player;
+	if (g->briefing_player < 0) g->briefing_player = local_player;
 	/* the local player's vision while the map loads; a replay's full vision comes at StartGame 0x443f40's step 13,
 	 * after the units and the creep (below) */
 	g->local_vision = (int64_t)1 << local_player;
@@ -526,7 +619,12 @@ KpGame *kp_start(const KpStartInput *in, KpError *err)
 		snprintf(err->msg, sizeof err->msg, "%s", w->error);
 		goto failed;
 	}
+	music_rotation(g, in);
 	start_steps(g, in, effects, nydus, addons);
+	if (kp_gametype_victory(g, in->victory, err) != 0) { /* StartGame's step 11 */
+		kp_images_end(w, &t);
+		goto failed;
+	}
 	if (in->replay) g->local_vision = w->local_vision = 0xff; /* 0x67cc84 = 0x672668 = 0xff (step 13) */
 	/* 0x467ba0 runs StartGame 0x443f40 with the game RNG on (kp_game_seed turned it on) and turns it off after */
 	kp_rng_game_set_enabled(g->rng, 0);
@@ -560,4 +658,6 @@ void kp_carry_take(const KpGame *g, KpCarry *c)
 	memcpy(c->count_completed, t->count_completed, sizeof c->count_completed);
 	memcpy(c->count_pstat, t->count_pstat, sizeof c->count_pstat);
 	memcpy(c->ai_reach_source, g->ai_reach_source, sizeof c->ai_reach_source);
+	c->music_rotation = g->music_rotation + 1;
+	c->rng_state = g->rng ? g->rng->state : 0;
 }

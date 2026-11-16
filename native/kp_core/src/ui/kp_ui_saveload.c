@@ -1,8 +1,8 @@
 /* The in-game message boxes (okcancel.cpp, atlas P27 0x47acd0..0x47b0a0) and the save and load dialogs (saveload.cpp,
  * P31 0x49ae00..0x49b710): rez\ok.bin, rez\okcancel.bin and rez\wait.bin as modeless dialogs with a completion
- * callback; rez\savegame.bin lists the saved games (the host's: u:saves, a save the game made added first), takes a
- * name and sends the save command 0x06, with the overwrite and delete confirmations; rez\loadgame.bin sends the load
- * command 0x07. The files are the host's: the game's commands reach it as KP_EVENT_SAVE_GAME / KP_EVENT_LOAD_GAME, a
+ * callback (over the glue: modal, RunOkBox's); rez\savegame.bin lists the saved games (the host's: u:saves, a save the
+ * game made added first), takes a name and sends the save command 0x06, with the overwrite and delete confirmations;
+ * rez\loadgame.bin sends the load command 0x07. The files are the host's: the game's commands reach it as KP_EVENT_SAVE_GAME / KP_EVENT_LOAD_GAME, a
  * delete as a call (ui->delete_save). */
 #include "kp_text.h"
 #include "kp_ui.h"
@@ -38,6 +38,8 @@
 #define SAVE_NAME_LIMIT 28           /* IsInvalidFileName 0x408300's limit in SaveDialogConfirm */
 #define NET_FORBIDDEN 0x11
 #define NET_SAVING 0x6d
+#define VK_BACK 8
+#define GLUE_THEME 0                 /* RunOkBox's InitGlueDialog theme (a nested dialog keeps the screen's) */
 
 typedef void (*BoxDone)(KpUi *ui, int32_t result);
 
@@ -149,6 +151,56 @@ static int wait_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 	return kp_ui_modeless_default(ui, d, e);
 }
 
+/* --- the glue's boxes --- */
+
+static int glue_box_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
+{
+	/* MessageBoxProc 0x47afa0 over the glue (0x675058 and 0x508d6c set): centred on the screen (CenterGlueDialog
+	 * 0x46c8a0), nested in it (InitGlueDialog 0x457f00 at RunOkBox's load; nothing releases it, EndGlueScreen 0x457b50
+	 * resets the count), its frame the GRP its caller named in the glue's translucent style; its result goes to the
+	 * run's continuation */
+	int32_t self = (int32_t)(d - ui->controls), t;
+	if (e->type == KP_UI_USER) {
+		switch (e->code) {
+		case KP_UI_RECENTRE:
+			kp_ui_centre_glue_dialog(d);
+			break;
+		case KP_UI_POST_LOAD:
+			kp_ui_glue_init_dialog(ui, self, NULL, 0, GLUE_THEME);
+			break;
+		case KP_UI_CREATE: /* InitMessageBox 0x47aec0 */
+			kp_ui_tile_frame_grp(ui, self, ui->box.grp);
+			kp_ui_glue_border_colour(ui, self);
+			tiled(ui, self, ID_OK, TILED_OK);
+			tiled(ui, self, ID_CANCEL, TILED_CANCEL);
+			if ((t = kp_ui_find_control(ui, self, ID_TEXT)) >= 0) {
+				ui->controls[t].text = (const uint8_t *)ui->box.text;
+				ui->controls[t].draw = draw_box_text;
+			}
+			break;
+		case KP_UI_DESTROY: /* DestroyMessageBox 0x47af60 */
+			if ((t = kp_ui_find_control(ui, self, ID_TEXT)) >= 0) ui->controls[t].text = NULL;
+			ui->box.text[0] = 0;
+			ui->box.grp = NULL;
+			kp_ui_close_modeless(ui, 0);
+			return kp_ui_modeless_default(ui, d, e);
+		case KP_UI_CLOSE: /* EndDialog 0x4c2b50: RunModal returns the result */
+			kp_ui_end_dialog(ui, self);
+			return 1;
+		default: break;
+		}
+	}
+	return kp_ui_modeless_default(ui, d, e);
+}
+
+int32_t kp_ui_glue_box(KpUi *ui, const char *text, const char *bin, const KpUiFile *grp, KpUiModalDone done)
+{
+	/* RunOkBox 0x47acd0 / RunOkCancelBox 0x47ad70 with EDX 1 */
+	snprintf(ui->box.text, sizeof ui->box.text, "%s", text != NULL ? text : "");
+	ui->box.grp = grp;
+	return kp_ui_modal(ui, bin, glue_box_proc, done);
+}
+
 /* --- the saved games (the host's list) --- */
 
 static int save_index_of(const KpUi *ui, const char *name)
@@ -237,9 +289,9 @@ static const char *list_text(KpUi *ui, int32_t dialog)
 	return s != KP_UI_LIST_NONE ? (const char *)kp_ui_list_text(ui, l, s) : NULL;
 }
 
-static void update_delete(KpUi *ui, int32_t dialog, int32_t list)
+void kp_ui_update_delete_button(KpUi *ui, int32_t dialog, int32_t list)
 {
-	/* UpdateDeleteButton 0x49b360 */
+	/* UpdateDeleteButton 0x49b360 (the save-replay dialog's too) */
 	int32_t del = kp_ui_find_control(ui, dialog, ID_DELETE);
 	if (del < 0) return;
 	kp_ui_set_enabled(ui, del, kp_ui_list_count(ui, list) != 0 && kp_ui_list_selection(ui, list) != KP_UI_LIST_NONE);
@@ -258,7 +310,7 @@ static int save_list_proc(KpUi *ui, KpUiControl *c, KpUiEvent *e)
 		if (kp_ui_list_count(ui, self) == 0 && (ok = kp_ui_find_control(ui, c->parent, ID_OK)) >= 0) {
 			kp_ui_set_enabled(ui, ok, 0);
 		}
-		update_delete(ui, c->parent, self);
+		kp_ui_update_delete_button(ui, c->parent, self);
 		return r;
 	}
 	if (e->type == KP_UI_USER && e->code == KP_UI_VALUE_CHANGED) {
@@ -266,35 +318,38 @@ static int save_list_proc(KpUi *ui, KpUiControl *c, KpUiEvent *e)
 		edit = kp_ui_find_control(ui, c->parent, ID_EDIT);
 		s = kp_ui_list_selection(ui, self);
 		if (edit >= 0 && s != KP_UI_LIST_NONE) kp_ui_edit_set_text(ui, edit, kp_ui_list_text(ui, self, s));
-		update_delete(ui, c->parent, self);
+		kp_ui_update_delete_button(ui, c->parent, self);
 		return 1;
 	}
 	return kp_ui_list_proc(ui, c, e);
 }
 
+int kp_ui_save_name_key(KpUi *ui, KpUiControl *c, KpUiEvent *e)
+{
+	/* SaveNameEditKeyFilter 0x49b260 and SaveReplayNameKeyFilter 0x480ac0 (the same rules) */
+	const uint8_t *forbidden = kp_ui_tbl(ui, KP_UI_NETWORK, NET_FORBIDDEN);
+	uint16_t ch = e->key;
+	size_t n = c->text != NULL ? kp_text_chars(c->text) : 0;
+	int32_t ok, list;
+	if (ch == 0 || (ch < KP_TEXT_ASCII_END && forbidden != NULL && strchr((const char *)forbidden, ch) != NULL)) return 1;
+	if (ch == VK_BACK || (n < SAVE_NAME_MAX && !(ch == ' ' && n == 0))) (void)kp_ui_edit_proc(ui, c, e);
+	if ((ok = kp_ui_find_control(ui, c->parent, ID_OK)) >= 0) kp_ui_set_enabled(ui, ok, c->text != NULL && c->text[0] != 0);
+	list = kp_ui_find_control(ui, c->parent, ID_LIST);
+	if (list < 0 || kp_ui_list_selection(ui, list) == KP_UI_LIST_NONE) return 1;
+	(void)kp_ui_send_user(ui, list, KP_UI_VALUE_CHANGED, KP_UI_LIST_NONE);
+	kp_ui_mark_dirty(ui, list);
+	kp_ui_update_delete_button(ui, c->parent, list);
+	return 1;
+}
+
 static int save_edit_proc(KpUi *ui, KpUiControl *c, KpUiEvent *e)
 {
-	/* SaveNameEditProc 0x49b4d0 with SaveNameEditKeyFilter 0x49b260 */
-	int32_t self = (int32_t)(c - ui->controls), ok, list;
+	/* SaveNameEditProc 0x49b4d0 */
 	if (e->type == KP_UI_USER && e->code == KP_UI_CREATE) {
 		c->flags |= FLAG_EDIT_FILTER; /* the focus outline */
-		kp_ui_edit_set_margin(ui, self, SAVE_EDIT_MARGIN);
+		kp_ui_edit_set_margin(ui, (int32_t)(c - ui->controls), SAVE_EDIT_MARGIN);
 	} else if (e->type == KP_UI_CHAR) {
-		const uint8_t *forbidden = kp_ui_tbl(ui, KP_UI_NETWORK, NET_FORBIDDEN);
-		uint16_t ch = e->key;
-		size_t n = c->text != NULL ? kp_text_chars(c->text) : 0;
-		if (ch == 0 || (ch < KP_TEXT_ASCII_END && forbidden != NULL && strchr((const char *)forbidden, ch) != NULL)) return 1;
-		if (ch == 8 || (n < SAVE_NAME_MAX && !(ch == ' ' && n == 0))) (void)kp_ui_edit_proc(ui, c, e);
-		if ((ok = kp_ui_find_control(ui, c->parent, ID_OK)) >= 0) {
-			kp_ui_set_enabled(ui, ok, c->text != NULL && c->text[0] != 0);
-		}
-		list = kp_ui_find_control(ui, c->parent, ID_LIST);
-		if (list < 0 || kp_ui_list_selection(ui, list) == KP_UI_LIST_NONE) return 1;
-		(void)kp_ui_send_user(ui, list, KP_UI_VALUE_CHANGED, KP_UI_LIST_NONE);
-		kp_ui_mark_dirty(ui, list);
-		update_delete(ui, c->parent, list);
-		(void)self;
-		return 1;
+		return kp_ui_save_name_key(ui, c, e);
 	}
 	return kp_ui_edit_proc(ui, c, e);
 }

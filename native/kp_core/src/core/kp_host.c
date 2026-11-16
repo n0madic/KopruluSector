@@ -47,7 +47,7 @@ int kp_host_shared_from_files(KpHostShared *sh, const KpFiles *files, const KpDa
 {
 	memset(sh, 0, sizeof *sh);
 	if (kp_grpmeta_from_files(&sh->data.grp, files, dat, err) != 0 || kp_iscript_from_files(&sh->data.script, files, err) != 0
-		|| kp_ai_bins_from_files(&sh->data.ai, files, err) != 0) {
+		|| kp_ai_bins_from_files(&sh->data.ai, files, err) != 0 || kp_victory_from_files(&sh->victory, files, err) != 0) {
 		kp_host_shared_free(sh);
 		return -1;
 	}
@@ -58,6 +58,7 @@ int kp_host_shared_from_files(KpHostShared *sh, const KpFiles *files, const KpDa
 void kp_host_shared_free(KpHostShared *sh)
 {
 	kp_game_shared_free(&sh->data);
+	kp_victory_free(&sh->victory);
 	memset(sh, 0, sizeof *sh);
 }
 
@@ -221,6 +222,9 @@ int kp_host_game_start(KpHostGame *hg, uint32_t seed, int expansion, const KpHos
 	in.carry = opts->carry;
 	in.turn = opts->turn;
 	in.replay = opts->replay;
+	in.setup = opts->setup;
+	in.victory = &hg->shared->victory;
+	in.local_storm = opts->local_storm;
 	if (opts->speed != KP_NIL) in.speed = opts->speed;
 	hg->g = kp_start(&in, err);
 	if (!hg->g) {

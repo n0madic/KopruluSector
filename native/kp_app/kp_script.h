@@ -35,6 +35,7 @@ extern "C" {
 #define KP_SCRIPT_MARKS 32
 #define KP_SCRIPT_MARK_VALUES 32  /* the values one mark keeps (those an @mark.value reads) */
 #define KP_SCRIPT_PICKS 16
+#define KP_SCRIPT_SEATS 8         /* seat N's seats (kp_hub.h's KP_HUB_SEATS) */
 #define KP_SCRIPT_TERMS 4         /* a condition's terms joined by "and" */
 #define KP_SCRIPT_LOG_VALUES 12
 #define KP_SCRIPT_WHY 256         /* a host's reason */
@@ -71,6 +72,7 @@ typedef enum {
 	KP_SCRIPT_SELECT,          /* id: the unit's kind; n: the box's radius */
 	KP_SCRIPT_END_PLACEMENT,
 	KP_SCRIPT_CANCEL_TARGETING,
+	KP_SCRIPT_SEAT,            /* n: the seat shown (--seats) */
 	KP_SCRIPT_AUDIT,           /* audit hd: the canvases count the draws outside the image log */
 	KP_SCRIPT_HANG,            /* n: ms the frame takes (the watchdog's test) */
 	/* waits */

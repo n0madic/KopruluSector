@@ -7,8 +7,11 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "kp_data.h"
+#include "kp_ids.h"
 #include "kp_kpf.h"
 #include "kp_oracle.h"
+#include "kp_seats.h"
 #include "kp_session.h"
 #include "kp_ui.h"
 #include "zlib.h"
@@ -925,7 +928,7 @@ static void session_profile_options(KpT *T)
 	kp_t_ok(T, kp_profile_decode(&q, bytes, size, &err) == 0, "%s", err.msg);
 	free(bytes);
 	kp_t_eq(T, q.options, KP_UI_OPTION_EXPANSION_INTRO | KP_UI_OPTIONS_DEFAULT, "its intro to play kept");
-	kp_t_ok(T, kp_kpf_build("PROF", 9, 0, "koprulu", NULL, old, 3, &bytes, &size) == 0, "a later schema's profile");
+	kp_t_ok(T, kp_kpf_build("PROF", 10, 0, "koprulu", NULL, old, 3, &bytes, &size) == 0, "a later schema's profile");
 	kp_t_ok(T, kp_profile_decode(&q, bytes, size, &err) != 0, "is not read");
 	free(bytes);
 }
@@ -1086,6 +1089,69 @@ static void session_profile_language(KpT *T)
 	kp_t_ok(T, kp_profile_decode(&q, bytes, size, &err) == 0, "%s", err.msg);
 	free(bytes);
 	kp_t_ok(T, q.text_locale[0] == 0 && q.speech_locale[0] == 0, "damaged: none");
+}
+
+/* Play Custom's registry values (CUST, schema 9): the round trip; none before the section, for a value that is not
+ * UTF-8 or past the original's 32 bytes, and for a damaged section. */
+static void session_profile_custom_choices(KpT *T)
+{
+	static const uint8_t CHARS[2] = { 0, 0 };
+	static const uint8_t SAVES[2] = { 0, 0 };
+	static const uint8_t NOT_UTF8[] = { 2, 0xc3, 0x28, 5, 'T', 'e', 'a', 'm', 's' };
+	static const uint8_t PAST_ITS_END[] = { 5, 'M', 'e', 'l', 'e', 'e', 9, '1' };
+	uint8_t too_long[1 + KP_PROFILE_CUSTOM + 1];
+	KpProfile p, q;
+	KpKpfOut old[4];
+	KpError err;
+	uint8_t *bytes;
+	size_t size;
+	int k;
+	kp_profile_init(&p);
+	kp_t_ok(T, p.custom_type[0] == 0 && p.game_subtype[0] == 0, "a new profile: none");
+	snprintf(p.custom_type, sizeof p.custom_type, "Top vs Bottom");
+	snprintf(p.game_subtype, sizeof p.game_subtype, "3 vs 1");
+	kp_t_ok(T, kp_profile_encode(&p, &bytes, &size) == 0, "encoded");
+	kp_t_ok(T, kp_profile_decode(&q, bytes, size, &err) == 0, "%s", err.msg);
+	free(bytes);
+	kp_t_eq_str(T, q.custom_type, "Top vs Bottom", "the round trip");
+	kp_t_eq_str(T, q.game_subtype, "3 vs 1", NULL);
+	memset(old, 0, sizeof old);
+	old[0].fourcc = "NAME";
+	old[0].payload = (const uint8_t *)"";
+	old[1].fourcc = "CHAR";
+	old[1].payload = CHARS;
+	old[1].size = sizeof CHARS;
+	old[2].fourcc = "SAVE";
+	old[2].payload = SAVES;
+	old[2].size = sizeof SAVES;
+	old[3].fourcc = "CUST";
+	for (k = 0; k < 4; k++) old[k].schema_version = 1;
+	kp_t_ok(T, kp_kpf_build("PROF", 8, 0, "koprulu", NULL, old, 3, &bytes, &size) == 0, "a schema 8 profile");
+	kp_t_ok(T, kp_profile_decode(&q, bytes, size, &err) == 0, "%s", err.msg);
+	free(bytes);
+	kp_t_ok(T, q.custom_type[0] == 0 && q.game_subtype[0] == 0, "before the section: none");
+	old[3].payload = NOT_UTF8;
+	old[3].size = sizeof NOT_UTF8;
+	kp_t_ok(T, kp_kpf_build("PROF", 9, 0, "koprulu", NULL, old, 4, &bytes, &size) == 0, "a value that is not UTF-8");
+	kp_t_ok(T, kp_profile_decode(&q, bytes, size, &err) == 0, "%s", err.msg);
+	free(bytes);
+	kp_t_eq_str(T, q.custom_type, "", "not UTF-8: none");
+	kp_t_eq_str(T, q.game_subtype, "Teams", "the other read");
+	memset(too_long, 'x', sizeof too_long);
+	too_long[0] = KP_PROFILE_CUSTOM;
+	too_long[1 + KP_PROFILE_CUSTOM] = 0; /* the subtype's length: "" */
+	old[3].payload = too_long;
+	old[3].size = sizeof too_long;
+	kp_t_ok(T, kp_kpf_build("PROF", 9, 0, "koprulu", NULL, old, 4, &bytes, &size) == 0, "a value of 32 bytes");
+	kp_t_ok(T, kp_profile_decode(&q, bytes, size, &err) == 0, "%s", err.msg);
+	free(bytes);
+	kp_t_eq_str(T, q.custom_type, "", "past 31 bytes: none");
+	old[3].payload = PAST_ITS_END;
+	old[3].size = sizeof PAST_ITS_END;
+	kp_t_ok(T, kp_kpf_build("PROF", 9, 0, "koprulu", NULL, old, 4, &bytes, &size) == 0, "a damaged section");
+	kp_t_ok(T, kp_profile_decode(&q, bytes, size, &err) == 0, "%s", err.msg);
+	free(bytes);
+	kp_t_ok(T, q.custom_type[0] == 0 && q.game_subtype[0] == 0, "damaged: none");
 }
 
 /* The login list carries the IDs both ways: one deleted and a new one created start the new one with no progress, a
@@ -1587,6 +1653,203 @@ static void session_replay_record_in_a_save(KpT *T)
 }
 
 
+/* --- a custom map's game (ADR 0024) --- */
+
+static void free_map(void *p)
+{
+	kp_data_map_close((KpDataMap *)p);
+	free(p);
+}
+
+/* The test scenario's CHK as a custom map (a scenario alone, over the data's files), as its replay or save gives it. */
+static KpDataMap *custom_map(KpT *T, const uint8_t *chk, size_t size)
+{
+	KpDataMap *map = (KpDataMap *)calloc(1, sizeof *map);
+	uint8_t *copy = (uint8_t *)malloc(size ? size : 1);
+	KpError err;
+	if (!map || !copy) kp_t_fail(T, "out of memory");
+	memcpy(copy, chk, size);
+	kp_t_ok(T, kp_data_map_from_chk(map, &kp_t_data(T)->files, copy, size, "marine_group.scx", &err) == 0, "%s", err.msg);
+	kp_t_defer(T, free_map, map);
+	return map;
+}
+
+/* A session of the custom map's Use Map Settings game, loaded (not started) under its key "maps/<name>". */
+static KpSession *custom_loaded(KpT *T, KpDataMap *map)
+{
+	const KpData *d = kp_t_data(T);
+	KpSession *s = (KpSession *)calloc(1, sizeof *s);
+	KpMission m;
+	KpError err;
+	if (!s) kp_t_fail(T, "out of memory");
+	kp_t_defer(T, free_session, s);
+	kp_t_ok(T, kp_data_map_mission(map, KP_CHK_UMS, &m, &err) == 0, "%s", err.msg);
+	kp_t_eq(T, m.load, KP_CHK_UMS, "the mission's load");
+	if (kp_session_load_from(s, &d->shared, &d->dat, &m, "maps/marine_group.scx", &map->files) != 0)
+		kp_t_fail(T, "the game does not load: %s", s->error);
+	return s;
+}
+
+/* The lobby's setup of the map: its CHK's humans and computers as the lobby's (6 human, 5 computer), named; the
+ * slots 8..11 none (Storm ID -1, as every network replay's header has them). */
+static void custom_setup(const KpMission *m, KpGameSetup *setup)
+{
+	int p;
+	memset(setup, 0, sizeof *setup);
+	memcpy(setup->template_record, KP_TEMPLATE_UMS, KP_TEMPLATE_SIZE);
+	for (p = 0; p < KP_SETUP_SLOTS; p++) setup->storm[p] = -1;
+	for (p = 0; p < 8; p++) {
+		setup->storm[p] = -1;
+		if (m->owners[p] == 6 && setup->slots == 0) {
+			setup->type[p] = KP_CTRL_HUMAN;
+			setup->storm[p] = 0;
+			snprintf(setup->name[p], sizeof setup->name[p], "%s", "Tester");
+		} else if (m->owners[p] == 5) {
+			setup->type[p] = KP_CTRL_LOBBY_COMPUTER;
+		}
+		setup->race[p] = m->races[p];
+		setup->force[p] = setup->type[p] ? m->force_player[p] + 1 : 0;
+		if (setup->type[p]) setup->slots++;
+	}
+}
+
+static int setup_eq(const KpGameSetup *a, const KpGameSetup *b)
+{
+	int p;
+	if (memcmp(a->template_record, b->template_record, KP_TEMPLATE_SIZE) != 0 || a->multiplayer != b->multiplayer
+		|| a->slots != b->slots || a->started != b->started)
+		return 0;
+	for (p = 0; p < KP_SETUP_SLOTS; p++) {
+		if (a->storm[p] != b->storm[p] || a->type[p] != b->type[p] || a->race[p] != b->race[p] || a->force[p] != b->force[p]
+			|| strcmp(a->name[p], b->name[p]) != 0)
+			return 0;
+	}
+	for (p = 0; p < 8; p++) {
+		if (a->user_select[p] != b->user_select[p] || a->color[p] != b->color[p]) return 0;
+	}
+	return 1;
+}
+
+/* The started records of a lobby's Use Map Settings setup without random races or starts: StartGame's slot types
+ * (SetupGameSlots 0x479340: a lobby computer plays as a computer, an open or closed slot is empty). */
+static int started_as_the_lobby(const KpGameSetup *started, const KpGameSetup *lobby)
+{
+	int p;
+	if (!started->started || memcmp(started->template_record, lobby->template_record, KP_TEMPLATE_SIZE) != 0
+		|| started->slots != lobby->slots)
+		return 0;
+	for (p = 0; p < KP_SETUP_SLOTS; p++) {
+		int64_t type = lobby->type[p] == KP_CTRL_LOBBY_COMPUTER ? KP_CTRL_COMPUTER
+			: lobby->type[p] == KP_CTRL_OPEN || lobby->type[p] == KP_CTRL_CLOSED ? 0 : lobby->type[p];
+		if (started->type[p] != type || started->storm[p] != lobby->storm[p] || strcmp(started->name[p], lobby->name[p]) != 0)
+			return 0;
+	}
+	return 1;
+}
+
+/* A custom map's game: started from its setup (the game keeps it), its replay's header holds the template, the slots
+ * and the names and plays the game back from its own CHK; its save holds the map (MAPC) and loads into the game its map
+ * and setup start again. */
+static void session_a_custom_maps_game(KpT *T)
+{
+	static KpStateCrcs recorded[REPLAY_STEPS + 2], got;
+	KpSession *s, *p, *again;
+	KpDataMap *map, *from_replay, *from_save;
+	KpSessionStart start;
+	KpSaveIdentity id;
+	KpSaveMap saved;
+	KpGameSetup setup, back;
+	KpRepPlayer human;
+	KpRep *rep;
+	KpMission m;
+	KpError err;
+	uint8_t *bytes;
+	size_t size;
+	int k, c, found, steps = 0;
+	if (!ready(T)) return;
+	id = identity(T);
+	if (!kp_oracle_mission(".", MAP, &m, &err)) kp_t_fail(T, "%s", err.msg);
+	map = custom_map(T, m.blob, m.chk_size);
+	custom_setup(&m, &setup);
+	kp_mission_free(&m);
+	s = custom_loaded(T, map);
+	kp_session_start_defaults(&start);
+	start.seed = SEED;
+	start.record = 1;
+	start.has_setup = 1;
+	start.setup = setup;
+	if (kp_session_start(s, &start) != 0) kp_t_fail(T, "the game does not start: %s", s->error);
+	kp_t_guard(T, s->g);
+	kp_t_ok(T, started_as_the_lobby(&s->g->setup, &setup), "the game keeps its setup, started");
+	kp_t_eq(T, kp_scalar(s->g, KP_MISSION_INDEX), 0, "a custom map's game is row 0");
+	for (k = 0; k < REPLAY_STEPS; k++) {
+		if (k == 0) {
+			order(T, s);
+			crcs(T, s, &recorded[steps++]);
+		}
+		if (k == REPLAY_STEPS - 1) {
+			static const uint8_t NONE[2] = { 0x09, 0 };
+			kp_session_command(s, NONE, sizeof NONE, -1); /* the last block: never fed */
+		}
+		if (k == 20) kp_t_ok(T, kp_save_encode(s, &id, NULL, NULL, &bytes, &size, &err) == 0, "%s", err.msg);
+		step(T, s, 1);
+		crcs(T, s, &recorded[steps++]);
+	}
+	/* the replay's header: the setup's template, slots and names; its setup plays the game back */
+	rep = rep_new(T);
+	kp_t_ok(T, kp_session_replay_file(s, NULL, rep, &err) == 0, "%s", err.msg);
+	kp_t_eq(T, kp_rep_campaign(rep), 0, "row 0");
+	kp_t_ok(T, memcmp(rep->header + KP_REP_TEMPLATE, KP_TEMPLATE_UMS, KP_TEMPLATE_SIZE) == 0, "the template");
+	kp_t_eq(T, rep->header[KP_REP_GAME_TYPE], KP_TEMPLATE_UMS[KP_TEMPLATE_TYPE], "the type again");
+	kp_t_eq(T, rep->header[KP_REP_SLOTS], (int)setup.slots, "the slots");
+	kp_rep_player(rep, (int)s->g->local_player, &human);
+	kp_t_ok(T, strcmp(human.name, "Tester") == 0 && human.storm == 0, "the human's record: %s", human.name);
+	kp_rep_setup(rep, &back);
+	kp_t_ok(T, setup_eq(&back, &s->g->setup), "kp_rep_setup: the started setup, its colours and user-select flags");
+	from_replay = custom_map(T, rep->chk, rep->chk_size);
+	p = custom_loaded(T, from_replay);
+	kp_session_start_defaults(&start);
+	kp_t_eq(T, kp_session_replay_start(&start, rep), 0, "a custom replay plays");
+	kp_t_ok(T, start.has_setup && start.mission_index == 0, "from its header's setup");
+	start.replay_as_game = 1;
+	start.objective_count = -1;
+	if (kp_session_start(p, &start) != 0) kp_t_fail(T, "the playback does not start: %s", p->error);
+	kp_t_guard(T, p->g);
+	for (k = 0; k < steps - 2; k++) {
+		step(T, p, 1);
+		crcs(T, p, &got);
+		for (c = 0; c < recorded[k].count; c++) {
+			if (strcmp(recorded[k].names[c], "step") == 0) continue; /* the result dialog's clock */
+			kp_t_eq(T, kp_state_crc(&got, recorded[k].names[c], &found), recorded[k].crcs[c], "playback step %d: %s", k,
+				recorded[k].names[c]);
+		}
+	}
+	/* the save: its MAPC, a game started again from it, the save loaded into that game */
+	kp_t_eq(T, kp_save_map(bytes, size, &id, &saved, &err), 1, "a custom map's save has its map: %s", err.msg);
+	from_save = custom_map(T, saved.chk, saved.chk_size);
+	kp_t_ok(T, saved.chk_size == from_replay->chk_size && memcmp(saved.chk, rep->chk, saved.chk_size) == 0, "the map");
+	kp_t_eq(T, saved.load, KP_CHK_UMS, "the load");
+	kp_t_ok(T, setup_eq(&saved.setup, &s->g->setup), "the started setup");
+	free(saved.chk);
+	again = custom_loaded(T, from_save);
+	kp_session_start_defaults(&start);
+	start.seed = SEED;
+	start.has_setup = 1;
+	start.setup = saved.setup;
+	if (kp_session_start(again, &start) != 0) kp_t_fail(T, "the game does not start again: %s", again->error);
+	kp_t_guard(T, again->g);
+	kp_t_ok(T, kp_save_load(again, bytes, size, &id, NULL, NULL, &err) == 0, "%s", err.msg);
+	free(bytes);
+	step(T, again, 1);
+	crcs(T, again, &got);
+	same_crcs(T, &recorded[21], &got, "the loaded save's next step"); /* saved after 21 steps */
+	/* a campaign scenario's save has no map */
+	again = session(T, NULL);
+	kp_t_ok(T, kp_save_encode(again, &id, NULL, NULL, &bytes, &size, &err) == 0, "%s", err.msg);
+	kp_t_eq(T, kp_save_map(bytes, size, &id, &saved, &err), 0, "no MAPC");
+	free(bytes);
+}
+
 #define TERRAN01 "missions/terran/terran01"
 /* The original's own replays of the emulator's campaign chains (phase RP, stage RP0; private): each game is one cheat
  * command at the end, whose block the playback never dispatches. */
@@ -1874,7 +2137,237 @@ static int check_every_long(void)
 static void replay_plays_play_back(KpT *T) { goldens_play_back(T, "plays/index.json", "plays", check_every_long()); }
 static void replay_runs_play_back(KpT *T) { goldens_play_back(T, "runs/index.json", "runs", check_every_long()); }
 
+/* --- a network game's seats (phase M, stage M6; ADR 0025) --- */
+
+static void free_hub(void *p) { kp_hub_free((KpTurnHub *)p); }
+
+static KpTurnHub *hub_new(KpT *T, int seats, int frames_per_turn)
+{
+	KpTurnHub *h = kp_hub_new(seats, frames_per_turn);
+	if (!h) kp_t_fail(T, "out of memory");
+	kp_t_defer(T, free_hub, h);
+	return h;
+}
+
+/* The turn hub alone: the first turns at the start, a turn every frames per turn, each turn's commands by the Storm IDs
+ * from 7 down, a seat ahead of the others waits, a full turn is sent first and a command past the bound is dropped,
+ * the latency command's extra turns (the lowest Storm ID's of a turn last). */
+static void hub_runs_the_seats_turns(KpT *T)
+{
+	static const uint8_t A[3] = { 0x13, 1, 0 }, B[3] = { 0x13, 2, 0 }, C[3] = { 0x13, 3, 0 }; /* hotkeys 1..3 */
+	static const uint8_t LAT1[2] = { 0x55, 1 }, LAT2[2] = { 0x55, 9 };
+	uint8_t big[KP_HUB_MESSAGE];
+	KpTurnHub *h;
+	const KpCommand *list;
+	int count, k, frames;
+	kp_t_eq(T, kp_hub_frames_per_turn(6, KP_HUB_TURNS_PER_SECOND), 2, "Fastest at 8 turns a second: 2 frames a turn");
+	kp_t_eq(T, kp_hub_frames_per_turn(0, KP_HUB_TURNS_PER_SECOND), 1, "Slowest: 1");
+	kp_t_eq(T, kp_hub_frames_per_turn(6, 0), 1, "no turns per second: 20, 1 frame");
+	kp_t_ok(T, kp_hub_new(0, 1) == NULL && kp_hub_new(KP_HUB_SEATS + 1, 1) == NULL, "a seat count outside: none");
+	h = hub_new(T, 3, 3);
+	kp_t_eq(T, kp_hub_begin(h), -1, "no Storm IDs yet: no start");
+	kp_t_eq(T, kp_hub_seat(h, 0, 4, 2), 0, "seat 0: record 4, Storm ID 2");
+	kp_t_eq(T, kp_hub_seat(h, 1, 0, 0), 0, "seat 1: record 0, Storm ID 0");
+	kp_t_eq(T, kp_hub_seat(h, 2, 1, 2), -1, "a Storm ID twice");
+	kp_t_eq(T, kp_hub_seat(h, 2, 1, 1), 0, "seat 2: record 1, Storm ID 1");
+	kp_t_eq(T, kp_hub_frame(h, 0, &list, &count), KP_HUB_WAIT, "before the start: waits");
+	kp_t_eq(T, kp_hub_begin(h), 0, "the start");
+	for (k = 0; k < 3; k++) kp_t_eq(T, kp_hub_in_transit(h, k), KP_HUB_IN_TRANSIT, "seat %d: the first turns sent", k);
+	/* the commands queued now are in each seat's third turn (two in transit before it, sent by its first turn) */
+	kp_t_eq(T, kp_hub_submit(h, 0, A, sizeof A), 0, "seat 0's command");
+	kp_t_eq(T, kp_hub_submit(h, 1, B, sizeof B), 0, "seat 1's command");
+	kp_t_eq(T, kp_hub_submit(h, 2, C, sizeof C), 0, "seat 2's command");
+	kp_t_eq(T, kp_hub_first_turn(h, 0, &list, &count), KP_HUB_TURN, "RunGame's turn");
+	kp_t_eq(T, count, 0, "the first turns are empty");
+	kp_t_eq(T, kp_hub_first_turn(h, 0, &list, &count), KP_HUB_WAIT, "one first turn");
+	for (k = 1; k < 3; k++) kp_t_eq(T, kp_hub_first_turn(h, k, &list, &count), KP_HUB_TURN, "seat %d's first turn", k);
+	/* seat 0: turn 1 at its first frame, two frames between, turn 2 with the commands */
+	kp_t_eq(T, kp_hub_frame(h, 0, &list, &count), KP_HUB_TURN, "turn 1");
+	kp_t_eq(T, count, 0, "turn 1 empty");
+	kp_t_eq(T, kp_hub_frame(h, 0, &list, &count), KP_HUB_BETWEEN, "a frame between");
+	kp_t_eq(T, kp_hub_frame(h, 0, &list, &count), KP_HUB_BETWEEN, "a frame between");
+	kp_t_eq(T, kp_hub_frame(h, 0, &list, &count), KP_HUB_TURN, "turn 2");
+	kp_t_eq(T, count, 3, "every seat's command");
+	if (count == 3) {
+		kp_t_ok(T, list[0].player == 4 && list[0].bytes[1] == 1, "Storm ID 2's first, as its record");
+		kp_t_ok(T, list[1].player == 1 && list[1].bytes[1] == 3, "then Storm ID 1's");
+		kp_t_ok(T, list[2].player == 0 && list[2].bytes[1] == 2, "Storm ID 0's last");
+	}
+	/* seat 0 is ahead: the seats' turn 3 is not sent yet */
+	for (frames = 0; frames < 2; frames++) (void)kp_hub_frame(h, 0, &list, &count);
+	kp_t_eq(T, kp_hub_frame(h, 0, &list, &count), KP_HUB_WAIT, "a seat ahead waits for the others' turn");
+	kp_t_eq(T, kp_hub_frame(h, 0, &list, &count), KP_HUB_WAIT, "and polls again");
+	/* the latency: two in one turn (each seat's third, queued after the first turns), the lowest Storm ID's last; the
+	 * next sends keep 2 + 1 in transit */
+	h = hub_new(T, 3, 1);
+	for (k = 0; k < 3; k++) kp_t_eq(T, kp_hub_seat(h, k, k, 2 - k), 0, "seat %d", k);
+	kp_t_eq(T, kp_hub_begin(h), 0, "the start");
+	for (k = 0; k < 3; k++) kp_t_eq(T, kp_hub_first_turn(h, k, &list, &count), KP_HUB_TURN, "seat %d's first turn", k);
+	kp_t_eq(T, kp_hub_submit(h, 2, LAT1, sizeof LAT1), 0, "Storm ID 0's latency 1");
+	kp_t_eq(T, kp_hub_submit(h, 0, LAT2, sizeof LAT2), 0, "Storm ID 2's latency 9 (2 at most)");
+	for (frames = 0; frames < 6; frames++) {
+		for (k = 0; k < 3; k++) kp_t_eq(T, kp_hub_frame(h, k, &list, &count), KP_HUB_TURN, "seat %d's turn %d", k, frames + 1);
+	}
+	for (k = 0; k < 3; k++) {
+		kp_t_eq(T, kp_hub_target(h, k), KP_HUB_IN_TRANSIT + 1, "seat %d's target: the lowest Storm ID's", k);
+		kp_t_eq(T, kp_hub_in_transit(h, k), KP_HUB_IN_TRANSIT + 1, "seat %d's turns in transit", k);
+	}
+	/* a full turn is sent first; past the bound of turns in transit a command is dropped */
+	memset(big, 0x0c, sizeof big);
+	kp_t_eq(T, kp_hub_submit(h, 2, big, 0), -1, "an empty command");
+	kp_t_eq(T, kp_hub_submit(h, 2, big, sizeof big + 0), 0, "a whole message");
+	for (k = 0; k < KP_HUB_TRANSIT_LIMIT; k++) (void)kp_hub_submit(h, 2, big, sizeof big);
+	kp_t_eq(T, kp_hub_in_transit(h, 2), KP_HUB_TRANSIT_LIMIT - KP_HUB_IN_TRANSIT, "full turns sent up to the bound");
+	kp_t_eq(T, kp_hub_submit(h, 2, A, sizeof A), -1, "a short command past the full turn: dropped too");
+	kp_t_ok(T, h->dropped > 0, "then dropped");
+}
+
+#define SEATS_MAP "scenarios/burrowed_computer" /* a human's Marines and a computer's burrowed Zerglings */
+
+/* A seat's select of its first unit and a right click, into one turn. */
+static void seat_order(KpT *T, KpSession *s)
+{
+	static const uint8_t RIGHT_CLICK[10] = { 0x14, 0x14, 0x05, 0x56, 0x04, 0, 0, 0xe4, 0, 0 }; /* to (1300, 1110) */
+	int64_t units[1];
+	uint16_t ref;
+	uint8_t select[4];
+	kp_t_ok(T, kp_t_list_units(s->g, KP_LIST_ACTIVE, units, 1) == 1, "a unit");
+	ref = kp_ui_unit_ref(s->g, units[0]);
+	select[0] = 0x09;
+	select[1] = 1;
+	select[2] = (uint8_t)(ref & 0xff);
+	select[3] = (uint8_t)(ref >> 8);
+	kp_t_eq(T, kp_session_command(s, select, sizeof select, -1), 0, "the select queued");
+	kp_t_eq(T, kp_session_command(s, RIGHT_CLICK, sizeof RIGHT_CLICK, -1), 0, "the right click queued");
+}
+
+/* Two seats of a network game on a custom map, each its own session with its own local player and turns from the hub:
+ * a seat's orders reach both games in the same turn, and the seats' shared hashes are equal at every frame. */
+static void session_seats_share_the_state(KpT *T)
+{
+	enum { SEATS = 2, FRAMES = 240 };
+	KpSession *s[SEATS];
+	KpTurnHub *h;
+	KpDataMap *map;
+	KpGameSetup setup;
+	KpMission m;
+	KpError err;
+	int k, p, humans = 0, frame;
+	int64_t moved_at = -1;
+	if (!ready(T)) return;
+	if (!kp_oracle_mission(".", SEATS_MAP, &m, &err)) kp_t_fail(T, "%s", err.msg);
+	map = custom_map(T, m.blob, m.chk_size);
+	custom_setup(&m, &setup);
+	for (p = 0; p < 8 && humans < SEATS; p++) { /* the map's human, then its computer as the second human */
+		if (setup.type[p] == KP_CTRL_HUMAN || setup.type[p] == KP_CTRL_LOBBY_COMPUTER) {
+			setup.type[p] = KP_CTRL_HUMAN;
+			setup.storm[p] = humans;
+			snprintf(setup.name[p], sizeof setup.name[p], "Seat %d", humans++);
+		}
+	}
+	kp_mission_free(&m);
+	kp_t_eq(T, humans, SEATS, "two humans");
+	setup.multiplayer = 1;
+	h = hub_new(T, SEATS, kp_hub_frames_per_turn(6, KP_HUB_TURNS_PER_SECOND));
+	for (k = 0; k < SEATS; k++) {
+		KpSessionStart start;
+		s[k] = custom_loaded(T, map);
+		kp_session_start_defaults(&start);
+		start.seed = SEED;
+		start.record = k == 0;
+		start.has_setup = 1;
+		start.setup = setup;
+		start.hub = h;
+		start.seat = k;
+		start.local_storm = k;
+		if (kp_session_start(s[k], &start) != 0) kp_t_fail(T, "seat %d does not start: %s", k, s[k]->error);
+		kp_t_guard(T, s[k]->g);
+	}
+	kp_t_ok(T, s[0]->g->local_player != s[1]->g->local_player, "each seat its own local player");
+	kp_t_eq(T, kp_hub_begin(h), 0, "the hub starts");
+	for (k = 0; k < SEATS; k++) kp_t_eq(T, kp_session_seat_begin(s[k]), 0, "seat %d's first turn: %s", k, s[k]->error);
+	for (frame = 0; frame < FRAMES; frame++) {
+		uint64_t a = 0, b = 0;
+		if (frame == 5) seat_order(T, s[0]); /* seat 0's Marine walks away */
+		for (k = 0; k < SEATS; k++) kp_t_ok(T, kp_session_step(s[k], NULL), "seat %d's frame %d: %s", k, frame, s[k]->error);
+		kp_t_ok(T, kp_shared_hash(s[0]->g, NULL, NULL, &a) == 0 && kp_shared_hash(s[1]->g, NULL, NULL, &b) == 0, "out of memory");
+		kp_t_ok(T, a == b, "frame %d: the seats' shared hashes differ", frame);
+		if (moved_at < 0) {
+			int64_t units[1];
+			if (kp_t_list_units(s[1]->g, KP_LIST_ACTIVE, units, 1) == 1 && s[1]->g->u.order[units[0]] == KP_ORD_MOVE)
+				moved_at = frame;
+		}
+	}
+	kp_t_ok(T, moved_at > 5, "the other seat runs seat 0's order (frame %lld)", (long long)moved_at);
+	kp_t_eq(T, kp_scalar(s[0]->g, KP_FRAME), kp_scalar(s[1]->g, KP_FRAME), "the seats' frames");
+	kp_t_eq(T, kp_scalar(s[0]->g, KP_TURN), kp_scalar(s[0]->g, KP_FRAME) / 2 + 1, "a turn every 2 frames, the first before");
+	kp_t_eq(T, h->dropped, 0, "no command dropped");
+}
+
+/* The development mode's seats (kp_seats.h): the lobby's computer seated, the hidden seat stepped to the shown one's
+ * frame and compared there, a seat's own state apart changes nothing, the shared state apart stops the seats with the
+ * section and the field named. */
+static void seats_stop_at_a_difference(KpT *T)
+{
+	KpSeats seats;
+	KpDataMap *map;
+	KpGameSetup setup, three;
+	KpMission m;
+	KpError err;
+	char why[256] = "";
+	int k, frame;
+	int64_t units[1];
+	if (!ready(T)) return;
+	if (!kp_oracle_mission(".", SEATS_MAP, &m, &err)) kp_t_fail(T, "%s", err.msg);
+	map = custom_map(T, m.blob, m.chk_size);
+	custom_setup(&m, &setup);
+	kp_mission_free(&m);
+	three = setup;
+	kp_t_ok(T, kp_seats_setup(&three, 3, why, sizeof why) != 0 && strstr(why, "room for 2 seats") != NULL,
+		"a third seat refused: %s", why);
+	kp_t_eq(T, kp_seats_setup(&setup, 2, why, sizeof why), 0, "two seats: %s", why);
+	kp_t_eq(T, setup.multiplayer, 1, "a network game");
+	memset(&seats, 0, sizeof seats); /* its hub and sessions the test's: no kp_seats_free */
+	seats.count = 2;
+	seats.hub = hub_new(T, 2, kp_hub_frames_per_turn(6, KP_HUB_TURNS_PER_SECOND));
+	for (k = 0; k < 2; k++) {
+		KpSessionStart start;
+		seats.session[k] = custom_loaded(T, map);
+		kp_session_start_defaults(&start);
+		start.seed = SEED;
+		start.has_setup = 1;
+		start.setup = setup;
+		start.hub = seats.hub;
+		start.seat = k;
+		start.local_storm = k;
+		if (kp_session_start(seats.session[k], &start) != 0) kp_t_fail(T, "seat %d: %s", k, seats.session[k]->error);
+		kp_t_guard(T, seats.session[k]->g);
+	}
+	kp_t_eq(T, kp_seats_begin(&seats), 0, "the first turns: %s", seats.report);
+	for (frame = 0; frame < 60; frame++) {
+		kp_t_ok(T, kp_session_step(seats.session[0], NULL), "frame %d: %s", frame, seats.session[0]->error);
+		kp_t_eq(T, kp_seats_frame(&seats), 0, "frame %d: %s", frame, seats.report);
+	}
+	kp_t_eq(T, kp_scalar(seats.session[1]->g, KP_FRAME), kp_scalar(seats.session[0]->g, KP_FRAME), "the hidden seat follows");
+	kp_t_eq(T, seats.checked, kp_scalar(seats.session[0]->g, KP_FRAME), "compared at the shown seat's frame");
+	seats.session[1]->g->scalar[KP_SCREEN_X] += 32;
+	kp_t_ok(T, kp_session_step(seats.session[0], NULL), "a frame more");
+	kp_t_eq(T, kp_seats_frame(&seats), 0, "a seat's screen is its own: %s", seats.report);
+	kp_t_eq(T, kp_t_list_units(seats.session[1]->g, KP_LIST_ACTIVE, units, 1), 1, "a unit");
+	seats.session[1]->g->u.kills[units[0]] += 1;
+	seats.shown = 1; /* the other seat shown: seat 0 follows it, and the report still names the pair that differs */
+	kp_t_ok(T, kp_session_step(seats.session[1], NULL), "a frame more");
+	kp_t_eq(T, kp_seats_frame(&seats), -1, "the seats stop");
+	kp_t_ok(T, seats.stopped && strncmp(seats.report, "seats 0 and 1 differ", 20) == 0
+			&& strstr(seats.report, "sections UNIT") != NULL && strstr(seats.report, "g->u.kills") != NULL,
+		"the report: %s", seats.report);
+	kp_t_eq(T, kp_seats_frame(&seats), -1, "and stay stopped");
+}
+
 static const KpTest TESTS[] = {
+	{ "hub_runs_the_seats_turns", hub_runs_the_seats_turns, 0 },
+	{ "session_seats_share_the_state", session_seats_share_the_state, 0 },
+	{ "seats_stop_at_a_difference", seats_stop_at_a_difference, 0 },
 	{ "clock_fastest_steps_at_42ms", clock_fastest_steps_at_42ms, 0 },
 	{ "clock_speed_table", clock_speed_table, 0 },
 	{ "clock_interpolation_fraction", clock_interpolation_fraction, 0 },
@@ -1899,11 +2392,13 @@ static const KpTest TESTS[] = {
 	{ "session_replay_speed_and_live_commands", session_replay_speed_and_live_commands, 0 },
 	{ "session_replay_record_in_a_save", session_replay_record_in_a_save, 0 },
 	{ "session_replay_records_as_the_original", session_replay_records_as_the_original, 0 },
+	{ "session_a_custom_maps_game", session_a_custom_maps_game, 0 },
 	{ "replay_scenarios_play_back", replay_scenarios_play_back, 6 },
 	{ "replay_plays_play_back", replay_plays_play_back, 12 },
 	{ "replay_runs_play_back", replay_runs_play_back, 8 },
 	{ "session_profile_round_trip", session_profile_round_trip, 0 },
 	{ "session_profile_language", session_profile_language, 0 },
+	{ "session_profile_custom_choices", session_profile_custom_choices, 0 },
 	{ "session_profile_names_become_utf8", session_profile_names_become_utf8, 0 },
 	{ "session_profile_video_options", session_profile_video_options, 0 },
 	{ "session_profile_options", session_profile_options, 0 },

@@ -127,11 +127,28 @@ static void console(KpApp *a, ConsoleInput *in)
 	}
 }
 
+/* --seats: Ctrl+Alt and a digit shows that seat (0 the player's); the key is the development mode's, not the game's.
+ * 1 when the key was it. */
+static int seat_key(KpApp *a, const SDL_KeyboardEvent *k)
+{
+	int seat;
+	char why[256];
+	if (!a->flow.seats.count || !(k->mod & SDL_KMOD_CTRL) || !(k->mod & SDL_KMOD_ALT)) return 0;
+	if (k->scancode == SDL_SCANCODE_0) seat = 0;
+	else if (k->scancode >= SDL_SCANCODE_1 && k->scancode <= SDL_SCANCODE_9) seat = 1 + (int)(k->scancode - SDL_SCANCODE_1);
+	else return 0;
+	if (k->type == SDL_EVENT_KEY_DOWN && !k->repeat && kp_flow_show_seat(&a->flow, seat, why, sizeof why) != 0) {
+		SDL_Log("seats: seat %d: %s", seat, why);
+	}
+	return 1;
+}
+
 static void key(KpApp *a, const SDL_KeyboardEvent *k)
 {
 	uint16_t vk = vk_of(k->scancode);
 	int side = side_of(k->scancode);
 	int down = k->type == SDL_EVENT_KEY_DOWN;
+	if (seat_key(a, k)) return;
 	if (side >= 0) {
 		int other = side ^ 1;
 		a->held_sides[side] = down;

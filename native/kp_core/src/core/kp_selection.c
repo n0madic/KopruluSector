@@ -1,5 +1,6 @@
 /* Unit selection (kp_game.h). */
 #include "kp_game_internal.h"
+#include "kp_gametype.h"
 
 #define RECENT_FIRST 10
 #define SPRITE_SELECTED 0x08
@@ -28,7 +29,6 @@ static int64_t flags(KpGame *g, int64_t t) { return KP_DAT(g, units, special_abi
 void kp_selection_init(KpGame *g)
 {
 	int p, k, i;
-	int64_t me = g->local_player;
 	kp_scalar_set(g, KP_ORDER_MARKER, 0);
 	for (k = 0; k < KP_SLOTS; k++) g->local_selection[k] = 0;
 	for (p = 0; p < KP_SELECTION_PLAYERS; p++) {
@@ -38,13 +38,117 @@ void kp_selection_init(KpGame *g)
 			for (k = 0; k < KP_SLOTS; k++) g->groups[p][i][k] = 0;
 		}
 	}
+	/* InitSelectionState 0x443900: the colours with the selections empty */
+	kp_refresh_alliance_colors(g);
+}
+
+/* RefreshAllianceColors 0x41d7b0's first step: each player's circle colour 0x52904a from the local player's row (0 its
+ * own, 1 an ally, 2 an enemy); in a replay 0 for every player but 1 for player 11. The images world keeps a copy by
+ * owner for the fog ghosts' flash. */
+static void circle_classes(KpGame *g)
+{
+	int64_t me = g->local_player, p;
 	for (p = 0; p <= 11; p++) {
-		if (p == me) g->circle_colors[p] = COLOR_OWN;
+		if (g->w->replay) g->circle_colors[p] = p == 11 ? COLOR_ALLY : COLOR_OWN;
+		else if (p == me) g->circle_colors[p] = COLOR_OWN;
 		else g->circle_colors[p] = kp_alliance(g, me, p) == 0 ? COLOR_ENEMY : COLOR_ALLY;
 	}
-	/* 0x52904a, read by the fog ghosts' flash */
 	g->w->has_circle_colors = 1;
 	for (p = 0; p < 256; p++) g->w->circle_colors[p] = p <= 11 ? (int32_t)g->circle_colors[p] : -1;
+}
+
+static int64_t circle_color(KpGame *g, int64_t owner);
+
+int32_t kp_ally_circle_cap(KpGame *g)
+{
+	int size = kp_setup_team_size(&g->setup);
+	if (size < 0) kp_game_fail(g, "selection: %d teams (error 0x5d)", g->setup.template_record[KP_TEMPLATE_TEAMS]);
+	return size - 1;
+}
+
+/* IsTeamAllySelectionRow 0x49c2b0: in a team game the selection row of another human of the seat's force, the seat's
+ * own record a human. */
+static int ally_row(KpGame *g, int64_t p)
+{
+	int64_t me = g->local_record;
+	return kp_setup_team_game(&g->setup) && p != me && p >= 0 && p < KP_SELECTION_PLAYERS
+		&& kp_controller(g, p) == KP_CTRL_HUMAN && me >= 0 && me < KP_PLAYERS && kp_controller(g, me) == KP_CTRL_HUMAN
+		&& g->players.force[me] == g->players.force[p];
+}
+
+/* IncrementDashed 0x423100 (in the colour of the unit's owner) and DecrementDashed 0x4230e0 of an allied row's unit. */
+static void increment_dashed(KpGame *g, int64_t n)
+{
+	kp_sprite_add_ally_circle(g->w, kp_unit_sprite(g, n), (int32_t)circle_color(g, g->u.owner[n]), kp_ally_circle_cap(g));
+}
+static void decrement_dashed(KpGame *g, int64_t n) { kp_sprite_decrement_ally_circle(g->w, kp_unit_sprite(g, n)); }
+
+/* The rows of the seat's force but its own (no controller test; RefreshAllianceColors 0x41d7b0 and
+ * RestoreSelectionOverlays 0x416e20 walk them). */
+static int force_row(KpGame *g, int64_t p)
+{
+	int64_t me = g->local_record;
+	return p != me && me >= 0 && me < KP_PLAYERS && g->players.force[p] == g->players.force[me];
+}
+
+/* RefreshAllianceColors 0x41d7b0: the colours, then the local selection's circles of other players' units (every
+ * unit's in a replay) again in their new colour (0x422b40, then 0x422eb0); a team game's rows of the seat's force
+ * redraw their dashed circles of the units the team does not own (0x4230e0, then 0x423100: a new image only for a
+ * count of 1). */
+void kp_refresh_alliance_colors(KpGame *g)
+{
+	int64_t k, p;
+	circle_classes(g);
+	for (k = 0; k < KP_SLOTS && g->local_selection[k] != 0; k++) {
+		int64_t n = g->local_selection[k];
+		if (!g->w->replay && g->u.owner[n] == g->local_player) continue;
+		kp_remove_selection_circle(g, n);
+		kp_reselect_slot(g, n, k);
+	}
+	if (!kp_setup_team_game(&g->setup)) return;
+	for (p = 0; p < KP_SELECTION_PLAYERS; p++) {
+		if (!force_row(g, p)) continue;
+		for (k = 0; k < KP_SLOTS && g->selections[p][k] != 0; k++) {
+			int64_t n = g->selections[p][k];
+			if (!g->w->replay && g->u.owner[n] == g->local_player) continue;
+			decrement_dashed(g, n);
+			increment_dashed(g, n);
+		}
+	}
+}
+
+void kp_restore_ally_circles(KpGame *g)
+{
+	int64_t p, k;
+	if (!kp_setup_team_game(&g->setup)) return;
+	for (p = KP_SELECTION_PLAYERS - 1; p >= 0; p--) {
+		if (!force_row(g, p)) continue;
+		for (k = 0; k < KP_SLOTS && g->selections[p][k] != 0; k++) increment_dashed(g, g->selections[p][k]);
+	}
+}
+
+void kp_reselect_slot(KpGame *g, int64_t n, int64_t slot)
+{
+	if (kp_band(flags(g, g->u.type[n]), DAT_SUBUNIT) != 0) {
+		kp_add_selection_circle(g, g->u.subunit[n], slot);
+		g->local_selection[slot] = g->u.subunit[n];
+	} else {
+		kp_add_selection_circle(g, n, slot);
+	}
+}
+
+void kp_clear_selection_row(KpGame *g, int64_t p)
+{
+	int k;
+	if (p < 0 || p >= KP_SELECTION_PLAYERS) return;
+	if (ally_row(g, p)) { /* the units up to the first empty entry, each one dashed circle less */
+		for (k = 0; k < KP_SLOTS && g->selections[p][k] != 0; k++) {
+			decrement_dashed(g, g->selections[p][k]);
+			g->selections[p][k] = 0;
+		}
+		return;
+	}
+	for (k = 0; k < KP_SLOTS; k++) g->selections[p][k] = 0;
 }
 
 int64_t kp_unit_ref(KpGame *g, int64_t n)
@@ -188,6 +292,7 @@ static int put_in_row(KpGame *g, int64_t n, int64_t p, int64_t k)
 	if (kp_band(g->w->spr.flags[kp_unit_sprite(g, n)], SPRITE_HIDDEN) != 0) return 0;
 	if (k > 0 && (!kp_multi_selectable(g, n) || g->u.owner[n] != kp_scalar(g, KP_COMMAND_PLAYER))) return 0;
 	g->selections[p][k] = n;
+	if (ally_row(g, p)) increment_dashed(g, n);
 	return 1;
 }
 
@@ -229,7 +334,7 @@ void kp_command_select(KpGame *g, int64_t p, const int64_t *refs, int count)
 	if (count > KP_SLOTS) return;
 	if (p < 0 || p >= KP_SELECTION_PLAYERS) kp_game_fail(g, "selection: player %lld", (long long)p);
 	sel = g->selections[p];
-	for (k = 0; k < KP_SLOTS; k++) sel[k] = 0;
+	kp_clear_selection_row(g, p); /* 0x49c7d0 */
 	for (r = 0; r < count; r++) {
 		int64_t n = kp_unit_from_ref(g, refs[r]);
 		if (n != 0) {
@@ -290,8 +395,8 @@ static int remove_from_row(KpGame *g, int64_t n, int64_t p)
 	return count - 1;
 }
 
-/* ExecSelectRemove 0x473170 (command 0x0b): units leave the player's selection (RemoveUnitFromSelectionRow 0x49c870;
- * the dashed circles of a team game's allied rows, 0x49c2b0, never show in a campaign). */
+/* ExecSelectRemove 0x473170 (command 0x0b): units leave the player's selection (RemoveUnitFromSelectionRow 0x49c870: an
+ * allied row's unit loses a dashed circle first, in the row or not). */
 void kp_command_select_remove(KpGame *g, int64_t p, const int64_t *refs, int count)
 {
 	int r = 0, k;
@@ -299,7 +404,9 @@ void kp_command_select_remove(KpGame *g, int64_t p, const int64_t *refs, int cou
 	if (p < 0 || p >= KP_SELECTION_PLAYERS) kp_game_fail(g, "selection: player %lld", (long long)p);
 	for (k = 0; k < count; k++) {
 		int64_t n = kp_unit_from_ref(g, refs[k]);
-		if (n != 0) r = remove_from_row(g, n, p);
+		if (n == 0) continue;
+		if (ally_row(g, p)) decrement_dashed(g, n);
+		r = remove_from_row(g, n, p);
 	}
 	if (r > 1) record_recent(g, p);
 }
@@ -368,9 +475,9 @@ static void assign_control_group(KpGame *g, int64_t p, int64_t group, int replac
 static void select_control_group(KpGame *g, int64_t p, int64_t group)
 {
 	int64_t *row = group_row(g, p, group), player = kp_scalar(g, KP_COMMAND_PLAYER), *sel = g->selections[p];
-	int n = group_length(row), i = 0, k;
+	int n = group_length(row), i = 0;
 	if (n == 0) return;
-	for (k = 0; k < KP_SLOTS; k++) sel[k] = 0; /* 0x49c7d0 */
+	kp_clear_selection_row(g, p);
 	while (i < n) {
 		int64_t u = kp_unit_from_ref(g, row[i]);
 		if (u == 0 || g->u.owner[u] != player || kp_band(g->w->spr.flags[kp_unit_sprite(g, u)], SPRITE_HIDDEN) != 0
@@ -380,6 +487,7 @@ static void select_control_group(KpGame *g, int64_t p, int64_t group)
 			row[n] = 0;
 		} else {
 			sel[i++] = u; /* 0x49cbc0 */
+			if (ally_row(g, p)) increment_dashed(g, u);
 		}
 	}
 	if (group >= RECENT_FIRST) g->recent_stamps[p][group - RECENT_FIRST] = kp_mod(kp_scalar(g, KP_TURN), 65536);

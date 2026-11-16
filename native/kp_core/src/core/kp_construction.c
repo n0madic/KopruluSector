@@ -60,6 +60,7 @@
 #define WELD_TIME_BASE 30
 #define STRING_CANNOT_BUILD 0x358
 #define SOUND_WORKER_ERROR 0xa2 /* + race */
+#define SOUND_PLACEMENT_ERROR 0x9f /* + race */
 #define SOUND_CANNOT_LAND 0x90 /* + race */
 #define SOUND_ZERG_DONE 135
 #define SOUND_SCV_DONE 136
@@ -434,16 +435,20 @@ void kp_snap_building(KpGame *g, int64_t t, int64_t *x, int64_t *y, int64_t *tx,
 	*ty = div32(*y) - div32(hh);
 }
 
-/* ShowWorkerBuildError 0x4464e0: for its local owner outside a replay, the race's error sound at the worker
- * (0x446940 with [1, 99]; the talking request when it played) and the message whether or not it played. */
-void kp_worker_error(KpGame *g, int64_t n, int64_t string)
+/* ShowWorkerPlacementError 0x446450 (sound 0x9f + race) and ShowWorkerBuildError 0x4464e0 (0xa2 + race): for its
+ * local owner outside a replay, the race's error sound at the worker (0x446940 with [1, 99]; the talking request when
+ * it played) and the message whether or not it played. */
+static void worker_error(KpGame *g, int64_t n, int64_t sound, int64_t string)
 {
 	int64_t p = g->u.owner[n];
 	if (p != g->local_player || g->w->replay) return;
-	kp_unit_sound(g, SOUND_WORKER_ERROR + kp_unit_race(g, n), n, KP_SOUND_ON, KP_VOICE_VOLUME, KP_TALK_PLAYED,
-		KP_VOICE_CAMERA, KP_VOICE_COLOUR);
+	kp_unit_sound(g, sound + kp_unit_race(g, n), n, KP_SOUND_ON, KP_VOICE_VOLUME, KP_TALK_PLAYED, KP_VOICE_CAMERA,
+		KP_VOICE_COLOUR);
 	kp_report_error(g, p, string);
 }
+
+void kp_worker_error(KpGame *g, int64_t n, int64_t string) { worker_error(g, n, SOUND_WORKER_ERROR, string); }
+void kp_worker_placement_error(KpGame *g, int64_t n, int64_t string) { worker_error(g, n, SOUND_PLACEMENT_ERROR, string); }
 
 /* PlayLandingErrorVoice 0x4465e0: the race's sound for a building or Drone that may not land, for its local owner
  * outside a replay (0x446940 with [1, 99]; the talking request when it played). */

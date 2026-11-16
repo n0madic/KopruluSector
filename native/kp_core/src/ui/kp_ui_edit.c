@@ -290,6 +290,18 @@ void kp_ui_edit_set_margin(KpUi *ui, int32_t control, uint8_t x)
 	if (k >= 0) ui->edits[k].margin_x = x;
 }
 
+size_t kp_ui_edit_cursor(KpUi *ui, int32_t control)
+{
+	int k = slot_of(ui, control);
+	return k >= 0 ? ui->edits[k].cursor : 0;
+}
+
+void kp_ui_edit_scroll_home(KpUi *ui, int32_t control)
+{
+	int k = slot_of(ui, control);
+	if (k >= 0) ui->edits[k].scroll = 0;
+}
+
 /* The width of the character at text[at], *past the byte after it. */
 static int32_t one_width(const KpUi *ui, const uint8_t *text, size_t at, size_t *past)
 {

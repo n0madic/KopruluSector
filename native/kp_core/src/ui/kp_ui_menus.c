@@ -2,8 +2,10 @@
  * gluchatslot.cpp..gluconn.cpp and glues.cpp, glujoin.cpp's load screen; atlas P18..P21, P41): a state's screen runs
  * modally (RunModal 0x4c35c0 as a dialog whose destruction runs its continuation), the popups nest in it (a glue dialog
  * composited into the screen's bitmap, flag 0x8000000), and the screen's end leaves the next state and the host's work
- * (a mission or cinematic to start, a saved game to load, a replay to play, the exit). Multiplayer, the Campaign Editor
- * and Play Custom are outside the product's scope: their buttons have no label and answer nothing. */
+ * (a mission or cinematic to start, a saved game to load, a replay to play, a custom game to create, the exit).
+ * Multiplayer and the Campaign Editor are outside the product's scope: their buttons have no label and answer nothing. */
+#include "kp_gametype.h"
+#include "kp_template.h"
 #include "kp_text.h"
 #include "kp_ui.h"
 #include "kp_rng.h"
@@ -22,6 +24,7 @@
 #define STATE_TERRAN_ROOM 7
 #define STATE_ZERG_ROOM 8
 #define STATE_PROTOSS_ROOM 9
+#define STATE_PLAY_CUSTOM 11
 #define STATE_LOAD_REPLAY 12
 #define STATE_LOAD 13
 #define STATE_EXP_CAMPAIGN 22
@@ -61,7 +64,7 @@
 #define R_SINGLE 3
 #define ID_MAIN_MULTI 4         /* the buttons the remake lacks: Multiplayer, Campaign Editor */
 #define ID_MAIN_EDITOR 5
-#define ID_CAMPAIGN_CUSTOM 10   /* the campaign menus' Play Custom (outside the remake) and Load Replay (results 10 and */
+#define ID_CAMPAIGN_CUSTOM 10   /* the campaign menus' Play Custom and Load Replay (results 10 and */
 #define ID_CAMPAIGN_REPLAY 11   /* 11, glue states 11 and 12: RunCampaignMenu 0x453f00, 0x458b00) */
 #define R_INTRO 8
 /* The main menu's version label: the original's is "Version 1.17.0" (0x465960 from its executable's product version),
@@ -245,7 +248,7 @@ static void popup_post_load(KpUi *ui, int32_t dialog)
 	kp_ui_mark_dirty(ui, dialog);
 }
 
-static void centre(KpUiControl *d)
+void kp_ui_centre_glue_dialog(KpUiControl *d)
 {
 	/* CenterGlueDialog 0x46c8a0 (the right and bottom still hold the size) */
 	d->left = (int16_t)((KP_UI_SCREEN_W - d->right) / 2);
@@ -265,7 +268,7 @@ static int popup_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 			kp_ui_glue_release_dialog(ui, self);
 			m->popup = -1;
 			break;
-		case KP_UI_RECENTRE: centre(d); break;
+		case KP_UI_RECENTRE: kp_ui_centre_glue_dialog(d); break;
 		case KP_UI_POST_LOAD: popup_post_load(ui, self); break;
 		case KP_UI_CLOSE:
 			(void)base(ui, d, e);
@@ -646,11 +649,6 @@ static int unsupported_button_proc(KpUi *ui, KpUiControl *c, KpUiEvent *e)
 	return unsupported_event(e) ? 1 : kp_ui_flc_button_proc(ui, c, e);
 }
 
-static int unsupported_text_button_proc(KpUi *ui, KpUiControl *c, KpUiEvent *e)
-{
-	return unsupported_event(e) ? 1 : kp_ui_text_button_proc(ui, c, e);
-}
-
 static void hide_unsupported_labels(KpUi *ui, int32_t dialog, const int16_t *ids, int count)
 {
 	int k;
@@ -719,7 +717,7 @@ static int32_t open_screen(KpUi *ui, const char *bin, KpUiInteract proc, KpUiMod
 int32_t kp_ui_login_open(KpUi *ui);
 int32_t kp_ui_campaign_open(KpUi *ui, int expansion);
 int32_t kp_ui_load_open(KpUi *ui);
-int32_t kp_ui_replay_open(KpUi *ui);
+int32_t kp_ui_create_open(KpUi *ui);
 
 static const uint8_t *campaign_table(KpUi *ui, int expansion, int race, int *count);
 static uint16_t row16(const uint8_t *row, int at);
@@ -798,7 +796,8 @@ int32_t kp_ui_menus_enter(KpUi *ui, int state)
 	case STATE_CAMPAIGN: return kp_ui_campaign_open(ui, 0);
 	case STATE_EXP_CAMPAIGN: return kp_ui_campaign_open(ui, 1);
 	case STATE_LOAD: return kp_ui_load_open(ui);
-	case STATE_LOAD_REPLAY: return kp_ui_replay_open(ui);
+	case STATE_PLAY_CUSTOM:
+	case STATE_LOAD_REPLAY: return kp_ui_create_open(ui);
 	default: return -1;
 	}
 }
@@ -1144,8 +1143,9 @@ static void campaign_done(KpUi *ui, int32_t r)
 	case 7: next = STATE_TERRAN_ROOM; break;
 	case 8: next = STATE_ZERG_ROOM; break;
 	case 9: next = STATE_LOGIN; break;
+	case 10: next = STATE_PLAY_CUSTOM; break;
 	case 11: next = STATE_LOAD_REPLAY; break;
-	default: next = STATE_MAIN; break; /* Play Custom answers nothing (unsupported_text_button_proc) */
+	default: next = STATE_MAIN; break;
 	}
 	screen_ended(ui, next, mn(ui)->action == KP_UI_MENU_CINEMATIC ? KP_UI_MENU_CINEMATIC
 		: next == STATE_PROTOSS_ROOM || next == STATE_TERRAN_ROOM || next == STATE_ZERG_ROOM ? KP_UI_MENU_MISSION
@@ -1263,8 +1263,6 @@ static int campaign_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 	if (e->type != KP_UI_USER) return base(ui, d, e);
 	switch (e->code) {
 	case KP_UI_CREATE: {
-		static const int16_t UNSUPPORTED[1] = { ID_CAMPAIGN_CUSTOM };
-		hide_unsupported_labels(ui, self, UNSUPPORTED, 1);
 		kp_ui_glue_activate(ui, self, THEME_CAMPAIGN);
 		if (!ui->music.playing) kp_ui_music_play(ui, KP_UI_TITLE_MUSIC);
 		break;
@@ -1290,8 +1288,7 @@ static int campaign_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 		KpUiInteract procs[11];
 		memset(procs, 0, sizeof procs);
 		procs[4] = procs[8] = kp_ui_text_button_proc; /* 0x503d1c, 0x5080d4 */
-		procs[ID_CAMPAIGN_CUSTOM - 1] = unsupported_text_button_proc;
-		procs[ID_CAMPAIGN_REPLAY - 1] = kp_ui_text_button_proc;
+		procs[ID_CAMPAIGN_CUSTOM - 1] = procs[ID_CAMPAIGN_REPLAY - 1] = kp_ui_text_button_proc;
 		if (m->expansion) {
 			procs[5] = kp_ui_flc_button_proc;
 			procs[6] = procs[7] = episode_proc;
@@ -1381,6 +1378,30 @@ static void load_done(KpUi *ui, int32_t r)
 	else screen_ended(ui, STATE_MAIN, KP_UI_MENU_STATE);
 }
 
+#define SLIDE_DONE 0x405 /* the dialog's slides ended (kp_ui_glue.c) */
+
+void kp_ui_menus_refused(KpUi *ui, uint16_t gluall) { mn(ui)->refusal = gluall; }
+
+void kp_ui_menus_net_error(KpUi *ui, uint16_t network) { mn(ui)->net_error = network; }
+
+void kp_ui_menus_flush_net_error(KpUi *ui)
+{
+	uint16_t index = mn(ui)->net_error;
+	if (index == 0) return;
+	mn(ui)->net_error = 0;
+	ok_popup(ui, kp_ui_tbl(ui, KP_UI_NETWORK, index), NULL); /* ShowGlueOkBox 0x4570d0 over the active dialog */
+}
+
+/* The refusal of the game the screen chose before, once the screen stood (kp_ui_menus_refused). */
+static void refused_popup(KpUi *ui)
+{
+	KpUiMenus *m = mn(ui);
+	uint16_t refusal = m->refusal;
+	if (refusal == 0) return;
+	m->refusal = 0;
+	ok_popup(ui, kp_ui_tbl(ui, KP_UI_GLUALL, refusal), NULL);
+}
+
 static int load_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 {
 	/* 0x459a70 */
@@ -1407,6 +1428,9 @@ static int load_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 		}
 		kp_ui_glue_slide_out(ui, self);
 		return 1;
+	case SLIDE_DONE:
+		refused_popup(ui);
+		break;
 	case KP_UI_POST_LOAD: {
 		static const uint16_t SLIDES[6] = { 1, 0, 2, 3, 3, 2 }; /* 0x508160 */
 		KpUiInteract procs[7];
@@ -1429,19 +1453,32 @@ int32_t kp_ui_load_open(KpUi *ui)
 	return open_screen(ui, "rez\\gluLoad.bin", load_proc, load_done);
 }
 
-/* --- Load Replay (glue state 12: RunCreateGameScreen 0x455550 with ECX = 1, rez\gluCustm.bin; atlas P18, P19, P20)
- * --- The original's screen is also Play Custom's: in a replay's mode its game type, subtype and slot controls stay
- * hidden for a replay's entry (ApplyEntryFixedSettings 0x454e50, RefreshComputerSlots 0x456420), and Koprulu has no
- * other mode, so they are hidden from the start. The list is the listed folder's (menus.replay_dir under the replays
- * folder): "[Up One Level]" below the root, its folders as "[name]", then its replays (BuildMapList 0x45ba40,
- * ScanMapDirectory 0x45c9a0 with flags 0x28, SortedInsertEntry 0x45b3f0); Ok on a folder enters it (OnCreateGameOk
- * 0x455240's 0x8000000b). */
+/* --- the gluCustm screen: Play Custom (glue state 11) and Load Replay (12) (RunCreateGameScreen 0x455550 with ECX =
+ * the replay mode, rez\gluCustm.bin; atlas P18, P19, P20) ---
+ * One screen for both. The list is the listed folder's (menus.map_dir under the mode's root: Load Replay's
+ * maps\replays, Play Custom's maps): "[Up One Level]" below the root, its folders as "[name]", then its files
+ * (BuildMapList 0x45ba40, ScanMapDirectory 0x45c9a0 with flags 0x28, InsertMapEntrySorted 0x45b3f0). An entry's
+ * information shows 100 ms after its selection (PreviewMapEntry 0x45b970); the game type and subtype lists offer the
+ * templates; the slots' computers and races follow the selected map (RefreshComputerSlots 0x456420). Ok on a folder
+ * enters it (OnCreateGameOk 0x455240's 0x8000000b), on a replay plays it, on a map creates its game with the screen's
+ * template and races. */
 
 #define ID_CREATE_LIST 5
 #define ID_CREATE_FOLDER 6
 #define R_CREATE_OK 12
 #define R_CREATE_CANCEL 13
-#define SLIDE_DONE 0x405        /* the dialog's slides ended (kp_ui_glue.c) */
+#define ID_SUBTYPE_LABEL 14     /* the subtype's label (0x669730) */
+#define ID_GAME_TYPE 17
+#define ID_SUBTYPE 18
+#define ID_LOCAL_PLAYER 20      /* RefreshComputerSlots' first: the player's own slot */
+#define ID_FIRST_SLOT 21        /* the computers' slot types 21..27, each with its race list RACE_LIST_OFFSET on */
+#define ID_LAST_SLOT 27
+#define ID_LOCAL_RACE 28        /* its label: the player's race; the siblings below it are the slots */
+#define ID_GAME_TYPE_LABEL 38
+#define RACE_LIST_OFFSET 8
+#define COMBO_EVENTS 0x20000u   /* the combo boxes' post-load flag (LocalPlayerListProc 0x456120 and the others) */
+#define SLOT_TIMER 5            /* RefreshComputerSlots 0x456420's own timer while the map is unread */
+#define SLOT_PERIOD 100
 #define PREVIEW_TIMER 12        /* PreviewMapEntry 0x45b970's SetTimer(12, 100) */
 #define PREVIEW_PERIOD 100
 #define CREATE_GRP "glue\\create\\iCreate.grp"
@@ -1449,7 +1486,9 @@ int32_t kp_ui_load_open(KpUi *ui)
 #define ICON_FILE 3             /* DrawMapListItem 0x455850: 3 + highlighted */
 #define CREATE_FORMAT 0x11      /* the layout flags 0x6d300e of the list's and the label's text */
 #define STR_UP_ONE_LEVEL 28     /* gluAll: "Up One Level", in brackets (0x66adf0) */
-#define ROOT_LABEL "replays"    /* SetFolderLabel 0x4560d0 of maps\replays: its last name */
+#define REPLAY_ROOT_LABEL "replays" /* SetFolderLabel 0x4560d0 of maps\replays: its last name */
+#define CUSTOM_ROOT_LABEL "maps"
+#define CUSTOM_EXPANSION_DIR "BroodWar" /* InitMapList 0x455aa0's first visit with Brood War */
 #define STR_INVALID_SCENARIO 61
 #define STR_MISSING 66
 #define STR_MAP_NAME 48
@@ -1460,52 +1499,221 @@ int32_t kp_ui_load_open(KpUi *ui)
 #define STR_HUMAN_COUNT 37
 #define STR_TILESET_FIRST 39    /* Badlands .. Twilight */
 #define TILESETS 8
+#define TILESET_INSTALLATION 2
+/* OnCreateGameOk 0x455240's messages of CreateGameFromEntry 0x45bfc0's results (gluAll) */
+#define STR_CREATE_EXPANSION 60 /* 0x80000001 */
+#define STR_CREATE_UMS_ONLY 59  /* 0x80000002 */
+#define STR_CREATE_INVALID 51   /* 0x80000007 */
+#define STR_CREATE_TEMPLATE 54  /* 0x80000008 */
+#define STR_CREATE_NO_HUMAN 58  /* 0x8000000c */
+#define STR_CREATE_NO_COMPUTER 57 /* 0x8000000d; FinishSinglePlayerCreate 0x4554a0's too */
+#define STR_CREATE_FAILED 52    /* the other results offline */
+#define TEMPLATE_TOP_VS_BOTTOM 0x0f
+#define TEMPLATE_SUBTYPE_TEXTS 9 /* FormatTemplateSubtype 0x447bb0: glue string 0xa4 + value */
+#define STR_SUBTYPE_FIRST 0xa4
+#define STR_TOP_VS_BOTTOM 0xac  /* "%u vs %u" */
+#define SUBTYPE_CHARS 15        /* AddSubtypeItem 0x456720's 16-byte buffer */
+#define TEMPLATE_SERVER 0x80    /* a Battle.net server template's type (0x447cc0, with a sub-byte) */
+#define TEMPLATE_LADDER_FIRST 0x11 /* 0x447ed0: the types [0x11, 0x16] need a map of class 6 */
+#define TEMPLATE_LADDER_LAST 0x16
+#define MAP_CLASS_TOURNAMENT 2
+#define MAP_CLASS_SERVER 5
+#define MAP_CLASS_LADDER 6
+#define SLOT_COMPUTER 1         /* the slot types 0x503d9c: {0 Closed, 1 Computer} */
+#define RACE_RANDOM 6
+#define RACE_DEFAULT_ITEM 3     /* FillRaceList 0x456170 selects Random */
+
+static const struct { uint8_t value; uint16_t text; } SLOT_TYPES[2] = { { 0, 0x86 }, { 1, 0x84 } }; /* 0x503d9c */
+static const struct { uint8_t race; uint8_t text; } RACES[4] = { { 0, 7 }, { 1, 8 }, { 2, 9 }, { 6, 10 } }; /* 0x503da4 */
 
 /* The information fields and their controls (RegisterMapInfoField 0x45c6a0 from InitMapList 0x455aa0): the title,
- * the description, then players, size, computers, humans and tileset with SetMapInfoText 0x455d10's labels. */
+ * the description, then players, size, computers, humans and tileset with SetMapInfoText 0x455d10's labels. Fields 4,
+ * 6 and 7 are shown by the selected template (the players outside Use Map Settings, the computers and humans in it);
+ * 5 and 8 keep the dialog's. */
 enum { FIELD_PLAYERS, FIELD_SIZE, FIELD_COMPUTERS, FIELD_HUMANS, FIELD_TILESET, FIELD_LINES };
+enum { SHOWN_KEPT, SHOWN_OUTSIDE_UMS, SHOWN_IN_UMS };
 static const struct { int16_t control; uint16_t label; uint8_t shown; } INFO_LINES[FIELD_LINES] = {
-	{ 9, 0x1f, 1 },     /* field 4: shown offline (0x447de0's template is not Use Map Settings) */
-	{ 10, 0x21, 1 },    /* field 5 */
-	{ 0x24, 0x24, 0 },  /* field 6: hidden offline */
-	{ 0x25, 0x26, 0 },  /* field 7 */
-	{ 0xb, 0x22, 1 },   /* field 8 */
+	{ 9, 0x1f, SHOWN_OUTSIDE_UMS }, /* field 4 */
+	{ 10, 0x21, SHOWN_KEPT },       /* field 5 */
+	{ 0x24, 0x24, SHOWN_IN_UMS },   /* field 6 */
+	{ 0x25, 0x26, SHOWN_IN_UMS },   /* field 7 */
+	{ 0xb, 0x22, SHOWN_KEPT },      /* field 8 */
 };
 #define ID_INFO_TITLE 7
 #define ID_INFO_DESCRIPTION 8
 #define ID_INFO_UNVERIFIED 39   /* Koprulu's labels (defs/ui/koprulu-dialogs.json's extend), 39 + reason - 1: */
 #define INFO_UNVERIFIED_LABELS 3 /* loads, another revision, other data (KP_UI_REPLAY_LOADS..KP_UI_REPLAY_DATA) */
-#define R_REPLAY_IMPORT 42      /* Koprulu's buttons (the same extend), shown when the host has a file picker */
-#define R_REPLAY_EXPORT 43
-#define CREATE_CONTROLS R_REPLAY_EXPORT
+#define R_REPLAY_IMPORT 42      /* Koprulu's buttons (the same extend), shown when the host has a file picker: Load */
+#define R_REPLAY_EXPORT 43      /* Replay's under the list, */
+#define R_CUSTOM_IMPORT 44      /* Play Custom's above Ok (the slots fill the space under its list) */
+#define CREATE_CONTROLS R_CUSTOM_IMPORT
+
+static KpUiCreate *cr(KpUi *ui) { return &ui->menus.create; }
+
+static unsigned char ascii_upper(unsigned char ch) { return ch >= 'a' && ch <= 'z' ? (unsigned char)(ch - 32) : ch; }
+
+static uint32_t record16(const uint8_t *r, int at) { return (uint32_t)r[at] | (uint32_t)r[at + 1] << 8; }
+
+static uint32_t record32(const uint8_t *r, int at) { return record16(r, at) | record16(r, at + 2) << 16; }
+
+/* FindTemplateRecord 0x447b50 of a list item's type (the type and its sub-byte << 8) and a subtype (NULL none). */
+static const KpTemplate *find_template(const KpUi *ui, uint32_t type, uint32_t subtype)
+{
+	return ui->templates != NULL
+		? kp_templates_find(ui->templates, (int)(type & 0xff), (int)(type >> 8 & 0xff), (int)(subtype & 0xffff)) : NULL;
+}
+
+/* IsTemplateMelee 0x447d30: the victory byte 1 */
+static int template_melee(const KpUi *ui, uint32_t type, uint32_t subtype)
+{
+	const KpTemplate *t = find_template(ui, type, subtype);
+	return t != NULL && t->record[KP_TEMPLATE_VICTORY] == KP_VICTORY_MELEE;
+}
+
+/* IsTemplateUms 0x447de0: no victory, no starting units, no tournament */
+static int template_ums(const KpUi *ui, uint32_t type, uint32_t subtype)
+{
+	const KpTemplate *t = find_template(ui, type, subtype);
+	return t != NULL && kp_template_ums(t->record);
+}
+
+static int selected_ums(KpUi *ui) { return template_ums(ui, cr(ui)->game_type, cr(ui)->subtype); }
+
+/* IsTemplateSelectable 0x4479e0 off Battle.net: no tournament, no server template, offline a restriction other than 0
+ * and 1 */
+static int template_selectable(const uint8_t *r, int multiplayer)
+{
+	if (r[KP_TEMPLATE_TOURNAMENT] != 0) return 0;
+	if (r[0] == TEMPLATE_SERVER && r[KP_TEMPLATE_SUB] != 0) return 0;
+	return multiplayer || (r[KP_TEMPLATE_RESTRICTION] != 0 && r[KP_TEMPLATE_RESTRICTION] != 1);
+}
+
+/* The entry of the map list's selected item (GetMapEntryInfo 0x45beb0 finds it), or -1. */
+static int selected_entry(KpUi *ui)
+{
+	KpUiMenus *m = mn(ui);
+	int s = m->map_list >= 0 ? kp_ui_list_selection(ui, m->map_list) : KP_UI_LIST_NONE, k;
+	if (s == KP_UI_LIST_NONE) return -1;
+	k = (int)kp_ui_list_data(ui, m->map_list, s);
+	return k >= 0 && k < m->entry_count ? k : -1;
+}
+
+/* SelectListItemByText 0x4c7090: the first item whose text the given one begins, the ASCII letters folded, selected
+ * (its index); else no item selected (KP_UI_LIST_NONE). An empty text matches none. */
+static int select_text(KpUi *ui, int32_t list, const char *text)
+{
+	int n = kp_ui_list_count(ui, list), k;
+	for (k = 0; k < n && text[0] != 0; k++) {
+		const uint8_t *t = kp_ui_list_text(ui, list, k);
+		size_t i;
+		if (t[0] == 0) continue;
+		for (i = 0; text[i] != 0 && ascii_upper(t[i]) == ascii_upper((unsigned char)text[i]); i++) {}
+		if (text[i] == 0) {
+			kp_ui_list_select(ui, list, k);
+			return k;
+		}
+	}
+	kp_ui_list_select(ui, list, KP_UI_LIST_NONE);
+	return KP_UI_LIST_NONE;
+}
+
+/* SaveGameTypeSelection 0x454e10, SubtypeListProc 0x456780's code 1: the selected item's text as the registry's value */
+static void save_choice(KpUi *ui, int32_t list, char value[KP_UI_TEMPLATE_TEXT])
+{
+	int s = kp_ui_list_selection(ui, list);
+	if (s == KP_UI_LIST_NONE) return;
+	(void)kp_text_copy(value, KP_UI_TEMPLATE_TEXT, (const char *)kp_ui_list_text(ui, list, s));
+	cr(ui)->registry_changed = 1;
+}
 
 static void info_text(KpUi *ui, int16_t id, const uint8_t *text)
 {
-	int32_t c = kp_ui_find_control(ui, mn(ui)->replay_dialog, id);
+	int32_t c = kp_ui_find_control(ui, mn(ui)->create_dialog, id);
 	if (c >= 0) kp_ui_set_control_text(ui, c, text);
 }
 
-/* PublishMapInfo 0x45dfc0 of entry k (-1: the fields cleared, ClearMapInfo 0x45b5e0). */
-static void publish_replay_info(KpUi *ui, int k)
+static void fill_subtypes(KpUi *ui);
+
+/* ApplyEntryFixedSettings 0x454e50: a read replay's game type is its own (offline its list and label hidden, the
+ * subtype list showing the replay's and locked); any other entry leaves them to the player. */
+static void fixed_settings(KpUi *ui)
 {
 	KpUiMenus *m = mn(ui);
-	const KpUiReplayEntry *r = k >= 0 && k < m->replay_count ? &m->replays[k] : NULL;
+	int k = selected_entry(ui), at, n;
+	int32_t type, subtype, label;
+	const KpUiMapEntry *e;
+	if (k < 0) return;
+	e = &m->entries[k];
+	type = kp_ui_find_control(ui, m->create_dialog, ID_GAME_TYPE);
+	subtype = kp_ui_find_control(ui, m->create_dialog, ID_SUBTYPE);
+	label = kp_ui_find_control(ui, m->create_dialog, ID_GAME_TYPE_LABEL);
+	if (e->loaded && e->kind == KP_UI_ENTRY_REPLAY) {
+		if (type >= 0) kp_ui_hide_control(ui, type);
+		if (label >= 0) kp_ui_hide_control(ui, label);
+		if (subtype >= 0) {
+			n = kp_ui_list_count(ui, subtype);
+			for (at = 0; at < n && kp_ui_list_data(ui, subtype, at) != e->game_subtype; at++) {}
+			if (at < n && at != kp_ui_list_selection(ui, subtype)) {
+				(void)kp_ui_send_user(ui, subtype, KP_UI_VALUE_CHANGED, (uint32_t)at);
+			}
+			kp_ui_set_enabled(ui, subtype, 0);
+		}
+	} else {
+		if (type >= 0) {
+			kp_ui_show_control(ui, type);
+			kp_ui_set_enabled(ui, type, 1);
+		}
+		if (label >= 0) kp_ui_show_control(ui, label);
+		if (subtype >= 0) kp_ui_set_enabled(ui, subtype, 1);
+	}
+}
+
+/* OnMapSlotCountChanged 0x455710 (PublishMapInfo's tail, while the screen runs): Top vs Bottom's subtypes follow the
+ * slots */
+static void map_slot_count(KpUi *ui, uint8_t slots)
+{
+	KpUiCreate *c = cr(ui);
+	if (!c->active) return;
+	c->slots = slots;
+	if ((c->game_type & 0xff) == TEMPLATE_TOP_VS_BOTTOM) fill_subtypes(ui);
+	fixed_settings(ui);
+}
+
+/* ClearMapInfoFields 0x45b5e0 (k = -1) and PublishMapInfo 0x45dfc0 of entry k (a folder's fields are empty): the
+ * title, the description and the lines through SetMapInfoText 0x455d10, the entry's User Select slots, then
+ * OnMapSlotCountChanged 0x455710 with the slots of the replay read last, else the entry's. */
+static void publish_info(KpUi *ui, int k)
+{
+	KpUiMenus *m = mn(ui);
+	KpUiCreate *c = &m->create;
+	const KpUiMapEntry *r = k >= 0 && k < m->entry_count ? &m->entries[k] : NULL;
 	char value[FIELD_LINES][64];
-	int j, u;
+	int j, u, ums;
 	memset(value, 0, sizeof value);
-	m->replay_title[0] = m->replay_description[0] = 0;
-	if (r != NULL) { /* LoadReplayEntryInfo 0x45d250 */
-		uint16_t title = r->status != 0 && r->description == STR_MISSING ? STR_INVALID_SCENARIO : STR_REPLAY;
-		(void)kp_text_copy_chars((char *)m->replay_title, sizeof m->replay_title,
-			(const char *)kp_ui_tbl(ui, KP_UI_GLUALL, title), KP_UI_REPLAY_TITLE_CHARS);
+	m->map_title[0] = m->map_description[0] = 0;
+	if (r != NULL && (r->kind == KP_UI_ENTRY_REPLAY || r->kind == KP_UI_ENTRY_MAP)) {
+		int replay = r->kind == KP_UI_ENTRY_REPLAY;
+		/* LoadReplayEntryInfo 0x45d250, LoadMapEntryInfo 0x45d870 */
 		if (r->status != 0) {
-			(void)kp_text_copy((char *)m->replay_description, sizeof m->replay_description,
+			uint16_t title = !replay || r->description == STR_MISSING ? STR_INVALID_SCENARIO : STR_REPLAY;
+			(void)kp_text_copy_chars((char *)m->map_title, sizeof m->map_title,
+				(const char *)kp_ui_tbl(ui, KP_UI_GLUALL, title), KP_UI_MAP_TITLE_CHARS);
+			(void)kp_text_copy((char *)m->map_description, sizeof m->map_description,
 				(const char *)kp_ui_tbl(ui, KP_UI_GLUALL, r->description));
 		} else {
-			snprintf((char *)m->replay_description, sizeof m->replay_description,
-				(const char *)kp_ui_tbl(ui, KP_UI_GLUALL, STR_MAP_NAME), r->map);
-			strncat((char *)m->replay_description, "\n\n", sizeof m->replay_description - strlen((char *)m->replay_description) - 1);
-			snprintf(value[FIELD_PLAYERS], sizeof value[0], (const char *)kp_ui_tbl(ui, KP_UI_GLUALL, STR_COUNT), 1u);
+			if (replay) {
+				(void)kp_text_copy_chars((char *)m->map_title, sizeof m->map_title,
+					(const char *)kp_ui_tbl(ui, KP_UI_GLUALL, STR_REPLAY), KP_UI_MAP_TITLE_CHARS);
+				snprintf((char *)m->map_description, sizeof m->map_description,
+					(const char *)kp_ui_tbl(ui, KP_UI_GLUALL, STR_MAP_NAME), r->map);
+				strncat((char *)m->map_description, "\n\n",
+					sizeof m->map_description - strlen((char *)m->map_description) - 1);
+			} else {
+				(void)kp_text_copy_chars((char *)m->map_title, sizeof m->map_title, r->map, KP_UI_MAP_TITLE_CHARS);
+				(void)kp_text_copy((char *)m->map_description, sizeof m->map_description, r->text);
+			}
+			snprintf(value[FIELD_PLAYERS], sizeof value[0], (const char *)kp_ui_tbl(ui, KP_UI_GLUALL, STR_COUNT),
+				replay ? 1u : (unsigned)r->players);
 			snprintf(value[FIELD_SIZE], sizeof value[0], (const char *)kp_ui_tbl(ui, KP_UI_GLUALL, STR_DIMENSIONS),
 				(unsigned)r->width, (unsigned)r->height);
 			snprintf(value[FIELD_COMPUTERS], sizeof value[0], (const char *)kp_ui_tbl(ui, KP_UI_GLUALL, STR_COMPUTER_COUNT),
@@ -1518,44 +1726,388 @@ static void publish_replay_info(KpUi *ui, int k)
 			}
 		}
 	}
-	info_text(ui, ID_INFO_TITLE, m->replay_title);
-	info_text(ui, ID_INFO_DESCRIPTION, m->replay_description);
+	info_text(ui, ID_INFO_TITLE, m->map_title);
+	info_text(ui, ID_INFO_DESCRIPTION, m->map_description);
 	for (u = 0; u < INFO_UNVERIFIED_LABELS; u++) { /* the reason's label alone */
-		j = kp_ui_find_control(ui, m->replay_dialog, (int16_t)(ID_INFO_UNVERIFIED + u));
-		if (j >= 0) kp_ui_set_visible(ui, j, r != NULL && r->status == 0 && r->unverified == KP_UI_REPLAY_LOADS + u);
+		j = kp_ui_find_control(ui, m->create_dialog, (int16_t)(ID_INFO_UNVERIFIED + u));
+		if (j >= 0) {
+			kp_ui_set_visible(ui, j, r != NULL && r->kind == KP_UI_ENTRY_REPLAY && r->status == 0
+				&& r->unverified == KP_UI_REPLAY_LOADS + u);
+		}
 	}
+	ums = selected_ums(ui);
 	for (j = 0; j < FIELD_LINES; j++) { /* SetMapInfoText 0x455d10: the label is the format, 0x12 aligns the value */
 		const char *label = (const char *)kp_ui_tbl(ui, KP_UI_GLUALL, INFO_LINES[j].label);
-		int32_t c = kp_ui_find_control(ui, m->replay_dialog, INFO_LINES[j].control);
-		if (strlen(label) + strlen(value[j]) < sizeof m->replay_lines[0]) {
-			snprintf((char *)m->replay_lines[j], sizeof m->replay_lines[j], label, 0x12, value[j]);
+		int32_t ctl = kp_ui_find_control(ui, m->create_dialog, INFO_LINES[j].control);
+		if (strlen(label) + strlen(value[j]) < sizeof m->map_lines[0]) {
+			snprintf((char *)m->map_lines[j], sizeof m->map_lines[j], label, 0x12, value[j]);
 		} /* else the line keeps its old text: 0x455d51 skips SetControlText */
-		if (c < 0) continue;
-		kp_ui_set_control_text(ui, c, m->replay_lines[j]);
-		kp_ui_set_visible(ui, c, INFO_LINES[j].shown);
+		if (ctl < 0) continue;
+		kp_ui_set_control_text(ui, ctl, m->map_lines[j]);
+		if (INFO_LINES[j].shown != SHOWN_KEPT) kp_ui_set_visible(ui, ctl, (INFO_LINES[j].shown == SHOWN_IN_UMS) == ums);
 	}
+	if (r == NULL) {
+		memset(c->user_select, 0, sizeof c->user_select); /* ClearUserSelectFlags 0x479c80 */
+		return;
+	}
+	memcpy(c->user_select, r->user_select, sizeof c->user_select); /* LoadUserSelectFlags 0x479cc0 */
+	map_slot_count(ui, c->replay_read ? c->replay_slots : r->players);
+}
+
+/* LoadReplayEntryInfo 0x45d250 (the replay read flag 0x67cc90 set before its loaded test) and LoadMapEntryInfo
+ * 0x45d870 (the map's header read: LoadMapHeader 0x46b5c0's players) of entry k, once; the host read a replay's with
+ * the list, a map's in load_entry. */
+static void read_entry(KpUi *ui, int k)
+{
+	KpUiCreate *c = cr(ui);
+	KpUiMapEntry *e = &mn(ui)->entries[k];
+	if (e->kind == KP_UI_ENTRY_REPLAY) c->replay_read = 1;
+	if (e->loaded || (e->kind != KP_UI_ENTRY_REPLAY && e->kind != KP_UI_ENTRY_MAP)) return;
+	if (e->kind == KP_UI_ENTRY_REPLAY && e->status == 0) c->replay_slots = e->slots; /* its header read (0x480690) */
+	if (e->kind == KP_UI_ENTRY_MAP) {
+		if (ui->load_entry != NULL) {
+			ui->load_entry(ui->host, ui, k);
+		} else { /* no host to read it: as a missing file */
+			e->status = 1;
+			e->description = STR_MISSING;
+		}
+		c->header_human = e->status == 0 ? e->first_human : -1;
+	}
+	e->loaded = 1;
 }
 
 /* DeferredPreviewTimer 0x45d1e0: the entry's information 100 ms after its selection. */
 static void preview_tick(KpUi *ui, int32_t owner)
 {
 	KpUiMenus *m = mn(ui);
+	int k = m->map_preview;
 	kp_ui_delete_timer(&ui->timers, owner, PREVIEW_TIMER);
-	publish_replay_info(ui, m->replay_preview);
-	m->replay_preview = -1;
+	m->create.replay_read = 0;
+	m->map_preview = -1;
+	if (k < 0 || k >= m->entry_count) return; /* the list was built again under it */
+	read_entry(ui, k);
+	publish_info(ui, k);
 }
 
-/* PreviewMapEntry 0x45b970: the fields cleared, the information 100 ms later. */
-static void preview_replay(KpUi *ui, int k)
+/* PreviewMapEntry 0x45b970: an unread map's or replay's fields cleared and its information 100 ms later; any other
+ * entry's at once. */
+static void preview_entry(KpUi *ui, int k)
 {
 	KpUiMenus *m = mn(ui);
-	kp_ui_delete_timer(&ui->timers, m->replay_dialog, PREVIEW_TIMER);
-	if (k < 0 || k >= m->replay_count) return;
-	publish_replay_info(ui, -1);
-	if (m->replays[k].kind != KP_UI_REPLAY_ENTRY_FILE) return; /* a folder's information is none (0x45dfc0) */
-	m->replay_preview = k;
-	(void)kp_ui_set_timer(&ui->timers, m->replay_dialog, PREVIEW_TIMER, PREVIEW_PERIOD, kp_ui_callback(ui, preview_tick),
-		ui->now);
+	const KpUiMapEntry *e;
+	kp_ui_delete_timer(&ui->timers, m->create_dialog, PREVIEW_TIMER);
+	if (k < 0 || k >= m->entry_count) return;
+	e = &m->entries[k];
+	if ((e->kind == KP_UI_ENTRY_MAP || e->kind == KP_UI_ENTRY_REPLAY) && !e->loaded) {
+		publish_info(ui, -1);
+		m->map_preview = k;
+		(void)kp_ui_set_timer(&ui->timers, m->create_dialog, PREVIEW_TIMER, PREVIEW_PERIOD,
+			kp_ui_callback(ui, preview_tick), ui->now);
+		return;
+	}
+	publish_info(ui, k);
+}
+
+/* ConfigureSlotControls 0x456350: a slot's type usable (a melee template's), else locked to a computer; its race list
+ * shown for a usable computer. */
+static void configure_slot(KpUi *ui, int32_t list, int configurable)
+{
+	int visible = configurable && (ui->controls[list].flags & KP_UI_VISIBLE);
+	int s = kp_ui_list_selection(ui, list), n, k;
+	int32_t race;
+	if (!configurable && s != KP_UI_LIST_NONE && kp_ui_list_data(ui, list, s) != SLOT_COMPUTER) {
+		n = kp_ui_list_count(ui, list);
+		for (k = 0; k < n && kp_ui_list_data(ui, list, k) != SLOT_COMPUTER; k++) {}
+		if (k < n) kp_ui_list_select(ui, list, k);
+	}
+	kp_ui_set_enabled(ui, list, configurable);
+	s = kp_ui_list_selection(ui, list);
+	race = kp_ui_find_control(ui, ui->controls[list].parent, (int16_t)(ui->controls[list].id + RACE_LIST_OFFSET));
+	if (race >= 0) kp_ui_set_visible(ui, race, visible && s != KP_UI_LIST_NONE && kp_ui_list_data(ui, list, s) != 0);
+}
+
+static void slot_tick(KpUi *ui, int32_t owner);
+
+/* RefreshComputerSlots 0x456420 (offline): the player's slot and as many computer slots as a melee template's map
+ * has other slots, or another template's has computers (locked); the rest hidden. The player's race list is the label:
+ * shown for a melee template, or while the list leads for a map whose first human slot is User Select, at Ok for the
+ * player's slot being so. While the selected map is unread the refresh waits for it (100 ms). */
+static void refresh_slots(KpUi *ui, int32_t dialog)
+{
+	KpUiMenus *m = mn(ui);
+	KpUiCreate *c = &m->create;
+	int k = selected_entry(ui), melee = 0, s, n, user;
+	uint8_t total = 0, avail = 0;
+	int32_t first, label, x;
+	if (m->multiplayer) return;
+	kp_ui_delete_timer(&ui->timers, dialog, SLOT_TIMER);
+	if (k >= 0 && m->entries[k].kind != KP_UI_ENTRY_REPLAY) { /* 0xff each while unread (0x45beb0) */
+		avail = m->entries[k].loaded ? m->entries[k].computers : 0xff;
+		total = m->entries[k].loaded ? m->entries[k].players : 0xff;
+	}
+	if (c->loading && total == 0xff) {
+		(void)kp_ui_set_timer(&ui->timers, dialog, SLOT_TIMER, SLOT_PERIOD, kp_ui_callback(ui, slot_tick), ui->now);
+		return;
+	}
+	first = kp_ui_find_control(ui, dialog, ID_LOCAL_PLAYER);
+	label = kp_ui_find_control(ui, dialog, ID_LOCAL_RACE);
+	if (first < 0 || label < 0) return;
+	s = c->type_list >= 0 ? kp_ui_list_selection(ui, c->type_list) : KP_UI_LIST_NONE;
+	x = first;
+	if (total != 0 && s != KP_UI_LIST_NONE) {
+		melee = template_melee(ui, kp_ui_list_data(ui, c->type_list, s), 1);
+		kp_ui_show_control(ui, first);
+		if (c->loading) user = c->header_human >= 0 && c->header_human < KP_UI_SLOT_FLAGS && c->user_select[c->header_human];
+		else user = c->local_slot >= 0 && c->local_slot < KP_UI_SLOT_FLAGS && c->user_select[c->local_slot];
+		kp_ui_set_visible(ui, label, melee || user);
+		n = melee ? (uint8_t)(total - 1) : avail;
+		x = ui->controls[first].next;
+		for (; n > 0; n--) {
+			if (x < 0) return;
+			if (ui->controls[x].id >= ID_LOCAL_RACE) break;
+			kp_ui_show_control(ui, x);
+			configure_slot(ui, x, melee);
+			x = ui->controls[x].next;
+		}
+	}
+	for (; x >= 0 && ui->controls[x].id < ID_LOCAL_RACE; x = ui->controls[x].next) {
+		kp_ui_hide_control(ui, x);
+		configure_slot(ui, x, melee);
+	}
+}
+
+static void slot_tick(KpUi *ui, int32_t owner) { refresh_slots(ui, owner); }
+
+/* AddSubtypeItem 0x456720: a template of the selected type with a value (Top vs Bottom's below the map's slots), its
+ * text by FormatTemplateSubtype 0x447bb0, its data the subtype */
+static void add_subtype_item(KpUi *ui, int32_t list, const uint8_t *r)
+{
+	KpUiCreate *c = cr(ui);
+	uint32_t value = record32(r, KP_TEMPLATE_VALUE);
+	char full[128], text[64];
+	int at;
+	if (value == 0) return;
+	if (r[0] == TEMPLATE_TOP_VS_BOTTOM && (c->slots < 2 || value >= c->slots)) return;
+	if (r[0] == TEMPLATE_SUBTYPE_TEXTS) {
+		snprintf(full, sizeof full, "%s", (const char *)kp_ui_tbl(ui, KP_UI_GLUALL, STR_SUBTYPE_FIRST + value));
+	} else if (r[0] == TEMPLATE_TOP_VS_BOTTOM) {
+		snprintf(full, sizeof full, (const char *)kp_ui_tbl(ui, KP_UI_GLUALL, STR_TOP_VS_BOTTOM), (unsigned)value,
+			(unsigned)(c->slots - value));
+	} else {
+		snprintf(full, sizeof full, "%u", (unsigned)value);
+	}
+	(void)kp_text_copy_chars(text, sizeof text, full, SUBTYPE_CHARS);
+	at = kp_ui_list_add(ui, list, (const uint8_t *)text, 0x10);
+	if (at != KP_UI_LIST_NONE) kp_ui_list_set_data(ui, list, at, record16(r, KP_TEMPLATE_SUBTYPE));
+}
+
+/* FillSubtypeList 0x456830: the selected type's subtypes, the registry's "Game Subtype" chosen (else the first; Top vs
+ * Bottom's middle one), the list shown with them, hidden without (the subtype 1). */
+static void fill_subtypes(KpUi *ui)
+{
+	KpUiCreate *c = cr(ui);
+	int32_t list = c->subtype_list;
+	int k, n;
+	if (list < 0) return;
+	kp_ui_list_redraw(ui, list, 0);
+	kp_ui_list_clear(ui, list);
+	for (k = 0; ui->templates != NULL && k < ui->templates->count; k++) { /* ForEachTemplateOfType 0x447ee0 */
+		const uint8_t *r = ui->templates->list[k].record;
+		if (r[0] == (c->game_type & 0xff) && r[KP_TEMPLATE_SUB] == (c->game_type >> 8 & 0xff)) add_subtype_item(ui, list, r);
+	}
+	kp_ui_list_redraw(ui, list, 1);
+	n = kp_ui_list_count(ui, list);
+	if (n == 0) {
+		kp_ui_hide_control(ui, list);
+		c->subtype = 1;
+		return;
+	}
+	if (c->game_subtype[0] == 0 || select_text(ui, list, c->game_subtype) == KP_UI_LIST_NONE) kp_ui_list_select(ui, list, 0);
+	if ((c->game_type & 0xff) == TEMPLATE_TOP_VS_BOTTOM) kp_ui_list_select(ui, list, n / 2);
+	kp_ui_show_control(ui, list);
+	c->subtype = (uint16_t)kp_ui_list_data(ui, list, kp_ui_list_selection(ui, list));
+}
+
+/* OnGameTypeSelected 0x456a40: the type, its subtype label (FindTemplateLabel 0x447ac0 and ':'), its subtypes, the
+ * template's record (0x67293d), the slots again, and the selected entry's information again. */
+static void on_type_selected(KpUi *ui, int32_t list)
+{
+	KpUiMenus *m = mn(ui);
+	KpUiCreate *c = &m->create;
+	int32_t parent = ui->controls[list].parent, label, entries;
+	const KpTemplate *t;
+	char text[KP_UI_TEMPLATE_TEXT * 3 + 1];
+	int s, k;
+	size_t chars;
+	if (kp_ui_list_count(ui, list) == 0 || (s = kp_ui_list_selection(ui, list)) == KP_UI_LIST_NONE) return;
+	c->game_type = kp_ui_list_data(ui, list, s);
+	text[0] = 0;
+	for (k = 0; ui->templates != NULL && k < ui->templates->count; k++) {
+		const uint8_t *r = ui->templates->list[k].record;
+		if (r[0] == (c->game_type & 0xff) && r[KP_TEMPLATE_SUB] == (c->game_type >> 8 & 0xff)) {
+			(void)kp_text_from_legacy(ui->templates->list[k].label, text, sizeof text);
+			break;
+		}
+	}
+	/* SStrCopy of 32 bytes, then SStrNCat of ':' within them */
+	chars = kp_text_copy_chars((char *)c->type_label, sizeof c->type_label - 1, text, KP_UI_TEMPLATE_TEXT - 1);
+	if (c->type_label[0] != 0 && chars < KP_UI_TEMPLATE_TEXT - 1) strcat((char *)c->type_label, ":");
+	if ((label = kp_ui_find_control(ui, parent, ID_SUBTYPE_LABEL)) >= 0) kp_ui_set_control_text(ui, label, c->type_label);
+	fill_subtypes(ui);
+	if ((t = find_template(ui, c->game_type, c->subtype)) != NULL) memcpy(c->record, t->record, sizeof c->record);
+	if (!m->multiplayer) {
+		c->loading = 1;
+		refresh_slots(ui, parent);
+	}
+	entries = kp_ui_find_control(ui, parent, ID_CREATE_LIST);
+	if (entries >= 0 && (s = kp_ui_list_selection(ui, entries)) != KP_UI_LIST_NONE) {
+		preview_entry(ui, (int)kp_ui_list_data(ui, entries, s));
+	}
+}
+
+/* FillGameTypeList 0x456910: the templates of subtype 1 the player may choose (AddGameTypeItem 0x456990, the name
+ * and the type), the registry's "Custom Type" chosen (RestoreGameTypeSelection 0x454d40), else offline the last melee
+ * template from the bottom; an empty list disabled. */
+static void fill_types(KpUi *ui, int32_t list)
+{
+	KpUiMenus *m = mn(ui);
+	KpUiCreate *c = &m->create;
+	int k, n, restored = 0;
+	for (k = 0; ui->templates != NULL && k < ui->templates->count; k++) {
+		const KpTemplate *t = &ui->templates->list[k];
+		char name[KP_UI_TEMPLATE_TEXT * 3 + 1];
+		int at;
+		if (record16(t->record, KP_TEMPLATE_SUBTYPE) != 1 || !template_selectable(t->record, m->multiplayer)) continue;
+		(void)kp_text_from_legacy(t->name, name, sizeof name); /* the template's name: the list's own copy */
+		at = kp_ui_list_add(ui, list, (const uint8_t *)name, 0x10);
+		if (at != KP_UI_LIST_NONE) kp_ui_list_set_data(ui, list, at, t->record[0]);
+	}
+	n = kp_ui_list_count(ui, list);
+	if (n == 0) {
+		kp_ui_set_enabled(ui, list, 0);
+		return;
+	}
+	if (c->custom_type[0] != 0 && select_text(ui, list, c->custom_type) != KP_UI_LIST_NONE) restored = 1;
+	else kp_ui_list_select(ui, list, 0);
+	if (!m->multiplayer && !restored) {
+		for (k = n - 1; k >= 0; k--) {
+			if (template_melee(ui, kp_ui_list_data(ui, list, k), 1)) {
+				kp_ui_list_select(ui, list, k);
+				break;
+			}
+		}
+	}
+	on_type_selected(ui, list);
+}
+
+static int type_list_proc(KpUi *ui, KpUiControl *c, KpUiEvent *e)
+{
+	/* GameTypeListProc 0x4569d0 */
+	int32_t self = (int32_t)(c - ui->controls);
+	if (e->type == KP_UI_USER) {
+		switch (e->code) {
+		case KP_UI_DESTROY: save_choice(ui, self, cr(ui)->custom_type); break;
+		case KP_UI_POST_LOAD: c->flags |= COMBO_EVENTS; break;
+		case KP_UI_VALUE_CHANGED:
+			(void)kp_ui_combo_proc(ui, c, e);
+			on_type_selected(ui, self);
+			return 1;
+		case SLIDE_DONE: fill_types(ui, self); break;
+		default: break;
+		}
+	}
+	return kp_ui_combo_proc(ui, c, e);
+}
+
+static int subtype_list_proc(KpUi *ui, KpUiControl *c, KpUiEvent *e)
+{
+	/* SubtypeListProc 0x456780 */
+	int32_t self = (int32_t)(c - ui->controls);
+	int s;
+	if (e->type == KP_UI_USER) {
+		switch (e->code) {
+		case KP_UI_DESTROY: save_choice(ui, self, cr(ui)->game_subtype); break;
+		case KP_UI_POST_LOAD:
+			c->flags |= COMBO_EVENTS;
+			kp_ui_hide_control(ui, self);
+			cr(ui)->subtype = 1;
+			break;
+		case KP_UI_VALUE_CHANGED:
+			(void)kp_ui_combo_proc(ui, c, e);
+			if (kp_ui_list_count(ui, self) != 0 && (s = kp_ui_list_selection(ui, self)) != KP_UI_LIST_NONE) {
+				cr(ui)->subtype = (uint16_t)kp_ui_list_data(ui, self, s);
+			}
+			return 1;
+		default: break;
+		}
+	}
+	return kp_ui_combo_proc(ui, c, e);
+}
+
+static int local_player_proc(KpUi *ui, KpUiControl *c, KpUiEvent *e)
+{
+	/* LocalPlayerListProc 0x456120: the player's name, its one item */
+	int32_t self = (int32_t)(c - ui->controls);
+	if (e->type == KP_UI_USER && e->code == KP_UI_CREATE) {
+		kp_ui_list_redraw(ui, self, 0);
+		(void)kp_ui_list_add(ui, self, (const uint8_t *)mn(ui)->player, 0);
+		kp_ui_list_redraw(ui, self, 1);
+	} else if (e->type == KP_UI_USER && e->code == KP_UI_POST_LOAD) {
+		c->flags |= COMBO_EVENTS;
+	}
+	return kp_ui_combo_proc(ui, c, e);
+}
+
+static int race_list_proc(KpUi *ui, KpUiControl *c, KpUiEvent *e)
+{
+	/* RaceListProc 0x4561d0, FillRaceList 0x456170: Zerg, Terran, Protoss, Random (selected) */
+	int32_t self = (int32_t)(c - ui->controls);
+	int k, at;
+	if (e->type == KP_UI_USER && e->code == KP_UI_CREATE) {
+		kp_ui_list_redraw(ui, self, 0);
+		for (k = 0; k < 4; k++) {
+			if ((at = kp_ui_list_add(ui, self, kp_ui_tbl(ui, KP_UI_NETWORK, RACES[k].text), 0)) == KP_UI_LIST_NONE) break;
+			kp_ui_list_set_data(ui, self, at, RACES[k].race);
+		}
+		kp_ui_list_redraw(ui, self, 1);
+		kp_ui_list_select(ui, self, RACE_DEFAULT_ITEM);
+	} else if (e->type == KP_UI_USER && e->code == KP_UI_POST_LOAD) {
+		c->flags |= COMBO_EVENTS;
+	}
+	return kp_ui_combo_proc(ui, c, e);
+}
+
+static int slot_type_proc(KpUi *ui, KpUiControl *c, KpUiEvent *e)
+{
+	/* SlotTypeListProc 0x456290 */
+	int32_t self = (int32_t)(c - ui->controls), race;
+	int k, at, n, visible, s;
+	if (e->type == KP_UI_USER) {
+		switch (e->code) {
+		case KP_UI_CREATE: /* FillSlotTypeList 0x456210: Closed, Computer (selected) */
+			kp_ui_list_redraw(ui, self, 0);
+			for (k = 0; k < 2; k++) {
+				if ((at = kp_ui_list_add(ui, self, kp_ui_tbl(ui, KP_UI_GLUALL, SLOT_TYPES[k].text), 0)) == KP_UI_LIST_NONE) break;
+				kp_ui_list_set_data(ui, self, at, SLOT_TYPES[k].value);
+			}
+			kp_ui_list_redraw(ui, self, 1);
+			n = kp_ui_list_count(ui, self);
+			for (k = 0; k < n && kp_ui_list_data(ui, self, k) != SLOT_COMPUTER; k++) {}
+			kp_ui_list_select(ui, self, k < n ? k : 0);
+			break;
+		case KP_UI_POST_LOAD: c->flags |= COMBO_EVENTS; break;
+		case KP_UI_VALUE_CHANGED: /* OnSlotTypeChanged 0x4562e0: the list box's default, enabled, the race list by it */
+			(void)kp_ui_list_proc(ui, c, e);
+			visible = (c->flags & KP_UI_VISIBLE) != 0;
+			kp_ui_set_enabled(ui, self, 1);
+			s = kp_ui_list_selection(ui, self);
+			race = kp_ui_find_control(ui, c->parent, (int16_t)(c->id + RACE_LIST_OFFSET));
+			if (race >= 0) kp_ui_set_visible(ui, race, visible && s != KP_UI_LIST_NONE && kp_ui_list_data(ui, self, s) != 0);
+			return 1;
+		default: break;
+		}
+	}
+	return kp_ui_combo_proc(ui, c, e);
 }
 
 /* An icon of iCreate.grp at x, centred in the rows top..bottom (DrawMapListItem 0x455850, DrawFolderLabel 0x455fe0);
@@ -1575,19 +2127,22 @@ static int32_t create_icon(KpUi *ui, int frame, int32_t x, int32_t top, int32_t 
 	return w;
 }
 
-static void replay_item_draw(KpUi *ui, KpUiControl *c, int index, const int16_t row[4], int32_t dx, int32_t dy)
+static void map_item_draw(KpUi *ui, KpUiControl *c, int index, const int16_t row[4], int32_t dx, int32_t dy)
 {
-	/* DrawMapListItem 0x455850: the file's icon, then its name cut to the row */
+	/* DrawMapListItem 0x455850: the entry's icon (a folder's, else a file's), then its name cut to the row */
 	KpUiList *l = c->list;
 	int hot = index == l->hover;
 	int32_t w, x;
-	uint8_t text[KP_UI_REPLAY_FILE];
+	uint8_t text[KP_UI_MAP_FILE];
 	size_t n;
 	uint32_t k;
 	int frame = 0; /* an item without its entry */
 	if (index >= l->count || l->text[index] == NULL) return;
 	k = kp_ui_list_data(ui, (int32_t)(c - ui->controls), index);
-	if (k < (uint32_t)mn(ui)->replay_count) frame = mn(ui)->replays[k].kind != KP_UI_REPLAY_ENTRY_FILE ? hot : ICON_FILE + hot;
+	if (k < (uint32_t)mn(ui)->entry_count) {
+		uint8_t kind = mn(ui)->entries[k].kind;
+		frame = kind == KP_UI_ENTRY_FOLDER || kind == KP_UI_ENTRY_UP ? hot : ICON_FILE + hot;
+	}
 	w = create_icon(ui, frame, row[0] + dx, row[1] + dy, row[3] + dy, row);
 	x = dx + w + 2; /* the text x, from the row's left: past the icon drawn at the x offset */
 	kp_ui_select_color(&ui->text, 3 + hot);
@@ -1610,77 +2165,93 @@ static void folder_label_draw(KpUi *ui, KpUiControl *c, int32_t x, int32_t y, co
 	if (c->text != NULL) kp_ui_draw_control_text(ui, c, x + w + 2, y, clip, CREATE_FORMAT);
 }
 
-/* RefreshMapList 0x455f50 (the dialog's code 0x405, its slides ended): the list filled (AddMapListItem 0x455810),
- * the entry to select previewed, then selected. BuildMapList 0x45ba40 selects the entry named by the last chosen map,
- * which Load Replay never sets (OnCreateGameOk 0x455240 skips it in state 12), else the first .scx or .scm, which a
- * replays folder has none of, else the first entry. */
-static void refresh_replays_at(KpUi *ui, const char *select);
+/* The extension after a name's last '.' is scx or scm (BuildMapList 0x45ba40's map to select). */
+static int map_extension(const char *name)
+{
+	const char *dot = strrchr(name, '.');
+	return dot != NULL && ascii_upper((unsigned char)dot[1]) == 'S' && ascii_upper((unsigned char)dot[2]) == 'C'
+		&& (ascii_upper((unsigned char)dot[3]) == 'X' || ascii_upper((unsigned char)dot[3]) == 'M') && dot[4] == 0;
+}
 
-static void refresh_replays(KpUi *ui) { refresh_replays_at(ui, NULL); }
-
-/* refresh_replays, with the file named select (Koprulu's import) selected in place of the first entry */
-static void refresh_replays_at(KpUi *ui, const char *select)
+/* RefreshMapList 0x455f50 (the dialog's code 0x405, its slides ended): the list filled (AddMapListItem 0x455810), the
+ * entry to select previewed, then selected. BuildMapList 0x45ba40 selects the first entry whose list text begins the
+ * remembered map's (0x668c78, Play Custom's last map; Load Replay keeps what it is), else the first .scx or .scm, else
+ * the first entry; Koprulu's import selects the imported file (select). */
+static void refresh_list_at(KpUi *ui, const char *select)
 {
 	KpUiMenus *m = mn(ui);
-	int chosen = 0;
-	int32_t folder = m->replay_dialog >= 0 ? kp_ui_find_control(ui, m->replay_dialog, ID_CREATE_FOLDER) : -1;
-	const char *last = strrchr(m->replay_dir, '/');
+	KpUiCreate *c = &m->create;
+	int chosen = -1, first_map = -1;
+	int32_t folder = m->create_dialog >= 0 ? kp_ui_find_control(ui, m->create_dialog, ID_CREATE_FOLDER) : -1;
+	const char *last = strrchr(m->map_dir, '/');
 	int k;
-	if (m->replay_list < 0) return;
+	if (m->map_list < 0) return;
 	if (folder >= 0) { /* SetFolderLabel 0x4560d0: the listed folder's last name */
-		kp_ui_set_control_text(ui, folder, (const uint8_t *)(m->replay_dir[0] == 0 ? ROOT_LABEL : last ? last + 1 : m->replay_dir));
+		const char *root = m->state == STATE_PLAY_CUSTOM ? CUSTOM_ROOT_LABEL : REPLAY_ROOT_LABEL;
+		kp_ui_set_control_text(ui, folder, (const uint8_t *)(m->map_dir[0] == 0 ? root : last ? last + 1 : m->map_dir));
 	}
-	m->replay_count = 0;
-	kp_ui_list_redraw(ui, m->replay_list, 0);
-	kp_ui_list_clear(ui, m->replay_list);
-	if (ui->list_replays != NULL) (void)ui->list_replays(ui->host, ui);
-	for (k = 0; k < m->replay_count; k++) {
-		KpUiReplayEntry *e = &m->replays[k];
+	m->entry_count = 0;
+	kp_ui_list_redraw(ui, m->map_list, 0);
+	kp_ui_list_clear(ui, m->map_list);
+	if (ui->list_entries != NULL) (void)ui->list_entries(ui->host, ui);
+	for (k = 0; k < m->entry_count; k++) {
+		KpUiMapEntry *e = &m->entries[k];
 		int at;
-		if (e->kind == KP_UI_REPLAY_ENTRY_UP) {
+		if (e->kind == KP_UI_ENTRY_UP) {
 			snprintf(e->label, sizeof e->label, "[%s]", (const char *)kp_ui_tbl(ui, KP_UI_GLUALL, STR_UP_ONE_LEVEL));
 		} else {
 			/* "[folder]" or the file: lengths and memmove, not snprintf, as both buffers are the entry's, which
 			 * GCC's -Wrestrict takes for an overlap under the sanitizers and _FORTIFY_SOURCE (GCC 13 to 15) */
-			size_t b = e->kind == KP_UI_REPLAY_ENTRY_FOLDER, f = strlen(e->file);
+			size_t b = e->kind == KP_UI_ENTRY_FOLDER, f = strlen(e->file);
 			if (f + 2 * b >= sizeof e->label) f = sizeof e->label - 1 - 2 * b;
 			if (b) e->label[0] = '[';
 			memmove(e->label + b, e->file, f);
 			if (b) e->label[b + f] = ']';
 			e->label[2 * b + f] = 0;
 		}
-		at = kp_ui_list_add(ui, m->replay_list, (const uint8_t *)e->label, 3);
-		if (at != KP_UI_LIST_NONE) kp_ui_list_set_data(ui, m->replay_list, at, (uint32_t)k);
-		if (at != KP_UI_LIST_NONE && select != NULL && e->kind == KP_UI_REPLAY_ENTRY_FILE && strcmp(e->file, select) == 0) {
-			chosen = at;
+		at = kp_ui_list_add(ui, m->map_list, (const uint8_t *)e->label, 3);
+		if (at == KP_UI_LIST_NONE) continue;
+		kp_ui_list_set_data(ui, m->map_list, at, (uint32_t)k);
+		if (select != NULL) {
+			if (chosen < 0 && e->kind == KP_UI_ENTRY_REPLAY && strcmp(e->file, select) == 0) chosen = at;
+		} else if (chosen < 0 && c->preselect[0] != 0) {
+			size_t n = strlen(e->label), i;
+			for (i = 0; i < n && ascii_upper((unsigned char)c->preselect[i]) == ascii_upper((unsigned char)e->label[i]); i++) {}
+			if (i == n) chosen = at; /* _strnicmp(preselect, name, strlen(name)) */
 		}
+		if (first_map < 0 && e->kind != KP_UI_ENTRY_FOLDER && e->kind != KP_UI_ENTRY_UP && map_extension(e->file)) first_map = at;
 	}
-	kp_ui_list_redraw(ui, m->replay_list, 1);
-	if (m->replay_count == 0) return;
-	preview_replay(ui, (int)kp_ui_list_data(ui, m->replay_list, chosen));
-	kp_ui_list_select(ui, m->replay_list, chosen);
+	kp_ui_list_redraw(ui, m->map_list, 1);
+	if (m->entry_count == 0) return;
+	if (chosen < 0) chosen = first_map >= 0 ? first_map : 0;
+	preview_entry(ui, (int)kp_ui_list_data(ui, m->map_list, chosen));
+	kp_ui_list_select(ui, m->map_list, chosen);
 }
 
-static int replay_list_proc(KpUi *ui, KpUiControl *c, KpUiEvent *e)
+static void refresh_list(KpUi *ui) { refresh_list_at(ui, NULL); }
+
+static int map_list_proc(KpUi *ui, KpUiControl *c, KpUiEvent *e)
 {
 	/* MapListProc 0x4559d0 */
 	int32_t self = (int32_t)(c - ui->controls);
 	int k;
 	if (e->type == KP_UI_USER) {
 		switch (e->code) {
-		case KP_UI_CREATE: /* InitMapList 0x455aa0; the list is filled when the slides end (refresh_replays) */
-			mn(ui)->replay_list = self;
-			c->list->draw_item = replay_item_draw;
+		case KP_UI_CREATE: /* InitMapList 0x455aa0; the list is filled when the slides end (refresh_list) */
+			mn(ui)->map_list = self;
+			c->list->draw_item = map_item_draw;
 			break;
 		case KP_UI_DESTROY: kp_ui_list_clear(ui, self); break;
 		case KP_UI_POST_LOAD:
 			c->flags |= 0x30000u;
-			mn(ui)->replay_list = self;
+			mn(ui)->map_list = self;
 			break;
 		case KP_UI_VALUE_CHANGED:
 			(void)kp_ui_list_proc(ui, c, e);
 			k = kp_ui_list_selection(ui, self);
-			if (k != KP_UI_LIST_NONE) preview_replay(ui, (int)kp_ui_list_data(ui, self, k));
+			if (k != KP_UI_LIST_NONE) preview_entry(ui, (int)kp_ui_list_data(ui, self, k));
+			cr(ui)->loading = 1;
+			refresh_slots(ui, c->parent);
 			return 1;
 		default: break;
 		}
@@ -1690,78 +2261,218 @@ static int replay_list_proc(KpUi *ui, KpUiControl *c, KpUiEvent *e)
 
 /* AddFolderEntry 0x45b080's path: ".." the listed folder cut at its last separator, a folder's name appended; a
  * path past the buffer leaves the folder as it is. */
-static void enter_replay_folder(KpUi *ui, const KpUiReplayEntry *e)
+static void enter_folder(KpUi *ui, const KpUiMapEntry *e)
 {
 	KpUiMenus *m = mn(ui);
-	if (e->kind == KP_UI_REPLAY_ENTRY_UP) {
-		char *cut = strrchr(m->replay_dir, '/');
+	if (e->kind == KP_UI_ENTRY_UP) {
+		char *cut = strrchr(m->map_dir, '/');
 		if (cut != NULL) *cut = 0;
-		else m->replay_dir[0] = 0;
+		else m->map_dir[0] = 0;
 	} else {
 		/* lengths and memmove, not strcat: both buffers are KpUiMenus', which GCC's -Wrestrict takes for an overlap */
-		size_t n = strlen(m->replay_dir), sep = n != 0, f = strlen(e->file);
-		if (n + 1 + f < sizeof m->replay_dir) {
-			if (sep) m->replay_dir[n] = '/';
-			memmove(m->replay_dir + n + sep, e->file, f + 1);
+		size_t n = strlen(m->map_dir), sep = n != 0, f = strlen(e->file);
+		if (n + 1 + f < sizeof m->map_dir) {
+			if (sep) m->map_dir[n] = '/';
+			memmove(m->map_dir + n + sep, e->file, f + 1);
 		}
 	}
 }
 
-static void replay_refused(KpUi *ui, int32_t r) { (void)ui; (void)r; } /* the screen stays (every message case) */
+static void create_refused(KpUi *ui, int32_t r) { (void)ui; (void)r; } /* the screen stays (every message case) */
 
-/* OnCreateGameOk 0x455240: 0 keeps the screen open. */
-static int replay_ok(KpUi *ui)
+/* ValidateGameTemplate 0x45b700 offline: the template's own needs of the map (OnCreateGameOk 0x455240's message) */
+static uint16_t validate_template(KpUi *ui, const KpUiMapEntry *e)
 {
 	KpUiMenus *m = mn(ui);
-	int s = m->replay_list >= 0 ? kp_ui_list_selection(ui, m->replay_list) : KP_UI_LIST_NONE, k;
+	KpUiCreate *c = &m->create;
+	const KpTemplate *t = find_template(ui, c->game_type, c->subtype);
+	if (t == NULL) return STR_CREATE_TEMPLATE;
+	if (c->record[0] >= TEMPLATE_LADDER_FIRST && c->record[0] <= TEMPLATE_LADDER_LAST && e->map_class != MAP_CLASS_LADDER) {
+		return STR_CREATE_FAILED; /* 0x80000012 */
+	}
+	if (t->record[KP_TEMPLATE_TOURNAMENT] == 1) {
+		if (e->map_class != MAP_CLASS_TOURNAMENT) return STR_CREATE_FAILED; /* 0x80000003 */
+	} else if (t->record[0] == TEMPLATE_SERVER && t->record[KP_TEMPLATE_SUB] != 0) {
+		if (!m->expansion || e->map_class != MAP_CLASS_SERVER) return STR_CREATE_FAILED; /* 0x80000011, 0x8000000e */
+	}
+	if (e->tileset == TILESET_INSTALLATION && !template_ums(ui, c->game_type, c->subtype)) return STR_CREATE_UMS_ONLY;
+	/* IsTemplateAllowedForMap 0x4480a0: the template's teams fit the map's slots */
+	if (t->record[KP_TEMPLATE_TEAMS] != 0 && t->record[KP_TEMPLATE_TEAMS] > e->players) return STR_CREATE_TEMPLATE;
+	return 0;
+}
+
+/* CreateGameFromEntry 0x45bfc0 offline for a replay or a map: 0 with its game chosen, else the gluAll message. */
+static uint16_t create_game(KpUi *ui, int k)
+{
+	KpUiMenus *m = mn(ui);
+	KpUiCreate *c = &m->create;
+	KpUiMapEntry *e = &m->entries[k];
 	uint16_t refusal;
-	if (s == KP_UI_LIST_NONE) return 0;
-	k = (int)kp_ui_list_data(ui, m->replay_list, s);
-	if (k < 0 || k >= m->replay_count) return 0;
-	if (m->replays[k].kind != KP_UI_REPLAY_ENTRY_FILE) { /* 0x8000000b: the folder entered, the list rebuilt */
-		enter_replay_folder(ui, &m->replays[k]);
-		refresh_replays(ui);
+	int local = -1;
+	m->replay_choice = -1;
+	c->choice = -1;
+	if (e->kind == KP_UI_ENTRY_REPLAY) { /* read again (a status 1 is gluAll 51, 2 gluAll 60) */
+		read_entry(ui, k);
+		refusal = ui->check_replay != NULL ? ui->check_replay(ui->host, k) : 0;
+		if (refusal == 0) m->replay_choice = k;
+		return refusal;
+	}
+	if (!e->loaded) read_entry(ui, k);
+	if (e->status == 1) return STR_CREATE_INVALID;
+	if (e->status == 2) return STR_CREATE_EXPANSION;
+	if (template_ums(ui, c->game_type, c->subtype)) {
+		if (e->humans == 0) return STR_CREATE_NO_HUMAN;
+		if (e->computers == 0) return STR_CREATE_NO_COMPUTER;
+	} else if (e->players < 2) {
+		return STR_CREATE_NO_COMPUTER;
+	}
+	if ((refusal = validate_template(ui, e)) != 0) return refusal;
+	/* the header read again (LoadMapHeader 0x46b5c0), the player in the first open slot (PlaceLocalHumanForCustomGame
+	 * 0x4bb550), the local game (CreateLocalGame 0x475220): the host's */
+	if (ui->check_map != NULL && (refusal = ui->check_map(ui->host, k, &local)) != 0) return refusal;
+	c->local_slot = (int8_t)(local >= 0 && local < KP_UI_SLOT_FLAGS ? local : -1);
+	c->header_human = e->first_human;
+	memcpy(c->user_select, e->user_select, sizeof c->user_select);
+	c->choice = k;
+	return 0;
+}
+
+/* CanStartCustomGame 0x455740: a Use Map Settings map with computers, else a shown slot with a computer */
+static int can_start(KpUi *ui)
+{
+	KpUiMenus *m = mn(ui);
+	int32_t x;
+	int s, k;
+	if (selected_ums(ui)) {
+		k = selected_entry(ui);
+		return k >= 0 && m->entries[k].kind == KP_UI_ENTRY_MAP && m->entries[k].loaded && m->entries[k].computers != 0
+			&& m->entries[k].computers != 0xff;
+	}
+	for (x = kp_ui_find_control(ui, m->create_dialog, ID_FIRST_SLOT); x >= 0 && ui->controls[x].id <= ID_LAST_SLOT;
+		x = ui->controls[x].next) {
+		if ((ui->controls[x].flags & KP_UI_VISIBLE) && (s = kp_ui_list_selection(ui, x)) != KP_UI_LIST_NONE
+			&& kp_ui_list_data(ui, x, s) == SLOT_COMPUTER) {
+			return 1;
+		}
+	}
+	return 0;
+}
+
+/* ApplyCustomGameRaces 0x455020: a melee template's races (the player's, then each shown race list's below it in the
+ * list's order, KP_UI_RACE_NONE for the rest), another template's player race when its list is shown (Random without
+ * a choice). */
+static void custom_races(KpUi *ui)
+{
+	KpUiMenus *m = mn(ui);
+	KpUiCreate *c = &m->create;
+	int32_t local = kp_ui_find_control(ui, m->create_dialog, ID_LOCAL_RACE), x;
+	int s, n = 0, k;
+	c->local_race = KP_UI_RACE_NONE;
+	for (k = 0; k < KP_UI_CUSTOM_RACES; k++) c->races[k] = KP_UI_RACE_NONE;
+	c->melee = (uint8_t)template_melee(ui, c->game_type, c->subtype);
+	if (local < 0) return;
+	s = kp_ui_list_selection(ui, local);
+	if (!c->melee) {
+		if (ui->controls[local].flags & KP_UI_VISIBLE) c->local_race = s != KP_UI_LIST_NONE ? kp_ui_list_data(ui, local, s) : RACE_RANDOM;
+		return;
+	}
+	if (s != KP_UI_LIST_NONE) c->local_race = kp_ui_list_data(ui, local, s);
+	for (x = ui->controls[local].next; x >= 0 && n < KP_UI_CUSTOM_RACES; x = ui->controls[x].next) {
+		if ((ui->controls[x].flags & KP_UI_VISIBLE) && ui->controls[x].list != NULL
+			&& (s = kp_ui_list_selection(ui, x)) != KP_UI_LIST_NONE) {
+			c->races[n++] = kp_ui_list_data(ui, x, s);
+		}
+	}
+}
+
+/* FinishSinglePlayerCreate 0x4554a0: the slots as Ok sees them, a computer opponent needed unless a replay was read,
+ * then the races. 0 keeps the screen open. */
+static int finish_create(KpUi *ui)
+{
+	KpUiMenus *m = mn(ui);
+	KpUiCreate *c = &m->create;
+	int k;
+	kp_ui_delete_timer(&ui->timers, m->create_dialog, SLOT_TIMER);
+	k = selected_entry(ui);
+	if (k < 0 || m->entries[k].kind == KP_UI_ENTRY_FOLDER || m->entries[k].kind == KP_UI_ENTRY_UP) return 1;
+	c->loading = 0;
+	refresh_slots(ui, m->create_dialog);
+	if (!can_start(ui) && !c->replay_read) {
+		ok_popup(ui, kp_ui_tbl(ui, KP_UI_GLUALL, STR_CREATE_NO_COMPUTER), create_refused);
 		return 0;
 	}
-	/* CreateGameFromEntry 0x45bfc0's kind 0x80 (read again; a status 1 is gluAll 51, 2 gluAll 60) */
-	refusal = ui->check_replay != NULL ? ui->check_replay(ui->host, k) : 0;
-	if (refusal != 0) {
-		ok_popup(ui, kp_ui_tbl(ui, KP_UI_GLUALL, refusal), replay_refused);
-		return 0;
-	}
-	m->replay_choice = k;
+	custom_races(ui);
 	return 1;
 }
 
-/* Koprulu's Import (the host's picker; kp_ui_replay_imported answers) and Export (the selected file's, a folder's
- * none) */
-static void replay_file_button(KpUi *ui, int32_t r)
+/* OnCreateGameOk 0x455240: 0 keeps the screen open. */
+static int create_ok(KpUi *ui)
 {
 	KpUiMenus *m = mn(ui);
-	int at = m->replay_list >= 0 ? kp_ui_list_selection(ui, m->replay_list) : KP_UI_LIST_NONE;
-	int k = at != KP_UI_LIST_NONE ? (int)kp_ui_list_data(ui, m->replay_list, at) : -1;
-	if (r == R_REPLAY_IMPORT && ui->import_replay != NULL) ui->import_replay(ui->host);
-	else if (r == R_REPLAY_EXPORT && ui->export_replay != NULL && k >= 0 && k < m->replay_count
-		&& m->replays[k].kind == KP_UI_REPLAY_ENTRY_FILE) {
+	KpUiCreate *c = &m->create;
+	int s = m->map_list >= 0 ? kp_ui_list_selection(ui, m->map_list) : KP_UI_LIST_NONE, k;
+	uint16_t refusal;
+	if (s == KP_UI_LIST_NONE) return 0;
+	k = (int)kp_ui_list_data(ui, m->map_list, s);
+	if (k < 0 || k >= m->entry_count) return 0;
+	if (m->entries[k].kind == KP_UI_ENTRY_FOLDER || m->entries[k].kind == KP_UI_ENTRY_UP) { /* 0x8000000b */
+		enter_folder(ui, &m->entries[k]);
+		c->preselect[0] = 0;
+		refresh_list(ui);
+		return 0;
+	}
+	if ((refusal = create_game(ui, k)) != 0) {
+		ok_popup(ui, kp_ui_tbl(ui, KP_UI_GLUALL, refusal), create_refused);
+		return 0;
+	}
+	if (m->state == STATE_PLAY_CUSTOM) { /* the folder and the map remembered (Load Replay skips it) */
+		memcpy(c->dir, m->map_dir, sizeof c->dir);
+		(void)kp_text_copy(c->last, sizeof c->last, (const char *)kp_ui_list_text(ui, m->map_list, s));
+	}
+	return finish_create(ui);
+}
+
+/* Koprulu's Import (the host's picker; kp_ui_file_imported answers) and Export (the selected file's, a folder's
+ * none) */
+static void file_button(KpUi *ui, int32_t r)
+{
+	KpUiMenus *m = mn(ui);
+	int k = selected_entry(ui);
+	if ((r == R_REPLAY_IMPORT || r == R_CUSTOM_IMPORT) && ui->import_file != NULL) ui->import_file(ui->host);
+	else if (r == R_REPLAY_EXPORT && ui->export_replay != NULL && k >= 0 && m->entries[k].kind == KP_UI_ENTRY_REPLAY) {
 		ui->export_replay(ui->host, k);
 	}
 }
 
-void kp_ui_replay_imported(KpUi *ui, const char *file, uint16_t refusal)
+void kp_ui_file_imported(KpUi *ui, const char *file, uint16_t refusal)
 {
 	KpUiMenus *m = mn(ui);
-	if (m->state != STATE_LOAD_REPLAY || m->screen < 0 || m->replay_list < 0) return;
-	if (refusal != 0) ok_popup(ui, kp_ui_tbl(ui, KP_UI_GLUALL, refusal), replay_refused);
-	else refresh_replays_at(ui, file);
+	if ((m->state != STATE_LOAD_REPLAY && m->state != STATE_PLAY_CUSTOM) || m->screen < 0 || m->map_list < 0) return;
+	if (refusal != 0) ok_popup(ui, kp_ui_tbl(ui, KP_UI_GLUALL, refusal), create_refused);
+	else refresh_list_at(ui, file);
 }
 
 static void create_done(KpUi *ui, int32_t r)
 {
-	/* RunCreateGameScreen 0x455550: Ok starts the replay's game at once (0x6662b8 = 1), Cancel the campaign menu */
+	/* RunCreateGameScreen 0x455550: Ok starts the replay's game, or the map's (at once outside Use Map Settings or
+	 * after a replay's read, else from the ready room of the player's race: the host's lobby decides it), Cancel the
+	 * campaign menu */
 	KpUiMenus *m = mn(ui);
-	if (r == R_CREATE_OK) screen_ended(ui, m->state, KP_UI_MENU_REPLAY);
-	else if (r == R_CREATE_CANCEL || r == -3) screen_ended(ui, m->expansion ? STATE_EXP_CAMPAIGN : STATE_CAMPAIGN, KP_UI_MENU_STATE);
-	else screen_ended(ui, STATE_MAIN, KP_UI_MENU_STATE);
+	KpUiCreate *c = &m->create;
+	c->active = 0;
+	if (r == R_CREATE_OK) {
+		if (m->replay_choice >= 0) {
+			screen_ended(ui, m->state, KP_UI_MENU_REPLAY);
+		} else {
+			c->at_once = (uint8_t)(!selected_ums(ui) || c->replay_read);
+			screen_ended(ui, m->state, KP_UI_MENU_CUSTOM);
+		}
+	} else if (r == R_CREATE_CANCEL || r == -3) {
+		c->replay_read = 0;
+		screen_ended(ui, m->expansion ? STATE_EXP_CAMPAIGN : STATE_CAMPAIGN, KP_UI_MENU_STATE);
+	} else {
+		screen_ended(ui, STATE_MAIN, KP_UI_MENU_STATE);
+	}
 }
 
 static int create_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
@@ -1769,58 +2480,67 @@ static int create_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 	/* CreateGameDialogProc 0x4550e0 */
 	int32_t self = (int32_t)(d - ui->controls);
 	KpUiInteract base = kp_ui_type_interact(0);
-	if (is_wheel(e)) return wheel_list(ui, mn(ui)->replay_list, e);
+	if (is_wheel(e)) return wheel_list(ui, mn(ui)->map_list, e);
 	if (e->type != KP_UI_USER) return base(ui, d, e);
 	switch (e->code) {
 	case KP_UI_CREATE: {
 		static const uint16_t SLIDES[10] = { 1, 0, 2, 2, 3, 3, 4, 2, 19, 0 }; /* 0x503e48 */
 		int32_t folder = kp_ui_find_control(ui, self, ID_CREATE_FOLDER);
 		kp_ui_glue_slide_in(ui, self, SLIDES, 5, 0);
-		if (folder >= 0) {
+		if (folder >= 0) { /* InitMapList 0x455aa0: the listed folder's last name */
+			const char *root = mn(ui)->state == STATE_PLAY_CUSTOM ? CUSTOM_ROOT_LABEL : REPLAY_ROOT_LABEL;
+			const char *last = strrchr(mn(ui)->map_dir, '/');
 			ui->controls[folder].draw = folder_label_draw;
-			kp_ui_set_control_text(ui, folder, (const uint8_t *)ROOT_LABEL); /* InitMapList 0x455aa0: the root */
+			kp_ui_set_control_text(ui, folder,
+				(const uint8_t *)(mn(ui)->map_dir[0] == 0 ? root : last ? last + 1 : mn(ui)->map_dir));
 		}
 		kp_ui_glue_activate(ui, self, THEME_NONE);
 		break;
 	}
 	case KP_UI_CLOSE:
-		if (ui->result == R_CREATE_OK && !replay_ok(ui)) return 1;
-		if (ui->result == R_REPLAY_IMPORT || ui->result == R_REPLAY_EXPORT) { /* the screen stays */
-			replay_file_button(ui, ui->result);
+		if (ui->result == R_CREATE_OK && !create_ok(ui)) return 1;
+		if (ui->result == R_REPLAY_IMPORT || ui->result == R_REPLAY_EXPORT || ui->result == R_CUSTOM_IMPORT) {
+			file_button(ui, ui->result); /* the screen stays */
 			return 1;
 		}
-		kp_ui_delete_timer(&ui->timers, self, PREVIEW_TIMER);
+		kp_ui_delete_timer(&ui->timers, self, SLOT_TIMER);
 		kp_ui_glue_slide_out(ui, self);
 		return 1;
 	case SLIDE_DONE:
-		refresh_replays(ui);
+		refresh_list(ui);
+		refused_popup(ui);
 		break;
 	case KP_UI_POST_LOAD: { /* InitCreateGameDialog 0x4551d0 with 0x503db0's procedures */
-		static const int16_t HIDDEN[] = { 14, 16, 17, 18, 38 }; /* Play Custom's: the game type, subtype and speed */
 		KpUiInteract procs[CREATE_CONTROLS];
-		int k;
+		int k, replay = mn(ui)->state != STATE_PLAY_CUSTOM;
 		memset(procs, 0, sizeof procs);
-		procs[ID_CREATE_LIST - 1] = replay_list_proc;
+		procs[ID_CREATE_LIST - 1] = map_list_proc;
 		for (k = 6; k <= 11; k++) procs[k - 1] = kp_ui_type_interact(9);
 		procs[R_CREATE_OK - 1] = procs[R_CREATE_CANCEL - 1] = kp_ui_text_button_proc;
 		procs[14 - 1] = procs[15 - 1] = kp_ui_type_interact(9);
+		procs[ID_GAME_TYPE - 1] = type_list_proc;
+		procs[ID_SUBTYPE - 1] = subtype_list_proc;
+		procs[ID_LOCAL_PLAYER - 1] = local_player_proc;
+		for (k = ID_FIRST_SLOT; k <= ID_LAST_SLOT; k++) procs[k - 1] = slot_type_proc;
+		for (k = ID_LOCAL_RACE; k <= ID_LAST_SLOT + RACE_LIST_OFFSET; k++) procs[k - 1] = race_list_proc;
 		for (k = 36; k <= 38; k++) procs[k - 1] = kp_ui_type_interact(9);
 		for (k = 0; k < INFO_UNVERIFIED_LABELS; k++) procs[ID_INFO_UNVERIFIED + k - 1] = kp_ui_type_interact(9);
-		procs[R_REPLAY_IMPORT - 1] = procs[R_REPLAY_EXPORT - 1] = kp_ui_text_button_proc;
-		/* without the host's file picker the screen is the original's */
-		if ((k = kp_ui_find_control(ui, self, R_REPLAY_IMPORT)) >= 0 && ui->import_replay == NULL) kp_ui_drop_control(ui, self, k);
-		if ((k = kp_ui_find_control(ui, self, R_REPLAY_EXPORT)) >= 0 && ui->export_replay == NULL) kp_ui_drop_control(ui, self, k);
-		mn(ui)->replay_dialog = self;
+		procs[R_REPLAY_IMPORT - 1] = procs[R_REPLAY_EXPORT - 1] = procs[R_CUSTOM_IMPORT - 1] = kp_ui_text_button_proc;
+		/* without the host's file picker the screen is the original's; each mode keeps its own buttons */
+		if ((k = kp_ui_find_control(ui, self, R_REPLAY_IMPORT)) >= 0 && (ui->import_file == NULL || !replay)) {
+			kp_ui_drop_control(ui, self, k);
+		}
+		if ((k = kp_ui_find_control(ui, self, R_REPLAY_EXPORT)) >= 0 && (ui->export_replay == NULL || !replay)) {
+			kp_ui_drop_control(ui, self, k);
+		}
+		if ((k = kp_ui_find_control(ui, self, R_CUSTOM_IMPORT)) >= 0 && (ui->import_file == NULL || replay)) {
+			kp_ui_drop_control(ui, self, k);
+		}
+		mn(ui)->create_dialog = self;
+		cr(ui)->subtype_list = kp_ui_find_control(ui, self, ID_SUBTYPE);
+		cr(ui)->type_list = kp_ui_find_control(ui, self, ID_GAME_TYPE);
 		kp_ui_glue_init_dialog(ui, self, procs, CREATE_CONTROLS, THEME_NONE);
-		for (k = 0; k < (int)(sizeof HIDDEN / sizeof HIDDEN[0]); k++) {
-			int32_t c = kp_ui_find_control(ui, self, HIDDEN[k]);
-			if (c >= 0) kp_ui_hide_control(ui, c);
-		}
-		for (k = 20; k <= 35; k++) { /* RefreshComputerSlots 0x456420 of a replay: no slot shown */
-			int32_t c = kp_ui_find_control(ui, self, (int16_t)k);
-			if (c >= 0) kp_ui_hide_control(ui, c);
-		}
-		publish_replay_info(ui, -1);
+		publish_info(ui, -1);
 		break;
 	}
 	default: break;
@@ -1828,12 +2548,29 @@ static int create_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 	return base(ui, d, e);
 }
 
-int32_t kp_ui_replay_open(KpUi *ui)
+/* RunCreateGameScreen 0x455550's entry: the screen, its list's folder (InitMapList 0x455aa0: Load Replay's root each
+ * time; Play Custom's first visit at maps, Brood War's at maps\BroodWar, a later visit at the remembered folder with
+ * the remembered map to select) */
+int32_t kp_ui_create_open(KpUi *ui)
 {
 	KpUiMenus *m = mn(ui);
-	m->replay_dialog = m->replay_list = -1;
-	m->replay_dir[0] = 0; /* InitMapList 0x455aa0 in a replay's mode: the root each time */
-	m->replay_preview = -1;
+	KpUiCreate *c = &m->create;
+	m->create_dialog = m->map_list = -1;
+	c->type_list = c->subtype_list = -1;
+	m->map_preview = -1;
 	m->replay_choice = -1;
+	c->choice = -1;
+	c->local_slot = -1;
+	if (m->state != STATE_PLAY_CUSTOM) {
+		m->map_dir[0] = 0;
+	} else if (!c->visited) {
+		c->visited = 1;
+		snprintf(m->map_dir, sizeof m->map_dir, "%s", m->expansion ? CUSTOM_EXPANSION_DIR : "");
+		memcpy(c->dir, m->map_dir, sizeof c->dir);
+	} else {
+		memcpy(m->map_dir, c->dir, sizeof m->map_dir);
+		memcpy(c->preselect, c->last, sizeof c->preselect);
+	}
+	c->active = 1;
 	return open_screen(ui, "rez\\gluCustm.bin", create_proc, create_done);
 }

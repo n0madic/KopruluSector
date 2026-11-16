@@ -12,7 +12,6 @@
 #define STATUS_COMPLETED 0x1
 #define STATUS_GROUNDED_BUILDING 0x2
 #define DAT_SUBUNIT 0x10
-#define SPRITE_DASHED 0x06
 #define NO_UPGRADE 61
 #define UNION_UPGRADE 0xc9    /* a building's upgrade in research (U_UPGRADE) */
 #define UNION_NEXT_LEVEL 0xcd /* its level to come (U_NEXT_LEVEL) */
@@ -56,7 +55,7 @@ static void relink_pylons(KpGame *g)
 	}
 }
 
-/* StripSelectionOverlays 0x416da0: every sprite record's health bar and selection circle go. */
+/* StripSelectionOverlays 0x416da0: every sprite record's health bar, selection circle and allies' dashed circle go. */
 static void strip_overlays(KpGame *g)
 {
 	KpImages *w = g->w;
@@ -64,25 +63,17 @@ static void strip_overlays(KpGame *g)
 	for (s = 0; s < KP_SPRITES; s++) {
 		if (w->spr.flags[s] & KP_SF_SELECTED) kp_sprite_remove_health_bar(w, s);
 		else if (w->spr.flags[s] & KP_SF_CIRCLE) kp_sprite_remove_circle(w, s);
-		/* the allies' dashed circles (0x40f570): team games only */
-		if (w->spr.flags[s] & SPRITE_DASHED) kp_game_fail(g, "save: a dashed selection circle (0x416da0)");
+		(void)kp_sprite_remove_ally_circles(w, s); /* the count cleared, the first dashed circle freed (0x40f570) */
 	}
 }
 
 /* RestoreSelectionOverlays 0x416e20: the local selection's circles, a subunit's on its parent (0x422eb0), which takes
- * its slot. */
+ * its slot; then a team game's allied rows' dashed circles. */
 static void restore_overlays(KpGame *g)
 {
 	int64_t k;
-	for (k = 0; k < KP_SLOTS && g->local_selection[k] != 0; k++) {
-		int64_t n = g->local_selection[k];
-		if (kp_band(KP_DAT(g, units, special_ability_flags, g->u.type[n]), DAT_SUBUNIT) != 0) {
-			kp_add_selection_circle(g, g->u.subunit[n], k);
-			g->local_selection[k] = g->u.subunit[n];
-		} else {
-			kp_add_selection_circle(g, n, k);
-		}
-	}
+	for (k = 0; k < KP_SLOTS && g->local_selection[k] != 0; k++) kp_reselect_slot(g, g->local_selection[k], k);
+	kp_restore_ally_circles(g);
 }
 
 /* BuildUsedUnitSlotMap 0x431280: the units of the active, pending, hidden and special lists and their DAT subunits. */

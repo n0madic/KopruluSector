@@ -15,7 +15,7 @@ option(KP_SANITIZE "Build with AddressSanitizer and UndefinedBehaviorSanitizer" 
 option(KP_CXX_CHECK "Check the C sources as C++11 (they stay in the common subset of C and C++, ADR 0008)" ON)
 option(KP_APP "Build the product: kp_app over SDL 3.4 and SDL3_mixer, kp_gfx (plan phase S, stage S5)" OFF)
 option(KP_TOOLS "Build the tools and the C suites" ON)
-option(KP_FUZZ "Build libFuzzer's targets fuzz_rep, fuzz_chk, fuzz_save, fuzz_commands (clang with libFuzzer, with KP_SANITIZE; tools/fuzz.sh, ADR 0022)" OFF)
+option(KP_FUZZ "Build libFuzzer's targets fuzz_rep, fuzz_chk, fuzz_save, fuzz_commands, fuzz_turns (clang with libFuzzer, with KP_SANITIZE; tools/fuzz.sh, ADR 0022)" OFF)
 option(KP_ASTC "Build the phones' HD sets in ASTC (kp_convert, kp_hd_phone) over the Arm ASTC encoder (tools/toolchain/fetch.sh astc; ADR 0013)" OFF)
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
@@ -238,7 +238,7 @@ add_executable(kp_fuzz_seeds ${CMAKE_CURRENT_SOURCE_DIR}/tests/fuzz/kp_fuzz_seed
 kp_target(kp_fuzz_seeds CXX)
 target_link_libraries(kp_fuzz_seeds PRIVATE kp_fuzz_lib)
 if(KP_FUZZ)
-	foreach(target rep chk save commands)
+	foreach(target rep chk save commands turns)
 		string(TOUPPER ${target} upper)
 		add_executable(fuzz_${target} ${CMAKE_CURRENT_SOURCE_DIR}/tests/fuzz/kp_fuzz_main.c)
 		kp_target(fuzz_${target})

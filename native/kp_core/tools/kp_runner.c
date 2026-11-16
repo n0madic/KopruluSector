@@ -7,6 +7,7 @@
 #include <string.h>
 
 #include "kp_data.h"
+#include "kp_rep.h"
 #include "kp_json.h"
 
 #define BYTE_BLOCK 65536
@@ -614,6 +615,76 @@ const KpDataMission *kp_oracle_mission(const char *root, const char *key, KpMiss
 	return entry;
 }
 
+/* Whether a custom map's path names a replay (".rep" or ".REP"). */
+static int replay_path(const char *path)
+{
+	size_t n = strlen(path);
+	return n > 4 && (strcmp(path + n - 4, ".rep") == 0 || strcmp(path + n - 4, ".REP") == 0);
+}
+
+/* A replay's map (ADR 0024): its scenario as the map, alone, and its header's setup (the started game's records).
+ * 0, or -1 with err. */
+static int replay_map(KpDataMap *map, const KpFiles *files, const char *path, KpGameSetup *setup, KpError *err)
+{
+	KpRep rep;
+	KpRepRefusal why;
+	size_t size;
+	uint8_t *bytes = kp_read_file(path, &size), *chk;
+	int rc;
+	if (!bytes) return kp_error_set(err, "oracle: cannot read %s", path);
+	rc = kp_rep_read(&rep, bytes, size, &why, err);
+	free(bytes);
+	if (rc != 0) return -1;
+	kp_rep_setup(&rep, setup);
+	if (!(chk = (uint8_t *)malloc(rep.chk_size ? rep.chk_size : 1))) kp_out_of_memory();
+	if (rep.chk_size) memcpy(chk, rep.chk, rep.chk_size);
+	size = rep.chk_size;
+	kp_rep_free(&rep);
+	return kp_data_map_from_chk(map, files, chk, size, path, err); /* the scenario taken */
+}
+
+/* A custom map's game (KP_ORACLE_MAPS): the map's mission for its setup's load (Use Map Settings or melee), its
+ * tileset from the map's files then the data's, campaign row 0. A replay's map comes with its header's setup unless
+ * opts->host.setup gives one. The map is closed once the game has started (the host reads no file after its start). */
+static int map_game_start(KpOracleGame *og, const char *root, const char *key, uint32_t seed, int expansion,
+	const KpOracleOpts *opts, KpError *err)
+{
+	const KpData *d;
+	KpDataMap map;
+	KpMission m;
+	KpHostOpts ho;
+	KpGameSetup replay_setup;
+	const KpGameSetup *setup = opts->host.setup;
+	char path[1024];
+	int rc;
+	if (!(d = kp_oracle_data(root, err))) return -1;
+	join(path, sizeof path, opts->maps ? opts->maps : ".", key + sizeof KP_ORACLE_MAPS - 1);
+	if (replay_path(path)) {
+		if (replay_map(&map, &d->files, path, &replay_setup, err) != 0) return -1;
+		if (!setup) setup = &replay_setup;
+	} else {
+		if (!setup) return kp_error_set(err, "oracle: the custom map %s needs a setup (KP_SETUP)", key);
+		if (kp_data_map_open(&map, &d->files, path, err) != 0) return -1;
+	}
+	if (kp_data_map_mission(&map, kp_template_ums(setup->template_record) ? KP_CHK_UMS : KP_CHK_MELEE, &m, err) != 0) {
+		kp_data_map_close(&map);
+		return -1;
+	}
+	rc = kp_host_game_load_from(og, &d->shared, &d->dat, &m, opts->name ? opts->name : key, err);
+	if (rc == 0 && kp_host_game_tileset_files(og, &map.files, err) != 0) {
+		kp_host_game_free(og);
+		rc = -1;
+	}
+	if (rc == 0) {
+		ho = opts->host;
+		ho.setup = setup;
+		if (ho.mission_index == KP_NIL) ho.mission_index = 0;
+		rc = kp_host_game_start(og, seed, expansion, &ho, err);
+	}
+	kp_data_map_close(&map);
+	return rc;
+}
+
 int kp_oracle_game_start(KpOracleGame *og, const char *root, const char *key, uint32_t seed, int expansion,
 	const KpOracleOpts *opts, KpError *err)
 {
@@ -627,6 +698,8 @@ int kp_oracle_game_start(KpOracleGame *og, const char *root, const char *key, ui
 		opts = &defaults;
 	}
 	memset(og, 0, sizeof *og);
+	if (strncmp(key, KP_ORACLE_MAPS, sizeof KP_ORACLE_MAPS - 1) == 0)
+		return map_game_start(og, root, key, seed, expansion, opts, err);
 	if (!(entry = kp_oracle_mission(root, key, &m, err))) return -1;
 	d = kp_oracle_data(root, err);
 	if (kp_host_game_load_from(og, &d->shared, &d->dat, &m, opts->name ? opts->name : key, err) != 0) return -1;

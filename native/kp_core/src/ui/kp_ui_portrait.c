@@ -385,9 +385,9 @@ static void show_portrait(KpUi *ui, int64_t unit, uint16_t portrait, int talking
 		return;
 	}
 	if (portrait == PORTRAIT_PLAYER_COLOUR && unit != 0) {
-		/* the speaker's sprite owner's colour (MapPlayerColor 0x41d560: the slots as the players in a single game's
-		 * 0x5264fc) and the row the map's colours moved it to (0x536722): 0x62 on, else 0x52 on */
-		int32_t colour = (int32_t)ui->game->w->spr.owner[kp_unit_sprite(ui->game, unit)];
+		/* the speaker's sprite owner's colour (MapPlayerColor 0x41d560) and the row the map's colours moved it to
+		 * (0x536722): 0x62 on, else 0x52 on */
+		int32_t colour = kp_ui_map_colour(ui, ui->game->w->spr.owner[kp_unit_sprite(ui->game, unit)]);
 		if (colour >= 8) portrait = (uint16_t)(colour + PLAYER_COLOUR_ROWS);
 		else if (ui->minimap.colour_table[colour] != 0) portrait = (uint16_t)(ui->minimap.colour_table[colour] + PLAYER_COLOUR_ROWS);
 		else portrait = (uint16_t)(colour + PORTRAIT_PLAYER_COLOUR);

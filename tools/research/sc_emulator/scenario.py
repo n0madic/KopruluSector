@@ -111,7 +111,11 @@ BRIEFING_OBJECTIVES = 0x44FDC0
 # frame-0 event, e.g. the briefing's objectives before the seed, does not release them; Koprulu takes all frame-0
 # events before its first step, where only the "crt" ones draw, so their order among those does not matter). That
 # step is watched one instruction into StepObjects (STEP_BODY), apart from the state dumps' hook at its entry.
+# The start's own draw is not logged either: outside the campaign LoadConsoleSkinAndPickMusic 0x443680 (StartGame's
+# step 8, past the game's seed) draws the session's first music rotation (rand at 0x443724), which Koprulu's start
+# makes itself (kp_start.c music_rotation) right before the start units' creep variants.
 CRT_RAND, CRT_SRAND = 0x4D14D4, 0x4D14F5
+PICK_MUSIC_RAND = 0x443729  # past LoadConsoleSkinAndPickMusic's `call 0x4d14d4`
 # ProcessCheatText 0x40dee0 runs on every line the player types (ToggleTextbox 0x4b3bd0) and on the command line's
 # tokens (ParseCommandLine 0x4661b0, before any game): srand(0x75), four rand() for its key, then srand(time(NULL)),
 # which leaves the CRT generator at the virtual time. Its srand calls are logged as "srand" with the seed (its rand
@@ -288,7 +292,7 @@ def install_logs(session, out: Path) -> dict:
 
     def on_crt_rand():
         caller, frame = m.r32(m.esp), current_frame()
-        if CREEP_VARIANT <= caller < CREEP_VARIANT + CREEP_VARIANT_SIZE:
+        if CREEP_VARIANT <= caller < CREEP_VARIANT + CREEP_VARIANT_SIZE or caller == PICK_MUSIC_RAND:
             return
         if frame == 0:
             crt_pending.append((frame, {"crt": 1}))

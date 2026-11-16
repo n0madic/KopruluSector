@@ -1,6 +1,6 @@
 # Replays (`.rep`)
 
-StarCraft 1.17's replay files, which Koprulu writes and reads for single-player campaign games ([ADR 0020](../adr/0020-campaign-replays.md), stages in [docs/phase-replay.md](../phase-replay.md)). A file Koprulu writes is played by the original, and the original's files are played by Koprulu, frame for frame. The original's code is P26 and P28 of the [atlas](../research/atlas/README.md): `WriteReplayFile` 0x480080, `ReadReplayFile` 0x480690, the recorder `RecordCommand` 0x478340 and the feed `FeedReplayCommands` 0x4769b0.
+StarCraft 1.17's replay files, which Koprulu writes and reads for single-player games: campaign games ([ADR 0020](../adr/0020-campaign-replays.md), stages in [docs/phase-replay.md](../phase-replay.md)) and, since phase M, custom maps' games ([ADR 0024](../adr/0024-game-setup-and-custom-maps.md)). A file Koprulu writes is played by the original, and the original's files are played by Koprulu, frame for frame. The original's code is P26 and P28 of the [atlas](../research/atlas/README.md): `WriteReplayFile` 0x480080, `ReadReplayFile` 0x480690, the recorder `RecordCommand` 0x478340 and the feed `FeedReplayCommands` 0x4769b0.
 
 Code:
 - `native/kp_app/kp_rep.{h,c}`: the file;
@@ -36,7 +36,7 @@ The reader refuses a record over 64 MiB or a CHK over 16 MiB (the original takes
 
 ## The header
 
-The offsets are `ReadReplayFile`'s accessors 0x480540–0x480680. The values are what a single-player campaign game writes; 1.17's own files from the emulator's campaign chains show them.
+The offsets are `ReadReplayFile`'s accessors 0x480540–0x480680. The values are what a single-player game writes; 1.17's own files from the emulator's campaign chains and Play Custom games show them, and the public replays of phase M0 the same layout for network games.
 
 | Offset | Size | Field |
 |---|---|---|
@@ -47,7 +47,7 @@ The offsets are `ReadReplayFile`'s accessors 0x480540–0x480680. The values are
 | +0x14 | 141 | the game header `0x6728d0` (below) |
 | +0xa1 | 12 × 36 | the player records `0x6726c8`: `{u32 slot, s32 Storm ID, u8 type, u8 race, u8 force, char name[25]}` |
 | +0x251 | 8 × 4 | the colours (`0x480630`); a campaign game's are 0..7 |
-| +0x271 | 8 | the force bytes (`0x480680`), all 0 in a campaign game |
+| +0x271 | 8 | the user-select flags (`0x480680`, the bytes `0x673f08`): 1 for a slot whose map race was User Select (`LoadMapHeader` `0x46b5c0`); all 0 in a campaign game |
 
 The game header's fields at their file offsets:
 
@@ -56,13 +56,15 @@ The game header's fields at their file offsets:
 | +0x18 | the player's name, 24 bytes with its NUL (the logged-in ID; `Anonymous`, network.tbl 72, without one) |
 | +0x34, +0x36 | the map's width and height (WORD) |
 | +0x38 | active players: 1 |
-| +0x39 | slots: 1 (`0x4805e0`) |
+| +0x39 | slots (`0x4805e0`): the map's player slots the lobby offered; a campaign game's 1 |
 | +0x3a | the game speed (`0x4805c0`) |
-| +0x3c, +0x3e | 0x0a, 1: the Use Map Settings type and subtype |
+| +0x3c, +0x3e | the template's type and subtype again (a campaign game's 0x0a, 1: Use Map Settings) |
 | +0x44 | the tileset (WORD) |
 | +0x46 | 1; the reader refuses 0 |
 | +0x61 | the scenario's name (SPRP), 32 bytes, in the map's encoding |
-| +0x81 | the Use Map Settings template, `0a 00 01 00 00 00 00 00 00 00 00 02 00 01 03 01 00 01 00` |
+| +0x81 | the game's template record, 32 bytes (`KP_TEMPLATE_SIZE`, the record at 0x67293d); a campaign game's is Use Map Settings, `0a 00 01 00 00 00 00 00 00 00 00 02 00 01 03 01 00 01 00` and zeros |
+
+The header is the game's setup (`kp_rep_setup`): a replay whose campaign row is 0 starts its map's game from its template, slots and player records, with the multiplayer byte at 0 as the original plays every replay. The player records, colours and user-select flags are those of the started game (phase M stage M2, `kp_session_replay_game`): the races chosen for random, the slots the random starts moved the players to, the shuffled colours. A team game's slots 8..11 are empty until stage M5 (a `TODO`).
 
 Player records:
 - **The human:** type 2, Storm ID 0, the profile's name.
@@ -94,7 +96,7 @@ Koprulu records in `kp_session_step`: the local player's commands with Storm ID 
 - **The end of the replay:** at the header's frame count the playback pauses (`SetReplayPaused` 0x480e00) and shows the victory dialog.
 - **Live commands during playback:** only ids 5, 8, 0x10, 0x11, 0x37–0x3b, 0x55 and 0x56 pass. 0x56 is the replay's speed and pause: u8 paused, u32 speed, u32 multiplier, as set by `SetReplaySpeed` 0x481040.
 
-Out of version 1: a record with the leave command 0x57 or the chat command 0x5c (a network game's) is refused before the playback starts. So is a record with any id the recorder never writes (table 0x4ef2fc: 0x05-0x08, 0x10, 0x11, 0x38-0x3b, 0x55), which no file the original wrote holds (the sync 0x37 of the table plays: its entry is 1 byte, the dispatcher's 0x37 7, so it never runs); a crafted file's save 0x06 or load 0x07 would otherwise write over or load the player's saves. The record is walked as the feed reads it and each entry as the dispatcher walks it, so a command after another inside one entry counts too (`test_kp_rep.unrecorded_commands_refused`). So is a player record with a Storm ID whose slot is no game player (0..7).
+Out of version 1: the leave command 0x57 plays since phase M's stage M5 (`ExecLeaveGame` 0x472da0 in a replay: the player's line, result and retirement, [ADR 0025](../adr/0025-seats-and-network-branches.md)), as do the alliances 0x0e, the shared vision 0x0d and the order Nothing 0x1d. The chat command 0x5c plays since stage M2: its line is the interface's (`DisplayChatMessage` 0x46a860, `KP_EVENT_CHAT`). So is a record with any id the recorder never writes (table 0x4ef2fc: 0x05-0x08, 0x10, 0x11, 0x38-0x3b, 0x55), which no file the original wrote holds (the sync 0x37 of the table plays: its entry is 1 byte, the dispatcher's 0x37 7, so it never runs); a crafted file's save 0x06 or load 0x07 would otherwise write over or load the player's saves. The record is walked as the feed reads it and each entry as the dispatcher walks it, so a command after another inside one entry counts too (`test_kp_rep.unrecorded_commands_refused`). So is a player record with a Storm ID whose slot is no game player (0..7).
 
 ## The KPRX tail
 
@@ -102,7 +104,7 @@ After the map's block Koprulu writes `KPRX` and one block of a fixed payload, li
 
 | Field | Size |
 |---|---|
-| version (1) | u32 |
+| version (2; 1 had neither the music rotation nor the game RNG's state in `KpCarry`) | u32 |
 | the simulation's revision (`KP_REP_SIM_REVISION`) | u32 |
 | the data set's hash (the save identity's DAT digest) | 32 |
 | has carry | u32 |
@@ -130,7 +132,17 @@ Since phase W ([ADR 0021](../adr/0021-state-walk-and-saves.md), 2026-11-15) the 
 u32 the native save's size, the native save's zlib stream (level 1)
 ```
 
-The native save is version 2: `KPSV`, u32 version, the mission's and the data's names, the sections, `END `, then the table of the sections' hashes (u32 count, per section its tag and u64 hash, u64 total). Saves do not migrate: a container of another schema, other data or a native save of another version is refused as another build (gluAll 67 at the load screens), a damaged one as unreadable (gluAll 66); `kp_save_check` gives which.
+The native save is version 5 (3 since ADR 0023's `VIEW`, 4 since [ADR 0024](../adr/0024-game-setup-and-custom-maps.md)'s `SETP`, the game's setup, 5 since [ADR 0025](../adr/0025-seats-and-network-branches.md)'s pauses left and a team game's lobby races and leaders): `KPSV`, u32 version, the mission's and the data's names, the sections, `END `, then the table of the sections' hashes (u32 count, per section its tag and u64 hash, u64 total). Saves do not migrate: a container of another schema, other data or a native save of another version is refused as another build (gluAll 67 at the load screens), a damaged one as unreadable (gluAll 66); `kp_save_check` gives which.
+
+A save of a custom map's game (phase M, [ADR 0024](../adr/0024-game-setup-and-custom-maps.md)) has a `MAPC` section: the map is outside the catalog, so the save carries it. A campaign game's save has none.
+
+```
+u32 version (1), u8 the CHK's load (1 melee, 2 Use Map Settings), u32 the scenario's size, the scenario,
+the setup: template[32], i64 multiplayer, i64 slots, i64 started, 12 × (i64 Storm ID, i64 type, i64 race, i64 force),
+12 × name[32], 8 × i64 user-select, 8 × i64 colour
+```
+
+A load reads the map from it, starts that game from the setup, then loads the state (`kp_save_map`). A damaged `MAPC` (wrong version, load or size) refuses the load as unreadable. The native save's mission name is the entry's key `maps/<name>`.
 
 ## Refusals
 
@@ -138,9 +150,8 @@ The native save is version 2: `KPSV`, u32 version, the mission's and the data's 
 |---|---|
 | `KP_REP_DAMAGED` | gluAll 63: not a replay, a bad block, a length past the file |
 | `KP_REP_EXPANSION` | gluAll 60: a Brood War replay without Brood War |
-| `KP_REP_NOT_CAMPAIGN` | outside version 1: a melee or custom map's replay (campaign row 0), a row the catalog does not have, a network game's commands |
 | `KP_REP_OTHER_MAP` | the CHK is not the campaign row's map |
 
 ## Where it is written
 
-After every game that reached its console and then ended (victory, defeat, quit, restart, exit), `<pref>replays/LastReplay.rep`, written atomically and synced on the web. A game whose ready room was cancelled, or left with the program from there, writes none and keeps the last one (`test_flow.room_cancel_leaves_no_game`). Save Replay after a campaign game stays disabled as in the original.
+After every game that reached its console and then ended (victory, defeat, quit, restart, exit), `<pref>replays/LastReplay.rep`, written atomically and synced on the web. A game whose ready room was cancelled, or left with the program from there, writes none and keeps the last one (`test_flow.room_cancel_leaves_no_game`). Save Replay after a campaign game stays disabled as in the original; after a custom game it copies `LastReplay.rep` to `<pref>replays/<name>.rep` (`SaveReplayAs` `0x4802c0`, [phase M](../phase-multiplayer.md#save-replay-after-a-custom-game-after-m7-2026-11-16)).

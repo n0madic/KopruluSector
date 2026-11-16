@@ -536,11 +536,11 @@ static int64_t second_pc(KpGame *g, int64_t s)
 	return pc;
 }
 
-/* kp_aiscript_ported and AIOP are the interpreter's. A script of one opcode (every other byte a stop, so its operands
- * read 0x24 and its jumps and return land on a stop) stops the game with "ai: opcode 0xNN, <name>" exactly when the
- * opcode is not ported; and when it goes on to a second instruction, that one is past the operands AIOP gives it (the
- * interpreter read as many bytes as kp_aiscript_check skips), or a jump's target when AIOP has an address operand. */
-static void ported_opcodes_are_the_interpreters(KpT *T)
+/* Every ordinal to 0x70 has the interpreter's case and AIOP is its operands. A script of one opcode (every other byte
+ * a stop, so its operands read 0x24 and its jumps and return land on a stop) never stops the game for a missing case;
+ * and when it goes on to a second instruction, that one is past the operands AIOP gives it (the interpreter read as
+ * many bytes as kp_aiscript_check skips), or a jump's target when AIOP has an address operand. */
+static void every_opcode_reads_its_aiop_operands(KpT *T)
 {
 	static uint8_t code[0x2500];
 	const KpDefsTable *aiop = kp_defs_table(kp_defs_profile("bw-1.17.0.1"), "AIOP");
@@ -567,11 +567,10 @@ static void ported_opcodes_are_the_interpreters(KpT *T)
 		once.g = g;
 		once.s = s;
 		kp_t_pcall(T, execute_once, &once, error, sizeof error);
-		snprintf(want, sizeof want, "ai: opcode 0x%02x, ", (unsigned)op);
+		snprintf(want, sizeof want, "ai: opcode 0x%02x without", (unsigned)op);
 		stopped = strncmp(error, want, strlen(want)) == 0;
-		if (stopped == kp_aiscript_ported(op)) {
-			kp_t_ok(T, 0, "opcode 0x%02x: ported %d, the interpreter: %s", (unsigned)op, kp_aiscript_ported(op),
-				error[0] ? error : "runs");
+		if (stopped) {
+			kp_t_ok(T, 0, "opcode 0x%02x: %s", (unsigned)op, error);
 			mismatches++;
 		}
 		next = second_pc(g, s);
@@ -605,17 +604,17 @@ static void check_bins(KpT *T, KpAiBins *b, uint8_t *ai, uint8_t *bw)
 		memcpy(ai + 64 + 16 * k, AI[k].id, 4);
 		kp_le_put32(ai + 64 + 16 * k + 4, AI[k].offset);
 	}
-	/* Tst1: goto 10; at 7 race_jump (never reached); at 10 stop */
-	ai[4] = 0x00, kp_le_put16(ai + 5, 10), ai[7] = 0x39, ai[10] = 0x24;
-	/* Tst2: random_jump 128 to 7 (race_jump), then stop */
+	/* Tst1: goto 10; at 7 fatal_error (never reached); at 10 stop */
+	ai[4] = 0x00, kp_le_put16(ai + 5, 10), ai[7] = 0x28, ai[10] = 0x24;
+	/* Tst2: random_jump 128 to 7 (fatal_error), then stop */
 	ai[16] = 0x30, ai[17] = 128, kp_le_put16(ai + 18, 7), ai[20] = 0x24;
 	/* Tst3: goto 0x7fff, outside */
 	ai[24] = 0x00, kp_le_put16(ai + 25, 0x7fff);
 	/* Tst4: call 36, then an ordinal past the table (freed as stop); at 36 return */
 	ai[30] = 0x40, kp_le_put16(ai + 31, 36), ai[33] = 0x71, ai[36] = 0x41;
-	/* Tst5: wait_secure (0x0f), not ported */
-	ai[40] = 0x0f;
-	/* Bpan: panic 7 (the panic block runs from aiscript.bin, where 7 is race_jump), then stop */
+	/* Tst5: wait_secure (0x0f), a melee opcode, then fatal_error */
+	ai[40] = 0x0f, ai[41] = 0x28;
+	/* Bpan: panic 7 (the panic block runs from aiscript.bin, where 7 is fatal_error), then stop */
 	kp_le_put32(bw, 32);
 	memcpy(bw + 32, "Bpan", 4);
 	kp_le_put32(bw + 36, 4);
@@ -640,11 +639,11 @@ static void scripts_are_checked_before_a_game(KpT *T)
 		const char *want; /* NULL: passes */
 	} CHECKS[] = {
 		{ "Tst1", NULL },
-		{ "Tst2", "AI script 'Tst2' reaches opcode 0x39, race_jump, at aiscript.bin+0x7" },
+		{ "Tst2", "AI script 'Tst2' reaches fatal_error at aiscript.bin+0x7" },
 		{ "Tst3", "AI script 'Tst3' reads PC 0x7fff outside aiscript.bin" },
 		{ "Tst4", NULL },
-		{ "Tst5", "reaches opcode 0x0f, wait_secure" },
-		{ "Bpan", "AI script 'Bpan' reaches opcode 0x39, race_jump, at aiscript.bin+0x7" },
+		{ "Tst5", "AI script 'Tst5' reaches fatal_error at aiscript.bin+0x29" },
+		{ "Bpan", "AI script 'Bpan' reaches fatal_error at aiscript.bin+0x7" },
 		{ "None", NULL }, /* no binary has it: the launch does nothing */
 	};
 	uint8_t ai[CHECK_AI_SIZE], bw[CHECK_BW_SIZE], trig[2400];
@@ -687,13 +686,296 @@ static void scripts_are_checked_before_a_game(KpT *T)
 	kp_t_eq(T, kp_mission_check_ai(&m, &b, &err), 0, "an action after the end: %s", err.msg);
 }
 
+#define OP_DEBUG 0x27
+#define OP_FATAL 0x28
+#define OP_WAIT_SECURE 0x0f
+#define OP_BUILD_TURRETS 0x34
+#define OP_WAIT_TURRETS 0x35
+#define OP_IMPLODE 0x5b
+#define GUARDED 0x01
+#define WANTS_TURRET 0x10
+#define RETRY_WAIT 30
+#define BUDGET_REFRESHED 0x1 /* KP_AIF_BUDGET_REFRESHED */
+#define STATE_IDLE 0
+#define STATE_WATCH 4
+#define STATE_BASE 5
+
+/* One opcode run from PC 0 of aiscript.bin for player 0 (every other byte a stop); the error it stopped with. */
+static KpGame *run_opcode(KpT *T, uint8_t *code, size_t size, int64_t *s, char *error, size_t error_size)
+{
+	KpGame *g = scripted(T, code, size, code, size, 0, 0, s);
+	Once once;
+	KpEvent e;
+	while (kp_event_take(g, &e)) {
+	}
+	once.g = g;
+	once.s = *s;
+	kp_t_pcall(T, execute_once, &once, error, error_size);
+	return g;
+}
+
+/* The melee scripts' opcodes as ExecuteAiScript 0x493a60 runs them: debug shows its text from aiscript.bin as the
+ * player's chat and jumps; fatal_error is the original's fatal error; wait_secure retries until the budget flag;
+ * build_turrets flags the guarded regions without a Missile Turret (six at most) and wait_turrets retries while one is
+ * flagged; implode turns a region with at most one low neighbour to state 4 at priority 40. */
+static void melee_opcodes_follow_the_interpreter(KpT *T)
+{
+	static uint8_t code[64];
+	char error[KP_ERROR_SIZE];
+	KpGame *g;
+	KpEvent e;
+	int64_t s, r, flagged = 0, count;
+	int chat = 0;
+	if (!kp_t_ready(T, "test_aiscript", FILES)) return;
+	memset(code, CHECK_FILL, sizeof code);
+	code[0] = OP_DEBUG, code[1] = 40, code[2] = 0, memcpy(code + 3, "hello", 6);
+	g = run_opcode(T, code, sizeof code, &s, error, sizeof error);
+	while (kp_event_take(g, &e)) {
+		if (e.kind != KP_EVENT_CHAT) continue;
+		chat++;
+		kp_t_ok(T, e.a == 0 && e.b == 0 && e.text && strcmp(e.text, "hello") == 0, "debug's chat: %lld %lld %s",
+			(long long)e.a, (long long)e.b, e.text ? e.text : "(none)");
+	}
+	kp_t_eq(T, chat, 1, "one chat line");
+	kp_t_eq(T, error[0], 0, "debug runs on: %s", error);
+	memset(code, CHECK_FILL, sizeof code);
+	code[0] = OP_FATAL;
+	run_opcode(T, code, sizeof code, &s, error, sizeof error);
+	kp_t_ok(T, strstr(error, "Illegal AI script executed.") != NULL, "fatal_error: %s", error);
+	code[0] = OP_WAIT_SECURE;
+	g = run_opcode(T, code, sizeof code, &s, error, sizeof error);
+	kp_t_ok(T, g->scripts.pc[s] == 0 && g->scripts.wait[s] == RETRY_WAIT, "wait_secure retries: PC %lld, wait %lld",
+		(long long)g->scripts.pc[s], (long long)g->scripts.wait[s]);
+	g->pai.flags[0] |= BUDGET_REFRESHED;
+	g->scripts.wait[s] = 0;
+	kp_aiscript_execute(g, s);
+	kp_t_ok(T, g->scripts.pc[s] != 0, "wait_secure goes on once the budget is refreshed");
+	/* build_turrets over every guarded region, then wait_turrets until none is flagged */
+	code[0] = OP_BUILD_TURRETS, code[1] = OP_WAIT_TURRETS;
+	g = scripted(T, code, sizeof code, code, sizeof code, 0, 0, &s);
+	count = (int64_t)g->regions.count;
+	for (r = 1; r < count; r++) g->air.flags[0][r] = GUARDED;
+	kp_aiscript_execute(g, s);
+	for (r = 1; r < count; r++) flagged += (g->air.flags[0][r] & WANTS_TURRET) != 0;
+	kp_t_eq(T, flagged, count > 6 ? 6 : count - 1, "build_turrets flags six regions");
+	kp_t_ok(T, g->scripts.pc[s] == 1 && g->scripts.wait[s] == RETRY_WAIT, "wait_turrets retries: PC %lld",
+		(long long)g->scripts.pc[s]);
+	for (r = 1; r < count; r++) g->air.flags[0][r] &= ~(int64_t)WANTS_TURRET;
+	g->scripts.wait[s] = 0;
+	kp_aiscript_execute(g, s);
+	kp_t_ok(T, g->scripts.pc[s] != 1, "wait_turrets goes on with no region flagged");
+	/* implode: every region of state 0 whose neighbours are all above state 3 but one */
+	code[0] = OP_IMPLODE;
+	g = scripted(T, code, sizeof code, code, sizeof code, 0, 0, &s);
+	count = (int64_t)g->regions.count;
+	for (r = 1; r < count; r++) g->air.state[0][r] = STATE_BASE;
+	g->air.state[0][1] = STATE_IDLE;
+	kp_aiscript_execute(g, s);
+	kp_t_ok(T, count < 2 || (g->air.state[0][1] == STATE_WATCH && g->air.priority[0][1] == 40),
+		"implode: region 1 in state %lld at priority %lld", (long long)g->air.state[0][1], (long long)g->air.priority[0][1]);
+}
+
+#define OP_BUILD_BUNKERS 0x11
+#define OP_WAIT_BUNKERS 0x12
+#define OP_HARASS_FACTOR 0x37
+#define OP_REGION_SIZE 0x3a
+#define OP_EVAL_HARASS 0x42
+#define OP_WAIT_UPGRADES 0x47
+#define WANTS_BUNKER 0x02
+#define REQUESTS_FIRST 0x400 /* KP_AIF_REQUESTS_FIRST */
+#define STATE_GATHER 8
+#define REGION_SIZE_UNIT 32
+#define FAR_JUMP 50 /* a jump target past the opcode under test */
+#define JUMPED (FAR_JUMP + 1) /* the script's PC once it jumped: past the stop there */
+#define TOWN_AT 3
+#define MARINE 0
+#define SCV 7
+#define COMMAND_CENTER 106
+#define BUNKER 125
+
+/* The tiles of the regions connected to r over ground neighbours, each counted once. */
+static int64_t connected_tiles(KpGame *g, int64_t r0)
+{
+	const KpRegionGraph *rg = &g->pathing.rg;
+	static uint8_t seen[KP_AI_REGIONS];
+	static int64_t queue[KP_AI_REGIONS];
+	int64_t head = 0, tail = 0, sum = 0;
+	memset(seen, 0, sizeof seen);
+	queue[tail++] = r0;
+	seen[r0] = 1;
+	while (head < tail) {
+		int64_t r = queue[head++], j;
+		sum += kp_region_tiles(g, r);
+		for (j = 0; j < rg->ground[r]; j++) {
+			int64_t nb = rg->neighbors[rg->nb_at[r] + j];
+			if (!seen[nb]) seen[nb] = 1, queue[tail++] = nb;
+		}
+	}
+	return sum;
+}
+
+/* The first unit of player p (0 when none). */
+static int64_t first_unit_of(KpGame *g, int64_t p)
+{
+	return g->player_units[p];
+}
+
+/* The opcodes no stock script reaches, beyond those above: wait_upgrades waits for the requests-first flag; build_bunkers
+ * flags the guarded regions with an own building or worker and no own Bunker (three at most) and wait_bunkers retries
+ * while one is flagged; region_size jumps when the walk from the town's region sums fewer tiles than the limit, a
+ * region counted each time it is reached (MeasureTownRegionSize 0x4877f0); harass_factor repeats the roster by the
+ * strength of the enemy nearest the target region (0x483830); eval_harass jumps when the attack cannot be prepared
+ * or the roster is weaker than the enemies near the grouping region (0x4af5b0). */
+static void more_melee_opcodes_follow_the_interpreter(KpT *T)
+{
+	static uint8_t code[64];
+	char error[KP_ERROR_SIZE];
+	KpGame *g;
+	int64_t s, r, count, n, flagged, x, y, region, total, limit, sum, len, enemy;
+	if (!kp_t_ready(T, "test_aiscript", FILES)) return;
+	memset(code, CHECK_FILL, sizeof code);
+	code[0] = OP_WAIT_UPGRADES;
+	g = run_opcode(T, code, sizeof code, &s, error, sizeof error);
+	kp_t_ok(T, g->scripts.pc[s] == 0 && g->scripts.wait[s] == RETRY_WAIT, "wait_upgrades retries: PC %lld",
+		(long long)g->scripts.pc[s]);
+	g->pai.flags[0] |= REQUESTS_FIRST;
+	g->scripts.wait[s] = 0;
+	kp_aiscript_execute(g, s);
+	kp_t_ok(T, g->scripts.pc[s] != 0, "wait_upgrades goes on once the requests come first");
+	/* build_bunkers: only the guarded region with player 0's SCV is flagged */
+	code[0] = OP_BUILD_BUNKERS, code[1] = OP_WAIT_BUNKERS;
+	g = scripted(T, code, sizeof code, code, sizeof code, 0, 0, &s);
+	count = (int64_t)g->regions.count;
+	n = first_unit_of(g, 0);
+	kp_t_ok(T, n != 0, "player 0 has a unit");
+	if (n == 0) return;
+	x = (int16_t)g->w->spr.x[kp_unit_sprite(g, n)];
+	y = (int16_t)g->w->spr.y[kp_unit_sprite(g, n)];
+	(void)kp_unit_complete(g, kp_unit_create(g, SCV, x, y, 0));
+	region = (kp_region_at(g, x, y) & 0xffff);
+	for (r = 1; r < count; r++) g->air.flags[0][r] = GUARDED;
+	kp_aiscript_execute(g, s);
+	flagged = 0;
+	for (r = 1; r < count; r++) flagged += (g->air.flags[0][r] & WANTS_BUNKER) != 0;
+	kp_t_ok(T, flagged >= 1 && flagged <= 3 && (g->air.flags[0][region] & WANTS_BUNKER) != 0,
+		"build_bunkers flags the SCV's region %lld (%lld flagged)", (long long)region, (long long)flagged);
+	kp_t_ok(T, g->scripts.pc[s] == 1 && g->scripts.wait[s] == RETRY_WAIT, "wait_bunkers retries: PC %lld",
+		(long long)g->scripts.pc[s]);
+	for (r = 1; r < count; r++) g->air.flags[0][r] &= ~(int64_t)WANTS_BUNKER;
+	(void)kp_unit_complete(g, kp_unit_create(g, BUNKER, x, y, 0));
+	g->scripts.wait[s] = 0;
+	g->scripts.pc[s] = 0;
+	kp_aiscript_execute(g, s);
+	kp_t_ok(T, (g->air.flags[0][region] & WANTS_BUNKER) == 0, "a region with an own Bunker is not flagged");
+	/* region_size from a town at player 0's unit */
+	code[0] = OP_REGION_SIZE, code[1] = 1, code[2] = FAR_JUMP, code[3] = 0;
+	g = scripted(T, code, sizeof code, code, sizeof code, 0, 0, &s);
+	n = first_unit_of(g, 0);
+	x = (int16_t)g->w->spr.x[kp_unit_sprite(g, n)];
+	y = (int16_t)g->w->spr.y[kp_unit_sprite(g, n)];
+	region = (kp_region_at(g, x, y) & 0xffff);
+	g->scripts.town[s] = kp_ai_start_town(g, 0, x, y, 0);
+	kp_aiscript_execute(g, s);
+	kp_t_ok(T, kp_region_tiles(g, region) < REGION_SIZE_UNIT || g->scripts.pc[s] != JUMPED,
+		"region_size of 32 tiles: no jump from a region of %lld tiles", (long long)kp_region_tiles(g, region));
+	/* a limit just past the connected regions' tiles counted once: the walk counts them again and reaches it */
+	total = connected_tiles(g, region);
+	limit = total / REGION_SIZE_UNIT + 1;
+	kp_t_ok(T, limit <= 255 && g->pathing.rg.ground[region] > 0, "the town's region has neighbours and the map's tiles fit a byte's limit (%lld)",
+		(long long)total);
+	if (limit <= 255 && g->pathing.rg.ground[region] > 0) {
+		code[1] = (uint8_t)limit;
+		program(T, g, code, sizeof code, code, sizeof code); /* the game keeps its own copy */
+		g->scripts.pc[s] = 0;
+		kp_aiscript_execute(g, s);
+		kp_t_ok(T, g->scripts.pc[s] != JUMPED, "region_size counts a region each time: no jump at %lld tiles (%lld once)",
+			(long long)(limit * REGION_SIZE_UNIT), (long long)total);
+	}
+	/* harass_factor: the roster of two Marines, the enemy (player 1, a Command Center at the target region) */
+	memset(code, CHECK_FILL, sizeof code);
+	code[0] = OP_HARASS_FACTOR, code[1] = 1, code[2] = 0;
+	g = scripted(T, code, sizeof code, code, sizeof code, 0, 0, &s);
+	n = first_unit_of(g, 0);
+	x = (int16_t)g->w->spr.x[kp_unit_sprite(g, n)];
+	y = (int16_t)g->w->spr.y[kp_unit_sprite(g, n)];
+	region = (kp_region_at(g, x, y) & 0xffff);
+	kp_ai_region_center(g, region, &x, &y);
+	enemy = kp_unit_create(g, COMMAND_CENTER, x, y, 1);
+	(void)kp_unit_complete(g, enemy);
+	kp_t_ok(T, enemy != 0 && (g->u.status[enemy] & 0x2) != 0, "a grounded enemy building");
+	sum = 0;
+	for (n = g->player_units[1]; n != 0; n = g->u.player_next[n]) {
+		int64_t a = g->u.air_strength[n], gr = g->u.ground_strength[n];
+		if (!kp_unit_inactive(g, n)) sum += a > gr ? a : gr;
+	}
+	if (sum == 0) {
+		g->u.ground_strength[enemy] = 10;
+		sum = 10;
+	}
+	g->pai.attack_target[0] = region;
+	g->pai.roster[0][0] = MARINE + 1, g->pai.roster[0][1] = MARINE + 1;
+	kp_aiscript_execute(g, s); /* divisor 1: three times the roster */
+	for (len = 0; len < ROSTER && g->pai.roster[0][len] != 0; len++) {}
+	kp_t_eq(T, len, sum >= 4 ? 6 : sum >= 3 ? 4 : 2, "harass_factor of divisor 1 (strength %lld)", (long long)sum);
+	g->pai.roster[0][2] = 0;
+	code[1] = (uint8_t)(sum % 256), code[2] = (uint8_t)(sum / 256 % 256); /* divisor = strength: once */
+	program(T, g, code, sizeof code, code, sizeof code);
+	g->scripts.pc[s] = 0;
+	kp_aiscript_execute(g, s);
+	for (len = 0; len < ROSTER && g->pai.roster[0][len] != 0; len++) {}
+	kp_t_eq(T, len, 2, "harass_factor of the strength's divisor leaves the roster");
+	code[1] = 0, code[2] = 0;
+	program(T, g, code, sizeof code, code, sizeof code);
+	g->scripts.pc[s] = 0;
+	{
+		Once once;
+		once.g = g;
+		once.s = s;
+		kp_t_pcall(T, execute_once, &once, error, sizeof error);
+	}
+	kp_t_ok(T, strstr(error, "divides by 0") != NULL, "harass_factor of divisor 0: %s", error);
+	/* eval_harass: no attack while countdown 2 runs (jump), and a Marine against no enemy near the grouping region */
+	memset(code, CHECK_FILL, sizeof code);
+	code[0] = OP_EVAL_HARASS, code[1] = FAR_JUMP, code[2] = 0;
+	g = scripted(T, code, sizeof code, code, sizeof code, 0, 0, &s);
+	g->pai.countdown2[0] = 1;
+	kp_aiscript_execute(g, s);
+	kp_t_eq(T, g->scripts.pc[s], JUMPED, "eval_harass jumps while the attack waits");
+	g->pai.countdown2[0] = 0;
+	n = first_unit_of(g, 0);
+	region = kp_region_at(g, (int16_t)g->w->spr.x[kp_unit_sprite(g, n)], (int16_t)g->w->spr.y[kp_unit_sprite(g, n)]) & 0xffff;
+	g->pai.attack_target[0] = TOWN_AT + 1;
+	g->air.state[0][TOWN_AT] = STATE_GATHER;
+	g->air.dest[0][TOWN_AT] = region;
+	g->pai.roster[0][0] = MARINE + 1;
+	kp_ai_region_center(g, region, &x, &y);
+	sum = 0;
+	for (n = g->lists[KP_LIST_ACTIVE].head; n != 0; n = g->u.next[n]) sum += kp_player_enemy_of(g, 0, n);
+	g->scripts.pc[s] = 0;
+	kp_aiscript_execute(g, s);
+	kp_t_ok(T, sum != 0 || g->scripts.pc[s] != JUMPED, "eval_harass goes on with no enemy (PC %lld)",
+		(long long)g->scripts.pc[s]);
+	/* an enemy army at the grouping region outweighs the Marine */
+	for (r = 0; r < 12; r++) {
+		n = kp_unit_create(g, MARINE, x + (r % 4) * 16, y + (r / 4) * 16, 1);
+		(void)kp_unit_complete(g, n);
+		g->u.air_strength[n] = g->strength[0][MARINE]; /* the strengths a step gives them */
+		g->u.ground_strength[n] = g->strength[1][MARINE];
+	}
+	g->scripts.pc[s] = 0;
+	kp_aiscript_execute(g, s);
+	kp_t_eq(T, g->scripts.pc[s], JUMPED, "eval_harass jumps against a stronger enemy");
+}
+
 static const KpTest TESTS[] = {
 	{ "vm_equals_the_original", vm_equals_the_original, 0 },
 	{ "launch_gate", launch_gate, 0 },
 	{ "small_binaries_hold_no_scripts", small_binaries_hold_no_scripts, 0 },
 	{ "lost_roster_entry_reads_the_next_column", lost_roster_entry_reads_the_next_column, 0 },
 	{ "stock_defense_types_have_strength", stock_defense_types_have_strength, 0 },
-	{ "ported_opcodes_are_the_interpreters", ported_opcodes_are_the_interpreters, 0 },
+	{ "every_opcode_reads_its_aiop_operands", every_opcode_reads_its_aiop_operands, 0 },
 	{ "scripts_are_checked_before_a_game", scripts_are_checked_before_a_game, 0 },
+	{ "melee_opcodes_follow_the_interpreter", melee_opcodes_follow_the_interpreter, 0 },
+	{ "more_melee_opcodes_follow_the_interpreter", more_melee_opcodes_follow_the_interpreter, 0 },
 };
 KP_SUITE(kp_suite_aiscript, "test_aiscript", TESTS);

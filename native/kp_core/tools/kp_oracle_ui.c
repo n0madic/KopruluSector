@@ -75,7 +75,7 @@ int kp_oracle_ui_colours(KpOracleUi *u, const char *root, const KpOracleGame *og
 	kp_ui_resolve_colours(u->ui, u->tileset.rgb, u->tileset.cycled);
 	if (kp_ui_game_effects(u->ui, u->tileset.rgb, u->tileset.cycled) != 0) return kp_error_set(err, "ui: out of memory");
 	if (minimap && (!u->tileset.mmni || kp_ui_set_minimap(u->ui, u->tileset.mmni, u->tileset.mmni_size, u->tileset.rgb,
-		u->tileset.cycled, d->palettes.tilesets[m->tileset & 7].dark, m->has_colors ? m->colors : NULL) != 0)) {
+		u->tileset.cycled, d->palettes.tilesets[m->tileset & 7].dark, m->has_colors ? m->colors : NULL, og->g ? og->g->setup.color : NULL) != 0)) {
 		return kp_error_set(err, "ui: no tminimap.pcx or tblink.pcx");
 	}
 	return 0;

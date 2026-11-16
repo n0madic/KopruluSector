@@ -26,7 +26,7 @@ void kp_group_formation(KpGame *g, int64_t x, int64_t y, int adjust, KpFormation
 	f->x = f->goal_x = f->ground_x = x;
 	f->y = f->goal_y = f->ground_y = y;
 	f->dx = f->dy = f->area = f->radius = f->flags = 0;
-	total = kp_selected_units(g, kp_scalar(g, KP_COMMAND_PLAYER), units);
+	total = kp_selected_units(g, g->command_record, units);
 	for (k = 0; k < total; k++) {
 		int64_t n = units[k], s = u->sprite[n];
 		if (s != -1) {

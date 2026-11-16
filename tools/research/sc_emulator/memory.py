@@ -92,17 +92,45 @@ class RegionAllocator:
         self.free: dict[int, list[int]] = {}
 
     def alloc(self, n: int) -> int:
+        """A block of the exact size freed before, else one at the top; past the region's end, the first freed range
+        (adjacent freed blocks merged) that holds it, its rest kept free. The fallback only serves what used to fail
+        (a run that frees and asks many sizes, such as a public replay's map), so the other runs' addresses stay."""
         r = align(max(n, 1), self.gran)
         lst = self.free.get(r)
         if lst:
             p = lst.pop()
-        else:
+        elif self.top + r <= self.end:
             p = self.top
             self.top += r
-            if self.top > self.end:
-                raise MemoryError(f"guest region {self.base:#x} exhausted")
+        else:
+            p = self._first_fit(r)
+            if p is None:
+                raise MemoryError(f"guest region {self.base:#x} exhausted: {n:#x} bytes asked, "
+                                  f"{sum(self.blocks.values()):#x} of {self.end - self.base:#x} held")
         self.blocks[p] = r
         return p
+
+    def _first_fit(self, r: int) -> int | None:
+        ranges = sorted((q, size) for size, qs in self.free.items() for q in qs)
+        merged: list[list[int]] = []
+        for q, size in ranges:
+            if merged and merged[-1][0] + merged[-1][1] == q:
+                merged[-1][1] += size
+            else:
+                merged.append([q, size])
+        if merged and merged[-1][0] + merged[-1][1] == self.top:  # a freed tail returns to the top
+            self.top = merged.pop()[0]
+        self.free = {}
+        found = None
+        for q, size in merged:
+            if found is None and size >= r:
+                found = q
+                q, size = q + r, size - r
+            if size:
+                self.free.setdefault(size, []).append(q)
+        if found is None and self.top + r <= self.end:
+            found, self.top = self.top, self.top + r
+        return found
 
     def release(self, p: int) -> int | None:
         r = self.blocks.pop(p, None)

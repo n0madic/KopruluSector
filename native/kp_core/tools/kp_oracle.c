@@ -5,6 +5,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "../src/core/kp_gametype.h"
+#include "../src/core/kp_ids.h"
 #include "../src/core/kp_kpf.h"
 
 /* --- goldens --- */
@@ -248,6 +250,66 @@ int kp_oracle_chain_opts(KpOracleOpts *opts, KpCarry *carry, KpError *err)
 	return 0;
 }
 
+int kp_oracle_setup_from_json(const KpJson *v, KpGameSetup *s, KpError *err)
+{
+	const char *hex = kp_json_field_str(v, "template", "");
+	const KpJson *players = kp_json_get(v, "players"), *races = kp_json_get(v, "custom_races");
+	int64_t custom[KP_CUSTOM_RACES], local = -1;
+	int k;
+	memset(s, 0, sizeof *s);
+	if (strlen(hex) != 2 * KP_TEMPLATE_SIZE) return kp_error_set(err, "setup: the template is not %d hex bytes", KP_TEMPLATE_SIZE);
+	for (k = 0; k < KP_TEMPLATE_SIZE; k++) {
+		unsigned byte;
+		if (sscanf(hex + 2 * k, "%2x", &byte) != 1) return kp_error_set(err, "setup: the template is not hex");
+		s->template_record[k] = (uint8_t)byte;
+	}
+	if (kp_json_len(players) != KP_SETUP_SLOTS) return kp_error_set(err, "setup: %d players, not %d", kp_json_len(players), KP_SETUP_SLOTS);
+	for (k = 0; k < KP_SETUP_SLOTS; k++) {
+		const KpJson *p = kp_json_at(players, k);
+		s->storm[k] = kp_json_field_int(p, "storm", -1);
+		s->type[k] = kp_json_field_int(p, "type", 0);
+		s->race[k] = kp_json_field_int(p, "race", 0);
+		s->force[k] = kp_json_field_int(p, "force", 0);
+		snprintf(s->name[k], sizeof s->name[k], "%s", kp_json_field_str(p, "name", ""));
+		if (k < 8 && s->type[k]) s->slots++;
+		if (s->type[k] == KP_CTRL_HUMAN && s->storm[k] == 0) local = k;
+	}
+	/* the single-player custom races 0x526546 (the local slot's, then the computers'), applied as StartGame's step 3
+	 * does when their flag 0x5264c3 is set */
+	if (kp_json_field_int(v, "custom_races_flag", 0)) {
+		for (k = 0; k < KP_CUSTOM_RACES; k++) custom[k] = kp_json_int(kp_json_at(races, k + 1), KP_RACE_NONE);
+		kp_setup_custom_races(s, local, kp_json_int(kp_json_at(races, 0), KP_RACE_RANDOM), custom);
+	}
+	return 0;
+}
+
+int kp_oracle_setup_opts(KpOracleOpts *opts, KpGameSetup *setup, KpError *err)
+{
+	const char *path = getenv("KP_SETUP");
+	KpJsonDoc doc;
+	const KpJson *root, *start;
+	char why[200];
+	size_t size;
+	uint8_t *text;
+	int rc;
+	if (!path || !path[0]) return 0;
+	if (!(text = kp_read_file(path, &size))) return kp_error_set(err, "oracle: cannot read %s", path);
+	kp_json_doc_init(&doc);
+	root = kp_json_parse(&doc, (const char *)text, size, why, sizeof why);
+	free(text);
+	if (!root) {
+		kp_json_doc_free(&doc);
+		return kp_error_set(err, "setup: %s: %s", path, why);
+	}
+	start = kp_json_get(root, "start_game");
+	rc = kp_oracle_setup_from_json(start ? start : root, setup, err);
+	kp_json_doc_free(&doc);
+	if (rc != 0) return -1;
+	opts->host.setup = setup;
+	opts->host.local_storm = 0;
+	return 0;
+}
+
 /* --- golden runs --- */
 
 static void golden_event(void *ud, const KpEvent *e)
@@ -278,6 +340,11 @@ int kp_golden_run_start(KpGoldenRun *gr, const char *root, const KpJson *g, cons
 	if (trace) o.host.trace = 1;
 	o.host.turn = kp_json_field_int(g, "turn", o.host.turn);
 	if (kp_json_field_int(g, "replay", 0)) o.host.replay = 1; /* the original playing a replay (--kind replays) */
+	if (kp_json_get(g, "setup")) {
+		if (kp_oracle_setup_from_json(kp_json_get(g, "setup"), &gr->setup, err) != 0) return -1;
+		o.host.setup = &gr->setup;
+		o.host.local_storm = 0;
+	}
 	if (kp_replay_from_golden(&gr->replay, root, g, err) != 0) return -1;
 	o.host.mission_index = gr->replay.mission_index;
 	if (kp_oracle_game_start(&gr->game, root, gr->replay.mission, gr->replay.seed, gr->replay.expansion, &o, err) != 0) {

@@ -22,6 +22,8 @@
 /* The hash: 64-bit words through a multiply-xorshift, a section's seeded with its tag and closed with its length
  * (murmur3's finaliser); "kphash" and the hash's version as the seed. */
 #define HASH_SEED (0x6b70686173680000ULL | (uint64_t)KP_HASH_VERSION)
+/* The shared hash's seed: "kpshar" and its version. */
+#define SHARED_SEED (0x6b70736861720000ULL | (uint64_t)KP_SHARED_HASH_VERSION)
 #define HASH_K 0x9e3779b97f4a7c15ULL
 /* The snapshot's header: magic "KPSN", sizeof KpGame, sizeof KpImages, the region graph's, the AI's regions and the
  * trigger copies' counts, whether the game has the CRT generator, the map's width and height (u32 each), then the
@@ -36,10 +38,23 @@ enum { KIND_U8 = 1, KIND_U32, KIND_U64, KIND_I32, KIND_I64, KIND_INT, KIND_LIST 
 
 typedef struct {
 	const char *tag;
-	int kind;
+	int kind, seat;
 	const void *at;
 	size_t count, elem;
 } Call;
+
+/* The shared walk's sprites (kp_shared_hash): the seat's (the fog ghosts', the placement cursor's), the shared ones
+ * the seat shows or hides (the Pylons' Psi fields: CreatePsiFieldSprite 0x42f270 by the local player) and each shared
+ * sprite's key, the hash of its fields and images but the seat's. A row's order is the seat's too (a sprite joins its
+ * row after the row's head, a fog ghost as well: the drawing's ties), so the shared sprites go by their keys in order
+ * and a reference to a sprite by its key. */
+typedef struct {
+	uint8_t seat[KP_SPRITES];
+	uint8_t shown[KP_SPRITES];
+	uint64_t key[KP_SPRITES];
+	uint64_t sorted[KP_SPRITES];
+	int count;
+} Canon;
 
 typedef struct {
 	int mode;
@@ -61,6 +76,10 @@ typedef struct {
 	const char *tag; /* HASH and COVER: the open section's tag */
 	KpSectionHash each;
 	void *ud;
+	/* HASH: the shared hash's walk (kp_shared_hash: the seat's fields left out, the images world in canon's order);
+	 * every mode: the visit is the seat's (SEAT_PART) */
+	int shared, seat;
+	const Canon *canon;
 	/* COVER: the calls */
 	Call *calls;
 	size_t ncalls, ncap;
@@ -140,9 +159,11 @@ static uint64_t hash_bytes(uint32_t tag, const uint8_t *p, size_t n)
 	return finish(h, (uint64_t)n);
 }
 
-/* The low `bytes` (1, 4 or 8) bytes of v as the save writes them, into the open section's words. */
+/* The low `bytes` (1, 4 or 8) bytes of v as the save writes them, into the open section's words; nothing of a seat's
+ * visit in the shared hash. */
 static void hash_put(Codec *c, uint64_t v, unsigned bytes)
 {
+	if (c->shared && c->seat) return;
 	c->length += bytes;
 	c->word |= v << (8 * c->fill);
 	if (c->fill + bytes < 8) {
@@ -157,6 +178,7 @@ static void hash_put(Codec *c, uint64_t v, unsigned bytes)
 static void hash_run(Codec *c, const uint8_t *p, size_t n)
 {
 	size_t k = 0;
+	if (c->shared && c->seat) return;
 	while (k < n && c->fill != 0) hash_put(c, p[k++], 1);
 	for (; k + 8 <= n; k += 8) {
 		c->h = mix(c->h, le64(p + k));
@@ -184,7 +206,7 @@ static void hash_open(Codec *c, const char *tag)
 {
 	hash_close(c);
 	c->tag = tag;
-	c->h = mix(HASH_SEED, tag_word(tag));
+	c->h = mix(c->shared ? SHARED_SEED : HASH_SEED, tag_word(tag));
 	c->word = 0;
 	c->fill = 0;
 	c->length = 0;
@@ -209,6 +231,7 @@ static void cover(Codec *c, int kind, const void *at, size_t count, size_t elem)
 	k = &c->calls[c->ncalls++];
 	k->tag = c->tag;
 	k->kind = kind;
+	k->seat = c->seat;
 	k->at = at;
 	k->count = count;
 	k->elem = elem;
@@ -268,6 +291,7 @@ static void log_field(Codec *c, size_t n)
 	f->offset = SNAP_HEADER + c->size;
 	f->bytes = n;
 	f->elem = c->elem;
+	f->seat = c->seat;
 }
 
 /* RAW: n bytes of the state as they are, into the caller's buffer (or counted) or back. */
@@ -518,6 +542,213 @@ static void checked_u32(Codec *c, uint32_t *v)
 #define I64(f) (NAMED(c, f), (i64s)(c, &(f), 1))
 /* a multi-dimensional int64_t array, all its elements */
 #define I64N(f) (NAMED(c, f), (i64s)(c, (int64_t *)(f), sizeof(f) / sizeof(int64_t)))
+/* Visits of the seat's state (ADR 0025, stage M6): saved and walked as any, the coverage's seat ranges, out of the
+ * shared hash. */
+#define SEAT_PART(stmt) \
+	do { \
+		int seat_ = c->seat; \
+		c->seat = 1; \
+		stmt; \
+		c->seat = seat_; \
+	} while (0)
+
+/* --- the shared hash's canonical forms (kp_shared_hash) --- */
+
+/* The seat's scalars: the screen, the placement and the order marker the interface sets, the command's player
+ * between turns (the local player's, 0x508d44 after ExecuteGameTurn 0x4768a0) and the requirement evaluator's last
+ * error (0x66ff60), which the interface's button checks write too and no check of the simulation reads before it writes
+ * it. */
+static int seat_scalar(size_t k)
+{
+	switch (k) {
+	case KP_SCREEN_X:
+	case KP_SCREEN_Y:
+	case KP_SCREEN_W:
+	case KP_SCREEN_H:
+	case KP_ORDER_MARKER:
+	case KP_PLACEMENT_ACTIVE:
+	case KP_PLACEMENT_ORDER:
+	case KP_PLACEMENT_TYPE:
+	case KP_COMMAND_PLAYER:
+	case KP_REQUIREMENT_ERROR: return 1;
+	default: return 0;
+	}
+}
+
+/* A Pylon's Psi field (its sprite + 1 in union_0xd0, kp_power.c), else -1. */
+static int32_t psi_sprite(const KpGame *g, int64_t n)
+{
+	int64_t v = g->u.union_0xd0[n];
+	if (n <= 0 || n > KP_UNITS || g->u.type[n] != KP_TYPE_PYLON || v <= 0 || v > KP_SPRITES) return -1;
+	return (int32_t)(v - 1);
+}
+
+/* A sprite reference by its key: -1 for none or a seat's sprite, 0 for a sprite in no row. */
+static uint64_t canon_sprite(const Codec *c, int64_t s)
+{
+	if (s < 0 || s >= KP_SPRITES) return s < 0 ? (uint64_t)-1 : (uint64_t)s;
+	return c->canon->seat[s] ? (uint64_t)-1 : c->canon->key[s];
+}
+
+static void hash_canon_sprites(Codec *c, const int64_t *v, size_t n)
+{
+	size_t k;
+	for (k = 0; k < n; k++) hash_put(c, canon_sprite(c, v[k]), 8);
+}
+
+/* The units' word 0xd0, a Pylon's Psi field by its key. */
+static void hash_unit_d0(Codec *c, const KpGame *g)
+{
+	int64_t n;
+	for (n = 0; n < (int64_t)ARRAY_N(g->u.union_0xd0); n++) {
+		int32_t s = psi_sprite(g, n);
+		hash_put(c, s >= 0 ? canon_sprite(c, s) : (uint64_t)g->u.union_0xd0[n], 8);
+	}
+}
+
+#define CREEP_SHOWN 0x40000000LL
+#define CREEP_GROUP 0x10
+/* The tiles' flags without the creep shown (the viewer's, OnCreepTileChanged 0x4b4040), and the tile words with a creep
+ * tile's variant (the CRT generator's draw, 0x4c0c40) left out: the seat's. */
+static void hash_shared_tiles(Codec *c, const int64_t *flags, const int64_t *words, size_t n)
+{
+	size_t k;
+	for (k = 0; k < n; k++) hash_put(c, (uint64_t)(flags[k] & ~CREEP_SHOWN), 8);
+	for (k = 0; k < n; k++) hash_put(c, (uint64_t)((words[k] & 0x7ff0) == CREEP_GROUP ? CREEP_GROUP : words[k]), 8);
+}
+
+/* The sprite flags of the local selection: its circle, the allies' dashed circles and the selected mark. */
+#define SEAT_SPRITE_FLAGS (KP_SF_CIRCLE | KP_SF_ALLIES | KP_SF_SELECTED)
+
+/* An image's drawing in the shared hash. The steady drawings are the seat's: normal, cloaked either way (by the local
+ * player's detection, UpdateDetection 0x4325a0, a burrowed unit's too) and a hallucination (the owner's, 0x430960), as
+ * one. A cloak's fade either way (CLOAK and DECLOAK, the detected forms + 3) is one with its counter: its end sets the
+ * unit's cloak state. Any other method and parameter as they are. */
+static void image_drawing(int32_t method, int32_t param, uint64_t *m, uint64_t *p)
+{
+	switch (method) {
+	case KP_METHOD_CLOAK:
+	case KP_METHOD_CLOAK + 3:
+		*m = KP_METHOD_CLOAK;
+		*p = (uint64_t)(param & 0xffff);
+		return;
+	case KP_METHOD_DECLOAK:
+	case KP_METHOD_DECLOAK_BLEND:
+		*m = KP_METHOD_DECLOAK;
+		*p = (uint64_t)(param & 0xffff);
+		return;
+	case 0:
+	case KP_METHOD_CLOAK + 1:
+	case KP_METHOD_CLOAK + 4:
+	case KP_METHOD_HALLUCINATION:
+		*m = *p = 0;
+		return;
+	default: *m = (uint64_t)(uint32_t)method; *p = (uint64_t)(uint32_t)param;
+	}
+}
+
+/* A shared sprite's key: its fields but the links, the slot and the seat's (the selection's slot, the flash timer, the
+ * selection's flags; a Psi field's hidden flag and visibility), its main image by its place, then its images but the
+ * selection pools' (health bars, circles, placement ghosts and boxes: KP_IMG_MAIN and up), each without its links, its
+ * sprite and the seat's drawing. */
+static uint64_t sprite_key(const Canon *k, const KpImages *w, int32_t s)
+{
+	const KpSpriteRecords *spr = &w->spr;
+	const KpImageRecords *img = &w->img;
+	int32_t i, main = -1, n = 0, guard;
+	int32_t seat_flags = SEAT_SPRITE_FLAGS | (k->shown[s] ? KP_SF_HIDDEN : 0);
+	uint64_t h = SHARED_SEED, m, p;
+	for (i = spr->images[s].head, guard = 0; i >= 0 && i < KP_IMAGES && guard < KP_IMAGES; i = img->next[i], guard++) {
+		if (i >= KP_IMG_MAIN) continue;
+		if (i == spr->main[s]) main = n;
+		n++;
+	}
+#define KEY(v) h = mix(h, (uint64_t)(uint32_t)(v))
+	KEY(spr->id[s]);
+	KEY(spr->owner[s]);
+	KEY(k->shown[s] ? 0 : spr->visibility[s]);
+	KEY(spr->elevation[s]);
+	KEY(spr->flags[s] & ~seat_flags);
+	KEY(spr->width[s]);
+	KEY(spr->height[s]);
+	KEY(spr->x[s]);
+	KEY(spr->y[s]);
+	KEY(main);
+	KEY(n);
+	for (i = spr->images[s].head, guard = 0; i >= 0 && i < KP_IMAGES && guard < KP_IMAGES; i = img->next[i], guard++) {
+		if (i >= KP_IMG_MAIN) continue;
+		image_drawing(img->method[i], img->param[i], &m, &p);
+		h = mix(mix(h, m), p);
+		KEY(img->id[i]); KEY(img->dir[i]); KEY(img->flags[i]); KEY(img->xoff[i]); KEY(img->yoff[i]);
+		KEY(img->header[i]); KEY(img->pc[i]); KEY(img->ret[i]); KEY(img->anim[i]); KEY(img->wait[i]);
+		KEY(img->frameset[i]); KEY(img->frame[i]); KEY(img->grp[i]); /* x, y: the seat's draw's (image_bounds) */
+	}
+#undef KEY
+	return finish(h, (uint64_t)n);
+}
+
+static int key_order(const void *x, const void *y)
+{
+	uint64_t a = *(const uint64_t *)x, b = *(const uint64_t *)y;
+	return a < b ? -1 : a > b;
+}
+
+/* The seat's sprites, the Psi fields, the shared sprites' keys and the keys in order. */
+static void canon_build(const KpGame *g, Canon *k)
+{
+	KpImages *w = g->w;
+	int32_t t, s, r, guard;
+	int64_t u;
+	memset(k->seat, 0, sizeof k->seat);
+	memset(k->shown, 0, sizeof k->shown);
+	memset(k->key, 0, sizeof k->key);
+	k->count = 0;
+	for (u = 1; u <= KP_UNITS; u++) {
+		s = psi_sprite(g, u);
+		if (s >= 0) k->shown[s] = 1;
+	}
+	for (t = w->active_fog.head, guard = 0; t >= 0 && t < KP_FOG && guard < KP_FOG; t = w->fog.next[t], guard++) {
+		s = w->fog.sprite[t];
+		if (s >= 0 && s < KP_SPRITES) k->seat[s] = 1;
+	}
+	if (w->cursor >= 0 && w->cursor < KP_LONE) {
+		s = w->thg.sprite[w->cursor];
+		if (s >= 0 && s < KP_SPRITES) k->seat[s] = 1;
+	}
+	for (r = 0; r < KP_ROWS; r++) {
+		for (s = w->rows[r].head, guard = 0; s >= 0 && s < KP_SPRITES && guard < KP_SPRITES; s = w->spr.next[s], guard++) {
+			if (k->seat[s] || k->count >= KP_SPRITES) continue;
+			k->key[s] = sprite_key(k, w, s);
+			k->sorted[k->count++] = k->key[s];
+		}
+	}
+	qsort(k->sorted, (size_t)k->count, sizeof k->sorted[0], key_order);
+}
+
+/* The images world of the shared hash: the scripts' contexts, the shared sprites' keys in order, the lone thingies but
+ * the placement cursor in their list's order with their sprites by key, the free lone thingies; no fog ghost, no row,
+ * no free list of the sprites or images, no circle colours. */
+static void walk_world_shared(Codec *c, KpImages *w)
+{
+	int32_t t, guard, k;
+	hash_put(c, (uint32_t)w->unit, 4);
+	hash_put(c, (uint32_t)w->flingy, 4);
+	hash_put(c, (uint32_t)w->bullet, 4);
+	hash_put(c, (uint32_t)w->has_unit, 4);
+	hash_put(c, (uint32_t)w->has_flingy, 4);
+	hash_put(c, (uint32_t)w->has_bullet, 4);
+	hash_put(c, (uint32_t)c->canon->count, 4);
+	for (k = 0; k < c->canon->count; k++) hash_put(c, c->canon->sorted[k], 8);
+	for (t = w->active_lone.head, guard = 0; t >= 0 && t < KP_LONE && guard < KP_LONE; t = w->thg.next[t], guard++) {
+		if (t == w->cursor) continue;
+		hash_put(c, (uint32_t)t, 4);
+		hash_put(c, (uint32_t)w->thg.kind[t], 4);
+		hash_put(c, canon_sprite(c, w->thg.sprite[t]), 8);
+	}
+	for (t = w->free_lone.head, guard = 0; t >= 0 && t < KP_LONE && guard < KP_LONE; t = w->thg.next[t], guard++) {
+		hash_put(c, (uint32_t)t, 4);
+	}
+}
 
 static void walk_pathing(Codec *c, KpGame *g)
 {
@@ -623,6 +854,11 @@ static void walk_pathing(Codec *c, KpGame *g)
 	}
 }
 
+/* An image's bounds (x, y): RefreshImageBounds as the seat's redraw refreshes them (RefreshAllSpriteBounds 0x415700,
+ * kp_images_refresh_bounds), which the simulation never reads (the draw and the interface's pick do): a seat that draws
+ * at other frames than another has them apart, so they are the seat's (ADR 0025). */
+static int image_bounds(const char *field) { return strcmp(field, "x") == 0 || strcmp(field, "y") == 0; }
+
 static void walk_world(Codec *c, KpImages *w)
 {
 	i32s(c, &w->unit, 1);
@@ -631,7 +867,9 @@ static void walk_world(Codec *c, KpImages *w)
 	ints(c, &w->has_unit, 1);
 	ints(c, &w->has_flingy, 1);
 	ints(c, &w->has_bullet, 1);
-#define IMG(name) i32s(c, w->img.name, KP_IMAGES);
+#define IMG(name) \
+	if (image_bounds(#name)) SEAT_PART(i32s(c, w->img.name, KP_IMAGES)); \
+	else i32s(c, w->img.name, KP_IMAGES);
 	KP_IMAGE_FIELDS(IMG)
 #undef IMG
 #define SPR(name) i32s(c, w->spr.name, KP_SPRITES);
@@ -641,28 +879,30 @@ static void walk_world(Codec *c, KpImages *w)
 #define THG(name) i32s(c, w->thg.name, KP_LONE);
 	KP_THINGY_FIELDS(THG)
 #undef THG
-#define FOG(name) i32s(c, w->fog.name, KP_FOG);
+	/* the fog ghosts, the selection pools' virtual GRPs and free lists and the circles' colours are the seat's (the
+	 * shared hash walks the rest in its canonical order, walk_world_shared) */
+#define FOG(name) SEAT_PART(i32s(c, w->fog.name, KP_FOG));
 	KP_THINGY_FIELDS(FOG)
 #undef FOG
-	i32s(c, w->vgrp_width, KP_IMAGES);
-	i32s(c, w->vgrp_height, KP_IMAGES);
-	i32s(c, w->vgrp_fw, KP_IMAGES);
-	i32s(c, w->vgrp_fh, KP_IMAGES);
-	u8s(c, w->has_vgrp, KP_IMAGES);
+	SEAT_PART(i32s(c, w->vgrp_width, KP_IMAGES));
+	SEAT_PART(i32s(c, w->vgrp_height, KP_IMAGES));
+	SEAT_PART(i32s(c, w->vgrp_fw, KP_IMAGES));
+	SEAT_PART(i32s(c, w->vgrp_fh, KP_IMAGES));
+	SEAT_PART(u8s(c, w->has_vgrp, KP_IMAGES));
 	lists(c, &w->free_images, 1);
-	lists(c, &w->free_health, 1);
-	lists(c, &w->free_circles, 1);
-	lists(c, &w->free_ghosts, 1);
-	lists(c, &w->free_boxes, 1);
+	SEAT_PART(lists(c, &w->free_health, 1));
+	SEAT_PART(lists(c, &w->free_circles, 1));
+	SEAT_PART(lists(c, &w->free_ghosts, 1));
+	SEAT_PART(lists(c, &w->free_boxes, 1));
 	lists(c, &w->free_sprites, 1);
 	lists(c, w->rows, KP_ROWS);
 	lists(c, &w->free_lone, 1);
 	lists(c, &w->active_lone, 1);
-	lists(c, &w->free_fog, 1);
-	lists(c, &w->active_fog, 1);
+	SEAT_PART(lists(c, &w->free_fog, 1));
+	SEAT_PART(lists(c, &w->active_fog, 1));
 	i32s(c, &w->cursor, 1);
-	i32s(c, w->circle_colors, 256);
-	ints(c, &w->has_circle_colors, 1);
+	SEAT_PART(i32s(c, w->circle_colors, 256));
+	SEAT_PART(ints(c, &w->has_circle_colors, 1));
 }
 
 static void walk(Codec *c, KpGame *g)
@@ -671,10 +911,25 @@ static void walk(Codec *c, KpGame *g)
 	KpPlayers *pl = &g->players;
 	size_t k;
 	section(c, "SCAL");
-	I64S(g->scalar);
-	u8s(c, g->scalar_present, sizeof g->scalar_present);
+	if (c->shared) {
+		for (k = 0; k < KP_SCALAR_COUNT; k++) {
+			if (!seat_scalar(k)) hash_put(c, (uint64_t)g->scalar[k], 8);
+		}
+		for (k = 0; k < KP_SCALAR_COUNT; k++) {
+			if (!seat_scalar(k)) hash_put(c, g->scalar_present[k], 1);
+		}
+	} else {
+		I64S(g->scalar);
+		u8s(c, g->scalar_present, sizeof g->scalar_present);
+	}
 	section(c, "UNIT");
-#define UNIT(name) if (!kp_unit_view_field(#name)) I64S(g->u.name);
+	/* the shared hash takes the units' (and the bullets' flingy parts') sprites by their canonical places */
+#define UNIT(name) \
+	if (!kp_unit_view_field(#name)) { \
+		if (c->shared && strcmp(#name, "sprite") == 0) hash_canon_sprites(c, g->u.name, ARRAY_N(g->u.name)); \
+		else if (c->shared && strcmp(#name, "union_0xd0") == 0) hash_unit_d0(c, g); \
+		else I64S(g->u.name); \
+	}
 	KP_UNIT_FIELDS(UNIT)
 #undef UNIT
 	lists(c, g->lists, KP_LIST_COUNT);
@@ -722,17 +977,19 @@ static void walk(Codec *c, KpGame *g)
 	lists(c, &g->orders.free, 1);
 	I64(g->orders.allocated);
 	section(c, "SELN");
-	I64S(g->local_selection);
+	SEAT_PART(I64S(g->local_selection));
 	for (k = 0; k < KP_SELECTION_PLAYERS; k++) {
 		size_t j;
 		I64S(g->selections[k]);
 		for (j = 0; j < KP_GROUPS; j++) I64S(g->groups[k][j]);
 		I64S(g->recent_stamps[k]);
 	}
-	I64S(g->circle_colors);
+	SEAT_PART(I64S(g->circle_colors)); /* by the local player's alliances (RefreshAllianceColors 0x41d7b0) */
 	section(c, "REQS");
-	for (k = 0; k < KP_REQ_DOMAINS; k++) I64S(g->req_offsets[k]);
-	u8s(c, g->req_offsets_ready, sizeof g->req_offsets_ready);
+	/* the lazy initializers' cache (0x407d50, 0x407f20, 0x4080d0, 0x408280): the interface's button checks fill it too,
+	 * and no answer depends on whether it is filled: the seat's (ADR 0025) */
+	for (k = 0; k < KP_REQ_DOMAINS; k++) SEAT_PART(I64S(g->req_offsets[k]));
+	SEAT_PART(u8s(c, g->req_offsets_ready, sizeof g->req_offsets_ready));
 	section(c, "AI  ");
 	I64(g->ai.terrain_changed);
 	I64(g->ai.period);
@@ -745,7 +1002,7 @@ static void walk(Codec *c, KpGame *g)
 	I64(g->ai.spell_reactive);
 	I64(g->power_head);
 	I64S(g->power.prev);
-	I64(g->power.fields_shown);
+	SEAT_PART(I64(g->power.fields_shown)); /* the local selection's Pylon shows them */
 	section(c, "AIRG");
 	{
 		/* The AI region records within the map's region count (at most KP_AI_REGIONS, kp_ai_regions_init); the
@@ -792,8 +1049,10 @@ static void walk(Codec *c, KpGame *g)
 	I64(g->spatial.max_w);
 	I64(g->spatial.max_h);
 	I64S(g->spatial.mark);
-	I64S(g->spatial.seen);
-	I64(g->spatial.stamp);
+	/* the rectangle query's marks: the interface's queries (a box's selection, the attack notices) write them too, and
+	 * no query's result depends on them (kp_units_in_rect clears them at the stamp's wrap): the seat's (ADR 0025) */
+	SEAT_PART(I64S(g->spatial.seen));
+	SEAT_PART(I64(g->spatial.stamp));
 	section(c, "MOVE");
 	I64(g->mv.next_x);
 	I64(g->mv.next_y);
@@ -811,11 +1070,17 @@ static void walk(Codec *c, KpGame *g)
 	section(c, "COLL");
 	I64S(g->collision.density);
 	section(c, "TERR");
-	I64S(t->tiles);
-	I64S(t->megatiles);
-	I64S(t->raw_tiles);
+	/* the viewer's remembered terrain (the megatiles, the creep borders) is the seat's; so are the creep shown and a
+	 * creep tile's variant within the tiles' flags and words (hash_shared_tiles) */
+	if (c->shared) {
+		hash_shared_tiles(c, t->tiles, t->raw_tiles, ARRAY_N(t->tiles));
+	} else {
+		I64S(t->tiles);
+		SEAT_PART(I64S(t->megatiles));
+		I64S(t->raw_tiles);
+	}
 	I64S(t->creep_backup);
-	I64S(t->creep_border);
+	SEAT_PART(I64S(t->creep_border));
 	I64(t->recede_timer);
 	I64(t->recede_free);
 	I64(t->recede_retry);
@@ -950,6 +1215,21 @@ static void walk(Codec *c, KpGame *g)
 		for (k = 0; k < KP_PSTAT_ARRAYS; k++) I64S(tr->count_pstat[k]);
 	}
 	I64S(g->results);
+	I64S(g->pauses);
+	section(c, "SETP"); /* the game's setup (ADR 0024): its start's, which a load's game was started with */
+	u8s(c, g->setup.template_record, KP_TEMPLATE_SIZE);
+	I64(g->setup.multiplayer);
+	I64(g->setup.slots);
+	I64(g->setup.started);
+	I64S(g->setup.storm);
+	I64S(g->setup.type);
+	I64S(g->setup.race);
+	I64S(g->setup.force);
+	u8s(c, (uint8_t *)g->setup.name, sizeof g->setup.name);
+	I64S(g->setup.user_select);
+	I64S(g->setup.color);
+	I64S(g->setup.race_summary);
+	I64S(g->setup.leader);
 	section(c, "RNGS");
 	u32(c, &g->rng->initial_seed);
 	u32(c, &g->rng->state);
@@ -959,7 +1239,8 @@ static void walk(Codec *c, KpGame *g)
 	{
 		uint32_t has_crt = g->crt != NULL, holdrand = g->crt ? g->crt->holdrand : 0;
 		checked_u32(c, &has_crt);
-		checked_u32(c, &holdrand);
+		/* the interface draws from it too (the original's rand(), each machine's own) */
+		SEAT_PART(checked_u32(c, &holdrand));
 		if (c->reading && !c->failed) {
 			if ((g->crt != NULL) != (has_crt != 0)) {
 				c->failed = 1;
@@ -970,9 +1251,10 @@ static void walk(Codec *c, KpGame *g)
 		}
 	}
 	section(c, "WRLD");
-	walk_world(c, g->w);
+	if (c->shared) walk_world_shared(c, g->w);
+	else walk_world(c, g->w);
 	section(c, VIEW_SECTION);
-#define VIEW(name) I64S(g->u.name);
+#define VIEW(name) SEAT_PART(I64S(g->u.name));
 	KP_UNIT_VIEW_STATE(VIEW)
 #undef VIEW
 	section(c, "END ");
@@ -983,6 +1265,7 @@ static void walk(Codec *c, KpGame *g)
 static void restored(KpGame *g)
 {
 	g->terrain.has_terrain_changed = 0;
+	g->command_record = g->local_record;
 	g->events.first = g->events.count = g->events.texts_waiting = 0;
 	/* the countdown's text (not saved) as the restored countdown shows it, not the game's before */
 	g->trig.countdown_text = g->trig.countdown != 0 ? g->trig.countdown : -1;
@@ -1231,6 +1514,26 @@ int kp_state_hash(KpGame *g, KpSectionHash each, void *ud, uint64_t *total)
 	return c.failed ? -1 : 0;
 }
 
+int kp_shared_hash(KpGame *g, KpSectionHash each, void *ud, uint64_t *out)
+{
+	Codec c;
+	Canon *canon = (Canon *)malloc(sizeof *canon);
+	if (!canon) return -1;
+	canon_build(g, canon);
+	memset(&c, 0, sizeof c);
+	c.mode = MODE_HASH;
+	c.shared = 1;
+	c.canon = canon;
+	c.each = each;
+	c.ud = ud;
+	c.total = SHARED_SEED;
+	walk(&c, g);
+	hash_close(&c);
+	if (out) *out = finish(c.total, (uint64_t)c.folded_sections);
+	free(canon);
+	return c.failed ? -1 : 0;
+}
+
 uint64_t kp_save_schema(void)
 {
 	/* The walk over a zeroed game: the map's counts are zero there (the AI regions' rows are KP_AI_REGIONS in the
@@ -1420,6 +1723,7 @@ static void add_range(Ranges *rs, KpGame *g, int klass, const void *at, size_t b
 	r = &rs->r[rs->n++];
 	r->base = base;
 	r->klass = klass;
+	r->seat = 0;
 	r->offset = offset;
 	r->bytes = bytes;
 	r->align = align;
@@ -1485,6 +1789,12 @@ static void exclusions(Ranges *rs, KpGame *g)
 	EXCLUDE(g->replay_paused, HOST);
 	EXCLUDE(g->replay_frames, HOST);
 	EXCLUDE(g->replay_header_speed, HOST);
+	EXCLUDE(g->turn_cancels_cursor, DERIVED); /* a turn's scratch */
+	EXCLUDE(g->local_record, HOST);
+	EXCLUDE(g->command_record, DERIVED); /* a command's scratch */
+	/* the session's music rotation: the next game's (KpCarry); the CRT's draw is in its holdrand (RNGS) */
+	EXCLUDE(g->music_rotation, HOST);
+	EXCLUDE(g->briefing_player, HOST); /* the briefing's, before the game */
 	/* the interface's refreshes (restored() raises them) */
 	EXCLUDE(g->local_selection_serial, VIEW);
 	EXCLUDE(g->interface_refresh, VIEW);
@@ -1590,7 +1900,9 @@ int kp_state_ranges(KpGame *g, KpStateRange **out, size_t *count)
 	memset(&rs, 0, sizeof rs);
 	for (k = 0; k < c.ncalls; k++) {
 		const Call *a = &c.calls[k];
+		size_t before = rs.n;
 		add_range(&rs, g, KP_STATE_SAVED, a->at, a->count * a->elem, kind_align(a->kind), a->tag);
+		if (rs.n > before) rs.r[before].seat = a->seat;
 	}
 	free(c.calls);
 	exclusions(&rs, g);

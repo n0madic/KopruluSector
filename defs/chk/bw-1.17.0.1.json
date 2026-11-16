@@ -1,7 +1,7 @@
 {
  "id": "chk-loader",
  "profile": "bw-1.17.0.1",
- "provenance": ["Version descriptors and section tables: docs/research/native-briefing-loader.md, evidence/native-briefing-loader-probes.json (version_descriptors); verified against StarCraft.exe by tools/research/scdata/tests/test_chk.py", "Handler payload rules: docs/research/atlas/p23.md (section callbacks 0x467e50-0x469320)", "Chunk enumeration and dispatch: docs/research/atlas/p42.md (0x4c1170, 0x4c1200, 0x4c12b0, 0x4c12e0)", "Ignored tags: tags present in the 68 physical campaign CHKs that no table row reads (docs/research/evidence/retail-manifest.json)"],
+ "provenance": ["Version descriptors and section tables: docs/research/native-briefing-loader.md, evidence/native-briefing-loader-probes.json (version_descriptors); verified against StarCraft.exe by tools/research/scdata/tests/test_chk.py", "Handler payload rules: docs/research/atlas/p23.md (section callbacks 0x467e50-0x469320); repeat: what a second chunk of the tag does, from the callbacks' disassembly (last: replaces the first, over: writes over its prefix; none: refused)", "Chunk enumeration and dispatch: docs/research/atlas/p42.md (0x4c1170, 0x4c1200, 0x4c12b0, 0x4c12e0)", "Ignored tags: tags present in the 68 physical campaign CHKs that no table row reads (docs/research/evidence/retail-manifest.json)"],
  "descriptor_table_va": "0x4eeb80",
  "version_probe": {
   "table_va": "0x4ee7f0",
@@ -209,48 +209,56 @@
   "0x469130": {
    "name": "LoadDimensionSection",
    "payload": {
+    "repeat": "last",
     "eq": 4
    }
   },
   "0x468b00": {
    "name": "LoadEraSection",
    "payload": {
+    "repeat": "last",
     "eq": 2
    }
   },
   "0x468ab0": {
    "name": "LoadOwnerSection",
    "payload": {
+    "repeat": "last",
     "eq": 12
    }
   },
   "0x468a60": {
    "name": "LoadSideSection",
    "payload": {
+    "repeat": "last",
     "eq": 12
    }
   },
   "0x468ce0": {
    "name": "LoadStringSection",
    "payload": {
+    "repeat": "last",
     "any": true
    }
   },
   "0x4692f0": {
    "name": "LoadScenarioPropertiesSection",
    "payload": {
+    "repeat": "last",
     "eq": 4
    }
   },
   "0x469320": {
    "name": "LoadForceSection",
    "payload": {
+    "repeat": "last",
     "max": 20
    }
   },
   "0x467e50": {
    "name": "LoadVcodSection",
    "payload": {
+    "repeat": "last",
     "vcod": true
    }
   },
@@ -263,6 +271,7 @@
   "0x469170": {
    "name": "LoadTileMapSection",
    "payload": {
+    "repeat": "over",
     "max": 131072
    }
   },
@@ -287,6 +296,7 @@
   "0x469260": {
    "name": "LoadFogMaskSection",
    "payload": {
+    "repeat": "over",
     "any": true
    }
   },
@@ -359,18 +369,21 @@
   "0x468db0": {
    "name": "LoadUnitPropertiesSection",
    "payload": {
+    "repeat": "last",
     "eq": 1280
    }
   },
   "0x468d50": {
    "name": "LoadLocationsSection64",
    "payload": {
+    "repeat": "last",
     "eq": 1280
    }
   },
   "0x468d80": {
    "name": "LoadLocationsSection255",
    "payload": {
+    "repeat": "last",
     "eq": 5100
    }
   },

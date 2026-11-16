@@ -37,8 +37,9 @@ extern "C" {
 #define KP_REP_SEED 0x08
 #define KP_REP_GAME 0x14 /* the 141-byte game header 0x6728d0 */
 #define KP_REP_GAME_SIZE 0x8d
-#define KP_REP_SLOTS 0x39  /* game header +0x25 */
+#define KP_REP_SLOTS 0x39  /* game header +0x25: the map's player slots */
 #define KP_REP_SPEED 0x3a  /* game header +0x26 */
+#define KP_REP_GAME_TYPE 0x3c /* game +0x28: the template's type and subtype again (WORDs) */
 #define KP_REP_PRESENT 0x46 /* nonzero, checked by the reader (WriteReplayFile writes 1) */
 #define KP_REP_GAME_NAME 0x18 /* the game header's player name (game +4), 24 bytes with its NUL */
 #define KP_REP_GAME_NAME_SIZE 24
@@ -46,16 +47,16 @@ extern "C" {
 #define KP_REP_TILESET 0x44   /* game +0x30 (WORD) */
 #define KP_REP_MAP_NAME 0x61  /* game +0x4d: the scenario's name, 32 bytes */
 #define KP_REP_MAP_NAME_SIZE 32
+#define KP_REP_TEMPLATE 0x81 /* game +0x6d: the game's template record, KP_TEMPLATE_SIZE bytes (kp_start.h) */
 #define KP_REP_PLAYER_RECORDS 0xa1
 #define KP_REP_COLORS 0x251
-#define KP_REP_FORCES 0x271
+#define KP_REP_USER_SELECT 0x271 /* the 8 user-select flags (LoadUserSelectFlags 0x479cc0) */
 
 /* Why a file was refused, matching the original's messages where it has one. */
 typedef enum {
 	KP_REP_OK = 0,
 	KP_REP_DAMAGED,   /* gluAll 63: not a replay, a bad block, a length past the file */
 	KP_REP_EXPANSION, /* gluAll 60: a Brood War replay without Brood War */
-	KP_REP_NOT_CAMPAIGN, /* outside V1: a melee or custom map's replay (campaign row 0) or a row we do not have */
 	KP_REP_OTHER_MAP, /* the CHK is not the campaign row's map */
 	KP_REP_NO_MEMORY,
 } KpRepRefusal;
@@ -69,10 +70,10 @@ typedef struct {
 
 /* Koprulu's tail (KPRX): what the game was recorded with and what it started from. */
 #define KP_REP_TAIL_MAGIC "KPRX"
-#define KP_REP_TAIL_VERSION 1
+#define KP_REP_TAIL_VERSION 2 /* 2: KpCarry with the music rotation and the game RNG's state (phase M) */
 /* The simulation's revision: raised when kp_core's behaviour changes for the same commands, so that a replay
  * recorded before is shown as unchecked. */
-#define KP_REP_SIM_REVISION 1
+#define KP_REP_SIM_REVISION 2 /* 2: phase M's melee start (stage M2) */
 typedef struct {
 	uint32_t version, sim_revision;
 	uint8_t data_hash[32]; /* the save identity's source hash: the data set's DAT (kp_save_identity) */
@@ -96,9 +97,10 @@ typedef struct {
 	size_t extra_size; /* bytes after the map that are no KPRX tail (kept unread) */
 } KpRep;
 
-/* What a campaign game's header holds (the single player game header 0x6728d0 and player records 0x6726c8 as
- * WriteReplayFile 0x480080 finds them; 1.17's files show the rest constant: one active slot, the Use Map Settings type
- * 0x0a/1 with its template, the colours 0..7, the force bytes 0). */
+/* What a game's header holds (the single player game header 0x6728d0, the player records 0x6726c8 and the colours
+ * 0x5264fc as RunGameSession 0x467ba0 records them after StartGame, 0x480810; 1.17's files show one active player
+ * whatever the game, and a campaign's the Use Map Settings template, one slot, the colours 0..7 and the user-select
+ * flags 0). */
 typedef struct {
 	int brood_war;
 	uint32_t frames;
@@ -108,6 +110,10 @@ typedef struct {
 	int map_w, map_h, tileset, speed;
 	const char *map_name;    /* the scenario's name (SPRP) in the map's encoding */
 	KpRepPlayer players[8];  /* slot = the index; storm -1 but the human's 0 */
+	const uint8_t *template_record; /* the game's template (KP_TEMPLATE_SIZE bytes); NULL: a campaign's Use Map Settings */
+	int slots;               /* the map's player slots (0: a campaign's 1) */
+	const int64_t *colors;      /* 8 colour rows (NULL: 0..7) */
+	const int64_t *user_select; /* 8 user-select flags (NULL: 0) */
 } KpRepGame;
 
 /* The 633-byte header of game into r->header. */
@@ -129,6 +135,10 @@ void kp_rep_player(const KpRep *r, int index, KpRepPlayer *p);
 void kp_rep_set_player(KpRep *r, int index, const KpRepPlayer *p);
 void kp_rep_set_frames(KpRep *r, uint32_t frames);
 void kp_rep_set_seed(KpRep *r, uint32_t seed);
+/* The game's setup the header holds (ADR 0024): its template, slots, the twelve player records, colours and
+ * user-select flags as the game started them (started 1: the playback skips StartGame's slot steps, as the original's
+ * replay mode does); the multiplayer byte 0, as the original plays every replay. */
+void kp_rep_setup(const KpRep *r, KpGameSetup *s);
 
 /* One block (ReadCompressedBlock 0x413ae0 / WriteCompressedBlock 0x4137d0). The reader reads exactly n bytes into
  * out at *pos and advances it; -1 on any bad length or checksum. The writer appends the block to *buf (grown with

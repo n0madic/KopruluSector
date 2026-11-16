@@ -240,15 +240,16 @@ static void player_slot_past_the_players_refused(KpT *T)
 	kp_t_eq(T, kp_session_replay_start(&st, rp), 0, "no Storm ID");
 }
 
-/* A network game's command (the leave 0x57, the chat 0x5c) and every id the recorder never writes (a crafted file's
- * save 0x06 or load 0x07 would reach the player's saves) are refused before the playback starts; a recorded command
- * plays, and so does the sync 0x37, whose 1-byte entry the dispatcher (7 bytes) never runs. One block of one entry:
- * the command alone. */
+/* Every id the recorder never writes (a crafted file's save 0x06 or load 0x07 would reach the player's saves) is
+ * refused before the playback starts; a recorded command plays, the chat 0x5c (stage M2: its line) and a player
+ * leaving 0x57 (stage M5) too, and so does the sync 0x37, whose 1-byte entry the dispatcher (7 bytes) never runs. One
+ * block of one entry: the command alone. */
 static void unrecorded_commands_refused(KpT *T)
 {
 	enum { BLOCK = 5, LONGEST = 82 };
-	static const uint8_t refused[] = { 0x57, 0x5c, 0x05, 0x06, 0x07, 0x08, 0x10, 0x11, 0x38, 0x39, 0x3a, 0x3b, 0x55 };
-	static const uint8_t played[] = { 0x13, 0x37 }; /* a hotkey, recorded; the sync, never run */
+	static const uint8_t refused[] = { 0x05, 0x06, 0x07, 0x08, 0x10, 0x11, 0x38, 0x39, 0x3a, 0x3b, 0x55 };
+	/* a hotkey, a chat line and a player leaving, recorded; the sync, never run */
+	static const uint8_t played[] = { 0x13, 0x5c, 0x57, 0x37 };
 	KpRep *rp = rep_new(T);
 	KpSessionStart st;
 	uint8_t *rec;

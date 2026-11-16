@@ -6,8 +6,8 @@
  *
  * An opcode's operands are read as the interpreter reads them (0x4932f0 a byte, 0x493310 a little-endian word) from
  * the script's binary; a handler continues with the next opcode unless it waits, retries or stops. A retry puts the
- * PC back at the opcode and waits 30 scheduler visits. The opcodes only the melee scripts use fail with
- * their address (outside V1). */
+ * PC back at the opcode and waits 30 scheduler visits. Every opcode is ported: the melee scripts' since phase M's
+ * stage M3. */
 #include "kp_game_internal.h"
 
 #include <stdio.h>
@@ -260,10 +260,7 @@ void kp_aiscript_spawn_area_town(KpGame *g, int64_t p, int bw, int64_t area, int
 	if (s == NONE) return;
 	g->scripts.flags[s] = kp_bor(kp_shlv(area, AREA_SHIFT), kp_band(g->scripts.flags[s], 7));
 	kp_ai_mark_defense_region(g, p, kp_region_at(g, x, y), 0); /* 0x4b0030 */
-	if (!kp_ai_campaign(g, p)) {
-		/* TODO: a non-campaign player's route cuts 0x4b0be0 (outside the campaigns) */
-		kp_game_fail(g, "ai: a non-campaign expansion's route cuts (0x4b0be0)");
-	}
+	if (!kp_ai_campaign(g, p)) kp_ai_defend_route_cuts(g, p, x, y); /* 0x4b0be0 */
 }
 
 /* HelpAlliesInTrouble 0x4acca0: every mutual ally's idle record of a region p's AI uses becomes a defended region
@@ -580,43 +577,276 @@ static int64_t script_town(KpGame *g, int64_t s, int64_t op)
 	return g->scripts.town[s];
 }
 
-/* The opcodes only the melee scripts use (StartCustomLevelAIScripts 0x4486a0's), whose helpers are not ported: they have
- * no case in the interpreter, whose default stops the game at one, and kp_aiscript_check refuses a script that reaches
- * one (tests/c/test_aiscript.c's ported_opcodes_are_the_interpreters keeps the two the same).
- * TODO: the melee AI's opcodes (outside V1). */
-static const struct {
-	uint8_t op;
-	unsigned helper;
-	const char *name;
-} UNPORTED[] = {
-	{ OP_WAIT_SECURE, 0x482470, "wait_secure" }, { OP_BUILD_BUNKERS, 0x4ade10, "build_bunkers" },
-	{ OP_WAIT_BUNKERS, 0x4b05c0, "wait_bunkers" }, { OP_DEBUG, 0x46a860, "debug" },
-	{ OP_FATAL_ERROR, 0x4cc190, "fatal_error" }, { OP_BUILD_TURRETS, 0x4aded0, "build_turrets" },
-	{ OP_WAIT_TURRETS, 0x4b0600, "wait_turrets" }, { OP_HARASS_FACTOR, 0x483830, "harass_factor" },
-	{ OP_RACE_JUMP, 0x486c50, "race_jump" }, { OP_REGION_SIZE, 0x4877f0, "region_size" },
-	{ OP_GET_OLDPEONS, 0x486480, "get_oldpeons" }, { OP_GROUNDMAP_JUMP, 0x486410, "groundmap_jump" },
-	{ OP_GUARD_RESOURCES, 0x493790, "guard_resources" }, { OP_EVAL_HARASS, 0x4af5b0, "eval_harass" },
-	{ OP_WAIT_UPGRADES, 0x483200, "wait_upgrades" }, { OP_RUSH, 0x4ad550, "rush" },
-	{ OP_MAKE_PATROL, 0x4b0f10, "make_patrol" }, { OP_ENTER_TRANSPORT, 0x4af520, "enter_transport" },
-	{ OP_EXIT_TRANSPORT, 0x4af6d0, "exit_transport" }, { OP_IMPLODE, 0x4ad430, "implode" }
-};
+/* ---- The melee scripts' opcodes (StartCustomLevelAIScripts 0x4486a0's scripts; docs/research/native-ai-opcodes.md) ---- */
 
-static int unported_index(int op)
+#define STATUS_GROUNDED 0x2 /* a grounded building: the status bit the enemy searches below require */
+#define STATUS_CAN_MOVE 0x20000
+#define DAT_BUILDING 0x1
+#define NEAREST_START 99999999 /* 0x5f5e0ff */
+#define HARASS_COPIES 3
+#define HARASS_RANGE 1024
+#define RUSH_NEAR 320
+#define GUARD_NEAR 288 /* 0x4b27a0: a guard home this near an area guards it */
+#define REGION_QUEUE 625 /* MeasureTownRegionSize 0x4877f0's circular queue */
+#define REGION_SIZE_UNIT 32 /* region_size's byte counts tiles by 32 */
+#define DEBUG_TEXT 256
+#define BUNKER_REQUESTS 3
+#define TURRET_REQUESTS 6
+
+/* The active unit nearest the centre of the region at (x, y) that is a grounded building hostile to player p
+ * (0x48e0c0, the strictly nearer winning); 0 for none. */
+static int64_t nearest_enemy_building(KpGame *g, int64_t p, int64_t x, int64_t y)
 {
-	size_t k;
-	for (k = 0; k < sizeof UNPORTED / sizeof UNPORTED[0]; k++) {
-		if (UNPORTED[k].op == op) return (int)k;
+	int64_t n, best = 0, best_d = NEAREST_START, cx, cy;
+	kp_ai_region_center(g, kp_band(kp_region_at(g, x, y), 0xffff), &cx, &cy); /* 0x481b10, 0x481a30 */
+	for (n = g->lists[KP_LIST_ACTIVE].head; n != 0; n = g->u.next[n]) {
+		int64_t d;
+		int32_t sp;
+		if (kp_unit_inactive(g, n) || kp_band(g->u.status[n], STATUS_GROUNDED) == 0 || !kp_player_enemy_of(g, p, n)) continue;
+		sp = kp_unit_sprite(g, n);
+		d = kp_u32v(kp_approx_distance(kp_s16v(g->w->spr.x[sp]) - cx, kp_s16v(g->w->spr.y[sp]) - cy)); /* 0x405cf0 */
+		if (d < best_d) {
+			best_d = d;
+			best = n;
+		}
 	}
-	return -1;
+	return best;
 }
 
-int kp_aiscript_ported(int op) { return op > LAST_OPCODE || unported_index(op) < 0; }
-
-static void unported(KpGame *g, int64_t op)
+/* ApplyHarassFactor 0x483830: the enemy nearest the attack's target region (0x48e080, which reads the target WORD as
+ * a region: the region after the grouping's) weighs its units' strength; the roster is repeated up to three times
+ * by it. */
+static void harass_factor(KpGame *g, int64_t p, int64_t divisor)
 {
-	int k = unported_index((int)op);
-	kp_game_fail(g, "ai: opcode 0x%02llx, %s (0x%x)", (long long)op, k < 0 ? "unknown" : UNPORTED[k].name,
-		k < 0 ? 0x494a98u : UNPORTED[k].helper);
+	KpPlayerAi *pai = &g->pai;
+	int64_t target = pai->attack_target[player_ai(g, p)], copy[KP_AI_ROSTER], n, e, sum = 0, k, len, pass;
+	if (target == 0) return;
+	if (target >= (int64_t)g->regions.count) kp_game_fail(g, "ai: harass_factor's region %lld (0x48e080)", (long long)target);
+	{
+		int64_t x, y;
+		kp_ai_region_center(g, target, &x, &y); /* GetRegionCenter 0x481a30 */
+		n = nearest_enemy_building(g, p, x, y);
+	}
+	if (n == 0) return;
+	e = g->u.owner[n];
+	for (n = g->player_units[e]; n != 0; n = g->u.player_next[n]) {
+		int64_t a = g->u.air_strength[n], gr = g->u.ground_strength[n];
+		if (!kp_unit_inactive(g, n)) sum = kp_u32v(sum + (a > gr ? a : gr));
+	}
+	if (sum == 0) return;
+	if (divisor == 0) kp_game_fail(g, "ai: harass_factor divides by 0 (0x483830)");
+	k = kp_u32v(kp_u32v(sum + divisor - 1) / divisor - 1);
+	if (k > HARASS_COPIES) k = HARASS_COPIES;
+	memcpy(copy, pai->roster[p], sizeof copy);
+	for (len = 0; len < KP_AI_ROSTER && copy[len] != 0; len++) {}
+	if (len == KP_AI_ROSTER) kp_game_fail(g, "ai: harass_factor's roster has no end (0x483830)");
+	for (pass = 1; pass < k && copy[0] != 0; pass++) { /* k - 1 more copies, to the roster's 63 WORDs */
+		int64_t j = 0, v = copy[0];
+		do {
+			pai->roster[p][len++] = v;
+			if (len == KP_AI_ROSTER_UNITS) return;
+			v = copy[++j];
+		} while (v != 0);
+	}
+}
+
+/* The centre of the region the attack groups in (the destination of the region before the target WORD, 0x483800). */
+static void grouping_point(KpGame *g, int64_t p, int64_t *x, int64_t *y)
+{
+	int64_t target = g->pai.attack_target[p];
+	if (target == 0 || target > (int64_t)g->regions.count) kp_game_fail(g, "ai: an attack's grouping region %lld (0x483800)", (long long)target);
+	kp_ai_region_center(g, g->air.dest[p][target - 1], x, y);
+}
+
+/* EvaluateHarass 0x4af5b0: 1 when the roster's air or ground strength passes the enemies' within 1024 of the
+ * grouping region's centre (after the attack is prepared there). */
+static int eval_harass(KpGame *g, int64_t p, int64_t x, int64_t y)
+{
+	const int64_t *roster = g->pai.roster[player_ai(g, p)];
+	int64_t ra = 0, rg = 0, ea = 0, eg = 0, k, n;
+	if (kp_ai_prepare_attack(g, p, x, y, 0, 0)) return 0; /* PrepareAttack 0x4af300 */
+	for (k = 0; k < KP_AI_ROSTER && roster[k] != 0; k++) {
+		int64_t t = roster[k] - 1;
+		if (t >= KP_UNIT_TYPES) kp_game_fail(g, "ai: eval_harass's roster type %lld", (long long)t);
+		ra = kp_u32v(ra + g->strength[0][t]); /* 0x4a97e0 */
+		rg = kp_u32v(rg + g->strength[1][t]); /* 0x4a97f0 */
+	}
+	grouping_point(g, p, &x, &y);
+	for (n = g->lists[KP_LIST_ACTIVE].head; n != 0; n = g->u.next[n]) {
+		int32_t sp;
+		if (kp_unit_inactive(g, n) || !kp_player_enemy_of(g, p, n)) continue;
+		sp = kp_unit_sprite(g, n);
+		if (kp_s32v(kp_approx_distance(kp_s16v(g->w->spr.x[sp]) - x, kp_s16v(g->w->spr.y[sp]) - y)) >= HARASS_RANGE) continue;
+		ea = kp_u32v(ea + g->u.air_strength[n]); /* 0x4a9a10 */
+		eg = kp_u32v(eg + g->u.ground_strength[n]); /* 0x4a9a20 */
+	}
+	return ra > ea || rg > eg;
+}
+
+/* EvaluateRush 0x4ad550: the enemy whose building is nearest the grouping region's centre (a building within 320 of
+ * the owner already chosen ends the search); the roster cleared; 1 when that enemy's forces fit the kind's profile. */
+static int eval_rush(KpGame *g, int64_t p, int64_t kind, int64_t x, int64_t y)
+{
+	int64_t n, e = -1, best_d = NEAREST_START, t, z, a, zealots;
+	if (kp_ai_prepare_attack(g, p, x, y, 0, 0)) return 0; /* PrepareAttack 0x4af300 */
+	grouping_point(g, p, &x, &y);
+	for (n = g->lists[KP_LIST_ACTIVE].head; n != 0; n = g->u.next[n]) {
+		int64_t d;
+		int32_t sp;
+		if (kp_unit_inactive(g, n) || kp_band(KP_DAT(g, units, special_ability_flags, g->u.type[n]), DAT_BUILDING) == 0
+			|| !kp_player_enemy_of(g, p, n)) continue;
+		sp = kp_unit_sprite(g, n);
+		d = kp_u32v(kp_approx_distance(kp_s16v(g->w->spr.x[sp]) - x, kp_s16v(g->w->spr.y[sp]) - y));
+		if (d <= RUSH_NEAR && e == g->u.owner[n]) break;
+		if (d <= best_d) {
+			e = g->u.owner[n];
+			best_d = d;
+		}
+	}
+	if (e < 0) return 0;
+	kp_ai_attack_clear(g, p, 1); /* ClearAttackRoster 0x483770 */
+	t = unit_count(g, KP_TYPE_MARINE, e, 1); /* 0x4aa4c0 */
+	a = kp_u32v(4 * unit_count(g, KP_TYPE_BUNKER, e, 1));
+	t = kp_u32v(t + (a > t ? t : a));
+	z = kp_u32v(unit_count(g, KP_TYPE_HYDRALISK, e, 1) + 2 * unit_count(g, KP_TYPE_SUNKEN_COLONY, e, 1)); /* 0x4adde0 */
+	a = kp_u32v(unit_count(g, KP_TYPE_MUTALISK, e, 1) + unit_count(g, KP_TYPE_HYDRALISK, e, 1)
+		+ 2 * unit_count(g, KP_TYPE_SPORE_COLONY, e, 1)); /* 0x4adb90 */
+	zealots = unit_count(g, KP_TYPE_ZEALOT, e, 1);
+	switch (kind) {
+	case 0: return unit_count(g, KP_TYPE_BARRACKS, e, 0) == 0 && unit_count(g, KP_TYPE_SPAWNING_POOL, e, 0) == 0
+		&& unit_count(g, KP_TYPE_GATEWAY, e, 0) == 0;
+	case 1: return t <= 16 && z <= 10 && zealots <= 6;
+	case 2: return t <= 24 && a <= 10;
+	case 3: return t <= 5 && z <= 2 && unit_count(g, KP_TYPE_HYDRALISK_DEN, e, 1) == 0 && zealots <= 1;
+	case 4: return t <= 16 && z <= 10 && zealots <= 8;
+	case 5: return t <= 6 && z <= 6 && zealots <= 3;
+	case 6: return t <= 12 && unit_count(g, KP_TYPE_SUNKEN_COLONY, e, 1) <= 1 && unit_count(g, KP_TYPE_DRAGOON, e, 1) <= 1;
+	case 7: return unit_count(g, KP_TYPE_SIEGE_TANK, e, 1) == 0 && unit_count(g, KP_TYPE_QUEEN, e, 1) == 0 && zealots <= 6;
+	case 8: return t <= 5 && z <= 2 && zealots <= 1;
+	case 9: return t <= 9 && z <= 4 && zealots <= 5;
+	case 10: return t <= 4 && z <= 4 && zealots <= 2;
+	case 11: return t <= 10 && z <= 10 && zealots <= 5;
+	case 12: return t <= 16 && a <= 5 && kp_u32v(unit_count(g, KP_TYPE_SCOUT, e, 1) + unit_count(g, KP_TYPE_DRAGOON, e, 1)) <= 2;
+	case 13: return t <= 24 && a <= 10 && kp_u32v(unit_count(g, KP_TYPE_SCOUT, e, 1) + unit_count(g, KP_TYPE_DRAGOON, e, 1)) <= 7;
+	default: return 0;
+	}
+}
+
+/* GetNearestEnemyRace 0x486c50: the race of the enemy whose grounded building is nearest town k's region, Terran
+ * (1) for none. */
+static int64_t nearest_enemy_race(KpGame *g, int64_t k)
+{
+	int64_t n = nearest_enemy_building(g, g->towns.owner[k], kp_s16v(g->towns.x[k]), kp_s16v(g->towns.y[k]));
+	return n != 0 ? g->players.race[g->u.owner[n]] : KP_RACE_TERRAN;
+}
+
+/* MeasureTownRegionSize 0x4877f0: the tiles of the regions a breadth-first walk from town k's region reaches over
+ * the ground neighbours, the limit once the sum reaches it. The queue is circular without a visited set: a region
+ * counts each time it is reached, and a tail that wraps onto the head ends the walk. */
+static int64_t town_region_size(KpGame *g, int64_t k, int64_t limit)
+{
+	const KpRegionGraph *rg = &g->pathing.rg;
+	int64_t queue[REGION_QUEUE], head = 0, tail = 1, sum = 0;
+	queue[0] = kp_band(kp_region_at(g, kp_s16v(g->towns.x[k]), kp_s16v(g->towns.y[k])), 0xffff);
+	do {
+		int64_t r = queue[head], j, at, n;
+		head = head + 1 == REGION_QUEUE ? 0 : head + 1;
+		sum = kp_u32v(sum + kp_region_tiles(g, r));
+		if (sum >= limit) return limit;
+		at = rg->nb_at[r];
+		n = rg->ground[r]; /* GetRegionGroundNeighbors 0x481ab0 */
+		for (j = 0; j < n; j++) {
+			queue[tail] = rg->neighbors[at + j];
+			tail = tail + 1 == REGION_QUEUE ? 0 : tail + 1;
+		}
+	} while (head != tail);
+	return sum;
+}
+
+/* IsEnemyBuildingReachable 0x486410: an active grounded building hostile to player p that can reach (x, y)
+ * (0x48e980). */
+static int enemy_reaches(KpGame *g, int64_t p, int64_t x, int64_t y)
+{
+	int64_t n;
+	for (n = g->lists[KP_LIST_ACTIVE].head; n != 0; n = g->u.next[n]) {
+		if (kp_unit_inactive(g, n) || !kp_player_enemy_of(g, p, n) || kp_band(g->u.status[n], STATUS_GROUNDED) == 0) continue;
+		if (kp_placement_reachable(g, n, x, y)) return 1;
+	}
+	return 0;
+}
+
+/* GuardResourceAreas 0x493790: a guard of type t precreated at every free resource area (flags 1 and 2 clear) that
+ * no guard of player p has its home within 288 of (0x4b27a0). */
+static void guard_resources(KpGame *g, int64_t p, int64_t t)
+{
+	int64_t area;
+	if (kp_u32v(p) >= KP_AI_PLAYERS) kp_game_fail(g, "ai: guard_resources of player %lld", (long long)p);
+	for (area = 1; area <= g->areas.used; area++) { /* the cursor 0x496500 / 0x496740 */
+		int64_t x, y, k, near = 0;
+		if (kp_band(g->areas.flags[area], 3) != 0) continue;
+		x = kp_s16v(g->areas.x[area]); /* 0x4970c0, 0x4970d0 */
+		y = kp_s16v(g->areas.y[area]);
+		for (k = g->guards.heads[p]; k != -1 && !near; k = g->guards.next[k]) {
+			near = kp_u32v(kp_approx_distance(kp_s16v(g->guards.x1[k]) - x, kp_s16v(g->guards.y1[k]) - y)) <= GUARD_NEAR;
+		}
+		if (!near) kp_guard_precreate(g, p, t, x, y); /* PrecreateGuard 0x4b22a0 */
+	}
+}
+
+/* MakePatrol 0x4b0f10: player p's movable units in the rectangle (its low WORDs) patrol to the centre of the
+ * PlayerAi area (set_gencmd's, 0x483810). */
+static void make_patrol(KpGame *g, int64_t p, const int64_t *rect)
+{
+	const int64_t *area = g->pai.area[player_ai(g, p)];
+	int64_t x = kp_s32v(area[0] + kp_s32v(area[2] - area[0]) / 2), y = kp_s32v(area[1] + kp_s32v(area[3] - area[1]) / 2);
+	int count, k;
+	int64_t *found = kp_query_rect(g, kp_s16v(rect[0]), kp_s16v(rect[1]), kp_s16v(rect[2]), kp_s16v(rect[3]), &count);
+	for (k = 0; k < count; k++) {
+		int64_t n = found[k];
+		if (g->u.owner[n] == p && kp_band(g->u.status[n], STATUS_CAN_MOVE) != 0) kp_issue_order_at(g, n, KP_ORD_PATROL, x, y);
+	}
+	kp_query_release(g, found);
+}
+
+/* 0x4aadc0: a transport of the passenger's owner with room for it now. */
+static int transport_with_room(KpGame *g, int64_t c, int64_t passenger)
+{
+	return kp_is_transport(g, c) && g->u.owner[c] == g->u.owner[passenger] && kp_can_load(g, passenger, c); /* 0x4381f0, 0x437440 */
+}
+
+/* EnterNearestTransports 0x4af520 and UnloadTransportsInArea 0x4af6d0: player p's units in the rectangle (its low
+ * WORDs) enter their nearest transport with room (map-wide, 0x442c20), or its transports there unload. */
+static void transports(KpGame *g, int64_t p, const int64_t *rect, int enter)
+{
+	int count, k;
+	int64_t *found = kp_query_rect(g, kp_s16v(rect[0]), kp_s16v(rect[1]), kp_s16v(rect[2]), kp_s16v(rect[3]), &count);
+	for (k = 0; k < count; k++) {
+		int64_t n = found[k], t;
+		if (g->u.owner[n] != p) continue;
+		if (!enter) {
+			if (kp_is_transport(g, n)) kp_issue_order_target(g, n, KP_ORD_MOVE_UNLOAD, n);
+			continue;
+		}
+		t = kp_nearest_unit_map(g, n, transport_with_room, n);
+		if (t != 0) kp_issue_order_target(g, n, KP_ORD_ENTER_TRANSPORT, t);
+	}
+	kp_query_release(g, found);
+}
+
+/* debug: the text after the operand, read from aiscript.bin whichever binary runs (0x6a2e74), shown as player p's
+ * chat (DisplayChatMessage 0x46a860, flag 0). */
+static void debug_text(KpGame *g, int64_t p, int64_t pc)
+{
+	const uint8_t *code = g->ai_bins->bin[0];
+	int64_t size = (int64_t)g->ai_bins->bin_size[0], n = 0;
+	char text[DEBUG_TEXT];
+	if (pc < 0 || pc >= size) kp_game_fail(g, "ai: debug's text at %lld outside aiscript.bin", (long long)pc);
+	while (n < DEBUG_TEXT - 1 && pc + n < size && code[pc + n] != 0) {
+		text[n] = (char)code[pc + n];
+		n++;
+	}
+	text[n] = 0;
+	kp_chat_display(g, text, p, 0);
 }
 
 /* ---- The check before a game (kp_aiscript_check) ---- */
@@ -704,9 +934,8 @@ static int check_run(Check *c, int bin, uint32_t pc, char *why, size_t why_size)
 		c->seen[bin][pc >> 3] |= (uint8_t)(1u << (pc & 7));
 		op = code[pc];
 		if (op > LAST_OPCODE) return 0; /* freed as stop does */
-		if (!kp_aiscript_ported(op)) {
-			snprintf(why, why_size, "AI script %s reaches opcode 0x%02x, %s, at %s+0x%x", c->id, (unsigned)op,
-				UNPORTED[unported_index(op)].name, BINS[bin], (unsigned)pc);
+		if (op == OP_FATAL_ERROR) { /* the original's fatal error (0x4cc190) */
+			snprintf(why, why_size, "AI script %s reaches fatal_error at %s+0x%x", c->id, BINS[bin], (unsigned)pc);
 			return -1;
 		}
 		at = c->at[op];
@@ -1168,7 +1397,82 @@ void kp_aiscript_execute(KpGame *g, int64_t s)
 			}
 			break;
 		/* outside the campaigns' scripts */
-		default: unported(g, op); break; /* the opcodes not ported (UNPORTED): every other one has a case */
+		case OP_WAIT_SECURE: case OP_WAIT_UPGRADES: case OP_WAIT_BUNKERS: case OP_WAIT_TURRETS: {
+			int ready = op == OP_WAIT_SECURE ? kp_band(pai->flags[player_ai(g, p)], KP_AIF_BUDGET_REFRESHED) != 0 /* 0x482470 */
+				: op == OP_WAIT_UPGRADES ? kp_band(pai->flags[player_ai(g, p)], KP_AIF_REQUESTS_FIRST) != 0 /* 0x483200 */
+				: kp_ai_defense_requests_done(g, p, op == OP_WAIT_BUNKERS ? KP_RFLAG_WANTS_BUNKER : KP_RFLAG_WANTS_TURRET);
+			if (!ready) {
+				retry(g, s, pc);
+				return;
+			}
+			break;
+		}
+		case OP_BUILD_BUNKERS: /* MarkBunkerRegions 0x4ade10 */
+			kp_ai_request_defenses(g, player_ai(g, p), KP_TYPE_BUNKER, KP_RFLAG_WANTS_BUNKER, BUNKER_REQUESTS, 1);
+			break;
+		case OP_BUILD_TURRETS: /* MarkTurretRegions 0x4aded0 */
+			kp_ai_request_defenses(g, player_ai(g, p), KP_TYPE_MISSILE_TURRET, KP_RFLAG_WANTS_TURRET, TURRET_REQUESTS, 0);
+			break;
+		case OP_DEBUG:
+			a = read_word(g, s);
+			debug_text(g, p, sc->pc[s]);
+			sc->pc[s] = a;
+			break;
+		case OP_FATAL_ERROR: /* FatalError 0x4cc190: the original's fatal error ends the program */
+			kp_game_fail(g, "ai: Illegal AI script executed. (fatal_error, 0x4cc190)");
+			break;
+		case OP_HARASS_FACTOR:
+			harass_factor(g, p, read_word(g, s));
+			break;
+		case OP_EVAL_HARASS:
+			a = read_word(g, s);
+			if (!eval_harass(g, p, sc->x[s], sc->y[s])) sc->pc[s] = a;
+			break;
+		case OP_GROUNDMAP_JUMP:
+			a = read_word(g, s);
+			if (enemy_reaches(g, p, sc->x[s], sc->y[s])) sc->pc[s] = a;
+			break;
+		case OP_RACE_JUMP: { /* GetNearestEnemyRace 0x486c50: Zerg, Terran, Protoss */
+			int64_t terran = read_word(g, s), zerg = read_word(g, s), protoss = read_word(g, s);
+			switch (nearest_enemy_race(g, script_town(g, s, op))) {
+			case KP_RACE_ZERG: sc->pc[s] = zerg; break;
+			case KP_RACE_TERRAN: sc->pc[s] = terran; break;
+			case KP_RACE_PROTOSS: sc->pc[s] = protoss; break;
+			default: break;
+			}
+			break;
+		}
+		case OP_REGION_SIZE:
+			a = read_byte(g, s) * REGION_SIZE_UNIT;
+			b = read_word(g, s);
+			if (town_region_size(g, script_town(g, s, op), a) < a) sc->pc[s] = b; /* MeasureTownRegionSize 0x4877f0 */
+			break;
+		case OP_GET_OLDPEONS: /* TransferWorkersToTown 0x486480 */
+			a = read_byte(g, s);
+			kp_ai_transfer_workers(g, script_town(g, s, op), a);
+			break;
+		case OP_GUARD_RESOURCES:
+			guard_resources(g, p, read_word(g, s));
+			break;
+		case OP_RUSH:
+			a = read_byte(g, s);
+			b = read_word(g, s);
+			if (!eval_rush(g, p, a, sc->x[s], sc->y[s])) sc->pc[s] = b;
+			break;
+		case OP_MAKE_PATROL:
+			rect_of(sc, s, rect);
+			make_patrol(g, p, rect);
+			break;
+		case OP_ENTER_TRANSPORT: case OP_EXIT_TRANSPORT:
+			rect_of(sc, s, rect);
+			transports(g, p, rect, op == OP_ENTER_TRANSPORT);
+			break;
+		case OP_IMPLODE: /* ImplodeRegions 0x4ad430 */
+			kp_ai_implode(g, player_ai(g, p));
+			break;
+		default: /* every ordinal to LAST_OPCODE has a case */
+			kp_game_fail(g, "ai: opcode 0x%02llx without a case (0x494a98)", (long long)op);
+			break;
 		}
 	}
 }

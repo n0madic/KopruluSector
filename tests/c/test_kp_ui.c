@@ -3,6 +3,7 @@
  * console over a replayed game against the original's captures, the keys, the selection commands, the result dialogs,
  * the game menus and the console's work over native games. The console's host and the presentation's canvas and layout
  * are tested in test_hud.c, over the interface's C host (native/kp_app/kp_hud.h) and kp_present's canvas and layout. */
+#include "kp_test_app.h"
 #include "kp_test_ui.h"
 #include "kp_kpf.h"
 #include "kp_text.h"
@@ -2786,6 +2787,343 @@ static void save_dialog_reports_a_file_that_stays(KpT *T)
 	kp_t_eq_str(T, ui->menus.saves[0], "beta", NULL);
 }
 
+/* --- the score's Save Replay (kp_ui_replay_save.c, replay.cpp: atlas P28) --- */
+
+#define SCORE_SAVE_REPLAY 61     /* gluscore.bin: Save Replay */
+#define REPLAY_ID_OK (-2)
+#define REPLAY_ID_CANCEL (-3)
+#define REPLAY_ID_LIST 1
+#define REPLAY_ID_EDIT 2
+#define REPLAY_ID_DELETE 3
+#define REPLAY_ID_TITLE 4
+#define GLU_SAVE_REPLAY_TITLE 0xb3
+#define GLU_REPLAY_SAVED 0xb1
+#define NET_DELETE_FAILED 1
+#define NET_REPLACE 3
+#define NET_DELETE 4
+#define NET_FORBIDDEN 0x11
+#define NET_REPLAY_NOT_SAVED 0x65
+#define REPLAY_FILES 8
+
+/* The host's replays folder for the save-replay dialog: its files, whether a name's file is there, the copies' and
+ * deletes' answers and the names asked last. */
+typedef struct {
+	const char *files[REPLAY_FILES];
+	int file_count, exists, copy_result, delete_result, copies, deletes;
+	char copied[32], deleted[32];
+} Replays;
+
+static void test_list_replays(void *host, KpUi *ui)
+{
+	const Replays *r = (const Replays *)host;
+	int k;
+	for (k = 0; k < r->file_count; k++) kp_ui_replay_listed(ui, r->files[k]);
+}
+
+static int test_replay_exists(void *host, const char *name)
+{
+	(void)name;
+	return ((const Replays *)host)->exists;
+}
+
+static int test_copy_last_replay(void *host, const char *name)
+{
+	Replays *r = (Replays *)host;
+	r->copies++;
+	snprintf(r->copied, sizeof r->copied, "%s", name);
+	return r->copy_result;
+}
+
+static int test_delete_replay(void *host, const char *name)
+{
+	Replays *r = (Replays *)host;
+	r->deletes++;
+	snprintf(r->deleted, sizeof r->deleted, "%s", name);
+	return r->delete_result;
+}
+
+/* A score screen after terran01's victory, its campaign row (0x526524) and loaded-save flag (0x66b410) as given, its
+ * slide-in and count-up done. */
+static void custom_score(KpT *T, KpUi *ui, KpGame *g, Clock *c, int64_t mission, int from_save, int replay)
+{
+	KpUiScoreData d;
+	kp_ui_score_data(ui, g, VICTORY, "Player", 20, &d);
+	d.mission = mission;
+	d.from_save = from_save;
+	d.replay = replay;
+	kp_t_ok(T, kp_ui_score_open(ui, &d) >= 0, "the score screen");
+	c->ui = ui;
+	c->now = ui->now;
+	frames(c, SCORE_SETTLE_FRAMES);
+}
+
+static int32_t score_button(KpUi *ui) { return kp_ui_find_control(ui, ui->score.dialog, SCORE_SAVE_REPLAY); }
+
+/* SaveReplayButtonProc 0x4620c0's code 0: Save Replay is disabled after a replay, a loaded save or a campaign mission,
+ * enabled after any other (a custom) game. */
+static void save_replay_is_a_custom_games(KpT *T)
+{
+	static const struct {
+		int64_t mission;
+		int from_save, replay, enabled;
+	} CASES[] = { { 0, 0, 0, 1 }, { 1, 0, 0, 0 }, { 0, 1, 0, 0 }, { 0, 0, 1, 0 } };
+	KpOracleUi *u;
+	KpOracleGame *game;
+	Clock c;
+	size_t k;
+	if (!kp_t_ready(T, "test_kp_ui.save_replay_is_a_custom_games", GAME_FILES)) return;
+	u = kp_t_ui(T, KP_ORACLE_UI_STRINGS);
+	game = terran01(T);
+	hud(T, u->ui, game->g);
+	kp_ui_end_game(u->ui);
+	for (k = 0; k < sizeof CASES / sizeof CASES[0]; k++) {
+		int32_t b;
+		custom_score(T, u->ui, game->g, &c, CASES[k].mission, CASES[k].from_save, CASES[k].replay);
+		b = score_button(u->ui);
+		kp_t_ok(T, b >= 0, "Save Replay");
+		kp_t_eq(T, !(u->ui->controls[b].flags & KP_UI_DISABLED), CASES[k].enabled,
+			"mission %lld, a save %d, a replay %d", (long long)CASES[k].mission, CASES[k].from_save, CASES[k].replay);
+		kp_ui_end_dialog(u->ui, u->ui->score.dialog);
+	}
+	{
+		KpUiScoreData d;
+		kp_ui_score_data(u->ui, game->g, VICTORY, "Player", 20, &d);
+		kp_t_ok(T, d.mission != 0, "terran01's score data: its campaign row");
+	}
+}
+
+static void type_char(Clock *c, uint16_t ch)
+{
+	kp_t_ui_input(c->ui, CHAR, ch, 0);
+	frames(c, 1);
+}
+
+static const char *edit_text(KpUi *ui)
+{
+	int32_t e = kp_ui_find_control(ui, ui->open, REPLAY_ID_EDIT);
+	return e >= 0 && ui->controls[e].text != NULL ? (const char *)ui->controls[e].text : "";
+}
+
+static int enabled(KpUi *ui, int16_t id)
+{
+	int32_t k = kp_ui_find_control(ui, ui->open, id);
+	return k >= 0 && !(ui->controls[k].flags & KP_UI_DISABLED);
+}
+
+/* RunSaveReplayDialog 0x4809d0 over a custom game's score: rez\savegame.bin nested in the score screen in the glue's
+ * translucent frame, the replays folder's names (EnumerateReplayFiles 0x4803d0: the extension cut at the last dot,
+ * LastReplay and names of 28 characters or more left out), the first row's name in the edit; a typed name (network.tbl
+ * 17's characters dropped) clears the selection and Delete; OK copies LastReplay.rep to it and relabels the button
+ * (gluAll 0xb1) disabled; an existing name asks network.tbl 3 first (Cancel: nothing copied); a failed copy shows
+ * network.tbl 0x65; the name LastReplay is saved without a copy. Koprulu's Delete asks network.tbl 4 about the selected
+ * row, a failure shows network.tbl 1, the dialog opens again after either. */
+static void save_replay_dialog_names_a_replay(KpT *T)
+{
+	KpOracleUi *u;
+	KpOracleGame *game;
+	KpUi *ui;
+	Replays r;
+	Clock c;
+	char name[128], want[256];
+	const uint8_t *forbidden;
+	int32_t d, list, b;
+	int pass;
+	if (!kp_t_ready(T, "test_kp_ui.save_replay_dialog_names_a_replay", GAME_FILES)) return;
+	u = kp_t_ui(T, KP_ORACLE_UI_STRINGS);
+	ui = u->ui;
+	game = terran01(T);
+	hud(T, ui, game->g);
+	kp_ui_end_game(ui);
+	memset(&r, 0, sizeof r);
+	r.files[0] = "beta.rep";
+	r.files[1] = "LastReplay.rep";
+	r.files[2] = "alpha.rep";
+	r.files[3] = "a.b.rep";
+	r.files[4] = "abcdefghijklmnopqrstuvwxyz12.rep"; /* 28 characters */
+	r.files[5] = "lastreplay.rep";                   /* the skip is case-sensitive */
+	r.file_count = 6;
+	r.copy_result = r.delete_result = 1;
+	ui->list_replays = test_list_replays;
+	ui->replay_exists = test_replay_exists;
+	ui->copy_last_replay = test_copy_last_replay;
+	ui->delete_replay = test_delete_replay;
+	ui->host = &r;
+	custom_score(T, ui, game->g, &c, 0, 0, 0);
+
+	dialog_click(T, &c, SCORE_SAVE_REPLAY);
+	d = ui->open;
+	kp_t_eq_str(T, kp_t_ui_bin(ui, d, name, sizeof name), "rez\\savegame.bin", "the save-replay dialog");
+	kp_t_ok(T, (ui->controls[d].flags & (0x2000000u | KP_UI_TRANSLUCENT)) == (0x2000000u | KP_UI_TRANSLUCENT),
+		"translucent in set B");
+	kp_t_eq(T, ui->effects.level[1], kp_ui_effect_level(80), "set B at 80 %%");
+	kp_t_ok(T, ui->controls[d].image != NULL && ui->replay_save.tile_file.size > 0, "the race's frame");
+	kp_t_eq_str(T, (const char *)ui->controls[kp_ui_find_control(ui, d, REPLAY_ID_TITLE)].text,
+		(const char *)kp_ui_tbl(ui, KP_UI_GLUALL, GLU_SAVE_REPLAY_TITLE), "the title");
+	list = kp_ui_find_control(ui, d, REPLAY_ID_LIST);
+	kp_t_eq(T, kp_ui_list_count(ui, list), 4, "beta, alpha, a.b, lastreplay");
+	kp_t_eq_str(T, (const char *)kp_ui_list_text(ui, list, 0), "beta", NULL);
+	kp_t_eq_str(T, (const char *)kp_ui_list_text(ui, list, 2), "a.b", "cut at the last dot");
+	kp_t_eq_str(T, (const char *)kp_ui_list_text(ui, list, 3), "lastreplay", NULL);
+	kp_t_eq(T, kp_ui_list_selection(ui, list), 0, "the first row");
+	kp_t_eq_str(T, edit_text(ui), "beta", "its name in the edit");
+	kp_t_ok(T, enabled(ui, REPLAY_ID_OK) && enabled(ui, REPLAY_ID_DELETE), "OK and Delete");
+	kp_t_ok(T, ui->controls[kp_ui_find_control(ui, d, REPLAY_ID_DELETE)].flags & KP_UI_VISIBLE, "Delete shown");
+
+	/* a typed name */
+	dialog_click(T, &c, REPLAY_ID_EDIT);
+	forbidden = kp_ui_tbl(ui, KP_UI_NETWORK, NET_FORBIDDEN);
+	kp_t_ok(T, forbidden != NULL && forbidden[0] != 0, "network.tbl 17");
+	type_char(&c, forbidden[0]);
+	kp_t_eq_str(T, edit_text(ui), "beta", "a forbidden character dropped");
+	type_char(&c, 'x');
+	kp_t_eq_str(T, edit_text(ui), "betax", NULL);
+	kp_t_eq(T, kp_ui_list_selection(ui, list), KP_UI_LIST_NONE, "the selection cleared");
+	kp_t_ok(T, !enabled(ui, REPLAY_ID_DELETE) && enabled(ui, REPLAY_ID_OK), "Delete off, OK on");
+	dialog_click(T, &c, REPLAY_ID_OK);
+	kp_t_eq(T, r.copies, 1, "LastReplay copied");
+	kp_t_eq_str(T, r.copied, "betax", NULL);
+	kp_t_eq(T, ui->open, ui->score.dialog, "the score screen");
+	b = score_button(ui);
+	kp_t_eq_str(T, (const char *)ui->controls[b].text, (const char *)kp_ui_tbl(ui, KP_UI_GLUALL, GLU_REPLAY_SAVED),
+		"Replay Saved");
+	kp_t_ok(T, ui->controls[b].flags & KP_UI_DISABLED, "and disabled");
+
+	/* an existing name: the question first */
+	r.exists = 1;
+	for (pass = 0; pass < 2; pass++) { /* Cancel, then OK */
+		kp_t_ok(T, kp_ui_replay_save_open(ui, 1, 1) >= 0, "the dialog again");
+		frames(&c, 2);
+		kp_ui_list_select(ui, kp_ui_find_control(ui, ui->open, REPLAY_ID_LIST), 1);
+		frames(&c, 2);
+		kp_t_eq_str(T, edit_text(ui), "alpha", "the row's name");
+		dialog_click(T, &c, REPLAY_ID_OK);
+		kp_t_eq_str(T, kp_t_ui_bin(ui, ui->open, name, sizeof name), "rez\\okcancel.bin", "asked first");
+		kp_ui_format_name_xy(want, sizeof want, kp_ui_tbl(ui, KP_UI_NETWORK, NET_REPLACE), (const uint8_t *)"alpha", 0, 0);
+		kp_t_eq_str(T, ui->box.text, want, "network.tbl 3 with the name");
+		dialog_click(T, &c, pass == 0 ? REPLAY_ID_CANCEL : REPLAY_ID_OK);
+		kp_t_eq(T, r.copies, 1 + pass, pass == 0 ? "no copy" : "copied over");
+		kp_t_eq(T, ui->open, ui->score.dialog, "the score screen");
+	}
+	kp_t_eq_str(T, r.copied, "alpha", NULL);
+
+	/* a copy that fails */
+	r.exists = 0;
+	r.copy_result = 0;
+	(void)kp_ui_replay_save_open(ui, 1, 1);
+	frames(&c, 2);
+	dialog_click(T, &c, REPLAY_ID_OK);
+	kp_t_eq(T, r.copies, 3, NULL);
+	kp_t_eq_str(T, kp_t_ui_bin(ui, ui->open, name, sizeof name), "rez\\ok.bin", "the failure's box");
+	kp_t_eq_str(T, ui->box.text, (const char *)kp_ui_tbl(ui, KP_UI_NETWORK, NET_REPLAY_NOT_SAVED), "network.tbl 0x65");
+	dialog_click(T, &c, REPLAY_ID_OK);
+	kp_t_eq(T, ui->open, ui->score.dialog, "the score screen");
+
+	/* LastReplay itself: saved, nothing copied */
+	(void)kp_ui_replay_save_open(ui, 1, 1);
+	frames(&c, 2);
+	kp_ui_edit_set_text(ui, kp_ui_find_control(ui, ui->open, REPLAY_ID_EDIT), (const uint8_t *)"lastREPLAY  ");
+	dialog_click(T, &c, REPLAY_ID_OK);
+	kp_t_eq(T, r.copies, 3, "no copy");
+	kp_t_eq(T, ui->open, ui->score.dialog, NULL);
+	kp_t_eq_str(T, ui->replay_save.name, "lastREPLAY", "the trailing spaces trimmed");
+
+	/* Koprulu's Delete: Cancel, a failure, a delete */
+	for (pass = 0; pass < 3; pass++) {
+		(void)kp_ui_replay_save_open(ui, 0, 0);
+		frames(&c, 2);
+		kp_ui_list_select(ui, kp_ui_find_control(ui, ui->open, REPLAY_ID_LIST), 1);
+		frames(&c, 2);
+		r.delete_result = pass == 2;
+		dialog_click(T, &c, REPLAY_ID_DELETE);
+		kp_t_eq_str(T, kp_t_ui_bin(ui, ui->open, name, sizeof name), "rez\\okcancel.bin", "asked first");
+		kp_ui_format_name_xy(want, sizeof want, kp_ui_tbl(ui, KP_UI_NETWORK, NET_DELETE), (const uint8_t *)"alpha", 0, 0);
+		kp_t_eq_str(T, ui->box.text, want, "network.tbl 4 with the selected name");
+		dialog_click(T, &c, pass == 0 ? REPLAY_ID_CANCEL : REPLAY_ID_OK);
+		kp_t_eq(T, r.deletes, pass, "the host asked to delete");
+		if (pass == 1) {
+			kp_t_eq_str(T, r.deleted, "alpha", NULL);
+			kp_t_eq_str(T, kp_t_ui_bin(ui, ui->open, name, sizeof name), "rez\\ok.bin", "the failure's box");
+			kp_ui_format_name_xy(want, sizeof want, kp_ui_tbl(ui, KP_UI_NETWORK, NET_DELETE_FAILED),
+				(const uint8_t *)"alpha", 0, 0);
+			kp_t_eq_str(T, ui->box.text, want, "network.tbl 1 with the name");
+			dialog_click(T, &c, REPLAY_ID_OK);
+		}
+		kp_t_eq_str(T, kp_t_ui_bin(ui, ui->open, name, sizeof name), "rez\\savegame.bin", "the dialog again");
+		kp_t_eq(T, kp_ui_list_selection(ui, kp_ui_find_control(ui, ui->open, REPLAY_ID_LIST)), 0, "its first row");
+		dialog_click(T, &c, REPLAY_ID_CANCEL);
+		kp_t_eq(T, ui->open, ui->score.dialog, "Cancel: the score screen");
+	}
+
+	/* no replays: no name, OK and Delete off */
+	r.file_count = 0;
+	(void)kp_ui_replay_save_open(ui, 2, 0);
+	frames(&c, 2);
+	kp_t_eq_str(T, edit_text(ui), "", NULL);
+	kp_t_ok(T, !enabled(ui, REPLAY_ID_OK) && !enabled(ui, REPLAY_ID_DELETE), "OK and Delete off");
+	dialog_click(T, &c, REPLAY_ID_CANCEL);
+	kp_t_eq(T, r.copies + r.deletes, 3 + 2, "nothing more asked of the host");
+}
+
+/* glue\pal<r><d|v>\tile.grp from dlgs\tile.grp: only the frames' pixels of colours 42 and 41 change, to the background's
+ * two colours (Zd 160 and 151, Pv 145 and 134); the header and the line offsets stay. */
+static void glue_tile_grp_recolours_the_frame(KpT *T)
+{
+	static const uint8_t TO[2][2] = { { 160, 151 }, { 145, 134 } };
+	static const int BACKGROUNDS[2] = { 0, 5 };
+	KpOracleUi *u;
+	const KpUiFile *tile;
+	uint8_t out[KP_UI_GLUE_TILE];
+	size_t k, n;
+	int b, changed;
+	if (!kp_t_ready(T, "test_kp_ui.glue_tile_grp_recolours_the_frame", UI_FILES)) return;
+	u = kp_t_ui(T, 0);
+	tile = kp_ui_file(u->ui->grps, u->ui->grp_count, "dlgs\\tile.grp");
+	kp_t_ok(T, tile != NULL, "dlgs\\tile.grp");
+	if (tile == NULL) return;
+	for (b = 0; b < 2; b++) {
+		n = kp_ui_glue_tile_grp(tile->data, tile->size, BACKGROUNDS[b], out, sizeof out);
+		kp_t_eq(T, (int64_t)n, (int64_t)tile->size, "background %d: the GRP's size", BACKGROUNDS[b]);
+		changed = 0;
+		for (k = 0; k < n; k++) {
+			if (out[k] == tile->data[k]) continue;
+			changed++;
+			kp_t_ok(T, (tile->data[k] == 42 && out[k] == TO[b][0]) || (tile->data[k] == 41 && out[k] == TO[b][1]),
+				"byte %zu: %d to %d", k, tile->data[k], out[k]);
+		}
+		kp_t_ok(T, changed > 0, "background %d: pixels recoloured", BACKGROUNDS[b]);
+		kp_t_ok(T, memcmp(out, tile->data, 6 + 8 * (size_t)kp_le_u16(tile->data)) == 0, "the header and frames' records");
+	}
+	kp_t_eq(T, (int64_t)kp_ui_glue_tile_grp(tile->data, tile->size, 6, out, sizeof out), 0, "no seventh background");
+	kp_t_eq(T, (int64_t)kp_ui_glue_tile_grp(tile->data, tile->size, 0, out, tile->size - 1), 0, "too small an output");
+	kp_t_eq(T, (int64_t)kp_ui_glue_tile_grp(tile->data, 5, 0, out, sizeof out), 0, "no GRP");
+}
+
+/* The six recoloured frames equal 1.17's glue\pal<r><d|v>\tile.grp byte for byte (KP_TEST_ORIGINAL). */
+static void glue_tile_grps_equal_the_originals(KpT *T)
+{
+	static const char *const NAMES[6] = { "glue\\palzd\\tile.grp", "glue\\paltd\\tile.grp", "glue\\palpd\\tile.grp",
+		"glue\\palzv\\tile.grp", "glue\\paltv\\tile.grp", "glue\\palpv\\tile.grp" };
+	KpFiles f;
+	KpError err;
+	uint8_t *tile, *want, out[KP_UI_GLUE_TILE];
+	size_t tile_size = 0, want_size = 0, n;
+	int b;
+	kp_res_files(kp_t_install(T, "KP_TEST_ORIGINAL"), &f);
+	tile = kp_files_need(&f, "dlgs\\tile.grp", &tile_size, &err);
+	kp_t_ok(T, tile != NULL, "dlgs\\tile.grp: %s", err.msg);
+	if (tile == NULL) return;
+	kp_t_defer(T, free, tile);
+	for (b = 0; b < 6; b++) {
+		want = kp_files_need(&f, NAMES[b], &want_size, &err);
+		kp_t_ok(T, want != NULL, "%s: %s", NAMES[b], err.msg);
+		if (want == NULL) continue;
+		n = kp_ui_glue_tile_grp(tile, tile_size, b, out, sizeof out);
+		kp_t_eq(T, (int64_t)n, (int64_t)want_size, "%s's size", NAMES[b]);
+		kp_t_ok(T, n == want_size && memcmp(out, want, n) == 0, "%s byte for byte", NAMES[b]);
+		free(want);
+	}
+}
+
 /* The host's check_save: refusal for every save (0: it loads), the save asked last. */
 typedef struct {
 	uint16_t refusal;
@@ -3735,6 +4073,10 @@ static const KpTest TESTS[] = {
 	{ "failed_console_leaves_no_game_input", failed_console_leaves_no_game_input, 0 },
 	{ "end_game_resets_the_input_procedures", end_game_resets_the_input_procedures, 0 },
 	{ "save_dialog_reports_a_file_that_stays", save_dialog_reports_a_file_that_stays, 0 },
+	{ "save_replay_is_a_custom_games", save_replay_is_a_custom_games, 0 },
+	{ "save_replay_dialog_names_a_replay", save_replay_dialog_names_a_replay, 0 },
+	{ "glue_tile_grp_recolours_the_frame", glue_tile_grp_recolours_the_frame, 0 },
+	{ "glue_tile_grps_equal_the_originals", glue_tile_grps_equal_the_originals, 0 },
 	{ "load_dialog_refuses_a_save_that_does_not_load", load_dialog_refuses_a_save_that_does_not_load, 0 },
 	{ "first_view_on_the_start_location", first_view_on_the_start_location, 0 },
 	{ "file_names_the_game_refuses", file_names_the_game_refuses, 0 },

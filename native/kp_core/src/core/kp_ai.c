@@ -55,6 +55,10 @@ void kp_ai_regions_init(KpGame *g, int campaign)
 	memset(&g->pai, 0, sizeof g->pai);
 	kp_ai_military_init(g); /* InitMilitaryPool 0x4a9a90 */
 	for (p = 0; p < KP_AI_PLAYERS; p++) {
+		/* the available budget starts as the player's resources (ApplyStartingResources 0x448420 has set them: a
+		 * melee game's starting minerals, a campaign's 0) */
+		g->pai.minerals[p] = g->players.minerals[p];
+		g->pai.gas[p] = g->players.gas[p];
 		g->pai.ai_state[p] = AI_STATE_START;
 		g->pai.default_min[p] = DEFAULT_MIN;
 		if (campaign) g->pai.flags[p] = kp_bor(g->pai.flags[p], CAMPAIGN);
@@ -1287,6 +1291,49 @@ static int region_has_own_base(KpGame *g, int64_t p, int64_t r)
 	}
 	kp_query_release(g, units);
 	return found;
+}
+
+void kp_ai_request_defenses(KpGame *g, int64_t p, int64_t t, int64_t flag, int64_t most, int need_base)
+{
+	KpAiRegions *a = &g->air;
+	int64_t r, marked = 0;
+	for (r = 1; r < (int64_t)g->regions.count; r++) {
+		int count, k, found = 0;
+		int64_t *units;
+		if (kp_band(a->flags[p][r], KP_RFLAG_GUARDED) == 0 || (need_base && !region_has_own_base(g, p, r))) continue;
+		units = kp_region_units(g, r, &count); /* GetUnitsInRegion 0x4222d0 */
+		for (k = 0; k < count && !found; k++) found = g->u.type[units[k]] == t && g->u.owner[units[k]] == p;
+		kp_query_release(g, units);
+		if (found) continue;
+		a->flags[p][r] = kp_bor(a->flags[p][r], flag);
+		if (++marked == most) return;
+	}
+}
+
+int kp_ai_defense_requests_done(KpGame *g, int64_t p, int64_t flag)
+{
+	int64_t r = 1, count = (int64_t)g->regions.count;
+	while (r < count && kp_band(g->air.flags[p][r], flag) == 0) r++;
+	return r == count; /* a count of 0 is not done, as the original's */
+}
+
+void kp_ai_implode(KpGame *g, int64_t p)
+{
+	KpAiRegions *a = &g->air;
+	int64_t r;
+	for (r = 1; r < (int64_t)g->regions.count; r++) {
+		int64_t at, n, k, low = 0;
+		if (a->state[p][r] > KP_RSTATE_ABANDONED) continue;
+		n = kp_region_all_neighbors(g, r, &at); /* 0x481ad0 */
+		for (k = 0; k < n; k++) { /* the walk stops at a second neighbour in state 3 or lower */
+			if (a->state[p][g->pathing.rg.neighbors[at + k]] > KP_RSTATE_ABANDONED) continue;
+			if (low) break;
+			low = 1;
+		}
+		/* the inline body: an idle record's reset, flag 0x20 cleared, state 4 at priority 40 (SetRegionState 0x4ab900's
+		 * state 4) */
+		if (k == n) kp_ai_set_region_state(g, p, r, KP_RSTATE_WATCH);
+	}
 }
 
 #define FAR_AWAY 9999999

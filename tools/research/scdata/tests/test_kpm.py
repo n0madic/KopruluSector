@@ -27,6 +27,10 @@ class KpmTest(unittest.TestCase):
         assert kpm.map_string(strs, 0) is None
         assert kpm.map_string(strs, 2) == b"two"
         assert kpm.map_string(strs, 3) == b""  # past the count: the native empty string
+        # past STR (ADR 0024): an offset past it reads empty, a string it does not end ends at its end
+        assert kpm.map_string(b"\x02\x00\x20\x00\x08\x00\x00\x00cd", 1) == b""
+        assert kpm.map_string(b"\x02\x00\x20\x00\x08\x00\x00\x00cd", 2) == b"cd"
+        assert kpm.map_string(b"e", 1) == b""
 
     def test_wav_ids_and_sounds(self):
         trig = chk_trigger([(8, 2), (7, 0x10003), (9, 1)])  # Play WAV, Transmission (low word), Display Text

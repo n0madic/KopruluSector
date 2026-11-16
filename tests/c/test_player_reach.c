@@ -21,8 +21,6 @@
 #define UNIT_X 1000
 #define UNIT_Y 1100
 #define DAT_SUBUNIT 0x10
-#define FIRST_FLAG_BEACON 197 /* the Flag Beacons, the Capture the Flag type of game's: no mission places or creates them */
-#define LAST_FLAG_BEACON 199
 
 typedef enum { T_GROUND, T_ENEMY, T_OWN, T_MINERAL, T_GEYSER, T_BUILDING, T_KINDS } Target;
 static const char *const TARGET_NAMES[T_KINDS] = { "ground", "enemy", "own", "mineral", "geyser", "building" };
@@ -51,11 +49,10 @@ typedef struct {
 
 static const char *const FILES[] = { KP_T_DATA, MAP, NULL };
 
-/* Whether a player can have a unit of the type under his command: a subunit (a turret) is made with its base, and the
- * Flag Beacons (idle order CTFCOP_INIT, 0x99, ported with the Capture the Flag game type) are no campaign's. */
+/* Whether a player can have a unit of the type under his command: a subunit (a turret) is made with its base. The Flag
+ * Beacons are Capture the Flag's (phase M stage M2, kp_ctf.c). */
 static int commandable(KpGame *g, int type)
 {
-	if (type >= FIRST_FLAG_BEACON && type <= LAST_FLAG_BEACON) return 0;
 	return (KP_DAT(g, units, special_ability_flags, type) & DAT_SUBUNIT) == 0;
 }
 

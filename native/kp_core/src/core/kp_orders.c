@@ -419,11 +419,14 @@ void kp_unit_kill(KpGame *g, int64_t n)
 }
 
 /* A critter selected once too often (PlayUnitSelectSound 0x446c30, offline): KillUnit 0x42a4d0 and the lone sprite 267
- * at its sprite (0x417b80) at elevation 4, with its tile's visibility (0x417e50). */
+ * at its sprite (0x417b80) at elevation 4, with its tile's visibility (0x417e50). A network game's seat never kills it
+ * (the branch tests the multiplayer byte 0x672664): no command carries the kill to the other seats. */
 void kp_critter_annoyed(KpGame *g, int64_t n)
 {
 	KpImages *w = g->w;
-	int32_t s = kp_unit_sprite(g, n), t;
+	int32_t s, t;
+	if (g->setup.multiplayer != 0) return;
+	s = kp_unit_sprite(g, n);
 	kp_unit_kill(g, n);
 	t = kp_lone_create(w, CRITTER_ANNOYED_SPRITE, w->spr.x[s], w->spr.y[s], 0);
 	if (t != KP_NONE) {

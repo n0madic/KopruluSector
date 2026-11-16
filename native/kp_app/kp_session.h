@@ -88,6 +88,15 @@ typedef struct {
 	 * the briefing's objectives, which Load Replay's start has none of), so that its state equals the recorded game's
 	 * in every field */
 	int replay_as_game;
+	/* a custom game's setup (ADR 0024): the lobby's, or a custom replay's header (kp_rep_setup); has_setup 0: the
+	 * campaign's from the map */
+	int has_setup;
+	KpGameSetup setup;
+	/* a network game's seat (phase M, stage M6): its turns the hub's (not owned; NULL none) as its seat, the setup's
+	 * local Storm ID the game finds its local player by (0x443be0) */
+	KpTurnHub *hub;
+	int seat;
+	int64_t local_storm;
 } KpSessionStart;
 
 typedef struct {
@@ -133,8 +142,12 @@ int kp_session_command(KpSession *s, const uint8_t *bytes, size_t size, int64_t 
 int kp_session_playing(const KpSession *s);
 int kp_session_replay_ended(const KpSession *s);
 uint32_t kp_session_replay_frames(const KpSession *s);
-/* One logical step with the queued commands; 0 once the game has stopped. now_ms (for the step's cost) may be 0. */
+/* One logical step with the queued commands; 0 once the game has stopped, or while a seat waits for a turn (not
+ * failed). now_ms (for the step's cost) may be 0. */
 int kp_session_step(KpSession *s, double (*clock_ms)(void));
+/* A network game's seat, once every seat started and the hub began (kp_hub_begin): RunGame 0x445310's first turn, the
+ * hub's (the seats' first turns). -1 with the session's error. */
+int kp_session_seat_begin(KpSession *s);
 /* Advances the wall clock to now (seconds) and runs the steps it is due: their number, *alpha the presentation's
  * interpolation (1 once the game has stopped). */
 int kp_session_advance(KpSession *s, double now, double *alpha, double (*clock_ms)(void));
@@ -209,6 +222,17 @@ int kp_save_encode(KpSession *s, const KpSaveIdentity *id, const KpSaveCampaign 
  * data. */
 int kp_save_mission(const uint8_t *save, size_t size, const KpSaveIdentity *id, char *mission, size_t mission_size,
 	KpSaveCampaign *camp, KpError *err);
+/* A custom map's game in a save (its MAPC, ADR 0024): the scenario as read (chk malloc'd), the load it was read for and
+ * the setup the game started from. */
+typedef struct {
+	uint8_t *chk;
+	size_t chk_size;
+	KpChkLoad load;
+	KpGameSetup setup;
+} KpSaveMap;
+/* The custom map of a save's game: 1 with map filled, 0 for a campaign mission's or a test scenario's save, -1 for a
+ * damaged save or one of other data. */
+int kp_save_map(const uint8_t *save, size_t size, const KpSaveIdentity *id, KpSaveMap *map, KpError *err);
 /* Why a save cannot be loaded, as the player is told: the original's statuses of ValidateSaveFile 0x499750 (1
  * unreadable: gluAll 66, 2 another version: gluAll 67). A save of another build or of other game data is
  * KP_SAVE_OTHER_BUILD (saves do not migrate, ADR 0021); a container, stream or native save that does not read is
@@ -232,6 +256,8 @@ void kp_save_pres_set(KpSavePresentation *p, const char *name, int64_t value);
  * the reason. */
 int kp_write_file_atomic(const char *path, const uint8_t *data, size_t size, KpError *err);
 
+/* Two names in kp_list_files' order: the ASCII letters folded, the bytes compared (<0, 0, >0). */
+int kp_compare_nocase(const char *a, const char *b);
 /* The files of dir whose name ends in ext (compared without case), folders and hidden files left out, sorted without
  * case (BuildMapList 0x45ba40's order); NULL with count 0 when the folder cannot be read or memory runs out. */
 char **kp_list_files(const char *dir, const char *ext, int *count);
@@ -248,6 +274,7 @@ void kp_list_files_free(char **names, int count);
 #define KP_PROFILE_NAME KP_UI_NAME
 #define KP_PROFILE_SAVE_NAME KP_UI_SAVE_NAME
 #define KP_PROFILE_LOCALE 8 /* a language's ID ("ruRU", ASCII) and its NUL */
+#define KP_PROFILE_CUSTOM 32 /* a Play Custom registry value (SRegLoadString's 32 bytes) and its NUL */
 /* A saved game: its ID (the original's save\<name>\ folder, BuildSaveDirectory 0x499e80; "" a run's without a login)
  * and its name. */
 typedef struct {
@@ -300,6 +327,9 @@ typedef struct {
 	char text_locale[KP_PROFILE_LOCALE];   /* the language the player chose for the text ("ruRU"; ADR 0016), "" none:
 	                                        * the system's, else the base's; "" in one older than schema 8 */
 	char speech_locale[KP_PROFILE_LOCALE]; /* and for the speech */
+	/* Play Custom's registry values (the game type list's "Custom Type", the subtype list's "Game Subtype": their
+	 * selected texts when the screen closed, UTF-8), "" none and in one older than schema 9 */
+	char custom_type[KP_PROFILE_CUSTOM], game_subtype[KP_PROFILE_CUSTOM];
 } KpProfile;
 
 void kp_profile_init(KpProfile *p);

@@ -1159,6 +1159,7 @@ static Handler every_step_handler(int64_t order)
 	if (order == KP_ORD_TURRET_GUARD) return order_turret_guard;
 	if (order == KP_ORD_TURRET_ATTACK) return kp_order_turret_attack;
 	if (order == KP_ORD_CRITTER) return order_critter;
+	if (order == KP_ORD_CTFCOP2) return kp_order_ctfcop2;
 	if (order == KP_ORD_SIEGING) return kp_order_sieging;
 	if (order == KP_ORD_INITIALIZE_ARBITER) return order_initialize_arbiter;
 	if (order == KP_ORD_UNSIEGING) return kp_order_unsieging;
@@ -1240,6 +1241,8 @@ static Handler periodic_handler(int64_t order)
 	case KP_ORD_HARVEST1: case KP_ORD_MOVE_TO_GAS: return kp_order_move_to_gas;
 	case KP_ORD_UNUSED_POWERUP: return kp_order_powerup_return;
 	case KP_ORD_POWERUP_IDLE: return kp_order_powerup_idle;
+	case KP_ORD_CTFCOP_INIT: return kp_order_ctfcop_init;
+	case KP_ORD_CTFCOP_STARTED: return kp_order_ctfcop_started;
 	case KP_ORD_LARVA: return kp_order_larva;
 	case KP_ORD_WAIT_FOR_GAS: return kp_order_wait_for_gas;
 	case KP_ORD_HARVEST_GAS: return kp_order_harvest_gas;

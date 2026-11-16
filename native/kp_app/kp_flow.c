@@ -8,6 +8,7 @@
  * failure handler: a failure stops the game (the session keeps its last state) and the product goes on.
  */
 #include "kp_flow.h"
+#include "kp_gametype.h"
 #include "kp_ids.h"
 #include "kp_text.h"
 
@@ -98,9 +99,22 @@ static void mission_speech(KpFlow *f, const KpDataMission *entry)
 
 static uint32_t now_ms(KpFlow *f) { return (uint32_t)(uint64_t)(now(f) * 1000); }
 
+/* The mission shown: a catalog mission or test scenario, or the custom map's (KP_FLOW_CUSTOM); NULL none. */
+static const KpDataMission *current_entry(const KpFlow *f)
+{
+	if (f->current == KP_FLOW_CUSTOM) return &f->custom_entry;
+	return f->current >= 0 ? &f->data->missions[f->current] : NULL;
+}
+
+static const char *current_name(const KpFlow *f)
+{
+	const KpDataMission *e = current_entry(f);
+	return e ? e->name : "?";
+}
+
 static void stop(KpFlow *f, const char *what)
 {
-	say(f, "play %s: stopped: %s", f->current >= 0 ? f->data->missions[f->current].name : "?", what);
+	say(f, "play %s: stopped: %s", current_name(f), what);
 }
 
 static void pref_path(const KpFlow *f, const char *file, char *out, size_t size) { snprintf(out, size, "%s%s", f->pref, file); }
@@ -214,8 +228,9 @@ static void end_console(KpFlow *f)
 }
 
 /* --- the replay of a game (atlas P28; docs/formats/rep.md) ---
- * Save Replay stays disabled after a campaign game, as in the original: a replay is named by Load Replay's Export
- * (the host's file picker, kp_flow_import_replay and export_replay below; docs/phase-replay.md, RP4). */
+ * The score's Save Replay names a custom game's replay (the save-replay dialog's files below); it stays disabled after
+ * a campaign game, as in the original, where Load Replay's Export names one (the host's file picker,
+ * kp_flow_import_replay and export_replay below; docs/phase-replay.md, RP4). */
 
 #define REPLAY_DIR "replays"
 #define REPLAY_EXT ".rep"
@@ -254,8 +269,8 @@ static void replay_start(KpFlow *f, const KpSessionStart *st)
 		if (r->type == KP_CTRL_HUMAN) {
 			snprintf(r->name, sizeof r->name, "%s", game.player_name);
 		} else {
-			legacy_name(kp_ui_default_player_name(f->ui, (int)s->g->expansion, st->mission_index, p, r->type, r->race),
-				r->name, sizeof r->name);
+			legacy_name(kp_ui_default_player_name(f->ui, (int)s->g->expansion, st->mission_index, p,
+				(int)s->g->setup.color[p], r->type, r->race), r->name, sizeof r->name);
 		}
 	}
 	kp_session_replay_header(s, &game);
@@ -285,7 +300,7 @@ static int make_dir(const char *path)
  * (the briefing cancelled, or the program left there) writes none and keeps the last game's file. */
 static void save_last_replay(KpFlow *f)
 {
-	KpSession *s = f->session;
+	KpSession *s = f->seats.count ? f->seats.session[0] : f->session; /* --seats: the player's seat records it */
 	KpRep rep;
 	KpError err;
 	uint8_t *bytes = NULL;
@@ -325,10 +340,12 @@ static void destroy_scene(KpFlow *f)
 	if (f->world) f->host.world_free(f->host.ctx);
 	f->world = 0;
 	if (f->session) {
+		if (f->session->g && f->session->g->rng) f->rng_state = f->session->g->rng->state; /* the next lobby's (0x479c90) */
 		kp_session_free(f->session);
 		free(f->session);
 		f->session = NULL;
 	}
+	kp_seats_free(&f->seats); /* the hidden seats' sessions and the turn hub */
 	if (f->ui) f->ui->game = NULL; /* a ready room's game too */
 	f->result = 0;
 }
@@ -393,38 +410,61 @@ static int rename_old_save(void *host, const char *from, const char *to)
 /* --- Load Replay (glue state 12; atlas P19, P20) --- */
 
 #define STR_NOT_VALID 51       /* gluAll "The selected scenario is not valid." */
+#define NET_NEXT_SCENARIO 0x6a /* network.tbl: CreateNextScenarioGame 0x4bb360's failure */
 #define STR_EXPANSION 60       /* gluAll: a scenario of the expansion */
 #define STR_DAMAGED 63
 #define STR_NAME_TOO_LONG 62
 #define STR_MISSING 66
 #define REPLAY_NAME_LIMIT 32   /* LoadReplayEntryInfo 0x45d250: a file name of 32 bytes or more is refused */
+#define KP_REP_LIST_PLAYERS 8  /* its entry's +0x479 */
+#define MAP_ORIGINAL_VERSION 59 /* LoadMapEntryInfo 0x45d870: a header that fails with a later VER is the expansion's */
+#define MAP_DIR "maps"         /* the user's maps folder (the original's user base maps\), a data folder's Maps */
+#define CUSTOM_REPLAYS "replays" /* Play Custom's root folder of the replays (the original's maps\replays) */
+#define CUSTOM_BASES (1 + KP_APP_RES_DIRS)
+#define ENTRY_PATH KP_FLOW_MAP_PATH
+#define MAP_TEMPLATE "Melee" /* --map's game type without --map-template */
 
-/* An entry's path under the replays folder: the listed folder's, then its name. */
-static void replay_relative(const KpUiMenus *m, const char *name, char *out, size_t size)
+static int has_replay_ext(const char *name);
+
+/* Whether s begins with prefix, the ASCII letters folded. */
+static int prefix_nocase(const char *s, const char *prefix)
 {
-	if (m->replay_dir[0] != 0) snprintf(out, size, "%s/%s", m->replay_dir, name);
-	else snprintf(out, size, "%s", name);
+	size_t n = strlen(prefix);
+	char head[64];
+	if (strlen(s) < n || n >= sizeof head) return 0;
+	memcpy(head, s, n);
+	head[n] = 0;
+	return kp_compare_nocase(head, prefix) == 0;
 }
 
-/* The replay file of the replays folder at the relative path name, read and checked; -1 with the gluAll text that
- * refuses it (the 32-byte limit is the file name's, the 260 the whole path's). */
-static int read_replay(KpFlow *f, const char *name, KpRep *rep, uint16_t *refusal)
+/* The CHK groups a custom game of a template's record reads: Use Map Settings', else the melee ones. */
+static KpChkLoad custom_load_of(const uint8_t *template_record)
 {
-	const char *base = strrchr(name, '/');
-	char path[1100], legacy[KP_UI_REPLAY_FILE];
+	return kp_template_ums(template_record) ? KP_CHK_UMS : KP_CHK_MELEE;
+}
+
+/* Whether a file's name and path are within the original's limits (LoadReplayEntryInfo 0x45d250, LoadMapEntryInfo
+ * 0x45d870): the name below 32 bytes in the map's encoding, the path and the name past 260 with a separator. */
+static int entry_name_fits(const char *path)
+{
+	const char *base = strrchr(path, '/');
+	char legacy[KP_UI_MAP_FILE];
+	return kp_text_to_legacy(base ? base + 1 : path, legacy, sizeof legacy) < REPLAY_NAME_LIMIT && strlen(path) + 1 < 260;
+}
+
+/* The replay file at path read and checked; -1 with the gluAll text that refuses it. */
+static int read_replay_at(const char *path, KpRep *rep, uint16_t *refusal)
+{
 	uint8_t *bytes;
 	size_t size;
 	KpRepRefusal why = KP_REP_OK;
 	KpError err;
 	int rc;
 	memset(rep, 0, sizeof *rep);
-	pref_path(f, REPLAY_DIR "/", path, sizeof path);
-	if (kp_text_to_legacy(base ? base + 1 : name, legacy, sizeof legacy) >= REPLAY_NAME_LIMIT
-		|| strlen(path) + strlen(name) + 1 >= 260) {
+	if (!entry_name_fits(path)) {
 		*refusal = STR_NAME_TOO_LONG;
 		return -1;
 	}
-	strncat(path, name, sizeof path - strlen(path) - 1);
 	if (!(bytes = kp_read_file(path, &size))) {
 		*refusal = STR_MISSING;
 		return -1;
@@ -439,15 +479,126 @@ static int read_replay(KpFlow *f, const char *name, KpRep *rep, uint16_t *refusa
 	return 0;
 }
 
-/* The catalog's mission of a replay's campaign row (-1: none, outside V1). */
+/* The catalog's mission of a replay's campaign row: its index, KP_FLOW_CUSTOM for a custom map's replay (row 0: its map
+ * is its CHK), -1 for a row the catalog does not have. */
 static int replay_mission(const KpFlow *f, const KpRep *rep)
 {
 	int row = kp_rep_campaign(rep), k;
-	if (row == 0) return -1;
+	if (row == 0) return KP_FLOW_CUSTOM;
 	for (k = 0; k < f->data->mission_count; k++) {
 		if (f->data->missions[k].catalog && f->data->missions[k].index == row) return k;
 	}
 	return -1;
+}
+
+/* A custom replay's map: the game type of its template (Use Map Settings or a melee type) picks the CHK's groups. */
+static KpChkLoad replay_load(const KpRep *rep)
+{
+	return custom_load_of(rep->header + KP_REP_TEMPLATE);
+}
+
+/* The scenario's name of a replay's header as UTF-8 (the header's is in the map's encoding). */
+static void replay_map_name(const KpRep *rep, char *out, size_t size)
+{
+	char map[KP_REP_MAP_NAME_SIZE + 1];
+	memcpy(map, rep->header + KP_REP_MAP_NAME, KP_REP_MAP_NAME_SIZE);
+	map[KP_REP_MAP_NAME_SIZE] = 0;
+	(void)kp_text_from_legacy(map, out, size);
+	if (!out[0]) snprintf(out, size, "%s", "map");
+}
+
+static void custom_close(KpFlow *f)
+{
+	if (f->custom_map) kp_data_map_close(f->custom_map);
+	free(f->custom_map);
+	f->custom_map = NULL;
+	f->has_custom_setup = 0;
+}
+
+/* The custom map the next game plays (ADR 0024): its scenario (malloc'd, taken also on failure) under name, read for
+ * load; its entry's key "maps/<name>" names its saves. 0, or -1 with why. */
+static int custom_from_chk(KpFlow *f, uint8_t *chk, size_t size, const char *name, KpChkLoad load, char *why,
+	size_t why_size)
+{
+	KpError e;
+	custom_close(f);
+	if (!(f->custom_map = (KpDataMap *)calloc(1, sizeof *f->custom_map))) {
+		free(chk);
+		snprintf(why, why_size, "out of memory");
+		return -1;
+	}
+	if (kp_data_map_from_chk(f->custom_map, &f->data->files, chk, size, name, &e) != 0) {
+		free(f->custom_map);
+		f->custom_map = NULL;
+		snprintf(why, why_size, "%s", e.msg);
+		return -1;
+	}
+	memset(&f->custom_entry, 0, sizeof f->custom_entry);
+	snprintf(f->custom_entry.name, sizeof f->custom_entry.name, "%s", name);
+	snprintf(f->custom_entry.key, sizeof f->custom_entry.key, "maps/%s", name);
+	f->custom_load = load;
+	f->custom_path[0] = 0;
+	return 0;
+}
+
+/* A malloc'd copy of a replay's CHK (NULL out of memory, which kp_data_map_from_chk reports) and its map's name. */
+static uint8_t *replay_chk_copy(const KpRep *rep, char *name, size_t name_size)
+{
+	uint8_t *chk = (uint8_t *)malloc(rep->chk_size ? rep->chk_size : 1);
+	if (chk && rep->chk_size) memcpy(chk, rep->chk, rep->chk_size);
+	replay_map_name(rep, name, name_size);
+	return chk;
+}
+
+/* A copy of a replay's CHK as the custom map the next game plays. */
+static int custom_from_replay(KpFlow *f, const KpRep *rep, char *why, size_t why_size)
+{
+	char name[64];
+	uint8_t *chk = replay_chk_copy(rep, name, sizeof name);
+	return custom_from_chk(f, chk, rep->chk_size, name, replay_load(rep), why, why_size);
+}
+
+/* The custom map the next game plays from its file at path (its sounds read from it), read for load. */
+static int custom_from_file(KpFlow *f, const char *path, const char *name, KpChkLoad load, char *why, size_t why_size)
+{
+	KpError e;
+	custom_close(f);
+	if (!(f->custom_map = (KpDataMap *)calloc(1, sizeof *f->custom_map))) {
+		snprintf(why, why_size, "out of memory");
+		return -1;
+	}
+	if (kp_data_map_open(f->custom_map, &f->data->files, path, &e) != 0) {
+		free(f->custom_map);
+		f->custom_map = NULL;
+		snprintf(why, why_size, "%s", e.msg);
+		return -1;
+	}
+	memset(&f->custom_entry, 0, sizeof f->custom_entry);
+	snprintf(f->custom_entry.name, sizeof f->custom_entry.name, "%s", name);
+	snprintf(f->custom_entry.key, sizeof f->custom_entry.key, "maps/%s", name);
+	f->custom_load = load;
+	snprintf(f->custom_path, sizeof f->custom_path, "%s", path);
+	return 0;
+}
+
+/* Whether a custom replay's map loads as its game reads it (its mission built, then let go). */
+static int custom_replay_loads(KpFlow *f, const KpRep *rep, char *why, size_t why_size)
+{
+	KpDataMap map;
+	KpMission m;
+	KpError e;
+	char name[64];
+	uint8_t *chk = replay_chk_copy(rep, name, sizeof name);
+	int rc;
+	if (kp_data_map_from_chk(&map, &f->data->files, chk, rep->chk_size, name, &e) != 0) {
+		snprintf(why, why_size, "%s", e.msg);
+		return 0;
+	}
+	rc = kp_data_map_mission(&map, replay_load(rep), &m, &e);
+	if (rc == 0) kp_mission_free(&m);
+	else snprintf(why, why_size, "%s", e.msg);
+	kp_data_map_close(&map);
+	return rc == 0;
 }
 
 /* Why a replay's playback is unverified (KP_UI_REPLAY_*): another simulation revision first (its commands may play
@@ -477,73 +628,307 @@ static int compare_folders(const void *pa, const void *pb)
 /* A listed name the list can hold: UTF-8 within the entry's buffer. */
 static int listable(const char *name, size_t size) { return strlen(name) < size && kp_text_valid_utf8((const uint8_t *)name, strlen(name)); }
 
-/* ListMapDirectory 0x45bc70 over maps\replays and the listed folder (InitMapList 0x455aa0 makes the root): below the
- * root the folder above first (AddFolderEntry 0x45b080's ".."), the folders, then each file with its header as
- * LoadReplayEntryInfo 0x45d250 reads it. */
-static int list_replays(void *host, KpUi *ui)
+/* The folders the screen's listed folder is in, as ScanMapDirectory 0x45c9a0 scans the user base before the install
+ * (BuildMapList 0x45ba40): Load Replay's the replays folder; Play Custom's below its root's "replays" the replays folder
+ * (the original's maps\replays), else the user's maps folder, then each data folder's Maps. Their count. */
+static int entry_bases(const KpFlow *f, const KpUiMenus *m, char bases[CUSTOM_BASES][ENTRY_PATH])
+{
+	const char *dir = m->map_dir, *rest = dir;
+	size_t r = sizeof CUSTOM_REPLAYS - 1;
+	char root[ENTRY_PATH];
+	int n = 0, k;
+	if (m->state != KP_GLUE_PLAY_CUSTOM
+		|| (prefix_nocase(dir, CUSTOM_REPLAYS) && (dir[r] == 0 || dir[r] == '/'))) {
+		if (m->state == KP_GLUE_PLAY_CUSTOM) rest = dir[r] == '/' ? dir + r + 1 : dir + r;
+		pref_path(f, REPLAY_DIR, root, sizeof root);
+		snprintf(bases[n++], ENTRY_PATH, rest[0] ? "%s/%s" : "%s%s", root, rest);
+		return n;
+	}
+	pref_path(f, MAP_DIR, root, sizeof root);
+	snprintf(bases[n++], ENTRY_PATH, dir[0] ? "%s/%s" : "%s%s", root, dir);
+	for (k = 0; f->flags && k < f->flags->res_dir_count && n < CUSTOM_BASES; k++) {
+		char **folders;
+		int nf = 0, j;
+		folders = kp_list_folders(f->flags->res_dirs[k], &nf);
+		for (j = 0; j < nf; j++) { /* the install's Maps, in the case its file system has */
+			if (kp_compare_nocase(folders[j], MAP_DIR) == 0) {
+				snprintf(bases[n++], ENTRY_PATH, dir[0] ? "%s/%s/%s" : "%s/%s%s", f->flags->res_dirs[k], folders[j], dir);
+				break;
+			}
+		}
+		kp_list_files_free(folders, nf);
+	}
+	return n;
+}
+
+/* The path of entry index's file (its folder's base): 1, or 0 for no such entry or a path past out. */
+static int entry_path(const KpFlow *f, const KpUiMenus *m, int index, char *out, size_t size)
+{
+	char bases[CUSTOM_BASES][ENTRY_PATH];
+	int n;
+	if (index < 0 || index >= m->entry_count) return 0;
+	n = entry_bases(f, m, bases);
+	if (f->entry_base[index] >= n) return 0;
+	return snprintf(out, size, "%s/%s", bases[f->entry_base[index]], m->entries[index].file) < (int)size;
+}
+
+/* A name found in a base: the first base's of a name (the user's: InsertMapEntrySorted 0x45b3f0's table keeps the
+ * first) */
+typedef struct {
+	const char *name;
+	uint8_t base;
+} Listed;
+
+static int compare_listed_folders(const void *a, const void *b)
+{
+	const Listed *x = (const Listed *)a, *y = (const Listed *)b;
+	return compare_folders(&x->name, &y->name);
+}
+
+static int compare_listed_files(const void *a, const void *b)
+{
+	return kp_compare_nocase(((const Listed *)a)->name, ((const Listed *)b)->name);
+}
+
+/* name added to list (at most KP_UI_MAP_ENTRIES) unless a name of it is there in any case: its count */
+static int add_listed(Listed *list, int n, const char *name, int base)
+{
+	int k;
+	for (k = 0; k < n; k++) {
+		if (kp_compare_nocase(list[k].name, name) == 0) return n;
+	}
+	if (n == KP_UI_MAP_ENTRIES) return n;
+	list[n].name = name;
+	list[n].base = (uint8_t)base;
+	return n + 1;
+}
+
+/* A replay entry as LoadReplayEntryInfo 0x45d250 reads it (the file at path). */
+static void replay_entry(KpFlow *f, KpUiMapEntry *e, const char *path)
+{
+	KpRep rep;
+	KpRepPlayer p;
+	char map[KP_REP_MAP_NAME_SIZE + 1];
+	int j;
+	e->kind = KP_UI_ENTRY_REPLAY;
+	if (read_replay_at(path, &rep, &e->description) != 0) {
+		e->status = e->description == STR_MISSING || e->description == STR_NAME_TOO_LONG ? 1 : 2;
+		return;
+	}
+	memcpy(map, rep.header + KP_REP_MAP_NAME, KP_REP_MAP_NAME_SIZE);
+	map[KP_REP_MAP_NAME_SIZE] = 0;
+	(void)kp_text_from_legacy(map, e->map, sizeof e->map);
+	e->width = (uint16_t)kp_le_u16(rep.header + KP_REP_MAP_SIZE);
+	e->height = (uint16_t)kp_le_u16(rep.header + KP_REP_MAP_SIZE + 2);
+	e->tileset = (uint16_t)kp_le_u16(rep.header + KP_REP_TILESET);
+	e->players = KP_REP_LIST_PLAYERS;
+	e->slots = rep.header[KP_REP_SLOTS];
+	e->game_type = (uint16_t)kp_le_u16(rep.header + KP_REP_TEMPLATE + KP_TEMPLATE_TYPE);
+	e->game_subtype = (uint16_t)kp_le_u16(rep.header + KP_REP_TEMPLATE + KP_TEMPLATE_SUBTYPE);
+	e->unverified = replay_unverified(f, rep.tail);
+	for (j = 0; j < KP_REP_PLAYERS; j++) { /* the records' computers and humans (their counts are hidden offline) */
+		kp_rep_player(&rep, j, &p);
+		if (p.type == KP_CTRL_COMPUTER) e->computers++;
+		else if (p.type == KP_CTRL_HUMAN) e->humans++;
+	}
+	kp_rep_free(&rep);
+}
+
+/* ListMapDirectory 0x45bc70 over the screen's folders (entry_bases; InitMapList 0x455aa0 makes the root): below the
+ * root the folder above first (AddFolderEntry 0x45b080's ".."), the folders (Play Custom's root with its "replays"),
+ * then the files: Load Replay's replays, Play Custom's maps (.scm; .scx with Brood War) and replays. A replay's header
+ * is read here; a map's when the screen first needs it (load_entry). */
+static int list_entries(void *host, KpUi *ui)
+{
+	static const char *const REPLAY_FILES[] = { REPLAY_EXT };
+	static const char *const CUSTOM_FILES[] = { ".scm", ".scx", REPLAY_EXT };
+	KpFlow *f = (KpFlow *)host;
+	KpUiMenus *m = &ui->menus;
+	int custom = m->state == KP_GLUE_PLAY_CUSTOM, nb, nl = 0, nf = 0, nn = 0, b, k, x;
+	int exts = custom ? (int)(sizeof CUSTOM_FILES / sizeof CUSTOM_FILES[0]) : 1;
+	const char *const *ext = custom ? CUSTOM_FILES : REPLAY_FILES;
+	char bases[CUSTOM_BASES][ENTRY_PATH], root[ENTRY_PATH], path[ENTRY_PATH];
+	char **lists[CUSTOM_BASES * 4];
+	int counts[CUSTOM_BASES * 4];
+	Listed *folders = (Listed *)calloc(KP_UI_MAP_ENTRIES, sizeof *folders);
+	Listed *files = (Listed *)calloc(KP_UI_MAP_ENTRIES, sizeof *files);
+	m->entry_count = 0;
+	if (!folders || !files) {
+		free(folders);
+		free(files);
+		return 0;
+	}
+	pref_path(f, REPLAY_DIR, root, sizeof root);
+	(void)make_dir(root);
+	if (custom) {
+		pref_path(f, MAP_DIR, root, sizeof root);
+		(void)make_dir(root);
+	}
+	nb = entry_bases(f, m, bases);
+	if (custom && m->map_dir[0] == 0) nf = add_listed(folders, nf, CUSTOM_REPLAYS, 0);
+	for (b = 0; b < nb; b++) {
+		lists[nl] = kp_list_folders(bases[b], &counts[nl]);
+		for (k = 0; k < counts[nl]; k++) nf = add_listed(folders, nf, lists[nl][k], b);
+		nl++;
+		for (x = 0; x < exts; x++) {
+			if (strcmp(ext[x], ".scx") == 0 && !m->expansion) continue; /* ScanMapDirectory: scx with Brood War */
+			lists[nl] = kp_list_files(bases[b], ext[x], &counts[nl]);
+			for (k = 0; k < counts[nl]; k++) nn = add_listed(files, nn, lists[nl][k], b);
+			nl++;
+		}
+	}
+	if (nf > 1) qsort(folders, (size_t)nf, sizeof *folders, compare_listed_folders);
+	if (nn > 1) qsort(files, (size_t)nn, sizeof *files, compare_listed_files);
+	if (m->map_dir[0] != 0) {
+		memset(&m->entries[0], 0, sizeof m->entries[0]);
+		f->entry_base[0] = 0;
+		m->entries[m->entry_count++].kind = KP_UI_ENTRY_UP;
+	}
+	for (k = 0; k < nf && m->entry_count < KP_UI_MAP_ENTRIES; k++) {
+		KpUiMapEntry *e = &m->entries[m->entry_count];
+		if (!listable(folders[k].name, sizeof e->file)) continue;
+		memset(e, 0, sizeof *e);
+		e->kind = KP_UI_ENTRY_FOLDER;
+		snprintf(e->file, sizeof e->file, "%s", folders[k].name);
+		f->entry_base[m->entry_count++] = folders[k].base;
+	}
+	for (k = 0; k < nn && m->entry_count < KP_UI_MAP_ENTRIES; k++) {
+		KpUiMapEntry *e = &m->entries[m->entry_count];
+		if (!listable(files[k].name, sizeof e->file)) continue;
+		memset(e, 0, sizeof *e);
+		snprintf(e->file, sizeof e->file, "%s", files[k].name);
+		f->entry_base[m->entry_count] = files[k].base;
+		e->kind = has_replay_ext(e->file) ? KP_UI_ENTRY_REPLAY : KP_UI_ENTRY_MAP;
+		e->first_human = -1;
+		if (e->kind == KP_UI_ENTRY_REPLAY) {
+			if (snprintf(path, sizeof path, "%s/%s", bases[files[k].base], e->file) < (int)sizeof path) {
+				replay_entry(f, e, path);
+			} else {
+				e->status = 1;
+				e->description = STR_NAME_TOO_LONG;
+			}
+		}
+		m->entry_count++;
+	}
+	for (k = 0; k < nl; k++) kp_list_files_free(lists[k], counts[k]);
+	free(folders);
+	free(files);
+	return m->entry_count;
+}
+
+/* LoadMapHeader 0x46b5c0 of the map at path for the map lists: 0, or -1 with why (h->version the VER read, 0 none). */
+static int map_header_at(KpFlow *f, const char *path, KpMapHeader *h, char *why, size_t why_size)
+{
+	KpDataMap map;
+	KpError e;
+	uint8_t *chk;
+	size_t size;
+	int rc;
+	memset(h, 0, sizeof *h);
+	if (kp_data_map_open(&map, &f->data->files, path, &e) != 0) {
+		snprintf(why, why_size, "%s", e.msg);
+		return -1;
+	}
+	if (!(chk = kp_data_map_chk(&map, &size, &e))) {
+		snprintf(why, why_size, "%s", e.msg);
+		kp_data_map_close(&map);
+		return -1;
+	}
+	rc = kp_map_header(h, chk, size, f->data->files.profile, f->ui->menus.expansion, why, why_size);
+	free(chk);
+	kp_data_map_close(&map);
+	return rc;
+}
+
+/* LoadMapEntryInfo 0x45d870 of the map entry index: its status and the gluAll text of an unreadable one (66 missing,
+ * 62 its name too long, 60 a later version's, 63 another refusal), else the header's information. */
+static void load_entry(void *host, KpUi *ui, int index)
 {
 	KpFlow *f = (KpFlow *)host;
 	KpUiMenus *m = &ui->menus;
-	char dir[1100], root[1100];
-	char **names, **folders;
-	int n = 0, nf = 0, k;
-	pref_path(f, REPLAY_DIR, root, sizeof root);
-	(void)make_dir(root);
-	if (m->replay_dir[0] != 0) snprintf(dir, sizeof dir, "%s/%s", root, m->replay_dir);
-	else snprintf(dir, sizeof dir, "%s", root);
-	m->replay_count = 0;
-	if (m->replay_dir[0] != 0) {
-		memset(&m->replays[0], 0, sizeof m->replays[0]);
-		m->replays[m->replay_count++].kind = KP_UI_REPLAY_ENTRY_UP;
+	KpUiMapEntry *e;
+	KpMapHeader h;
+	char path[ENTRY_PATH], why[KP_ERROR_SIZE], title[KP_UI_MAP_NAME];
+	FILE *probe;
+	if (index < 0 || index >= m->entry_count || m->entries[index].kind != KP_UI_ENTRY_MAP) return;
+	e = &m->entries[index];
+	e->status = 1;
+	if (!entry_path(f, m, index, path, sizeof path)) {
+		e->description = STR_NAME_TOO_LONG;
+		return;
 	}
-	folders = kp_list_folders(dir, &nf);
-	if (nf > 1) qsort(folders, (size_t)nf, sizeof *folders, compare_folders);
-	for (k = 0; k < nf && m->replay_count < KP_UI_REPLAYS; k++) {
-		KpUiReplayEntry *e = &m->replays[m->replay_count];
-		if (!listable(folders[k], sizeof e->file)) continue;
-		memset(e, 0, sizeof *e);
-		e->kind = KP_UI_REPLAY_ENTRY_FOLDER;
-		snprintf(e->file, sizeof e->file, "%s", folders[k]);
-		m->replay_count++;
+	if (!(probe = fopen(path, "rb"))) {
+		e->description = STR_MISSING;
+		return;
 	}
-	kp_list_files_free(folders, nf);
-	names = kp_list_files(dir, ".rep", &n);
-	for (k = 0; k < n && m->replay_count < KP_UI_REPLAYS; k++) {
-		KpUiReplayEntry *e = &m->replays[m->replay_count];
-		KpRep rep;
-		KpRepPlayer p;
-		char map[KP_REP_MAP_NAME_SIZE + 1], rel[KP_UI_REPLAY_DIR + KP_UI_REPLAY_FILE];
-		int j;
-		if (!listable(names[k], sizeof e->file)) continue;
-		memset(e, 0, sizeof *e);
-		snprintf(e->file, sizeof e->file, "%s", names[k]);
-		m->replay_count++;
-		replay_relative(m, names[k], rel, sizeof rel);
-		if (read_replay(f, rel, &rep, &e->description) != 0) {
-			e->status = e->description == STR_MISSING || e->description == STR_NAME_TOO_LONG ? 1 : 2;
-			continue;
-		}
-		memcpy(map, rep.header + KP_REP_MAP_NAME, KP_REP_MAP_NAME_SIZE);
-		map[KP_REP_MAP_NAME_SIZE] = 0;
-		(void)kp_text_from_legacy(map, e->map, sizeof e->map);
-		e->width = (uint16_t)(rep.header[KP_REP_MAP_SIZE] | rep.header[KP_REP_MAP_SIZE + 1] << 8);
-		e->height = (uint16_t)(rep.header[KP_REP_MAP_SIZE + 2] | rep.header[KP_REP_MAP_SIZE + 3] << 8);
-		e->tileset = (uint16_t)(rep.header[KP_REP_TILESET] | rep.header[KP_REP_TILESET + 1] << 8);
-		e->unverified = replay_unverified(f, rep.tail);
-		for (j = 0; j < KP_REP_PLAYERS; j++) { /* the records' computers and humans (their counts are hidden offline) */
-			kp_rep_player(&rep, j, &p);
-			if (p.type == KP_CTRL_COMPUTER) e->computers++;
-			else if (p.type == KP_CTRL_HUMAN) e->humans++;
-		}
-		kp_rep_free(&rep);
+	fclose(probe);
+	if (!entry_name_fits(path)) {
+		e->description = STR_NAME_TOO_LONG;
+		return;
 	}
-	kp_list_files_free(names, n);
-	return m->replay_count;
+	if (map_header_at(f, path, &h, why, sizeof why) != 0) {
+		say(f, "map %s: %s", e->file, why);
+		e->status = h.version > MAP_ORIGINAL_VERSION ? 2 : 1;
+		e->description = h.version > MAP_ORIGINAL_VERSION ? STR_EXPANSION : STR_DAMAGED;
+		return;
+	}
+	(void)kp_text_from_legacy(h.title, title, sizeof title);
+	if (title[0] == 0) snprintf(title, sizeof title, "%s", e->file); /* the file's name for no title */
+	(void)kp_text_copy_chars(e->map, sizeof e->map, title, KP_UI_MAP_TITLE_CHARS);
+	(void)kp_text_from_legacy(h.description, e->text, sizeof e->text);
+	e->width = h.width;
+	e->height = h.height;
+	e->tileset = h.tileset;
+	e->players = h.players;
+	e->computers = h.computers;
+	e->humans = h.humans;
+	memcpy(e->user_select, h.user_select, sizeof e->user_select);
+	e->first_human = h.first_human;
+	/* TODO: the map class of a signed condition file (OpenMapArchive 0x469de0's probe 0x469560): every map is 0, an
+	 * ordinary one, offline no selectable template needs another */
+	e->map_class = 0;
+	e->status = 0;
 }
 
-/* CreateGameFromEntry 0x45bfc0's reading of the replay at Ok, and Koprulu's refusals of a replay outside V1: a map
- * that is no catalog mission or a network game's command (gluAll 51, as an invalid scenario). The CHK is compared with
- * the mission's when the game starts (a web build may not have the mission's files yet). */
+/* CreateGameFromEntry 0x45bfc0's reading of the map at Ok (its header again, the player in its first open slot), and
+ * Koprulu's refusal of a map its game does not load (gluAll 51, as an invalid scenario). */
+static uint16_t check_map(void *host, int index, int *local_slot)
+{
+	KpFlow *f = (KpFlow *)host;
+	const KpUiMenus *m = &f->ui->menus;
+	KpMapHeader h;
+	KpDataMap map;
+	KpMission mission;
+	KpError e;
+	char path[ENTRY_PATH], why[KP_ERROR_SIZE];
+	int rc;
+	*local_slot = -1;
+	if (index < 0 || index >= m->entry_count || m->entries[index].kind != KP_UI_ENTRY_MAP) return STR_NOT_VALID;
+	if (!entry_path(f, m, index, path, sizeof path)) return STR_NOT_VALID;
+	if (map_header_at(f, path, &h, why, sizeof why) != 0) {
+		say(f, "map %s: %s", m->entries[index].file, why);
+		return h.version > MAP_ORIGINAL_VERSION ? STR_EXPANSION : STR_NOT_VALID;
+	}
+	if (h.first_human < 0) return STR_NOT_VALID; /* PlaceLocalHumanForCustomGame 0x4bb550's 0x80000007 */
+	if (kp_data_map_open(&map, &f->data->files, path, &e) != 0) {
+		say(f, "map %s: %s", m->entries[index].file, e.msg);
+		return STR_NOT_VALID;
+	}
+	rc = kp_data_map_mission(&map, custom_load_of(m->create.record), &mission, &e);
+	kp_data_map_close(&map);
+	if (rc != 0) {
+		say(f, "map %s: refused: %s", m->entries[index].file, e.msg);
+		return STR_NOT_VALID;
+	}
+	kp_mission_free(&mission);
+	*local_slot = h.first_human;
+	return 0;
+}
+
+/* CreateGameFromEntry 0x45bfc0's reading of the replay at Ok, and Koprulu's refusals of a replay it cannot play (gluAll
+ * 51, as an invalid scenario): a campaign row the catalog does not have, a custom map its game does not load, a
+ * network game's command. A campaign replay's CHK is compared with the mission's when the game starts (a web build may
+ * not have the mission's files yet). */
 static uint16_t check_replay(void *host, int index)
 {
 	KpFlow *f = (KpFlow *)host;
@@ -551,23 +936,28 @@ static uint16_t check_replay(void *host, int index)
 	KpRep rep;
 	KpSessionStart st;
 	uint16_t refusal = 0;
-	char rel[KP_UI_REPLAY_DIR + KP_UI_REPLAY_FILE];
-	if (index < 0 || index >= m->replay_count || m->replays[index].kind != KP_UI_REPLAY_ENTRY_FILE) return STR_NOT_VALID;
-	replay_relative(m, m->replays[index].file, rel, sizeof rel);
-	if (read_replay(f, rel, &rep, &refusal) != 0) {
+	char rel[ENTRY_PATH], why[KP_ERROR_SIZE];
+	int k;
+	if (index < 0 || index >= m->entry_count || m->entries[index].kind != KP_UI_ENTRY_REPLAY) return STR_NOT_VALID;
+	if (!entry_path(f, m, index, rel, sizeof rel)) return STR_NOT_VALID;
+	if (read_replay_at(rel, &rep, &refusal) != 0) {
 		/* CreateGameFromEntry's status test: an unreadable entry (status 1) is gluAll 51, a refused read (2) 60 */
 		return refusal == STR_MISSING || refusal == STR_NAME_TOO_LONG ? STR_NOT_VALID : STR_EXPANSION;
 	}
 	kp_session_start_defaults(&st);
-	if (replay_mission(f, &rep) < 0 || kp_session_replay_start(&st, &rep) != 0) {
+	k = replay_mission(f, &rep);
+	if (k == -1 || kp_session_replay_start(&st, &rep) != 0) {
 		say(f, "replay %s: refused (outside version 1)", rel);
+		refusal = STR_NOT_VALID;
+	} else if (k == KP_FLOW_CUSTOM && !custom_replay_loads(f, &rep, why, sizeof why)) {
+		say(f, "replay %s: refused: %s", rel, why);
 		refusal = STR_NOT_VALID;
 	}
 	kp_rep_free(&rep);
 	return refusal;
 }
 
-/* Load Replay's Ok: the replay file's mission without a ready room, played from the file. */
+/* Load Replay's Ok: the replay file's mission without a ready room, played from the file at path. */
 static int start_replay_file(KpFlow *f, const char *file, char *why, size_t why_size)
 {
 	uint16_t refusal;
@@ -577,56 +967,60 @@ static int start_replay_file(KpFlow *f, const char *file, char *why, size_t why_
 		return -1;
 	}
 	kp_rep_free(f->replay_play);
-	if (read_replay(f, file, f->replay_play, &refusal) != 0 || (k = replay_mission(f, f->replay_play)) < 0) {
+	if (read_replay_at(file, f->replay_play, &refusal) != 0 || (k = replay_mission(f, f->replay_play)) == -1) {
 		snprintf(why, why_size, "replay %s: cannot be played", file);
 		return -1;
 	}
+	if (k == KP_FLOW_CUSTOM && custom_from_replay(f, f->replay_play, why, why_size) != 0) return -1;
 	say(f, "replay %s: %u frames", file, (unsigned)kp_rep_frames(f->replay_play));
 	f->glue_room = 0;
 	f->playing_replay = 1;
-	return kp_flow_start_mission(f, k, why, why_size);
+	return k == KP_FLOW_CUSTOM ? kp_flow_start_custom(f, why, why_size) : kp_flow_start_mission(f, k, why, why_size);
 }
 
 static int start_replay_game(KpFlow *f, int index, char *why, size_t why_size)
 {
 	const KpUiMenus *m = &f->ui->menus;
-	char rel[KP_UI_REPLAY_DIR + KP_UI_REPLAY_FILE];
-	if (index < 0 || index >= m->replay_count || m->replays[index].kind != KP_UI_REPLAY_ENTRY_FILE) {
+	char path[ENTRY_PATH];
+	if (index < 0 || index >= m->entry_count || m->entries[index].kind != KP_UI_ENTRY_REPLAY
+		|| !entry_path(f, m, index, path, sizeof path)) {
 		snprintf(why, why_size, "no replay %d", index);
 		return -1;
 	}
-	replay_relative(m, m->replays[index].file, rel, sizeof rel);
-	return start_replay_file(f, rel, why, why_size);
+	return start_replay_file(f, path, why, why_size);
+}
+
+/* Whether the name ends in ext, the ASCII letters folded. */
+static int has_ext(const char *name, const char *ext)
+{
+	size_t n = strlen(name), e = strlen(ext);
+	return n >= e && kp_compare_nocase(name + n - e, ext) == 0;
 }
 
 /* Whether the name ends in .rep, in any case. */
-static int has_replay_ext(const char *name)
-{
-	size_t n = strlen(name), k, e = sizeof REPLAY_EXT - 1;
-	if (n < e) return 0;
-	for (k = 0; k < e; k++) {
-		char c = name[n - e + k];
-		if ((c >= 'A' && c <= 'Z' ? (char)(c - 'A' + 'a') : c) != REPLAY_EXT[k]) return 0;
-	}
-	return 1;
-}
+static int has_replay_ext(const char *name) { return has_ext(name, REPLAY_EXT); }
 
 int kp_flow_play_replay(KpFlow *f, const char *name, char *why, size_t why_size)
 {
-	char file[KP_UI_REPLAY_FILE];
+	char file[KP_UI_MAP_FILE], path[ENTRY_PATH];
 	size_t n = strlen(name);
 	if (n + sizeof REPLAY_EXT > sizeof file) {
 		snprintf(why, why_size, "a replay's name is %d bytes at most", (int)(sizeof file - sizeof REPLAY_EXT));
 		return -1;
 	}
 	snprintf(file, sizeof file, "%s%s", name, has_replay_ext(name) ? "" : REPLAY_EXT);
-	return start_replay_file(f, file, why, why_size);
+	pref_path(f, REPLAY_DIR "/", path, sizeof path);
+	strncat(path, file, sizeof path - strlen(path) - 1);
+	return start_replay_file(f, path, why, why_size);
 }
 
-/* --- Load Replay's Import and Export (Koprulu's: the platform's file picker) --- */
+/* --- Import (Load Replay's and Play Custom's) and Load Replay's Export (Koprulu's: the platform's file picker) --- */
 
-#define IMPORT_DEFAULT "Replay"
+#define IMPORT_REPLAY_DEFAULT "Replay"
+#define IMPORT_MAP_DEFAULT "Map"
 #define IMPORT_COPIES 99 /* " (2)" .. " (99)" */
+#define MAP_EXT ".scm"
+#define MAP_EXPANSION_EXT ".scx"
 
 static int hex_digit(char c)
 {
@@ -646,18 +1040,18 @@ static const char *last_part(const char *s)
 	return at;
 }
 
-/* The name a stem and a copy's number give, the stem cut at a character's start until the whole name fits out and its
- * legacy form is below the original's 32 bytes (the legacy form leaves out what windows-1252 lacks, so a long stem of
- * such characters is short there alone). */
-static void import_candidate(const char *stem, int copy, char *out, size_t size)
+/* The name a stem, a copy's number and ext give, the stem cut at a character's start until the whole name fits out and
+ * its legacy form is below the original's 32 bytes (the legacy form leaves out what windows-1252 lacks, so a long stem
+ * of such characters is short there alone). */
+static void import_candidate(const char *stem, int copy, const char *ext, char *out, size_t size)
 {
-	char cut[KP_UI_REPLAY_FILE], suffix[16], legacy[KP_UI_REPLAY_FILE * 2];
+	char cut[KP_UI_MAP_FILE], suffix[16], legacy[KP_UI_MAP_FILE * 2];
 	size_t n;
 	if (copy > 1) snprintf(suffix, sizeof suffix, " (%d)", copy);
 	else suffix[0] = 0;
 	snprintf(cut, sizeof cut, "%s", stem);
 	for (n = strlen(cut);; ) {
-		int w = snprintf(out, size, "%s%s%s", cut, suffix, REPLAY_EXT);
+		int w = snprintf(out, size, "%s%s%s", cut, suffix, ext);
 		if (n == 0 || (w > 0 && (size_t)w < size && kp_text_to_legacy(out, legacy, sizeof legacy) < REPLAY_NAME_LIMIT)) {
 			return;
 		}
@@ -667,11 +1061,15 @@ static void import_candidate(const char *stem, int copy, char *out, size_t size)
 	}
 }
 
-static void import_stem(const char *source, char *stem, size_t size)
+/* The picked file's stem: its last part, a URI's escapes undone, the first of exts it ends in (in any case) left out,
+ * what no file system takes made '_', else fallback. The index of the extension left out, or -1. */
+static int import_stem(const char *source, const char *const *exts, int ext_count, const char *fallback, char *stem,
+	size_t size)
 {
 	char decoded[1100];
 	const char *p = last_part(source), *name;
 	size_t n = 0, len;
+	int ext = -1, k;
 	for (; *p && n + 1 < sizeof decoded; p++) { /* a URI's escapes ("%3A", "%2F") undone */
 		int hi = p[0] == '%' ? hex_digit(p[1]) : -1, lo = hi >= 0 ? hex_digit(p[2]) : -1;
 		if (lo >= 0) {
@@ -684,7 +1082,12 @@ static void import_stem(const char *source, char *stem, size_t size)
 	decoded[n] = 0;
 	name = last_part(decoded);
 	len = strlen(name);
-	if (has_replay_ext(name)) len -= sizeof REPLAY_EXT - 1;
+	for (k = 0; k < ext_count && ext < 0; k++) {
+		if (has_ext(name, exts[k])) {
+			ext = k;
+			len -= strlen(exts[k]);
+		}
+	}
 	for (n = 0; n < len && n + 1 < size; n++) { /* what no file system takes, and the controls */
 		unsigned char c = (unsigned char)name[n];
 		stem[n] = c < 0x20 || strchr("<>:\"/\\|?*", c) ? '_' : (char)c;
@@ -692,14 +1095,18 @@ static void import_stem(const char *source, char *stem, size_t size)
 	while (n > 0 && n < len && ((unsigned char)name[n] & 0xc0) == 0x80) n--; /* a cut name ends at a character's start */
 	stem[n] = 0;
 	while (n > 0 && (stem[n - 1] == ' ' || stem[n - 1] == '.')) stem[--n] = 0; /* Windows drops them */
-	if (n == 0 || !kp_text_valid_utf8((const uint8_t *)stem, n)) snprintf(stem, size, "%s", IMPORT_DEFAULT);
+	if (n == 0 || !kp_text_valid_utf8((const uint8_t *)stem, n)) snprintf(stem, size, "%s", fallback);
+	return ext;
 }
+
+static const char *const REPLAY_EXTS[] = { REPLAY_EXT };
+static const char *const MAP_EXTS[] = { MAP_EXT, MAP_EXPANSION_EXT };
 
 void kp_flow_replay_import_name(const char *source, char *out, size_t size)
 {
-	char stem[KP_UI_REPLAY_FILE];
-	import_stem(source, stem, sizeof stem);
-	import_candidate(stem, 1, out, size);
+	char stem[KP_UI_MAP_FILE];
+	(void)import_stem(source, REPLAY_EXTS, 1, IMPORT_REPLAY_DEFAULT, stem, sizeof stem);
+	import_candidate(stem, 1, REPLAY_EXT, out, size);
 }
 
 static int file_there(const char *path)
@@ -710,69 +1117,131 @@ static int file_there(const char *path)
 	return 1;
 }
 
+/* The folder an import copies into, made level by level below the preferences' folder: the listed folder's user base
+ * (entry_bases' first: Load Replay's in the replays folder, Play Custom's in the user's maps folder or, below its
+ * "replays", the replays folder), else root's. 0, or -1. */
+static int import_dir(KpFlow *f, int custom, const char *root, char *dir, size_t size)
+{
+	const KpUiMenus *m = f->ui ? &f->ui->menus : NULL;
+	size_t k, pref = strlen(f->pref);
+	int ok = 1;
+	if (m && (m->state == KP_GLUE_PLAY_CUSTOM) == custom) {
+		char bases[CUSTOM_BASES][ENTRY_PATH];
+		(void)entry_bases(f, m, bases);
+		snprintf(dir, size, "%s", bases[0]);
+	} else {
+		pref_path(f, root, dir, size);
+	}
+	for (k = pref; dir[k] && ok; k++) {
+		if (dir[k] != '/') continue;
+		dir[k] = 0;
+		ok = make_dir(dir) == 0;
+		dir[k] = '/';
+	}
+	return ok && make_dir(dir) == 0 ? 0 : -1;
+}
+
+/* The picked bytes copied into dir under the first free name of stem and ext (path its file): 0 with the name in file,
+ * else -1 said. */
+static int import_copy(KpFlow *f, const char *what, const char *name, const char *dir, const char *stem, const char *ext,
+	const uint8_t *bytes, size_t size, char *file, size_t file_size, char *path, size_t path_size)
+{
+	KpError err;
+	int copy;
+	for (copy = 1; copy <= IMPORT_COPIES; copy++) {
+		import_candidate(stem, copy, ext, file, file_size);
+		snprintf(path, path_size, "%s/%s", dir, file);
+		if (!file_there(path)) break;
+	}
+	if (copy > IMPORT_COPIES || kp_write_file_atomic(path, bytes, size, &err) != 0) {
+		say(f, "%s import %s: %s", what, name, copy > IMPORT_COPIES ? "no free name" : err.msg);
+		return -1;
+	}
+	return 0;
+}
+
 int kp_flow_import_replay(KpFlow *f, const char *name, const uint8_t *bytes, size_t size, char *out, size_t out_size)
 {
-	char stem[KP_UI_REPLAY_FILE], file[KP_UI_REPLAY_FILE], dir[1100], path[1400];
-	const KpUiMenus *m = f->ui ? &f->ui->menus : NULL;
+	char stem[KP_UI_MAP_FILE], file[KP_UI_MAP_FILE], dir[ENTRY_PATH], path[ENTRY_PATH + KP_UI_MAP_FILE];
 	KpRep rep;
 	KpRepRefusal why = KP_REP_OK;
 	KpError err;
-	int copy;
 	if (out && out_size) out[0] = 0;
 	if (kp_rep_read(&rep, bytes, size, &why, &err) != 0) {
 		kp_rep_free(&rep);
 		say(f, "replay import %s: refused: %s", name, err.msg);
-		if (f->ui) kp_ui_replay_imported(f->ui, NULL, why == KP_REP_EXPANSION ? STR_EXPANSION : STR_DAMAGED);
+		if (f->ui) kp_ui_file_imported(f->ui, NULL, why == KP_REP_EXPANSION ? STR_EXPANSION : STR_DAMAGED);
 		return -1;
 	}
 	kp_rep_free(&rep);
-	pref_path(f, REPLAY_DIR, dir, sizeof dir);
-	(void)make_dir(dir);
-	if (m && m->replay_dir[0] != 0) {
-		strncat(dir, "/", sizeof dir - strlen(dir) - 1);
-		strncat(dir, m->replay_dir, sizeof dir - strlen(dir) - 1);
-	}
-	import_stem(name, stem, sizeof stem);
-	for (copy = 1; copy <= IMPORT_COPIES; copy++) {
-		import_candidate(stem, copy, file, sizeof file);
-		snprintf(path, sizeof path, "%s/%s", dir, file);
-		if (!file_there(path)) break;
-	}
-	if (copy > IMPORT_COPIES || kp_write_file_atomic(path, bytes, size, &err) != 0) {
-		say(f, "replay import %s: %s", name, copy > IMPORT_COPIES ? "no free name" : err.msg);
-		if (f->ui) kp_ui_replay_imported(f->ui, NULL, STR_NOT_VALID);
+	(void)import_stem(name, REPLAY_EXTS, 1, IMPORT_REPLAY_DEFAULT, stem, sizeof stem);
+	if (import_dir(f, 0, REPLAY_DIR, dir, sizeof dir) != 0
+		|| import_copy(f, "replay", name, dir, stem, REPLAY_EXT, bytes, size, file, sizeof file, path, sizeof path) != 0) {
+		if (f->ui) kp_ui_file_imported(f->ui, NULL, STR_NOT_VALID);
 		return -1;
 	}
 	f->host.sync_files(f->host.ctx);
 	say(f, "replay import %s: %s", name, path);
 	if (out) snprintf(out, out_size, "%s", file);
-	if (f->ui) kp_ui_replay_imported(f->ui, file, 0);
+	if (f->ui) kp_ui_file_imported(f->ui, file, 0);
 	return 0;
 }
 
-static void import_replay(void *host)
+int kp_flow_import_map(KpFlow *f, const char *name, const uint8_t *bytes, size_t size, char *out, size_t out_size)
+{
+	char stem[KP_UI_MAP_FILE], file[KP_UI_MAP_FILE], dir[ENTRY_PATH], path[ENTRY_PATH + KP_UI_MAP_FILE];
+	char why[KP_ERROR_SIZE];
+	const char *ext;
+	KpMapHeader h;
+	int at;
+	if (out && out_size) out[0] = 0;
+	if (!f->ui) return -1; /* the screen's expansion byte reads the header */
+	at = import_stem(name, MAP_EXTS, 2, IMPORT_MAP_DEFAULT, stem, sizeof stem);
+	ext = at >= 0 ? MAP_EXTS[at] : f->ui->menus.expansion ? MAP_EXPANSION_EXT : MAP_EXT;
+	if (import_dir(f, 1, MAP_DIR, dir, sizeof dir) != 0
+		|| import_copy(f, "map", name, dir, stem, ext, bytes, size, file, sizeof file, path, sizeof path) != 0) {
+		kp_ui_file_imported(f->ui, NULL, STR_NOT_VALID);
+		return -1;
+	}
+	/* read as the list reads it (LoadMapEntryInfo 0x45d870): a file that is no map of the screen's goes again */
+	if (map_header_at(f, path, &h, why, sizeof why) != 0) {
+		say(f, "map import %s: refused: %s", name, why);
+		(void)remove(path);
+		kp_ui_file_imported(f->ui, NULL, h.version > MAP_ORIGINAL_VERSION ? STR_EXPANSION : STR_DAMAGED);
+		return -1;
+	}
+	f->host.sync_files(f->host.ctx);
+	say(f, "map import %s: %s", name, path);
+	if (out) snprintf(out, out_size, "%s", file);
+	kp_ui_file_imported(f->ui, file, 0);
+	return 0;
+}
+
+/* Import's picker: the screen's kind of file (Play Custom's maps, Load Replay's replays). */
+static void import_file(void *host)
 {
 	KpFlow *f = (KpFlow *)host;
-	if (f->host.pick_replay) f->host.pick_replay(f->host.ctx);
+	int custom = f->ui && f->ui->menus.state == KP_GLUE_PLAY_CUSTOM;
+	if (f->host.pick_file) f->host.pick_file(f->host.ctx, custom ? KP_FLOW_PICK_MAP : KP_FLOW_PICK_REPLAY);
 }
 
 static void export_replay(void *host, int index)
 {
 	KpFlow *f = (KpFlow *)host;
 	const KpUiMenus *m = &f->ui->menus;
-	char rel[KP_UI_REPLAY_DIR + KP_UI_REPLAY_FILE], path[1400];
+	char path[ENTRY_PATH];
 	uint8_t *bytes;
 	size_t size;
-	if (!f->host.export_replay || index < 0 || index >= m->replay_count || m->replays[index].kind != KP_UI_REPLAY_ENTRY_FILE) return;
-	replay_relative(m, m->replays[index].file, rel, sizeof rel);
-	pref_path(f, REPLAY_DIR "/", path, sizeof path);
-	strncat(path, rel, sizeof path - strlen(path) - 1);
-	if (!(bytes = kp_read_file(path, &size))) {
-		say(f, "replay export %s: cannot be read", rel);
-		kp_ui_replay_imported(f->ui, NULL, STR_DAMAGED);
+	if (!f->host.export_replay || index < 0 || index >= m->entry_count || m->entries[index].kind != KP_UI_ENTRY_REPLAY
+		|| !entry_path(f, m, index, path, sizeof path)) {
 		return;
 	}
-	f->host.export_replay(f->host.ctx, m->replays[index].file, bytes, size);
+	if (!(bytes = kp_read_file(path, &size))) {
+		say(f, "replay export %s: cannot be read", path);
+		kp_ui_file_imported(f->ui, NULL, STR_DAMAGED);
+		return;
+	}
+	f->host.export_replay(f->host.ctx, m->entries[index].file, bytes, size);
 	free(bytes);
 }
 
@@ -802,15 +1271,119 @@ static uint16_t check_save(void *host, int index)
 	return refusal == KP_SAVE_OTHER_BUILD ? KP_UI_GLUALL_SAVE_VERSION : KP_UI_GLUALL_SAVE_DAMAGED;
 }
 
+/* --- the score's Save Replay: the save-replay dialog's files (replay.cpp, atlas P28) in <pref>replays --- */
+
+/* A name that is one file of a folder: no separator, control character, "." or "..". The save-replay dialog's (typed
+ * past network.tbl 17's characters, or a listed file's) and a custom game's next scenario (a map's trigger). */
+static int file_name_ok(const char *name)
+{
+	const unsigned char *p;
+	if (name[0] == 0 || strcmp(name, ".") == 0 || strcmp(name, "..") == 0) return 0;
+	for (p = (const unsigned char *)name; *p; p++) {
+		if (*p < 0x20 || *p == '/' || *p == '\\') return 0;
+	}
+	return 1;
+}
+
+/* The name's <pref>replays/<name>.rep: 0, or -1 for a name that is no file of the folder. */
+static int replay_path(const KpFlow *f, const char *name, char *path, size_t size)
+{
+	char dir[ENTRY_PATH];
+	int n;
+	if (!file_name_ok(name)) return -1;
+	pref_path(f, REPLAY_DIR, dir, sizeof dir);
+	n = snprintf(path, size, "%s/%s%s", dir, name, REPLAY_EXT);
+	return n < 0 || (size_t)n >= size ? -1 : 0;
+}
+
+static void list_replays(void *host, KpUi *ui)
+{
+	/* EnumerateReplayFiles 0x4803d0: the folder made, its .rep files (kp_list_files' order, not the file system's) */
+	KpFlow *f = (KpFlow *)host;
+	char dir[ENTRY_PATH];
+	char **names;
+	int count = 0, k;
+	pref_path(f, REPLAY_DIR, dir, sizeof dir);
+	if (make_dir(dir) != 0) {
+		say(f, "save replay: cannot create %s: %s", dir, strerror(errno));
+		return;
+	}
+	names = kp_list_files(dir, REPLAY_EXT, &count);
+	for (k = 0; k < count; k++) kp_ui_replay_listed(ui, names[k]);
+	kp_list_files_free(names, count);
+}
+
+static int replay_exists(void *host, const char *name)
+{
+	/* SaveReplayAs 0x4802c0's GetFileAttributesA */
+	char path[ENTRY_PATH + KP_UI_MAP_FILE];
+	return replay_path((const KpFlow *)host, name, path, sizeof path) == 0 && file_there(path);
+}
+
+static int copy_last_replay(void *host, const char *name)
+{
+	/* CopyLastReplayTo 0x47fe60: LastReplay.rep's bytes to the name's file */
+	KpFlow *f = (KpFlow *)host;
+	char last[ENTRY_PATH + KP_UI_MAP_FILE], path[ENTRY_PATH + KP_UI_MAP_FILE], dir[ENTRY_PATH];
+	uint8_t *bytes;
+	size_t size = 0;
+	KpError err;
+	int ok;
+	if (replay_path(f, name, path, sizeof path) != 0) {
+		say(f, "save replay %s: not a file name", name);
+		return 0;
+	}
+	pref_path(f, REPLAY_DIR, dir, sizeof dir);
+	snprintf(last, sizeof last, "%s/%s", dir, LAST_REPLAY);
+	if (make_dir(dir) != 0 || !(bytes = kp_read_file(last, &size))) {
+		say(f, "save replay %s: no %s", name, last);
+		return 0;
+	}
+	ok = kp_write_file_atomic(path, bytes, size, &err) == 0;
+	free(bytes);
+	if (!ok) {
+		say(f, "save replay %s: %s", name, err.msg);
+		return 0;
+	}
+	f->host.sync_files(f->host.ctx);
+	say(f, "save replay: %s", path);
+	return 1;
+}
+
+static int delete_replay(void *host, const char *name)
+{
+	/* DeleteReplayFile 0x47ffc0 (Koprulu's Delete) */
+	KpFlow *f = (KpFlow *)host;
+	char path[ENTRY_PATH + KP_UI_MAP_FILE];
+	if (replay_path(f, name, path, sizeof path) != 0) {
+		say(f, "delete replay %s: not a file name", name);
+		return 0;
+	}
+	if (remove(path) != 0) {
+		say(f, "delete replay %s: %s", name, strerror(errno));
+		return 0;
+	}
+	f->host.sync_files(f->host.ctx);
+	say(f, "delete replay: %s", path);
+	return 1;
+}
+
 static void interface_host(KpFlow *f, KpUi *ui)
 {
-	ui->list_replays = list_replays;
+	ui->list_entries = list_entries;
+	ui->load_entry = load_entry;
+	ui->check_map = check_map;
+	ui->templates = &f->data->templates;
 	ui->check_replay = check_replay;
 	ui->check_save = check_save;
-	ui->import_replay = f->host.pick_replay ? import_replay : NULL;
+	ui->import_file = f->host.pick_file ? import_file : NULL;
 	ui->export_replay = f->host.export_replay ? export_replay : NULL;
 	ui->delete_save = delete_save;
 	ui->delete_profile_saves = delete_profile_saves;
+	ui->list_replays = list_replays;
+	ui->replay_exists = replay_exists;
+	ui->copy_last_replay = copy_last_replay;
+	ui->delete_replay = delete_replay;
 	ui->host = f;
 }
 
@@ -867,7 +1440,9 @@ static int start_hud(KpFlow *f, int from_save, char *err, size_t err_size)
 	int32_t min_w, min_h, w, h;
 	double scale;
 	int mode;
+	memset(&m, 0, sizeof m);
 	f->host.hud_map(f->host.ctx, &m);
+	m.player_colors = f->session->g->setup.color; /* the game's colours (0x5264fc) */
 	/* the logical screen a game gets on this window (a game may narrow where a glue screen keeps 640 x 480) */
 	kp_layout_minimum(f->safe_w, f->safe_h, 0, &min_w, &min_h);
 	kp_layout_screen(f->safe_w, f->safe_h, f->flags->scale_mode, 0, min_w, min_h, &mode, &scale, &w, &h);
@@ -902,42 +1477,115 @@ static int start_hud(KpFlow *f, int from_save, char *err, size_t err_size)
 }
 
 /* The session of a mission (ADR 0018): its mission built from its files (kp_data_mission: a campaign mission's
- * scenario, a test scenario's CHK under KP_DATA_SCENARIOS), over a copy of the data set's DAT, with its CV5 and VF4. */
-static int load_mission(KpFlow *f, const KpDataMission *entry, char *err, size_t err_size)
+ * scenario, a test scenario's CHK under KP_DATA_SCENARIOS), over a copy of the data set's DAT, with its CV5 and VF4;
+ * NULL with err. */
+static KpSession *new_session(KpFlow *f, const KpDataMission *entry, char *err, size_t err_size)
 {
+	KpSession *s;
 	KpMission m;
 	KpError e;
 	uint8_t *chk = NULL;
 	size_t chk_size = 0;
-	if (!entry->directory[0]) {
+	const KpFiles *files = &f->data->files;
+	if (entry == &f->custom_entry) {
+		if (!f->custom_map || kp_data_map_mission(f->custom_map, f->custom_load, &m, &e) != 0) {
+			snprintf(err, err_size, "map %s: %s", entry->name, f->custom_map ? e.msg : "none");
+			return NULL;
+		}
+		files = &f->custom_map->files;
+	} else if (!entry->directory[0]) {
 		char path[160];
 		snprintf(path, sizeof path, KP_DATA_SCENARIOS "%s.chk", entry->key + sizeof "scenarios/" - 1);
 		if (!(chk = f->host.read(f->host.ctx, path, &chk_size))) {
 			snprintf(err, err_size, "mission %s: cannot read %s", entry->name, path);
+			return NULL;
+		}
+	}
+	if (entry != &f->custom_entry && kp_data_mission(f->data, entry, chk, chk_size, &m, &e) != 0) { /* the CHK taken */
+		snprintf(err, err_size, "mission %s: %s", entry->name, e.msg);
+		return NULL;
+	}
+	if (!(s = (KpSession *)calloc(1, sizeof *s))) {
+		kp_mission_free(&m);
+		snprintf(err, err_size, "out of memory");
+		return NULL;
+	}
+	if (kp_session_load_from(s, &f->data->shared, &f->data->dat, &m, entry->key, files) != 0) {
+		snprintf(err, err_size, "play %s: %s", entry->name, s->error);
+		kp_session_free(s);
+		free(s);
+		return NULL;
+	}
+	return s;
+}
+
+/* --- the seats (--seats, kp_seats.h) --- */
+
+/* Before the player's seat starts: the lobby's computers made the other seats, the hub its start joins. */
+static int seats_prepare(KpFlow *f, KpSessionStart *st, char *err, size_t err_size)
+{
+	KpSeats *s = &f->seats;
+	int n = f->flags->seats;
+	if (!st->has_setup) {
+		snprintf(err, err_size, "seats: no lobby to seat");
+		return -1;
+	}
+	if (kp_seats_setup(&st->setup, n, err, err_size) != 0) return -1;
+	if (!(s->hub = kp_hub_new(n, 1))) {
+		snprintf(err, err_size, "seats: out of memory");
+		return -1;
+	}
+	s->count = n;
+	s->shown = 0;
+	s->session[0] = f->session;
+	st->hub = s->hub;
+	st->seat = 0;
+	st->local_storm = 0;
+	return 0;
+}
+
+/* After the player's seat started: the other seats' sessions of the same game (each its Storm ID's local player, none
+ * recording), the hub's frames a turn at the game's speed (SetSpeedTable 0x445110), the first turns. */
+static int seats_start(KpFlow *f, const KpDataMission *entry, const KpSessionStart *st, char *err, size_t err_size)
+{
+	KpSeats *s = &f->seats;
+	int k;
+	s->hub->frames_per_turn = kp_hub_frames_per_turn((int)kp_scalar(f->session->g, KP_SPEED), KP_HUB_TURNS_PER_SECOND);
+	for (k = 1; k < s->count; k++) {
+		KpSessionStart other = *st;
+		other.seat = k;
+		other.local_storm = k;
+		other.record = 0;
+		if (!(s->session[k] = new_session(f, entry, err, err_size))) return -1;
+		if (kp_session_start(s->session[k], &other) != 0) {
+			snprintf(err, err_size, "seat %d: %s", k, s->session[k]->error);
 			return -1;
 		}
 	}
-	if (kp_data_mission(f->data, entry, chk, chk_size, &m, &e) != 0) { /* the CHK taken, also on failure */
-		snprintf(err, err_size, "mission %s: %s", entry->name, e.msg);
+	if (kp_seats_begin(s) != 0) {
+		snprintf(err, err_size, "%s", s->report);
 		return -1;
 	}
-	if (!(f->session = (KpSession *)calloc(1, sizeof *f->session))) {
-		kp_mission_free(&m);
-		snprintf(err, err_size, "out of memory");
-		return -1;
-	}
-	if (kp_session_load_from(f->session, &f->data->shared, &f->data->dat, &m, entry->key, &f->data->files) != 0) {
-		snprintf(err, err_size, "play %s: %s", entry->name, f->session->error);
-		return -1;
-	}
+	say(f, "seats: %d seats, %d frames a turn", s->count, s->hub->frames_per_turn);
 	return 0;
+}
+
+/* After the shown seat's steps: the others to its frame and the shared hashes compared; a difference stops the game. */
+static void seats_frame(KpFlow *f)
+{
+	KpSession *s = f->session;
+	if (f->seats.stopped || kp_seats_frame(&f->seats) == 0) return;
+	s->failed = 1;
+	snprintf(s->error, sizeof s->error, "%s", f->seats.report);
+	stop(f, s->error);
 }
 
 /* The session of the mission shown: a campaign's next game takes what the game
  * before it left, a catalog mission played directly starts a run of its campaign. */
 static int build_scene(KpFlow *f, char *err, size_t err_size)
 {
-	const KpDataMission *entry = &f->data->missions[f->current];
+	const KpDataMission *entry = current_entry(f);
+	int custom = entry == &f->custom_entry;
 	KpSessionStart st;
 	int continued = f->has_continue, started = f->has_start_run;
 	destroy_scene(f);
@@ -954,7 +1602,7 @@ static int build_scene(KpFlow *f, char *err, size_t err_size)
 		f->has_run = entry->catalog && kp_campaign_run_of_mission(&f->data->campaign, entry->index, &f->run);
 	}
 	if (f->playing_replay) f->has_run = 0; /* a replay is no game of the player's campaign */
-	if (load_mission(f, entry, err, err_size) != 0) return -1;
+	if (!(f->session = new_session(f, entry, err, err_size))) return -1;
 	mission_text(f, entry);
 	mission_speech(f, entry);
 	kp_session_start_defaults(&st);
@@ -964,7 +1612,7 @@ static int build_scene(KpFlow *f, char *err, size_t err_size)
 			snprintf(err, err_size, "replay: outside version 1");
 			return -1;
 		}
-		if (m->chk_size != f->replay_play->chk_size || memcmp(m->blob, f->replay_play->chk, m->chk_size) != 0) {
+		if (!custom && (m->chk_size != f->replay_play->chk_size || memcmp(m->blob, f->replay_play->chk, m->chk_size) != 0)) {
 			snprintf(err, err_size, "replay: its map is not %s's", entry->name);
 			return -1;
 		}
@@ -975,16 +1623,23 @@ static int build_scene(KpFlow *f, char *err, size_t err_size)
 		/* the player's speed starts each game (0x4bb360 passes 0x6d3130) */
 		if (!keeps_originals(f)) st.speed = (int)f->profile->settings.game_speed + 1;
 		st.record = 1; /* every game's commands for its LastReplay */
+		if (custom) { /* a custom map's game: row 0, the lobby's setup */
+			st.mission_index = 0;
+			st.has_setup = f->has_custom_setup;
+			if (st.has_setup) st.setup = f->custom_setup;
+		}
 		if (continued) {
 			st.has_carry = 1;
 			st.carry = f->continue_carry;
 			st.cheats = f->continue_cheats;
 		}
+		if (custom && f->flags->seats && seats_prepare(f, &st, err, err_size) != 0) return -1;
 	}
 	if (kp_session_start(f->session, &st) != 0) {
 		snprintf(err, err_size, "play %s: %s", entry->name, f->session->error);
 		return -1;
 	}
+	if (f->seats.count && seats_start(f, entry, &st, err, err_size) != 0) return -1;
 	if (f->playing_replay) {
 		int p;
 		for (p = 0; p < KP_UI_SLOT_NAMES; p++) { /* the player records' names (0x6726c8), the vision dialog's rows */
@@ -1008,7 +1663,7 @@ static int build_scene(KpFlow *f, char *err, size_t err_size)
 		if (start_hud(f, 1, err, err_size) != 0) return -1;
 	} else if (f->playing_replay) { /* a replay starts at once (RunCreateGameScreen 0x455550: 0x6662b8 = 1) */
 		if (start_hud(f, 0, err, err_size) != 0) return -1;
-	} else if (f->glue_on) { /* the game waits for its ready room's Start (the console comes then) */
+	} else if (f->glue_on && f->glue_room != 0) { /* the game waits for its ready room's Start (the console comes then) */
 		kp_session_pause(f->session);
 		if (kp_glue_room(&f->glue, f->session->g, f->glue_room) != 0) {
 			snprintf(err, err_size, "the ready room: %s", f->ui->error);
@@ -1033,6 +1688,17 @@ static int start_current(KpFlow *f, int ready, char *err, size_t err_size)
 	f->playing_replay = 0; /* the next game is the player's unless another replay is chosen */
 	f->load_on_start[0] = 0;
 	return -1;
+}
+
+int kp_flow_start_custom(KpFlow *f, char *err, size_t err_size)
+{
+	if (!f->custom_map) {
+		snprintf(err, err_size, "no custom map");
+		return -1;
+	}
+	f->current = KP_FLOW_CUSTOM;
+	f->waiting = 0;
+	return start_current(f, 1, err, err_size); /* the map's scenario is in memory: nothing to wait for */
 }
 
 int kp_flow_start_mission(KpFlow *f, int index, char *err, size_t err_size)
@@ -1155,20 +1821,32 @@ static int start_saved_game(KpFlow *f, const char *name, int other_only, char *w
 	uint8_t *bytes;
 	size_t size;
 	KpError err;
+	KpSaveMap map;
 	int k, rc;
 	if (!(bytes = read_save(f, name, &size))) {
 		snprintf(why, why_size, "no save");
 		return -1;
 	}
 	rc = kp_save_mission(bytes, size, f->identity, mission, sizeof mission, NULL, &err);
+	if (rc == 0) rc = kp_save_map(bytes, size, f->identity, &map, &err);
 	free(bytes);
-	if (rc != 0) {
+	if (rc < 0) {
 		snprintf(why, why_size, "%s", err.msg);
 		return -1;
 	}
-	if (other_only && f->current >= 0 && strcmp(f->data->missions[f->current].key, mission) == 0) {
+	if (other_only && current_entry(f) && strcmp(current_entry(f)->key, mission) == 0) {
+		free(map.chk);
 		snprintf(why, why_size, "the save is this mission's");
 		return -1;
+	}
+	if (rc == 1) { /* a custom map's game: its map from the save, started as it started, the save loaded then */
+		const char *map_name = strncmp(mission, "maps/", 5) == 0 ? mission + 5 : mission;
+		if (custom_from_chk(f, map.chk, map.chk_size, map_name, map.load, why, why_size) != 0) return -1;
+		f->has_custom_setup = 1;
+		f->custom_setup = map.setup;
+		snprintf(f->load_on_start, sizeof f->load_on_start, "%s", name);
+		f->glue_room = 0;
+		return kp_flow_start_custom(f, why, why_size);
 	}
 	for (k = 0; k < f->data->mission_count; k++) {
 		if (strcmp(f->data->missions[k].key, mission) == 0) {
@@ -1181,15 +1859,151 @@ static int start_saved_game(KpFlow *f, const char *name, int other_only, char *w
 	return -1;
 }
 
+/* The ready room of a custom game's local race (RunCreateGameScreen 0x455550: Zerg 8, Terran 7, Protoss 9), else 0. */
+static int custom_room(const KpGameSetup *s)
+{
+	int p;
+	for (p = 0; p < 8; p++) {
+		if (s->type[p] == KP_CTRL_HUMAN) return s->race[p] == 0 ? 8 : s->race[p] == 1 ? 7 : s->race[p] == 2 ? 9 : 0;
+	}
+	return 0;
+}
+
+/* The custom map at path (named name) as the next game's, its scenario read for the template record's load, and its
+ * lobby (kp_setup_lobby: the player's name, local_race and races, the random races from the last game's RNG). 0, or -1
+ * with why and nothing kept. */
+static int custom_lobby(KpFlow *f, const char *path, const char *name, const uint8_t *record, int64_t local_race,
+	const int64_t *races, char *why, size_t why_size)
+{
+	KpChkLoad load = custom_load_of(record);
+	KpMission mission;
+	KpError e;
+	char player[KP_PLAYER_NAME];
+	int rc;
+	if (custom_from_file(f, path, name, load, why, why_size) != 0) return -1;
+	if (kp_data_map_mission(f->custom_map, load, &mission, &e) != 0) {
+		snprintf(why, why_size, "%s", e.msg);
+		custom_close(f);
+		return -1;
+	}
+	legacy_name(f->profile ? f->profile->name : NULL, player, sizeof player);
+	rc = kp_setup_lobby(&f->custom_setup, &mission, record, player, local_race, races, f->rng_state);
+	kp_mission_free(&mission);
+	if (rc != 0) {
+		snprintf(why, why_size, "map %s: no open slot", name);
+		custom_close(f);
+		return -1;
+	}
+	f->has_custom_setup = 1;
+	return 0;
+}
+
+/* Play Custom's Ok on map entry index (CreateGameFromEntry 0x45bfc0, FinishSinglePlayerCreate 0x4554a0, RunCreateGameScreen
+ * 0x455550): the lobby's records of the map, the template and the screen's races (kp_setup_lobby), then the game at
+ * once outside Use Map Settings, else from the ready room of the player's race; a race of none goes back to the screen
+ * (*back). 0, or -1 with why. */
+static int start_custom_game(KpFlow *f, int index, int *back, char *why, size_t why_size)
+{
+	const KpUiMenus *m = &f->ui->menus;
+	const KpUiCreate *c = &m->create;
+	char path[ENTRY_PATH];
+	int room;
+	*back = 0;
+	if (index < 0 || index >= m->entry_count || m->entries[index].kind != KP_UI_ENTRY_MAP
+		|| !entry_path(f, m, index, path, sizeof path)) {
+		snprintf(why, why_size, "no map %d", index);
+		return -1;
+	}
+	if (custom_lobby(f, path, m->entries[index].file, c->record, c->local_race, c->melee ? c->races : NULL, why,
+			why_size) != 0) {
+		return -1;
+	}
+	room = c->at_once ? 0 : custom_room(&f->custom_setup);
+	if (!c->at_once && room == 0) { /* RunCreateGameScreen's other race: the screen again */
+		custom_close(f);
+		*back = 1;
+		return 0;
+	}
+	say(f, "custom %s: %s", m->entries[index].file, room ? "the ready room" : "at once");
+	f->glue_room = room;
+	return kp_flow_start_custom(f, why, why_size);
+}
+
+int kp_flow_play_map(KpFlow *f, const char *path, const char *template_name, char *err, size_t err_size)
+{
+	const char *name = template_name && template_name[0] ? template_name : MAP_TEMPLATE;
+	const char *file = last_part(path);
+	const KpTemplate *t = NULL;
+	int64_t races[KP_CUSTOM_RACES];
+	int k, melee;
+	for (k = 0; k < f->data->templates.count && t == NULL; k++) {
+		if (kp_compare_nocase(f->data->templates.list[k].name, name) == 0) t = &f->data->templates.list[k];
+	}
+	if (t == NULL) {
+		snprintf(err, err_size, "no game type %s in templates.lst", name);
+		return -1;
+	}
+	/* the screen's offer (RefreshComputerSlots 0x456420, FillRaceList 0x456170): a melee template's player and a
+	 * computer in each other slot, all Random; another template's slots as the map has them */
+	melee = t->record[KP_TEMPLATE_VICTORY] == KP_VICTORY_MELEE;
+	for (k = 0; k < KP_CUSTOM_RACES; k++) races[k] = melee ? KP_RACE_RANDOM : KP_RACE_NONE;
+	if (custom_lobby(f, path, file, t->record, melee ? KP_RACE_RANDOM : KP_RACE_NONE, races, err, err_size) != 0) {
+		return -1;
+	}
+	say(f, "custom %s: %s at once", file, t->name);
+	f->glue_room = 0;
+	return kp_flow_start_custom(f, err, err_size);
+}
+
 int kp_flow_load_saved(KpFlow *f, const char *name, char *why, size_t why_size)
 {
 	return start_saved_game(f, name, 0, why, why_size);
 }
 
+int kp_flow_show_seat(KpFlow *f, int seat, char *why, size_t why_size)
+{
+	KpSeats *s = &f->seats;
+	KpSession *old = f->session;
+	int64_t x, y;
+	if (!s->count) {
+		snprintf(why, why_size, "no seats (--seats)");
+		return -1;
+	}
+	if (seat < 0 || seat >= s->count) {
+		snprintf(why, why_size, "no seat %d of %d", seat, s->count);
+		return -1;
+	}
+	if (!f->world || !f->hud_on || !old || !old->g) {
+		snprintf(why, why_size, "no game in play");
+		return -1;
+	}
+	if (seat == s->shown) return 0;
+	kp_hud_take_commands(f->ui, old); /* the seat's commands its interface still holds */
+	end_hud(f);
+	f->host.world_free(f->host.ctx);
+	f->world = 0;
+	s->shown = seat;
+	f->session = s->session[seat];
+	f->loads = f->session->loads;
+	/* its clock from now, paused as the seat's before was (a hidden seat's stepped without it) */
+	kp_session_resume(f->session);
+	if (old->clock.paused) kp_session_pause(f->session);
+	layout(f);
+	if (f->host.world_build(f->host.ctx, why, why_size) != 0) return -1;
+	f->world = 1;
+	if (start_hud(f, 1, why, why_size) != 0) return -1;
+	x = kp_scalar(f->session->g, KP_SCREEN_X);
+	y = kp_scalar(f->session->g, KP_SCREEN_Y);
+	kp_hud_place_camera(&f->hud, &x, &y);
+	say(f, "seats: seat %d shown", seat);
+	return 0;
+}
+
 /* The glue state of the run's campaign menu: the expansion's or the original's. */
 static int run_campaign(const KpFlow *f)
 {
-	return f->has_run && f->run.expansion != 0 ? KP_GLUE_EXPANSION_CAMPAIGN : KP_GLUE_CAMPAIGN;
+	if (!f->has_run) return f->ui && f->ui->menus.expansion ? KP_GLUE_EXPANSION_CAMPAIGN : KP_GLUE_CAMPAIGN; /* a custom game's */
+	return f->run.expansion != 0 ? KP_GLUE_EXPANSION_CAMPAIGN : KP_GLUE_CAMPAIGN;
 }
 
 static void save_requests(KpFlow *f)
@@ -1243,6 +2057,13 @@ static int step_menu(const KpCampaignStep *step)
 	return step->kind == KP_CAMPAIGN_STEP_GLUE ? (int)step->glue : KP_GLUE_MAIN;
 }
 
+/* The custom single-player mode 0x6ca71c (PlaceLocalHumanForCustomGame 0x4bb550; a save's copy 0x5264c3): a custom
+ * map's game that is no replay's playback, whose end goes to CreateNextScenarioGame 0x4bb360. */
+static int custom_mode(const KpFlow *f)
+{
+	return f->current == KP_FLOW_CUSTOM && !f->playing_replay;
+}
+
 static void campaign_after_game(KpFlow *f, int result)
 {
 	KpCampaignStep step;
@@ -1251,6 +2072,12 @@ static void campaign_after_game(KpFlow *f, int result)
 	f->step_cinematic_count = 0;
 	f->step_glue = KP_GLUE_MAIN; /* a game without a run has no step: not the step of the game before */
 	f->step_epilog = 0;
+	f->custom_next[0] = 0;
+	if (custom_mode(f)) {
+		(void)kp_text_from_legacy((const char *)f->session->g->trig.next_scenario, f->custom_next, sizeof f->custom_next);
+		say(f, "custom %s: %s%s", current_name(f), f->custom_next[0] ? "the next scenario " : "the campaign menu",
+			f->custom_next);
+	}
 	if (!f->has_run) return;
 	kp_campaign_after_game(&f->data->campaign, &f->run, kp_profile_progress(f->profile), result,
 		(const char *)f->session->g->trig.next_scenario, &step, cinematics, &count, KP_APP_STEP_CINEMATICS);
@@ -1268,7 +2095,7 @@ static void campaign_after_game(KpFlow *f, int result)
 		kp_carry_take(f->session->g, &f->next_carry);
 		f->next_cheats = kp_cheats(f->session->g);
 	}
-	say(f, "campaign %s: %s", f->data->missions[f->current].name, f->has_next ? "the next game" : "the campaign ends");
+	say(f, "campaign %s: %s", current_name(f), f->has_next ? "the next game" : "the campaign ends");
 }
 
 static void start_glue_game(KpFlow *f, int64_t key, int state)
@@ -1317,9 +2144,53 @@ static void continue_with_next(KpFlow *f)
 
 /* What the score screen leads to: the next game, or the campaign's end: the epilog (mode 9) or the menu its step
  * ended in. */
+/* A custom game's end (CreateNextScenarioGame 0x4bb360): without a next scenario the campaign menu (22 with the
+ * expansion, else 6); otherwise <the map's folder>/<the next scenario> created with the Use Map Settings template
+ * (LoadUseMapSettingsTemplate 0x447b90, CreateGameFromMapPath 0x45c510: the map's races as they are) from the ready
+ * room of the player's race. A failure (no folder: a replay's or a save's map; a name that is no file of the folder,
+ * Koprulu's: the original appends any name; a map that does not load or has no open slot; a race of none) reports
+ * network.tbl's 0x6a and opens the campaign menu. */
+static void custom_next(KpFlow *f)
+{
+	char path[ENTRY_PATH], why[KP_ERROR_SIZE];
+	const char *slash = strrchr(f->custom_path, '/');
+	int menu = run_campaign(f), room;
+	leave_game(f);
+	if (!f->custom_next[0]) {
+		kp_glue_menus(&f->glue, menu);
+		return;
+	}
+	why[0] = 0;
+	/* TODO: a loaded save's game has no map folder (custom_path ""), so its next scenario fails with 0x6a; how the
+	 * original finds the folder after a load (0x5264c3's restore) is not traced */
+	if (slash == NULL
+		|| snprintf(path, sizeof path, "%.*s/%s", (int)(slash - f->custom_path), f->custom_path, f->custom_next)
+			>= (int)sizeof path) {
+		snprintf(why, sizeof why, "no folder of the map");
+	} else if (!file_name_ok(f->custom_next)) {
+		snprintf(why, sizeof why, "no file of the map's folder");
+	} else if (custom_lobby(f, path, f->custom_next, KP_TEMPLATE_UMS, KP_RACE_NONE, NULL, why, sizeof why) == 0) {
+		if ((room = custom_room(&f->custom_setup)) != 0) {
+			say(f, "custom %s: the next scenario's ready room", f->custom_next);
+			f->glue_room = room;
+			if (kp_flow_start_custom(f, why, sizeof why) == 0) return;
+			destroy_scene(f);
+			f->playing = 0;
+		} else {
+			snprintf(why, sizeof why, "the player's race is none of the three");
+			custom_close(f);
+		}
+	}
+	say(f, "custom %s: %s", f->custom_next, why);
+	kp_ui_menus_net_error(f->ui, NET_NEXT_SCENARIO);
+	kp_glue_menus(&f->glue, menu);
+}
+
 static void score_next(KpFlow *f)
 {
-	if (f->has_next) {
+	if (custom_mode(f)) {
+		custom_next(f);
+	} else if (f->has_next) {
 		int state = f->next_glue ? f->next_glue : f->glue_room;
 		continue_with_next(f);
 		start_glue_game(f, f->next_mission, state);
@@ -1648,11 +2519,12 @@ static void glue_frame(KpFlow *f)
 		if (ev.save < 0 || ev.save >= f->ui->menus.save_count
 			|| kp_flow_load_saved(f, f->ui->menus.saves[ev.save], why, sizeof why) != 0) {
 			/* the load screen again, as the original's state stays when LoadSavedGameByName 0x498bd0 fails
-			 * (RunLoadGameScreen 0x459970); its Back keeps the campaign it came from. TODO: tell the player there too
-			 * (an OK popup with KP_UI_GLUALL_SAVE_DAMAGED once the screen stands, as kp_ui_load_failed does in a
-			 * game): check_save refuses at Ok what kp_save_mission refuses, so only a save whose mission is not in the
-			 * data or whose start fails gets here. */
+			 * (RunLoadGameScreen 0x459970); its Back keeps the campaign it came from. The player is told once the
+			 * screen stood (gluAll 66, as kp_ui_load_failed in a game): check_save refuses at Ok what kp_save_mission
+			 * refuses, so only a save whose mission is not in the data or whose start fails (a custom map the game
+			 * refuses, ADR 0023's checks) gets here. */
 			say(f, "glue: load failed: %s", why);
+			kp_ui_menus_refused(f->ui, KP_UI_GLUALL_SAVE_DAMAGED);
 			kp_glue_menus(&f->glue, KP_GLUE_LOAD_SCREEN);
 		}
 		break;
@@ -1660,12 +2532,29 @@ static void glue_frame(KpFlow *f)
 	case KP_GLUE_REPLAY: {
 		char why[256];
 		if (start_replay_game(f, ev.save, why, sizeof why) != 0) {
-			/* Load Replay again, as the original's screen stays when the game is not created */
+			/* Load Replay again, as the original's screen stays when the game is not created, with why once it stood
+			 * (gluAll 51: a map whose game refused it at its start) */
 			say(f, "glue: %s", why);
+			kp_ui_menus_refused(f->ui, STR_NOT_VALID);
 			f->playing_replay = 0;
 			destroy_scene(f);
 			f->playing = 0;
 			kp_glue_menus(&f->glue, KP_GLUE_LOAD_REPLAY);
+		}
+		break;
+	}
+	case KP_GLUE_CUSTOM: {
+		char why[256];
+		int back;
+		if (start_custom_game(f, ev.save, &back, why, sizeof why) != 0) {
+			/* Play Custom again, as the original's screen stays when the game is not created, with why once it stood */
+			say(f, "glue: %s", why);
+			kp_ui_menus_refused(f->ui, STR_NOT_VALID);
+			destroy_scene(f);
+			f->playing = 0;
+			kp_glue_menus(&f->glue, KP_GLUE_PLAY_CUSTOM);
+		} else if (back) {
+			kp_glue_menus(&f->glue, KP_GLUE_PLAY_CUSTOM);
 		}
 		break;
 	}
@@ -1718,7 +2607,7 @@ static void hud_frame(KpFlow *f, int ticks)
 		kp_ui_end_game(ui);
 		save_last_replay(f);
 		sounds(f);
-		say(f, "play %s: exit %d", f->data->missions[f->current].name, exit);
+		say(f, "play %s: exit %d", current_name(f), exit);
 		kp_session_pause(f->session);
 		end_hud(f);
 		if (exit_ends_program(f, exit)) {
@@ -1738,7 +2627,10 @@ static void hud_frame(KpFlow *f, int ticks)
 		campaign_after_game(f, result);
 		kp_session_pause(f->session);
 		end_hud(f);
-		if (f->glue_on) kp_glue_score(&f->glue, f->session->g, result, (uint32_t)(now(f) - f->game_started_at));
+		if (f->glue_on) {
+			kp_glue_score(&f->glue, f->session->g, result, (uint32_t)(now(f) - f->game_started_at),
+				f->session->loads > 0);
+		}
 		f->result = 0;
 	}
 }
@@ -1761,6 +2653,7 @@ static void game_frame(KpFlow *f)
 	}
 	if (!kp_flow_glue_active(f) && !s->failed && !f->flags->autotest) { /* the autotest steps the game itself */
 		ticks = kp_session_advance(s, now(f), &fraction, f->host.clock_ms);
+		if (f->seats.count) seats_frame(f);
 		/* a loaded save: its state at once, without motion from the state before */
 		if (s->loads != f->loads) {
 			f->loads = s->loads;
@@ -1934,6 +2827,9 @@ int kp_flow_match_language(const KpUiLanguages *l, const char *wanted)
 	return -1;
 }
 
+/* --mission's or --map's game at once, without the glue. */
+static int starts_a_game(const KpFlow *f) { return f->flags->mission[0] != 0 || f->flags->map[0] != 0; }
+
 /* The language of the start: --locale's; for the glue (not the checks', --mission's, the screenshots' or the benches':
  * theirs is the base's with its original fonts) the profile's when installed, else the system's first installed, else
  * the base's. */
@@ -1942,7 +2838,7 @@ static void choose_language(KpFlow *f)
 	const KpUiLanguages *l = &f->languages;
 	const char *p = f->flags->system_locales;
 	int at = language_at(l, f->profile->text_locale);
-	if (f->flags->locale[0] != 0 || keeps_originals(f) || f->flags->mission[0] != 0) return;
+	if (f->flags->locale[0] != 0 || keeps_originals(f) || starts_a_game(f)) return;
 	if (at < 0 || !l->list[at].text) at = -1;
 	while (at < 0 && *p) { /* "ru_RU,en_US" */
 		char one[16];
@@ -1960,7 +2856,7 @@ static void choose_speech(KpFlow *f)
 {
 	const KpUiLanguages *l = &f->languages;
 	int at = language_at(l, f->profile->speech_locale);
-	if (f->flags->speech[0] != 0 || keeps_originals(f) || f->flags->mission[0] != 0) return;
+	if (f->flags->speech[0] != 0 || keeps_originals(f) || starts_a_game(f)) return;
 	if (at < 0 || !l->list[at].speech) at = language_at(l, f->flags->locale);
 	if (at >= 0 && !l->list[at].speech) at = -1;
 	snprintf(f->flags->speech, sizeof f->flags->speech, "%s", at >= 0 ? l->list[at].id : KP_LOCALE_BASE);
@@ -2034,7 +2930,7 @@ static void read_glyphs(KpFlow *f)
  * the base's) */
 static void choose_languages(KpFlow *f)
 {
-	int glue = f->flags->locale[0] == 0 && !keeps_originals(f) && f->flags->mission[0] == 0;
+	int glue = f->flags->locale[0] == 0 && !keeps_originals(f) && !starts_a_game(f);
 	memset(&f->languages, 0, sizeof f->languages);
 	if (f->flags->locale[0] != 0 || glue) {
 		list_languages(f);
@@ -2187,6 +3083,14 @@ int kp_flow_init(KpFlow *f, char *err, size_t err_size)
 		snprintf(err, err_size, "no mission %s", f->flags->mission);
 		return -1;
 	}
+	if (f->flags->seats && !f->flags->map[0]) {
+		snprintf(err, err_size, "--seats needs --map");
+		return -1;
+	}
+	if (f->flags->map[0]) {
+		if (!f->flags->play) f->flags->play = 1;
+		return kp_flow_play_map(f, f->flags->map, f->flags->map_template, err, err_size);
+	}
 	if (f->flags->autotest) return 0; /* the autotest starts its games itself */
 	kp_glue_init(&f->glue, f->ui, f->profile, now_ms(f));
 	f->glue_on = 1;
@@ -2213,4 +3117,5 @@ void kp_flow_free(KpFlow *f)
 	if (f->replay_play) kp_rep_free(f->replay_play);
 	free(f->replay_play);
 	f->replay_play = NULL;
+	custom_close(f);
 }

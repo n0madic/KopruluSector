@@ -1,5 +1,6 @@
-/* The modeless dialogs over the game (modeless.cpp, atlas P24 0x46ec70..0x46eda0), the in-game dialogs' tile frame and
- * border colour (opt_dlgs.cpp, P27 0x47bb70, 0x47bd40) and the result dialogs (victory.cpp, P41 0x4bcf80..0x4bd400):
+/* The modeless dialogs over the game (modeless.cpp, atlas P24 0x46ec70..0x46eda0), the dialogs' tile frame and
+ * border colour (opt_dlgs.cpp, P27 0x47bb70, 0x47bd40; the glue's translucent variant of the save-replay dialog and its
+ * boxes) and the result dialogs (victory.cpp, P41 0x4bcf80..0x4bd400):
  * rez\lmission.bin ends the game with exit code 7 after 20 s or at its OK, rez\wmission.bin with 6 at its OK. */
 #include "kp_ui.h"
 
@@ -13,6 +14,8 @@
 #define TILE_FRAMES 3                /* a row of the 9-slice frame: the left, the middle, the right piece */
 #define BORDER_PERCENT 60            /* SetDialogBorderColor 0x47bd40 */
 #define BORDER_FRAME 4               /* the frame whose (0, 0) pixel is the colour that blends */
+#define GLUE_BORDER_PERCENT 80       /* the glue's dialogs over their screen (0x4ca820's 0x50, set B) */
+#define FLAG_EFFECT_B 0x2000000u     /* a translucent dialog's blend: set B (kp_ui_draw.c FLAG_SELECT_B) */
 #define SFX_VICTORY 21
 #define SFX_DEFEAT 22
 #define DEFEAT_TIMER 0
@@ -32,9 +35,6 @@
 #define FLAG_TILED 0x20000000u       /* a button's three-part tiled art (DrawTiledButton 0x4c45a0) */
 #define FLAG_BACKDROP 0x10000000u    /* a dialog composited onto the backdrop with its flags */
 #define CONTINUE_STRING 0x10         /* network.tbl */
-#define TIMED_MESSAGE_MS 7000
-#define TIMED_MESSAGE_COLOUR 3
-#define TIMED_MESSAGE_SOUND 23
 
 static const KpUiFile *tile_grp(const KpUi *ui) { return kp_ui_file(ui->grps, ui->grp_count, TILE_GRP); }
 
@@ -82,12 +82,11 @@ static void tile_row(KpUi *ui, const KpUiFile *grp, int32_t width, int32_t y, in
 	kp_ui_draw_grp_rle(ui, x, y, grp->data, grp->size, frame + 2, crop);
 }
 
-void kp_ui_tile_frame(KpUi *ui, int32_t dialog)
+void kp_ui_tile_frame_grp(KpUi *ui, int32_t dialog, const KpUiFile *grp)
 {
-	/* DrawDialogTileFrame 0x47bb70 (the default GRP): the dialog's size rounded up to whole tiles, its image cleared
-	 * and the rows drawn into it */
+	/* DrawDialogTileFrame 0x47bb70: the dialog's size rounded up to whole tiles, its image cleared and the rows drawn
+	 * into it */
 	KpUiControl *d = &ui->controls[dialog];
-	const KpUiFile *grp = tile_grp(ui);
 	KpUiSurface image, *saved = ui->text.target;
 	int32_t gw, gh, w = d->image_w, h = d->image_h, r, y;
 	uint32_t serial;
@@ -115,6 +114,8 @@ void kp_ui_tile_frame(KpUi *ui, int32_t dialog)
 	ui->text.target = saved;
 }
 
+void kp_ui_tile_frame(KpUi *ui, int32_t dialog) { kp_ui_tile_frame_grp(ui, dialog, tile_grp(ui)); } /* the default GRP */
+
 void kp_ui_border_colour(KpUi *ui, int32_t dialog)
 {
 	/* SetDialogBorderColor 0x47bd40: the dialog is composited translucent onto the backdrop, the tile GRP's centre
@@ -123,6 +124,17 @@ void kp_ui_border_colour(KpUi *ui, int32_t dialog)
 	ui->controls[dialog].flags |= FLAG_BACKDROP | KP_UI_TRANSLUCENT;
 	ui->effects.level[0] = kp_ui_effect_level(BORDER_PERCENT);
 	ui->effects.colour[0] = grp != NULL ? grp_pixel(grp->data, grp->size, BORDER_FRAME, 0, 0) : 0;
+}
+
+void kp_ui_glue_border_colour(KpUi *ui, int32_t dialog)
+{
+	/* SaveReplayDialogInit 0x480db0 and InitMessageBox 0x47aec0 over the glue: the dialog nested in the glue's screen,
+	 * translucent with set B (DrawDialog's blit picks set B under 0x2000000), dlgs\tile.grp's centre colour at 80 %
+	 * (0x47bd70's GRP, not the frame's) */
+	const KpUiFile *grp = tile_grp(ui);
+	ui->controls[dialog].flags |= FLAG_EFFECT_B | KP_UI_TRANSLUCENT;
+	ui->effects.level[1] = kp_ui_effect_level(GLUE_BORDER_PERCENT);
+	ui->effects.colour[1] = grp != NULL ? grp_pixel(grp->data, grp->size, BORDER_FRAME, 0, 0) : 0;
 }
 
 /* SetChildMinus2UserWord 0x46c840 (4, 0x20000000): the OK button's tiled art. */
@@ -315,11 +327,7 @@ static int victory_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 			if (ui->result == ID_OK) {
 				ui->game_exit = EXIT_VICTORY;
 			} else if (ui->result == ID_OPTION) { /* DisplayTimedMessage 0x46ac90 */
-				const uint8_t *text = kp_ui_tbl(ui, KP_UI_NETWORK, CONTINUE_STRING);
-				if (text != NULL) {
-					kp_ui_lines_add(ui, text, TIMED_MESSAGE_COLOUR, ui->now + TIMED_MESSAGE_MS, 0);
-					(void)kp_ui_play_sound(ui, TIMED_MESSAGE_SOUND);
-				}
+				kp_ui_timed_message(ui, kp_ui_tbl(ui, KP_UI_NETWORK, CONTINUE_STRING), 0);
 			}
 			ui->result_answered = 1;
 			break;

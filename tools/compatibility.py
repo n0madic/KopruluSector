@@ -14,6 +14,9 @@ Columns:
 - status: the short status: ✅ a scripted win equal to the original's, 🟡 the mission plays with what the
   other checks show, ❌ not converted. The manual playthrough and the briefings belong to the interface of phase 9.
 
+After the campaigns, the custom games (phase M): one row per game of the original's Play Custom screen in
+tests/golden/oracle/custom, its map, the game type its lobby chose, the steps its golden holds and its AI trace.
+
 Usage: python3 tools/compatibility.py [--check]   (the missions' names come from the 1.17 install's catalog,
 KOPRULU_ORIGINAL: without it --check is skipped and nothing is written)
 """
@@ -50,6 +53,29 @@ def index_names(kind: str) -> set[str]:
     """The names of a golden index (its JSON twin, tools/state_check.py)."""
     path = GOLDEN / kind / "index.json"
     return set(json.loads(path.read_text())) if path.exists() else set()
+
+
+GAME_TYPE_LIST = "17"  # the Play Custom screen's game type combo box (its control id in the lobby's record)
+SUBTYPE_LIST = "18"
+
+
+def custom_rows() -> list[str]:
+    """The custom games' table (tests/golden/oracle/custom), one row per game of the original's Play Custom screen."""
+    rows = []
+    for name in sorted(index_names("custom")):
+        g = json.loads((GOLDEN / "custom" / f"{name}.json").read_text())
+        screen = g.get("lobby", {}).get("screen", {})
+        kinds = []
+        for control in (GAME_TYPE_LIST, SUBTYPE_LIST):
+            box = screen.get(control, {})
+            items, sel = box.get("items", []), box.get("selected", 255)
+            if box.get("usable", control == GAME_TYPE_LIST) and 0 <= sel < len(items):
+                kinds.append(items[sel])
+        steps = sorted(int(k) for k in g["steps"])
+        traced = bool(g.get("ai_trace", {}).get("count"))
+        rows.append(f"| `{name}` | `{g['mission'].removeprefix('maps/')}` | {', '.join(kinds) or '?'} | "
+                    f"{len(steps)} of {steps[0]}–{steps[-1]} | {'✓' if traced else '—'} |")
+    return rows
 
 
 def build(data: Path) -> str:
@@ -99,6 +125,14 @@ def build(data: Path) -> str:
                          f"{mark(mission in defeat_by_mission)} | {status} |")
         lines.append("")
     lines += [f"Scripted wins: {total['won']} of {total['rows']} playable rows.", ""]
+    custom = custom_rows()
+    if custom:
+        lines += ["## Custom games (phase M)", "",
+                  "The games of the original's Play Custom screen against computers ([phase M](phase-multiplayer.md)), "
+                  "each started from its lobby's setup on the install's map and equal to the original's at every step "
+                  "its golden holds, with the computers' AI trace (`test_scenarios`); `test_seats` plays each again "
+                  "with every other player as a seat.", "",
+                  "| Game | Map | Game type | Steps equal | AI trace |", "|---|---|---|---|---|", *custom, ""]
     return "\n".join(lines)
 
 

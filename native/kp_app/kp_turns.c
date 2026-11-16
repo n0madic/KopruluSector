@@ -30,11 +30,24 @@ int kp_turns_replay(KpTurns *t, const KpRep *rep)
 	return 0;
 }
 
+void kp_turns_seats(KpTurns *t, KpTurnHub *hub, int seat)
+{
+	t->kind = KP_TURNS_SEATS;
+	t->hub = hub;
+	t->seat = seat;
+}
+
 void kp_turns_begin(KpTurns *t, int64_t local_player)
 {
 	int p;
 	for (p = 0; p < KP_TURNS_SLOTS; p++) t->storm[p] = -1;
 	if (t->kind == KP_TURNS_LOCAL && local_player >= 0 && local_player < KP_TURNS_SLOTS) t->storm[local_player] = 0;
+	if (t->kind == KP_TURNS_SEATS) { /* every seat's commands under its Storm ID */
+		for (p = 0; p < t->hub->seats; p++) {
+			int64_t r = t->hub->record[p];
+			if (r >= 0 && r < KP_TURNS_SLOTS) t->storm[r] = t->hub->storm[p];
+		}
+	}
 	t->feed_player = local_player;
 }
 
@@ -61,6 +74,7 @@ static int live_in_replay(uint8_t id)
 int kp_turns_submit(KpTurns *t, const uint8_t *bytes, size_t size, int64_t player)
 {
 	KpQueuedCommand *c;
+	if (t->kind == KP_TURNS_SEATS) return kp_hub_submit(t->hub, t->seat, bytes, size);
 	if (t->pending_count >= KP_TURNS_PENDING || size == 0 || size > KP_TURNS_COMMAND_BYTES) return -1;
 	if (player < 0 || player >= KP_TURNS_SLOTS) return -1; /* the dispatcher's players: a seat's, 0..7 */
 	if (t->kind == KP_TURNS_REPLAY && !live_in_replay(bytes[0])) return -1;
@@ -134,6 +148,15 @@ int kp_turns_frame(KpTurns *t, int64_t frame, const KpCommand **list, int *count
 	sp.t = t;
 	*list = NULL;
 	*count = 0;
+	if (t->kind == KP_TURNS_SEATS) {
+		(void)frame;
+		switch (kp_hub_frame(t->hub, t->seat, list, count)) {
+		case KP_HUB_TURN: return KP_TURNS_READY;
+		case KP_HUB_BETWEEN: return KP_TURNS_BETWEEN;
+		case KP_HUB_WAIT: return KP_TURNS_WAIT;
+		default: return KP_TURNS_NO_MEMORY;
+		}
+	}
 	if (t->kind == KP_TURNS_REPLAY) {
 		int fed = feed(t, frame, &sp);
 		if (fed < 0) return KP_TURNS_NO_MEMORY;

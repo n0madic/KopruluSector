@@ -4,7 +4,8 @@
  * core on macOS, 3.3 core on Windows and Linux), the audio, the data, then each frame the flow, the drawing and the
  * development checks.
  *
- *   koprulu [--data DIR] [--mission NAME [--play]] [--scale-mode auto|integer|sharp] [--fog off|original|smooth]
+ *   koprulu [--data DIR] [--mission NAME [--play]] [--map PATH [--map-template NAME] [--seats N]]
+ *           [--scale-mode auto|integer|sharp] [--fog off|original|smooth]
  *           [--water on|off] [--world-only]
  *           [--autotest [N]] [--screenshot PATH [--after SECONDS] [--camera X,Y]] [--bench-frames N]
  *           [--frame-cap HZ]
@@ -99,6 +100,9 @@ static void usage_flags(KpAppFlags *f, int argc, char **argv)
 		else if (strcmp(s, "--res-log") == 0 && next) snprintf(f->res_log, sizeof f->res_log, "%s", argv[++k]);
 		else if (strcmp(s, "--mission") == 0 && next) snprintf(f->mission, sizeof f->mission, "%s", argv[++k]);
 		else if (strcmp(s, "--play") == 0) f->play = 1;
+		else if (strcmp(s, "--map") == 0 && next) snprintf(f->map, sizeof f->map, "%s", argv[++k]);
+		else if (strcmp(s, "--map-template") == 0 && next) snprintf(f->map_template, sizeof f->map_template, "%s", argv[++k]);
+		else if (strcmp(s, "--seats") == 0 && next) f->seats = atoi(argv[++k]);
 		else if (strcmp(s, "--console") == 0 && next) {
 			const char *m = argv[++k];
 			f->console_edges = strcmp(m, "edges") == 0 ? 1 : strcmp(m, "ornaments") == 0 ? 0 : KP_CONSOLE_EDGES;

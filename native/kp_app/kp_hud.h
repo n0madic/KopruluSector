@@ -27,6 +27,7 @@ typedef struct {
 	const KpPalettes *palettes;
 	int tileset_index;
 	const uint8_t *colors; /* the mission's colour slots (8), or NULL */
+	const int64_t *player_colors; /* the game's colours (0x5264fc, 8), or NULL: 0..7 (the flow sets them) */
 } KpHudMap;
 
 /* The console's colours over a tileset (the UI colours and the minimap's). */
@@ -169,20 +170,21 @@ uint16_t kp_hud_buttons(uint16_t buttons, int event);
 enum { KP_GLUE_NONE, KP_GLUE_MENUS, KP_GLUE_ROOM, KP_GLUE_SCORE, KP_GLUE_CREDITS, KP_GLUE_EPILOG, KP_GLUE_TITLE };
 #define KP_GLUE_MAIN 0
 #define KP_GLUE_CAMPAIGN 6
+#define KP_GLUE_PLAY_CUSTOM 11 /* Play Custom (RunCreateGameScreen 0x455550 with ECX = 0) */
 #define KP_GLUE_LOAD_REPLAY 12 /* Load Replay (RunCreateGameScreen 0x455550 with ECX = 1) */
 #define KP_GLUE_LOAD_SCREEN 13 /* its Back goes to the campaign menu it came from */
 #define KP_GLUE_EXPANSION_CAMPAIGN 22
 
 /* What a glue screen ended with. */
 enum { KP_GLUE_GOES_ON, KP_GLUE_PROFILE, KP_GLUE_MISSION, KP_GLUE_EXIT, KP_GLUE_LOAD, KP_GLUE_ROOM_START,
-	KP_GLUE_ROOM_CANCEL, KP_GLUE_SCORE_DONE, KP_GLUE_INTRO, KP_GLUE_LANGUAGE, KP_GLUE_REPLAY };
+	KP_GLUE_ROOM_CANCEL, KP_GLUE_SCORE_DONE, KP_GLUE_INTRO, KP_GLUE_LANGUAGE, KP_GLUE_REPLAY, KP_GLUE_CUSTOM };
 typedef struct {
 	int kind;
 	int profile_changed;
 	int64_t mission;
 	int state, expansion;
 	int32_t save; /* KP_GLUE_LOAD: the load screen's saved game, 0-based in the profile's list; KP_GLUE_REPLAY: Load
-	               * Replay's file, an index of the interface's menus.replays */
+	               * Replay's file, KP_GLUE_CUSTOM: Play Custom's map, an index of the interface's menus.entries */
 	int cinematic; /* KP_GLUE_MISSION: the cinematic the mission history's row plays first (with its prelude), 0 none */
 } KpGlueEvent;
 
@@ -222,8 +224,9 @@ void kp_glue_title(KpGlue *g, uint32_t now_ms);
 void kp_glue_epilog(KpGlue *g, int expansion);
 /* The ready room of the started game (its glue state's race); the game waits for the room's Start. */
 int kp_glue_room(KpGlue *g, KpGame *game, int state);
-/* The score screen of the finished game (result: 2 defeat, 3 victory), the game's seconds. */
-void kp_glue_score(KpGlue *g, KpGame *game, int result, uint32_t elapsed);
+/* The score screen of the finished game (result: 2 defeat, 3 victory), the game's seconds and whether a save was
+ * loaded into it (0x66b410: Save Replay stays off). */
+void kp_glue_score(KpGlue *g, KpGame *game, int result, uint32_t elapsed, int from_save);
 /* Each frame while a glue screen shows: what it ended with, whether the canvas changed (*changed) and the glue's
  * palette when it changed (rgb, *palette). */
 KpGlueEvent kp_glue_frame(KpGlue *g, int32_t w, int32_t h, uint32_t now_ms, int *changed, uint8_t rgb[768],

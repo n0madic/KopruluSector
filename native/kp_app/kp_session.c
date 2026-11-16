@@ -35,16 +35,18 @@
 const int32_t KP_CLOCK_SPEED_MS[KP_CLOCK_SPEEDS] = { 167, 111, 83, 67, 56, 48, 42 };
 
 #define REPL_VERSION 1
+#define MAPC_VERSION 1
 #define CORE_HEADER 12 /* "KPSV", u32 version, u32 the mission name's length */
 #define CORE_PREFIX 4  /* CORE: u32 the native save's size, then the save as one zlib stream */
 #define CORE_LEVEL 1   /* zlib's level of CORE (ADR 0021: 8 MB in about 10 ms to 1/47) */
 #define CORE_SCHEMA 2  /* CORE's section schema: the compressed form */
 #define PROFILE_KIND "PROF"
-#define PROFILE_SCHEMA 8 /* 1: one ID, its progress in PROG; 1 and 2: the saves without their IDs; 1..5: no SOPT; 1..3: no OPTS; 4: OPTS
-                          * with the intro's bit only; 1..6: the names in windows-1252, not UTF-8; 1..7: no LANG */
+#define PROFILE_SCHEMA 9 /* 1: one ID, its progress in PROG; 1 and 2: the saves without their IDs; 1..5: no SOPT; 1..3: no OPTS; 4: OPTS
+                          * with the intro's bit only; 1..6: the names in windows-1252, not UTF-8; 1..7: no LANG; 1..8: no
+                          * CUST */
 #define PROFILE_NAMES_UTF8 7
 #define PROFILE_ID "koprulu"
-#define PROFILE_SECTIONS 7     /* NAME, CHAR, SAVE, VOPT, OPTS, SOPT, LANG */
+#define PROFILE_SECTIONS 8     /* NAME, CHAR, SAVE, VOPT, OPTS, SOPT, LANG, CUST */
 #define FILE_PART_MAX 84       /* 28 bytes as _XX: no name of the original's limits, in windows-1252, goes past it */
 #define FNV_BASIS 0xcbf29ce484222325ull
 #define FNV_PRIME 0x100000001b3ull
@@ -186,7 +188,7 @@ static void first_turn(void *ud)
 		kp_briefing_objectives(f->g, kp_briefing_lead(f->g));
 	}
 	kp_prime(f->g);
-	kp_run_turn(f->g, NULL, 0);
+	if (!f->start->hub) kp_run_turn(f->g, NULL, 0); /* a seat's comes from the hub (kp_session_seat_begin) */
 }
 
 int kp_session_load_from(KpSession *s, const KpHostShared *sh, const KpDat *dat, KpMission *mission, const char *name,
@@ -206,6 +208,10 @@ int kp_session_load_from(KpSession *s, const KpHostShared *sh, const KpDat *dat,
 /* A start's turn source (a replay's playback: its record) and recorder (a recorded game's, empty, recording). */
 static int start_turns(KpSession *s, const KpSessionStart *start)
 {
+	if (start->hub) {
+		kp_turns_seats(&s->turns, start->hub, start->seat);
+		return 0;
+	}
 	if (start->replay) return kp_turns_replay(&s->turns, start->replay);
 	if (!start->record) return 0;
 	if (!(s->rec = (KpRecorder *)malloc(sizeof *s->rec))) return -1;
@@ -234,12 +240,18 @@ int kp_session_start(KpSession *s, const KpSessionStart *start)
 	o.cheats = start->cheats;
 	o.carry = start->has_carry ? &start->carry : NULL;
 	o.replay = start->replay != NULL && !start->replay_as_game;
+	o.setup = start->has_setup ? &start->setup : NULL;
+	o.local_storm = start->local_storm;
 	if (kp_host_game_start(&s->host, start->seed, start->expansion, &o, &err) != 0) {
 		fail(s, err.msg);
 		return -1;
 	}
 	s->g = s->host.g;
-	kp_turns_begin(&s->turns, s->g->local_player);
+	if (start->hub && kp_hub_seat(start->hub, start->seat, s->g->local_record, (int32_t)start->local_storm) != 0) {
+		fail(s, "seats: a seat or Storm ID twice");
+		return -1;
+	}
+	kp_turns_begin(&s->turns, s->g->local_record); /* the seat's record issues its commands */
 	if (start->replay) {
 		s->g->replay_frames = kp_turns_frames(&s->turns);
 		s->g->replay_header_speed = kp_rep_speed(start->replay);
@@ -282,13 +294,34 @@ uint32_t kp_session_replay_frames(const KpSession *s) { return kp_turns_frames(&
 typedef struct {
 	KpGame *g;
 	const KpCommand *list;
-	int count;
+	int count, between, first;
 } Frame;
 
 static void run_frame(void *ud)
 {
 	const Frame *f = (const Frame *)ud;
-	kp_run_frame(f->g, f->list, f->count);
+	if (f->first) kp_run_turn(f->g, f->list, f->count);
+	else if (f->between) kp_run_frame_between_turns(f->g);
+	else kp_run_frame(f->g, f->list, f->count);
+}
+
+int kp_session_seat_begin(KpSession *s)
+{
+	Frame frame;
+	int64_t f;
+	if (s->failed || !s->g || s->turns.kind != KP_TURNS_SEATS) return -1;
+	memset(&frame, 0, sizeof frame);
+	frame.g = s->g;
+	frame.first = 1;
+	f = kp_scalar(s->g, KP_FRAME);
+	if (kp_hub_first_turn(s->turns.hub, s->turns.seat, &frame.list, &frame.count) != KP_HUB_TURN) {
+		fail(s, "seats: the first turn is not there");
+		return -1;
+	}
+	if (s->rec) kp_turns_record(&s->turns, s->rec, f, frame.list, frame.count);
+	(void)kp_session_guard(s, run_frame, &frame);
+	s->start_turn = kp_scalar(s->g, KP_TURN);
+	return s->failed ? -1 : 0;
 }
 
 #define KP_REPLAY_RESULT 3 /* the victory dialog's result (KP_EVENT_GAME_RESULT's a) */
@@ -301,12 +334,15 @@ int kp_session_step(KpSession *s, double (*clock_ms)(void))
 	int status;
 	if (s->failed || !s->g) return 0;
 	f = kp_scalar(s->g, KP_FRAME);
+	memset(&frame, 0, sizeof frame);
 	frame.g = s->g;
 	status = kp_turns_frame(&s->turns, f, &frame.list, &frame.count);
 	if (status == KP_TURNS_NO_MEMORY) {
 		fail(s, "step: out of memory");
 		return 0;
 	}
+	if (status == KP_TURNS_WAIT) return 0; /* a seat's turn is missing: the frame waits (WaitForLaggingPlayers 0x47a810) */
+	frame.between = status == KP_TURNS_BETWEEN;
 	/* at the end of the record the playback pauses (SetReplayPaused 0x480e00) and the victory dialog opens once
 	 * (ShowVictoryDialog 0x4bcff0, the presentation's on the event) */
 	if (status == KP_TURNS_ENDED) kp_event(s->g, KP_EVENT_GAME_RESULT, KP_REPLAY_RESULT, 0, 0, NULL);
@@ -359,14 +395,13 @@ int kp_session_advance(KpSession *s, double now, double *alpha, double (*clock_m
 
 static int err_msg(KpError *err, const char *msg);
 
-/* The replay's leave 0x57 and chat 0x5c: a network player's, outside V1 (docs/formats/rep.md); and every id the recorder
- * never writes (RecordCommand 0x478340's table), which no file the original wrote holds: a crafted file's save 0x06 or
- * load 0x07 would write over or load the player's saves. kp_record_split's callback over an entry, as the playback
- * walks it (an entry may hold more commands than its first). */
+/* Every id the recorder never writes (RecordCommand 0x478340's table), which no file the original wrote holds: a
+ * crafted file's save 0x06 or load 0x07 would write over or load the player's saves. kp_record_split's callback over
+ * an entry, as the playback walks it (an entry may hold more commands than its first). */
 static void refused_command(void *ud, const uint8_t *cmd, size_t n)
 {
 	(void)n;
-	if (cmd[0] == 0x57 || cmd[0] == 0x5c || kp_record_excluded(cmd[0])) *(int *)ud = 1;
+	if (kp_record_excluded(cmd[0])) *(int *)ud = 1;
 }
 
 int kp_session_replay_start(KpSessionStart *st, const KpRep *rep)
@@ -402,6 +437,9 @@ int kp_session_replay_start(KpSessionStart *st, const KpRep *rep)
 	st->seed = kp_rep_seed(rep);
 	st->expansion = kp_rep_brood_war(rep);
 	st->mission_index = kp_rep_campaign(rep);
+	/* a custom map's game (campaign row 0) starts from the header's setup; a campaign's from its map */
+	st->has_setup = st->mission_index == 0;
+	if (st->has_setup) kp_rep_setup(rep, &st->setup);
 	st->speed = kp_rep_speed(rep) + 1;
 	st->replay = rep;
 	st->record = 0;
@@ -433,14 +471,22 @@ void kp_session_replay_game(KpSession *s, uint32_t seed, KpRepGame *game)
 	game->tileset = (int)(m->era % 8);
 	game->speed = (int)kp_scalar(g, KP_SPEED);
 	game->map_name = kp_map_string(g, m->name_string);
+	game->template_record = g->setup.template_record;
+	game->slots = (int)g->setup.slots;
+	game->colors = g->setup.color;
+	game->user_select = g->setup.user_select;
+	/* the started game's records (RunGameSession 0x467ba0 records 0x6726c8 after StartGame's slot steps); the header
+	 * has the slots 8..11 empty. TODO: a team game's slots 8..11 keep forces (a network team replay's header has
+	 * them) */
 	for (p = 0; p < 8; p++) {
 		KpRepPlayer *r = &game->players[p];
 		r->slot = (uint32_t)p;
-		r->type = (uint8_t)g->players.controller[p];
-		r->race = (uint8_t)g->players.race[p];
-		r->force = (uint8_t)g->players.force[p];
-		r->storm = r->type == KP_CTRL_HUMAN ? 0 : -1;
-		if (r->type == KP_CTRL_HUMAN) snprintf(r->name, sizeof r->name, "%s", ANONYMOUS);
+		r->type = (uint8_t)g->setup.type[p];
+		r->race = (uint8_t)g->setup.race[p];
+		r->force = (uint8_t)g->setup.force[p];
+		r->storm = (int32_t)g->setup.storm[p];
+		if (g->setup.name[p][0]) memcpy(r->name, g->setup.name[p], sizeof r->name - 1); /* r zeroed: terminated */
+		else if (r->type == KP_CTRL_HUMAN) snprintf(r->name, sizeof r->name, "%s", ANONYMOUS);
 	}
 }
 
@@ -596,6 +642,59 @@ static void put32(Buf *b, uint32_t v)
 	put16(b, v >> 16);
 }
 
+static void put64(Buf *b, int64_t v)
+{
+	put32(b, (uint32_t)(uint64_t)v);
+	put32(b, (uint32_t)((uint64_t)v >> 32));
+}
+
+static int64_t get64(const uint8_t *d) { return (int64_t)((uint64_t)kp_le_u32(d) | (uint64_t)kp_le_u32(d + 4) << 32); }
+
+/* A setup's bytes (MAPC): the template, the multiplayer byte, slots and started (i64), per slot its Storm ID, type,
+ * race and force (i64), the names, then the 8 user-select flags and colours (i64). */
+#define SETUP_BYTES (KP_TEMPLATE_SIZE + 8 * 3 + KP_SETUP_SLOTS * 4 * 8 + KP_SETUP_SLOTS * KP_SETUP_NAME + 8 * 2 * 8)
+
+static void put_setup(Buf *b, const KpGameSetup *s)
+{
+	int k;
+	put(b, s->template_record, KP_TEMPLATE_SIZE);
+	put64(b, s->multiplayer);
+	put64(b, s->slots);
+	put64(b, s->started);
+	for (k = 0; k < KP_SETUP_SLOTS; k++) {
+		put64(b, s->storm[k]);
+		put64(b, s->type[k]);
+		put64(b, s->race[k]);
+		put64(b, s->force[k]);
+	}
+	put(b, s->name, sizeof s->name);
+	for (k = 0; k < 8; k++) put64(b, s->user_select[k]);
+	for (k = 0; k < 8; k++) put64(b, s->color[k]);
+}
+
+static void get_setup(const uint8_t *d, KpGameSetup *s)
+{
+	int k;
+	memset(s, 0, sizeof *s);
+	memcpy(s->template_record, d, KP_TEMPLATE_SIZE);
+	d += KP_TEMPLATE_SIZE;
+	s->multiplayer = get64(d);
+	s->slots = get64(d + 8);
+	s->started = get64(d + 16);
+	d += 24;
+	for (k = 0; k < KP_SETUP_SLOTS; k++, d += 32) {
+		s->storm[k] = get64(d);
+		s->type[k] = get64(d + 8);
+		s->race[k] = get64(d + 16);
+		s->force[k] = get64(d + 24);
+	}
+	memcpy(s->name, d, sizeof s->name);
+	for (k = 0; k < KP_SETUP_SLOTS; k++) s->name[k][KP_SETUP_NAME - 1] = 0;
+	d += sizeof s->name;
+	for (k = 0; k < 8; k++) s->user_select[k] = get64(d + 8 * k);
+	for (k = 0; k < 8; k++) s->color[k] = get64(d + 64 + 8 * k);
+}
+
 static int pres_index(const KpSavePresentation *p, const char *name)
 {
 	int k;
@@ -641,8 +740,9 @@ static int deflate_core(const uint8_t *core, size_t size, uint8_t **out, size_t 
 int kp_save_encode(KpSession *s, const KpSaveIdentity *id, const KpSaveCampaign *camp, const KpSavePresentation *pres,
 	uint8_t **out, size_t *size, KpError *err)
 {
-	Buf cmds, cmp, prs, rpl;
-	KpKpfOut sections[5];
+	Buf cmds, cmp, prs, rpl, mpc;
+	KpKpfOut sections[6];
+	const KpMission *mission = &s->host.data.mission;
 	uint8_t *core = NULL, *zcore = NULL;
 	size_t core_size = 0, zcore_size = 0;
 	int k, rc, nsections = 4;
@@ -666,6 +766,7 @@ int kp_save_encode(KpSession *s, const KpSaveIdentity *id, const KpSaveCampaign 
 	memset(&cmp, 0, sizeof cmp);
 	memset(&prs, 0, sizeof prs);
 	memset(&rpl, 0, sizeof rpl);
+	memset(&mpc, 0, sizeof mpc);
 	/* REPL (a recorded game's): u32 version, the header kept since the start, u32 the loads, u32 whether one lost the
 	 * record, i64 the open block's frame, u32 size and the record, its open block closed (SaveRecordedCommands
 	 * 0x478980: commands of the same frame recorded after it go on without a header) */
@@ -680,10 +781,23 @@ int kp_save_encode(KpSession *s, const KpSaveIdentity *id, const KpSaveCampaign 
 		put32(&rpl, (uint32_t)((uint64_t)s->rec->open_frame >> 32));
 		put32(&rpl, (uint32_t)n);
 		put(&rpl, bytes, n);
-		sections[4].fourcc = "REPL";
-		sections[4].payload = rpl.b;
-		sections[4].size = rpl.n;
-		nsections = 5;
+		sections[nsections].fourcc = "REPL";
+		sections[nsections].payload = rpl.b;
+		sections[nsections].size = rpl.n;
+		nsections++;
+	}
+	/* MAPC (a custom map's game, ADR 0024): u32 version, u8 the load (KpChkLoad), u32 size and the scenario as read,
+	 * the setup the game started from (put_setup): the load starts the same game before it loads the state */
+	if (mission->load != KP_CHK_CAMPAIGN) {
+		put32(&mpc, MAPC_VERSION);
+		put8(&mpc, (uint32_t)mission->load);
+		put32(&mpc, (uint32_t)mission->chk_size);
+		put(&mpc, mission->blob, mission->chk_size);
+		put_setup(&mpc, &s->g->setup);
+		sections[nsections].fourcc = "MAPC";
+		sections[nsections].payload = mpc.b;
+		sections[nsections].size = mpc.n;
+		nsections++;
 	}
 	/* CMDS: u32 count, then per command u8 player, u16 size and its bytes */
 	put32(&cmds, (uint32_t)s->turns.pending_count);
@@ -741,13 +855,14 @@ int kp_save_encode(KpSession *s, const KpSaveIdentity *id, const KpSaveCampaign 
 	sections[3].size = prs.n;
 	for (k = 0; k < nsections; k++) sections[k].schema_version = 1;
 	sections[0].schema_version = CORE_SCHEMA;
-	rc = cmds.failed || cmp.failed || prs.failed || rpl.failed ? -1
+	rc = cmds.failed || cmp.failed || prs.failed || rpl.failed || mpc.failed ? -1
 		: kp_kpf_build(KP_SAVE_KIND, KP_SAVE_SCHEMA, 0, id->profile_id, id->source_hash, sections, nsections, out, size);
 	free(zcore);
 	free(cmds.b);
 	free(cmp.b);
 	free(prs.b);
 	free(rpl.b);
+	free(mpc.b);
 	if (rc != 0) return err_msg(err, "save: out of memory");
 	return 0;
 }
@@ -924,6 +1039,33 @@ int kp_save_mission(const uint8_t *save, size_t size, const KpSaveIdentity *id, 
 	return rc;
 }
 
+int kp_save_map(const uint8_t *save, size_t size, const KpSaveIdentity *id, KpSaveMap *map, KpError *err)
+{
+	SaveParts p;
+	const KpKpfSection *s;
+	uint32_t n;
+	int refusal, rc = 0;
+	memset(map, 0, sizeof *map);
+	if (decode(&p, save, size, id, &refusal, err) != 0) return -1;
+	if ((s = kp_kpf_find(&p.c, "MAPC")) != NULL) {
+		rc = -1;
+		if (s->size < 9 || kp_le_u32(s->data) != MAPC_VERSION || s->data[4] == KP_CHK_CAMPAIGN || s->data[4] > KP_CHK_UMS
+			|| (n = kp_le_u32(s->data + 5)) > KP_REP_MAX_CHK || s->size != 9 + (size_t)n + SETUP_BYTES) {
+			err_msg(err, "save: a damaged custom map");
+		} else if (!(map->chk = (uint8_t *)malloc(n ? n : 1))) {
+			err_msg(err, "save: out of memory");
+		} else {
+			if (n) memcpy(map->chk, s->data + 9, n);
+			map->chk_size = n;
+			map->load = (KpChkLoad)s->data[4];
+			get_setup(s->data + 9 + n, &map->setup);
+			rc = 1;
+		}
+	}
+	kp_kpf_free(&p.c);
+	return rc;
+}
+
 #define REPL_FIXED (4 + KP_REP_HEADER_SIZE + 4 + 4 + 8 + 4) /* REPL's fields before the record */
 
 /* A save's REPL as kp_save_encode writes it (NULL: none); -1 damaged. */
@@ -1060,7 +1202,7 @@ int kp_write_file_atomic(const char *path, const uint8_t *data, size_t size, KpE
 
 static int lower_byte(int c) { return c >= 'A' && c <= 'Z' ? c + 32 : c; }
 
-static int compare_nocase(const char *a, const char *b)
+int kp_compare_nocase(const char *a, const char *b)
 {
 	while (*a && lower_byte((unsigned char)*a) == lower_byte((unsigned char)*b)) {
 		a++;
@@ -1071,13 +1213,13 @@ static int compare_nocase(const char *a, const char *b)
 
 static int compare_names(const void *a, const void *b)
 {
-	return compare_nocase(*(const char *const *)a, *(const char *const *)b);
+	return kp_compare_nocase(*(const char *const *)a, *(const char *const *)b);
 }
 
 static int has_extension(const char *name, const char *ext)
 {
 	size_t n = strlen(name), e = strlen(ext);
-	return n > e && compare_nocase(name + n - e, ext) == 0;
+	return n > e && kp_compare_nocase(name + n - e, ext) == 0;
 }
 
 void kp_list_files_free(char **names, int count)
@@ -1285,14 +1427,21 @@ void kp_profile_from_words(KpCampaignProfile *p, const int64_t words[6])
  * options of the sound and speed dialogs and the tips, u32 each: the music, the effects, the mouse and key scroll speeds,
  * the game speed, the tip, the CPU throttle; optional, a value absent or out of range has a new profile's), LANG (the
  * languages the player chose, u8 length + ASCII ID each: the text's, then the speech's; "" none; optional, schema 8,
- * a language that is not an ID of letters is none). Schema 1 had
+ * a language that is not an ID of letters is none), CUST (Play Custom's registry values, u8 length + UTF-8 each: the
+ * game type's, then the subtype's; optional, schema 9, a damaged one or a value that is not UTF-8 below 32 bytes is
+ * none). Schema 1 had
  * PROG (the progress) for the one ID NAME; schemas 1 and 2 had SAVE without the IDs (u8 length + name each), one list
  * for every ID. */
 int kp_profile_encode(const KpProfile *p, uint8_t **out, size_t *size)
 {
-	Buf chars, saves, video, options, settings, languages;
+	Buf chars, saves, video, options, settings, languages, custom;
 	KpKpfOut sections[PROFILE_SECTIONS];
 	int k, rc;
+	memset(&custom, 0, sizeof custom);
+	put8(&custom, (uint32_t)strlen(p->custom_type));
+	put(&custom, p->custom_type, strlen(p->custom_type));
+	put8(&custom, (uint32_t)strlen(p->game_subtype));
+	put(&custom, p->game_subtype, strlen(p->game_subtype));
 	memset(&chars, 0, sizeof chars);
 	memset(&saves, 0, sizeof saves);
 	memset(&video, 0, sizeof video);
@@ -1359,8 +1508,12 @@ int kp_profile_encode(const KpProfile *p, uint8_t **out, size_t *size)
 	sections[6].fourcc = "LANG";
 	sections[6].payload = languages.b;
 	sections[6].size = languages.n;
+	sections[7].fourcc = "CUST";
+	sections[7].payload = custom.b;
+	sections[7].size = custom.n;
 	for (k = 0; k < PROFILE_SECTIONS; k++) sections[k].schema_version = 1;
-	rc = chars.failed || saves.failed || video.failed || options.failed || settings.failed || languages.failed ? -1
+	rc = chars.failed || saves.failed || video.failed || options.failed || settings.failed || languages.failed
+		|| custom.failed ? -1
 		: kp_kpf_build(PROFILE_KIND, PROFILE_SCHEMA, 0, PROFILE_ID, NULL, sections, PROFILE_SECTIONS, out, size);
 	free(chars.b);
 	free(saves.b);
@@ -1368,6 +1521,7 @@ int kp_profile_encode(const KpProfile *p, uint8_t **out, size_t *size)
 	free(options.b);
 	free(settings.b);
 	free(languages.b);
+	free(custom.b);
 	return rc;
 }
 
@@ -1413,6 +1567,18 @@ static int read_locale_id(const KpKpfSection *s, size_t *at, char out[KP_PROFILE
 	return 0;
 }
 
+/* A CUST value: UTF-8 below KP_PROFILE_CUSTOM bytes, else none (out ""); -1 for a damaged section. */
+static int read_custom_value(const KpKpfSection *s, size_t *at, char out[KP_PROFILE_CUSTOM])
+{
+	char value[256];
+	if (read_name(s, at, value, sizeof value) != 0) return -1;
+	out[0] = 0;
+	if (strlen(value) < KP_PROFILE_CUSTOM && kp_text_valid_utf8((const uint8_t *)value, strlen(value))) {
+		memcpy(out, value, strlen(value) + 1);
+	}
+	return 0;
+}
+
 /* SOPT's value k into *value when it is there and at most max (as LoadRegistryOptions 0x4ce5a0, every range from 0). */
 static void sopt_value(const KpKpfSection *s, int k, uint32_t max, uint32_t *value)
 {
@@ -1425,7 +1591,7 @@ int kp_profile_decode(KpProfile *p, const uint8_t *data, size_t size, KpError *e
 {
 	KpKpf c;
 	KpKpfExpect e;
-	const KpKpfSection *name, *saves, *video, *options, *settings, *languages;
+	const KpKpfSection *name, *saves, *video, *options, *settings, *languages, *custom;
 	size_t at = 2;
 	int k, rc = -1;
 	kp_profile_init(p);
@@ -1552,6 +1718,12 @@ int kp_profile_decode(KpProfile *p, const uint8_t *data, size_t size, KpError *e
 		if (read_locale_id(languages, &from, p->text_locale) != 0
 			|| read_locale_id(languages, &from, p->speech_locale) != 0) {
 			p->text_locale[0] = p->speech_locale[0] = 0;
+		}
+	}
+	if ((custom = kp_kpf_find(&c, "CUST")) != NULL) { /* a damaged one: no choice, the rest stays */
+		size_t from = 0;
+		if (read_custom_value(custom, &from, p->custom_type) != 0 || read_custom_value(custom, &from, p->game_subtype) != 0) {
+			p->custom_type[0] = p->game_subtype[0] = 0;
 		}
 	}
 	rc = 0;

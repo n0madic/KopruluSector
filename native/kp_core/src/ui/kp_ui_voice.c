@@ -237,8 +237,8 @@ int kp_ui_sound_played(KpUi *ui, int64_t kind, int64_t a, int64_t b, int64_t c)
 	return 0;
 }
 
-/* PlayUnitSelectSound 0x446c30; a critter selected 13 times in a row dies (offline: the multiplayer byte 0x672664 is
- * 0) before its answer. */
+/* PlayUnitSelectSound 0x446c30; a critter selected 13 times in a row dies before its answer, outside a network game
+ * (the multiplayer byte 0x672664 at 0). */
 static void select_sound(KpUi *ui, int64_t unit)
 {
 	KpGame *g = game(ui);

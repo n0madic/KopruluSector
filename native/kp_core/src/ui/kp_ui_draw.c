@@ -481,7 +481,8 @@ KpUiDraw kp_ui_type_draw(int type)
 	case 10: return draw_right_text;
 	case 11: return draw_centred_text;
 	case 12: return kp_ui_list_draw;
-	default: return NULL; /* type 13, a combo box: not ported, only the multiplayer and custom games' dialogs and the message filter have one (scdata/tests/test_ui.py) */
+	case 13: return kp_ui_combo_draw;
+	default: return NULL;
 	}
 }
 

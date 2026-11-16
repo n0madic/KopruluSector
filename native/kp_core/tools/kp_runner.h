@@ -132,6 +132,9 @@ typedef struct {
 	const char *speech;
 	/* the source the speech is read from (an install, a repack with the language's group); NULL: the data root's */
 	const char *speech_data;
+	/* the folder a custom map's relative path is under (KP_ORACLE_MAPS: an install's maps folder); NULL: the working
+	 * directory */
+	const char *maps;
 } KpOracleOpts;
 
 /* opts with the defaults: the host's, the mission index looked up. */
@@ -151,8 +154,12 @@ KpResSourceKind kp_oracle_data_origin(const char *root);
  * from its files (kp_data_mission, a scenario's CHK under root): its catalog entry, or NULL with the error (m
  * released). The root keeps its last 4 missions built and gives a copy of a kept one (kp_mission_copy). */
 const KpDataMission *kp_oracle_mission(const char *root, const char *key, KpMission *m, KpError *err);
-/* Starts the mission of a key (kp_oracle_mission) with the seed and expansion; -1 with the error in err (og
- * released). */
+/* The key prefix of a custom map's game: "maps/<path>", the .scm/.scx at path (an absolute path, or one relative to
+ * opts->maps), started from opts->host.setup (kp_oracle_setup_opts, a golden's "setup") as campaign row 0. A .rep at
+ * path gives its scenario and, without opts->host.setup, its header's setup (the public replays of phase M). */
+#define KP_ORACLE_MAPS "maps/"
+/* Starts the mission of a key (kp_oracle_mission, or a custom map's: KP_ORACLE_MAPS) with the seed and expansion; -1
+ * with the error in err (og released). */
 int kp_oracle_game_start(KpOracleGame *og, const char *root, const char *key, uint32_t seed, int expansion,
 	const KpOracleOpts *opts, KpError *err);
 void kp_oracle_game_free(KpOracleGame *og);

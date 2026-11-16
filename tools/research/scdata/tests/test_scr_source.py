@@ -154,10 +154,14 @@ class RemasteredInstallTest(unittest.TestCase):
             counts: dict[str, int] = {}
             for status, _ in s.status.values():
                 counts[status] = counts.get(status, 0) + 1
+            # a file the build names but the install has not downloaded (another language's) is the install's choice;
+            # one the build does not name at all is a gap of the source
+            unnamed = sorted(n for n, (status, casc_name) in s.status.items() if status == "missing" and not casc_name)
         assert counts.get("exact", 0) >= self.MIN_EXACT, counts
         assert counts.get("derived", 0) >= self.MIN_DERIVED, counts
         assert counts.get("equivalent", 0) >= self.MIN_EQUIVALENT, counts
-        assert "unlisted" not in counts and "missing" not in counts, counts
+        assert "unlisted" not in counts, counts
+        assert not unnamed, unnamed
 
 
 if __name__ == "__main__":

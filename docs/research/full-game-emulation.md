@@ -1100,6 +1100,11 @@ python -m sc_emulator play terran_m06 terran-m06 --out-root koprulu-private/emu/
   --state 1-501,521-60001/20 --fog 1000,4000 --speech ../../generated/speech/ruRU/missions/terran/terran05.kpm
                                             # a play with a language's speech: the overlay's TIME in the trigger lists
                                             # with --out-root a scenarios.py play's own records go to <root>/records, not emu/h03
+python -m sc_emulator custom "../../koprulu-private/full/app/maps/(2)Challenger.scm" OUT --type Melee --race terran \
+  --slots computer:zerg,closed --frames 2001 --state 1-101,121-2001/20 --shots 1,2000
+                                            # phase M0: a custom game through Play Custom (custom.py)
+python -m sc_emulator replay FILE.rep OUT --cd expansion --expansion --frames 2001 --state 1-101,121-2001/20
+                                            # a replay up to a frame, with the dumps of chosen steps
 ```
 
 `emu/chains/<name>/` holds:
@@ -1118,6 +1123,28 @@ Per mission, `emu/missions/<name>/` holds:
 - `coverage.json`, `files.txt` (MPQ files requested), `summary.json` and `run.log`.
 
 With `--capture FRAMES`, `sc_emulator/capture.py` writes `<out-root>/<name>/captures/fNNNNN.cap` for each frame: the draw procedure `0x445ea0` runs with a full redraw (terrain flag `0x6d0bf5` and the whole dirty grid `0x6d06d0`), and the capture holds the screen at the call of `DrawSortedSprites 0x415b30` (terrain) and after it (before the fog pass), the image and sprite records, rows, camera, vision byte, megatiles and remap records. `tools/compose_capture.py` compares them with Koprulu's draw list and kernels ([phase 2](../phase2.md#acceptance-item-7)). Use a separate `--out-root`: the default overwrites the 3000-frame traces in `emu/missions`.
+
+### Play Custom and public replays (phase M0)
+
+`sc_emulator/custom.py` ([phase M](../phase-multiplayer.md)) plays a custom game through the original's own Play Custom screen. It does what a person does:
+- puts the map into the overlay's user maps folder (`maps\BroodWar` with Brood War, the folder InitMapList 0x455aa0 enters on the first visit) under a name starting with `!`, so BuildMapList 0x45ba40 preselects it;
+- goes through the glue by keys: Single Player, the game mode, a new ID, the campaign menu's Play Custom (U), glue state 11;
+- sets the drop-downs with the mouse (ComboBoxProc 0x4c63b0), from the controls' geometry in memory;
+- presses Ok, and in a Use Map Settings game also the ready room's Start.
+
+It writes `setup.json`: the game header 0x6728d0 (0x8d bytes, a replay header's `+0x14`, with the template at its `+0x6d`) and the player records 0x6726c8 at StartGame 0x443f40 and after the first frame. Since stage M4 it also writes the screen: `combos`, the drop-downs it set in order with the row it picked, and `screen`, each drop-down's items, selection and usability when Ok is pressed. It also writes the frame digests, the oracle's logs and the chosen state dumps.
+
+The offline screen's facts, from the runs:
+- **Game types.** The list offers only Melee, Free For All and Use Map Settings, with either CD. Greed, Slaughter, Sudden Death, Capture the Flag, the team games, Top vs Bottom and the ladders are the multiplayer screen's. So only replays show them.
+- **Default type.** The last melee template, Free For All.
+- **Slots.** An opponent slot offers Closed or Computer (default Computer). A race offers Zerg, Terran, Protoss or Random (default Random).
+- **Player order.** The local person is not player 0: in a two-player melee the computer was player 0 and the person player 1.
+- **Races.** Melee races pass through the single-player custom races, flag 0x5264c3 and races 0x526546.. (ApplyCustomGameRaces 0x455020).
+- **Use Map Settings on a melee map.** Bottleneck offers no computer slot for Use Map Settings (the map panel's "Computer Slots: 0"); Ok then starts no game and the screen stays. The check is Play Custom's Ok (stage M4).
+
+`replay.py` takes `--frames N` (stop once the game reached frame N) and `--state` (the steps to dump, as `custom`'s), for the public replays, which run tens of thousands of frames. The emulator plays about 5–7 frames a second.
+
+The public replays' maps exhausted the VirtualAlloc region (`memory.py`'s `RegionAllocator`): the game frees and asks map-sized blocks of many sizes, and exact-size reuse with a bump pointer runs past the region's end. Past the end the allocator now takes the first freed range that holds the block, adjacent freed blocks merged and a freed tail returned to the top. Only what used to fail takes that path, so every earlier run keeps its addresses and its digests.
 
 ### Interface input log and screen captures (phase 9)
 

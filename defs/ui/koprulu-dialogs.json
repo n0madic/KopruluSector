@@ -10,8 +10,8 @@
   "label 6 and button 7 (a button's text is the language's own name, set at run time; a click takes the next",
   "language). \"extend\": records appended to an original's dialog after its own (their indices go on from its",
   "last): rez\\gluMain.bin's Language (ID 11), shown when there is more than one language to choose; rez\\gluCustm.bin's",
-  "labels of an unverified replay (IDs 39..41, by reason) and Import and Export (42, 43), shown when the platform has a",
-  "file picker. Each",
+  "labels of an unverified replay (IDs 39..41, by reason), Load Replay's Import and Export (42, 43) and Play Custom's",
+  "Import (44, above Ok: its slots fill the space under the list), shown when the platform has a file picker. Each",
   "widget: type (the original's control types), id, flags, rect [x, y, width, height] (the container's on the",
   "original's 640 x 480 screen, the others in it) and text (with flag 0x200 its first byte the hotkey,",
   "\\u0004..\\u0001 the hotkey's colour). \"labels\": texts we give an original's records that have none, by",
@@ -74,7 +74,8 @@
    {"type": 9, "id": 40, "flags": 0, "rect": [418, 302, 172, 20], "text": "Unverified: other version"},
    {"type": 9, "id": 41, "flags": 0, "rect": [418, 302, 172, 20], "text": "Unverified: other data"},
    {"type": 14, "id": 42, "flags": 34619928, "rect": [40, 330, 150, 20], "text": "i\u0004I\u0001mport"},
-   {"type": 14, "id": 43, "flags": 34619928, "rect": [190, 330, 150, 20], "text": "e\u0004E\u0001xport"}
+   {"type": 14, "id": 43, "flags": 34619928, "rect": [190, 330, 150, 20], "text": "e\u0004E\u0001xport"},
+   {"type": 14, "id": 44, "flags": 35668504, "rect": [442, 348, 150, 20], "text": "i\u0004I\u0001mport"}
   ]
  },
  "labels": {

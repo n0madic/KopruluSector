@@ -284,7 +284,15 @@ void kp_run_turn(KpGame *g, const KpCommand *commands, int count)
 	int k;
 	kp_rng_game_set_enabled(g->rng, 1);
 	for (k = 0; k < count; k++) kp_execute_command(g, commands[k].player, commands[k].bytes, commands[k].size);
+	/* the turn's end gives the context back to the seat (0x4768a0, 0x4769b0: 0x508d44 = 0x508d50, 0x508d48 =
+	 * 0x508d54): the seat's game player and record, the seat's values (out of the shared hash) */
+	g->command_record = g->local_record;
+	kp_scalar_set(g, KP_COMMAND_PLAYER, g->local_player);
 	kp_rng_game_set_enabled(g->rng, 0);
+	if (g->turn_cancels_cursor) { /* ExecuteGameTurn 0x4768a0's end: a pause or a resume ran */
+		g->turn_cancels_cursor = 0;
+		kp_cancel_cursor_modes(g); /* CancelCursorModes 0x448c20 */
+	}
 	kp_scalar_set(g, KP_TURN, kp_scalar(g, KP_TURN) + 1);
 }
 
@@ -303,6 +311,16 @@ void kp_run_frame(KpGame *g, const KpCommand *commands, int count)
 	}
 	kp_run_turn(g, commands, count);
 	if (g->w->replay && g->replay_paused) return;
+	kp_scalar_set(g, KP_FRAME, kp_scalar(g, KP_FRAME) + 1);
+	kp_step_frame(g);
+}
+
+void kp_run_frame_between_turns(KpGame *g)
+{
+	if (kp_scalar(g, KP_PAUSED) == 1) {
+		kp_paused_frame(g);
+		return;
+	}
 	kp_scalar_set(g, KP_FRAME, kp_scalar(g, KP_FRAME) + 1);
 	kp_step_frame(g);
 }
@@ -353,7 +371,7 @@ static void update_regions(KpGame *g)
 			ai->region_cursor = 1;
 			kp_ai_rebuild_enemy_strength(g);
 			if (computer(g, ai->region_player) && !kp_ai_campaign(g, ai->region_player)) {
-				kp_game_fail(g, "ai: an expansion attack plan (0x4aa8f0)");
+				kp_ai_plan_expansion_attack(g, ai->region_player); /* PlanExpansionAttack 0x4aa8f0 */
 			}
 		}
 	}

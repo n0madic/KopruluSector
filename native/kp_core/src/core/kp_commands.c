@@ -1,5 +1,6 @@
 /* Game commands of the turn (kp_game.h). */
 #include "kp_game_internal.h"
+#include "kp_gametype.h"
 
 #define EXECUTOR 0x475d30
 #define SYNC 0x37
@@ -14,6 +15,12 @@
 #define RESUME_COMMAND 0x11
 #define LATENCY_COMMAND 0x55
 #define REPLAY_SPEED_COMMAND 0x56
+#define VISION_COMMAND 0x0d
+#define ALLIANCE_COMMAND 0x0e
+#define ORDER_NOTHING_COMMAND 0x1d
+#define LEAVE_COMMAND 0x57
+#define MAX_EXTRA_LATENCY 2 /* OnLatencyCommand 0x476d10: the extra turns 0x672990 */
+#define LATENCY_STRING 0x45 /* rez\network.tbl: the latency lines 0x45..0x47 */
 #define SPEEDS 7
 #define EXIT_RESTART 5             /* RequestGameExit 0x444e00's code */
 #define DAT_BUILDING 0x1
@@ -58,6 +65,9 @@
 #define STIM_COMMAND 0x36
 #define CLOAK_COMMAND 0x21
 #define DECLOAK_COMMAND 0x22
+#define CHAT_COMMAND 0x5c
+#define CHAT_TEXT 80   /* HandleChatMessage 0x475b40's SStrCopy 80: the text and its terminator in 82 bytes */
+#define CHAT_SOUND 23  /* DisplayChatMessage 0x46a860's sound */
 #define UNLOAD_ALL_COMMAND 0x28
 #define MERGE_ARCHON_COMMAND 0x2a
 #define MERGE_DARK_ARCHON_COMMAND 0x5a
@@ -81,8 +91,7 @@
 /* The executor's handlers (atlas P25), for the failure's message. The ones without a case below have no sender in a
  * game offline: shared vision 0x0d and alliance 0x0e (ApplyAllianceDialog 0x441cb0, whose dialog offline opens only in
  * a replay's playback, which sends neither), leave game 0x57 (a replay's: HandlePlayerLeftGame 0x477a60 records it for
- * a network player), chat 0x5c (HandleChatMessage 0x475b40 records a network player's text in the replay; single
- * player has none; a replay holding either is refused before its playback, docs/formats/rep.md); 0x1d, 0x38/0x39 and
+ * a network player; a replay holding it is refused before its playback, docs/formats/rep.md); 0x1d, 0x38/0x39 and
  * 0x3a/0x3b no code of 1.17 queues (QueueTurnCommand 0x476c80's 63 callers). Pause 0x10, resume 0x11 (the game menu's
  * controls 7 and 8, shown by 0x47b4c0 only in multiplayer or a replay) and the replay speed 0x56 are a replay's
  * playback's; latency 0x55 (the network options, hidden in single player by 0x47be40) changes nothing offline. */
@@ -369,7 +378,7 @@ static void right_click(KpGame *g, int64_t x, int64_t y, int64_t target, int64_t
 		target = kp_fog_unit(g, x, y, fow);
 		fow = KP_TYPE_NONE;
 	}
-	count = kp_selected_units(g, player, units);
+	count = kp_selected_units(g, g->command_record, units);
 	for (k = 0; k < count; k++) {
 		int64_t n = units[k], action = click_action(g, n), order, t;
 		kp_scalar_set(g, KP_SECOND_ORDER, KP_ORD_NOTHING);
@@ -409,19 +418,20 @@ static void right_click(KpGame *g, int64_t x, int64_t y, int64_t target, int64_t
 static void order_selection(KpGame *g, int queued, int hold)
 {
 	int64_t units[KP_SLOTS], player = kp_scalar(g, KP_COMMAND_PLAYER);
-	int count = kp_selected_units(g, player, units), k;
+	int count = kp_selected_units(g, g->command_record, units), k;
 	for (k = 0; k < count; k++) {
 		int64_t n = units[k], order = hold ? hold_order(g->u.type[n]) : (int64_t)KP_ORD_STOP;
 		if (kp_can_issue_order(g, order, player, n) == 1) issue_command_on_unit(g, n, queued, order, 0);
 	}
 }
 
-/* ExecCarrierStop 0x473670 and ExecReaverStop 0x473710 (commands 0x1b, 0x1c): CarrierStop 52 or ReaverStop 7 for each
- * selected unit that can take it (their error feedback is the interface's). */
-static void hangar_stop_selection(KpGame *g, int64_t order)
+/* ExecCarrierStop 0x473670, ExecReaverStop 0x473710 and ExecOrderNothing 0x472b40 (commands 0x1b, 0x1c, 0x1d):
+ * CarrierStop 52, ReaverStop 7 or Nothing 23 for each selected unit that can take it (the stops' error feedback is the
+ * interface's; Nothing's none, 0x4be950). */
+static void order_selected(KpGame *g, int64_t order)
 {
 	int64_t units[KP_SLOTS], player = kp_scalar(g, KP_COMMAND_PLAYER);
-	int count = kp_selected_units(g, player, units), k;
+	int count = kp_selected_units(g, g->command_record, units), k;
 	for (k = 0; k < count; k++) {
 		if (kp_can_issue_order(g, order, player, units[k]) == 1) kp_issue_order(g, units[k], order);
 	}
@@ -439,7 +449,7 @@ static void minimap_ping(KpGame *g, int64_t player, int64_t x, int64_t y)
 static void siege_selection(KpGame *g, int siege, int queued)
 {
 	int64_t units[KP_SLOTS], player = kp_scalar(g, KP_COMMAND_PLAYER);
-	int count = kp_selected_units(g, player, units), k;
+	int count = kp_selected_units(g, g->command_record, units), k;
 	for (k = 0; k < count; k++) {
 		int64_t order = kp_siege_command_order(g, units[k], siege);
 		if (order != 0 && kp_can_use_tech(g, KP_TECH_TANK_SIEGE_MODE, player, units[k]) == 1) {
@@ -452,7 +462,7 @@ static void siege_selection(KpGame *g, int siege, int queued)
 static void unload_selection(KpGame *g, int queued)
 {
 	int64_t units[KP_SLOTS], player = kp_scalar(g, KP_COMMAND_PLAYER);
-	int count = kp_selected_units(g, player, units), k;
+	int count = kp_selected_units(g, g->command_record, units), k;
 	for (k = 0; k < count; k++) {
 		if (kp_can_issue_order(g, KP_ORD_UNLOAD, player, units[k]) == 1 && kp_has_cargo(g, units[k])) {
 			issue_command_on_unit(g, units[k], queued, KP_ORD_UNLOAD, 0);
@@ -471,17 +481,17 @@ static void unload_passenger(KpGame *g, int64_t p)
 }
 
 /* The issuer's only selected unit (0x49cb10 without a second, 0x49cb20), else 0. */
-static int64_t single_selected(KpGame *g, int64_t player)
+static int64_t single_selected(KpGame *g)
 {
 	int64_t units[KP_SLOTS];
-	return kp_selected_units(g, player, units) == 1 ? units[0] : 0;
+	return kp_selected_units(g, g->command_record, units) == 1 ? units[0] : 0;
 }
 
 /* ExecTrain 0x4722c0 (command 0x1f): the only selected unit queues a unit type it may train and starts Train (a
  * refusal's message is the interface's). */
 static void train(KpGame *g, int64_t t)
 {
-	int64_t player = kp_scalar(g, KP_COMMAND_PLAYER), n = single_selected(g, player);
+	int64_t player = kp_scalar(g, KP_COMMAND_PLAYER), n = single_selected(g);
 	if (n == 0 || kp_can_train_unit(g, t, player, n) != 1 || t > KP_TYPE_LAST_UNIT) return;
 	if (kp_enqueue_unit(g, n, t)) kp_set_secondary_order(g, n, KP_ORD_TRAIN);
 	g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
@@ -490,8 +500,8 @@ static void train(KpGame *g, int64_t t)
 /* ExecTrainFighter 0x472330 (command 0x27): each selected Carrier and Reaver queues a fighter. */
 static void train_fighters(KpGame *g)
 {
-	int64_t units[KP_SLOTS], player = kp_scalar(g, KP_COMMAND_PLAYER);
-	int count = kp_selected_units(g, player, units), k;
+	int64_t units[KP_SLOTS];
+	int count = kp_selected_units(g, g->command_record, units), k;
 	g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
 	for (k = 0; k < count; k++) kp_queue_fighter(g, units[k]);
 }
@@ -503,7 +513,7 @@ static void unit_morph(KpGame *g, int64_t t)
 {
 	KpUnits *u = &g->u;
 	int64_t units[KP_SLOTS], player = kp_scalar(g, KP_COMMAND_PLAYER), ok;
-	int count = kp_selected_units(g, player, units), k;
+	int count = kp_selected_units(g, g->command_record, units), k;
 	g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
 	for (k = 0; k < count; k++) {
 		int64_t n = units[k], type = u->type[n];
@@ -519,7 +529,7 @@ static void unit_morph(KpGame *g, int64_t t)
 static void cancel_morph(KpGame *g, int all)
 {
 	int64_t units[KP_SLOTS], player = kp_scalar(g, KP_COMMAND_PLAYER);
-	int count = kp_selected_units(g, player, units), k;
+	int count = kp_selected_units(g, g->command_record, units), k;
 	if (!all && count != 1) return;
 	for (k = 0; k < count; k++) {
 		if (g->u.owner[units[k]] == player) kp_cancel_construction(g, units[k]);
@@ -531,7 +541,7 @@ static void cancel_morph(KpGame *g, int all)
 static void cancel_train(KpGame *g, int64_t slot)
 {
 	KpUnits *u = &g->u;
-	int64_t player = kp_scalar(g, KP_COMMAND_PLAYER), n = single_selected(g, player), t;
+	int64_t player = kp_scalar(g, KP_COMMAND_PLAYER), n = single_selected(g), t;
 	if (n == 0) return;
 	t = u->type[n];
 	if (t == KP_TYPE_LARVA || t == KP_TYPE_MUTALISK || t == KP_TYPE_HYDRALISK || t == KP_TYPE_HATCHERY || t == KP_TYPE_LAIR || t == KP_TYPE_SPIRE || t == KP_TYPE_CREEP_COLONY
@@ -548,7 +558,7 @@ static void return_cargo_selection(KpGame *g, int queued)
 {
 	KpUnits *u = &g->u;
 	int64_t units[KP_SLOTS], player = kp_scalar(g, KP_COMMAND_PLAYER), order;
-	int count = kp_selected_units(g, player, units), k;
+	int count = kp_selected_units(g, g->command_record, units), k;
 	for (k = 0; k < count; k++) {
 		int64_t n = units[k];
 		if (kp_band(u->resource_type[n], CARRY_MINERALS) != 0) order = KP_ORD_RETURN_MINERALS;
@@ -561,7 +571,7 @@ static void return_cargo_selection(KpGame *g, int queued)
 static void stim_selection(KpGame *g)
 {
 	int64_t units[KP_SLOTS], player = kp_scalar(g, KP_COMMAND_PLAYER);
-	int count = kp_selected_units(g, player, units), k;
+	int count = kp_selected_units(g, g->command_record, units), k;
 	for (k = 0; k < count; k++) {
 		if (kp_can_use_tech(g, KP_TECH_STIM_PACKS, player, units[k]) == 1) kp_apply_stim(g, units[k]);
 	}
@@ -572,7 +582,7 @@ static void stim_selection(KpGame *g)
 static void cloak_selection(KpGame *g, int cloak)
 {
 	int64_t units[KP_SLOTS], player = kp_scalar(g, KP_COMMAND_PLAYER);
-	int count = kp_selected_units(g, player, units), k;
+	int count = kp_selected_units(g, g->command_record, units), k;
 	for (k = 0; k < count; k++) {
 		int64_t n = units[k];
 		if (kp_can_use_tech(g, kp_cloak_tech(g, n), player, n) != 1) continue;
@@ -586,7 +596,7 @@ static void burrow_selection(KpGame *g, int burrow, int queued)
 {
 	KpUnits *u = &g->u;
 	int64_t units[KP_SLOTS], player = kp_scalar(g, KP_COMMAND_PLAYER);
-	int count = kp_selected_units(g, player, units), k;
+	int count = kp_selected_units(g, g->command_record, units), k;
 	for (k = 0; k < count; k++) {
 		int64_t n = units[k];
 		if (kp_band(KP_DAT(g, units, special_ability_flags, u->type[n]), DAT_BURROWABLE) == 0) continue;
@@ -608,7 +618,7 @@ static void targeted_order(KpGame *g, int64_t x, int64_t y, int64_t target, int6
 	int count, k;
 	kp_group_formation(g, x, y, KP_DAT(g, orders, obstructable, order) != 0, &f);
 	if (ignored_targeted(order)) return;
-	count = kp_selected_units(g, player, units);
+	count = kp_selected_units(g, g->command_record, units);
 	for (k = 0; k < count; k++) {
 		int64_t n = units[k], tech = KP_DAT(g, orders, technology_energy, order), ok, status, t;
 		int building;
@@ -662,26 +672,63 @@ static void targeted_order(KpGame *g, int64_t x, int64_t y, int64_t target, int6
 	}
 }
 
-void kp_execute_command(KpGame *g, int64_t player, const uint8_t *b, size_t size)
+void kp_chat_display(KpGame *g, const char *text, int64_t sender, int normal)
 {
+	if (text == NULL) return;
+	kp_unit_sound(g, CHAT_SOUND, 0, KP_SOUND_ON, 0, KP_TALK_NONE, 0, 0);
+	kp_event(g, KP_EVENT_CHAT, sender, normal ? 1 : 0, 0, text);
+}
+
+/* CanPlayerPause 0x47cb20 of the issuer's record: a single player always; in a network game (the lobby state 0x672600
+ * at 9 in a game) a human with pauses left. */
+static int may_pause(KpGame *g, int64_t record)
+{
+	if (record < 0 || record >= 8) kp_game_fail(g, "commands: a pause of record %lld", (long long)record);
+	if (g->setup.multiplayer == 0) return 1;
+	return kp_controller(g, record) == KP_CTRL_HUMAN && g->pauses[record] != 0;
+}
+
+/* ExecSaveGame 0x472f50's gate: never in a tournament (IsTournamentMode 0x447d00); in a network game only the command
+ * of the lowest Storm ID still in the game (0x4771e0, the issuer's record's). */
+static int may_save(KpGame *g, int64_t record)
+{
+	int64_t storm, p;
+	if (kp_setup_tournament(&g->setup)) return 0;
+	if (g->setup.multiplayer == 0) return 1;
+	/* "still in the game" is the network's player state (0x673818, IsStormPlayerActive 0x4780a0). TODO: a seat's leave
+	 * (kp_hub.h has none yet): until the hub carries one, every human record's Storm ID counts */
+	for (storm = 0; storm < 8; storm++) {
+		if (kp_setup_storm_slot(&g->setup, storm) >= 0) break;
+	}
+	p = kp_setup_storm_slot(&g->setup, storm);
+	return p >= 0 && p == record;
+}
+
+void kp_execute_command(KpGame *g, int64_t record, const uint8_t *b, size_t size)
+{
+	int64_t player;
 	int id;
 	int i;
-	if (size == 0) kp_game_fail(g, "commands: an empty command of player %lld", (long long)player);
+	if (size == 0) kp_game_fail(g, "commands: an empty command of record %lld", (long long)record);
 	id = b[0];
 	/* CheckSyncCommand 0x47a510 compares the sync values of the players' games; a game run alone
 	 * has none to compare, and the check changes no game state. */
 	if (id == SYNC) return;
 	/* The keep-alive 0x05 only counts the network's turns (0x672988, atlas P25); no game state. */
 	if (id == KEEP_ALIVE) return;
+	/* ExecuteGameTurn 0x4768a0 by the Storm ID's maps: the game player (a team game's leader) and the issuer's record;
+	 * a replay's blocks (0x4769b0) set both to the record */
+	player = kp_setup_record_player(&g->setup, record);
+	g->command_record = record;
 	kp_scalar_set(g, KP_COMMAND_PLAYER, player);
 	switch (id) {
 	case SELECT: case SELECT_ADD: case SELECT_REMOVE: {
 		int64_t refs[256];
 		int count = (int)byte_at(g, b, size, 1), k;
 		for (k = 1; k <= count; k++) refs[k - 1] = u16(g, b, size, (size_t)(2 * k));
-		if (id == SELECT) kp_command_select(g, player, refs, count);
-		else if (id == SELECT_ADD) kp_command_select_add(g, player, refs, count);
-		else kp_command_select_remove(g, player, refs, count);
+		if (id == SELECT) kp_command_select(g, record, refs, count);
+		else if (id == SELECT_ADD) kp_command_select_add(g, record, refs, count);
+		else kp_command_select_remove(g, record, refs, count);
 		break;
 	}
 	case RIGHT_CLICK: {
@@ -702,6 +749,7 @@ void kp_execute_command(KpGame *g, int64_t player, const uint8_t *b, size_t size
 	case SAVE_COMMAND: case LOAD_COMMAND: { /* ExecSaveGame 0x472f50, ExecLoadGame 0x4729e0: the host's files */
 		char name[KP_EVENT_TEXT_SIZE]; /* the event's text: the dialog limits the name in characters */
 		size_t n = 0;
+		if (id == SAVE_COMMAND ? !may_save(g, record) : g->setup.multiplayer != 0) break;
 		while (n < sizeof name - 1 && 5 + n < size && b[5 + n] != 0) {
 			name[n] = (char)b[5 + n];
 			n++;
@@ -711,20 +759,29 @@ void kp_execute_command(KpGame *g, int64_t player, const uint8_t *b, size_t size
 		kp_event(g, id == SAVE_COMMAND ? KP_EVENT_SAVE_GAME : KP_EVENT_LOAD_GAME, u32(g, b, size, 1), 0, 0, name);
 		break;
 	}
-	case SPEED_COMMAND: /* ExecGameSpeed 0x473310 (a single player's) */
-		if (byte_at(g, b, size, 1) < SPEEDS) kp_scalar_set(g, KP_SPEED, byte_at(g, b, size, 1));
+	case SPEED_COMMAND: /* ExecGameSpeed 0x473310: a single player's */
+		if (byte_at(g, b, size, 1) < SPEEDS && g->setup.multiplayer == 0) kp_scalar_set(g, KP_SPEED, byte_at(g, b, size, 1));
 		break;
-	case PAUSE_COMMAND: /* ExecPauseGame 0x472c70: always allowed in single player (0x47cb20) */
-		if (kp_scalar(g, KP_PAUSED) != 0) break;
+	case PAUSE_COMMAND: /* ExecPauseGame 0x472c70 */
+		if (kp_scalar(g, KP_PAUSED) != 0 || !may_pause(g, record)) break;
+		g->turn_cancels_cursor = 1;
 		kp_scalar_set(g, KP_PAUSED, 1);
-		kp_event(g, KP_EVENT_COMMAND_PAUSE, 1, player, 0, NULL);
+		if (g->setup.multiplayer != 0 && g->pauses[record] != 0) g->pauses[record]--; /* 0x47cc60 */
+		kp_event(g, KP_EVENT_COMMAND_PAUSE, 1, record, g->pauses[record], NULL);
 		break;
-	case RESUME_COMMAND: /* ExecResumeGame 0x472be0 */
+	case RESUME_COMMAND: /* ExecResumeGame 0x472be0: any player's */
 		if (kp_scalar(g, KP_PAUSED) == 0) break;
+		g->turn_cancels_cursor = 1;
 		kp_scalar_set(g, KP_PAUSED, 0);
-		kp_event(g, KP_EVENT_COMMAND_PAUSE, 0, player, 0, NULL);
+		kp_event(g, KP_EVENT_COMMAND_PAUSE, 0, record, 0, NULL);
 		break;
-	case LATENCY_COMMAND: break; /* OnLatencyCommand 0x476d10: the network's extra turns 0x672990 */
+	case LATENCY_COMMAND: { /* OnLatencyCommand 0x476d10: the network's line 0x45 + the extra turns */
+		int64_t extra = byte_at(g, b, size, 1) < MAX_EXTRA_LATENCY ? byte_at(g, b, size, 1) : MAX_EXTRA_LATENCY;
+		/* the extra turns 0x672990 are the network's state, not the game's: the turn hub sets a seat's as the seat
+		 * runs the command (kp_hub.c, SendTurns 0x476500) */
+		kp_event(g, KP_EVENT_PLAYER_MESSAGE, LATENCY_STRING + extra, record, 0, NULL);
+		break;
+	}
 	case REPLAY_SPEED_COMMAND: { /* ExecReplaySpeed 0x4732f0 -> SetReplaySpeed 0x481040, in a replay only */
 		int64_t speed = u32(g, b, size, 2), m = u32(g, b, size, 6);
 		/* the original indexes its 7-entry table by any speed and divides by any multiplier: a speed past 6 or a
@@ -736,8 +793,12 @@ void kp_execute_command(KpGame *g, int64_t player, const uint8_t *b, size_t size
 		break;
 	}
 	case STOP_COMMAND: order_selection(g, flag(b, size, 1), 0); break;
-	case CARRIER_STOP_COMMAND: hangar_stop_selection(g, KP_ORD_CARRIER_STOP); break;
-	case REAVER_STOP_COMMAND: hangar_stop_selection(g, KP_ORD_REAVER_STOP); break;
+	case CARRIER_STOP_COMMAND: order_selected(g, KP_ORD_CARRIER_STOP); break;
+	case REAVER_STOP_COMMAND: order_selected(g, KP_ORD_REAVER_STOP); break;
+	case ORDER_NOTHING_COMMAND: order_selected(g, KP_ORD_NOTHING); break;
+	case VISION_COMMAND: kp_command_vision(g, player, u16(g, b, size, 1)); break;
+	case ALLIANCE_COMMAND: kp_command_alliance(g, player, (uint32_t)u32(g, b, size, 1)); break;
+	case LEAVE_COMMAND: kp_command_leave(g, player); break; /* the reason byte 1 unread in a replay (0x477a60) */
 	case MINIMAP_PING_COMMAND: minimap_ping(g, player, u16(g, b, size, 1), u16(g, b, size, 3)); break;
 	case HOLD_POSITION_COMMAND: order_selection(g, flag(b, size, 1), 1); break;
 	case SIEGE_COMMAND: case UNSIEGE_COMMAND: siege_selection(g, id == SIEGE_COMMAND, flag(b, size, 1)); break;
@@ -745,9 +806,9 @@ void kp_execute_command(KpGame *g, int64_t player, const uint8_t *b, size_t size
 	case RETURN_CARGO_COMMAND: return_cargo_selection(g, flag(b, size, 1)); break;
 	case BUILD_COMMAND:
 		kp_command_build(g, player, byte_at(g, b, size, 1), u16(g, b, size, 2), u16(g, b, size, 4), u16(g, b, size, 6),
-			single_selected(g, player));
+			single_selected(g));
 		break;
-	case CONTROL_GROUP_COMMAND: kp_command_control_group(g, player, byte_at(g, b, size, 1), byte_at(g, b, size, 2)); break;
+	case CONTROL_GROUP_COMMAND: kp_command_control_group(g, record, byte_at(g, b, size, 1), byte_at(g, b, size, 2)); break;
 	case TRAIN_COMMAND: train(g, u16(g, b, size, 1)); break;
 	case TRAIN_FIGHTER_COMMAND: train_fighters(g); break;
 	case UNIT_MORPH_COMMAND: unit_morph(g, u16(g, b, size, 1)); break;
@@ -755,18 +816,18 @@ void kp_execute_command(KpGame *g, int64_t player, const uint8_t *b, size_t size
 	case CANCEL_CONSTRUCTION_COMMAND: cancel_morph(g, 0); break;
 	case CANCEL_TRAIN_COMMAND: cancel_train(g, u16(g, b, size, 1)); break;
 	case LIFT_OFF_COMMAND:
-		kp_command_lift_off(g, player, single_selected(g, player), kp_s16v(u16(g, b, size, 1)), kp_s16v(u16(g, b, size, 3)));
+		kp_command_lift_off(g, player, single_selected(g), kp_s16v(u16(g, b, size, 1)), kp_s16v(u16(g, b, size, 3)));
 		break;
-	case CANCEL_NUKE_COMMAND: kp_command_cancel_nuke(g, player); break;
-	case CANCEL_ADDON_COMMAND: kp_command_cancel_addon(g, player, single_selected(g, player)); break;
+	case CANCEL_NUKE_COMMAND: kp_command_cancel_nuke(g); break;
+	case CANCEL_ADDON_COMMAND: kp_command_cancel_addon(g, player, single_selected(g)); break;
 	case BUILDING_MORPH_COMMAND:
-		kp_command_building_morph(g, player, single_selected(g, player), u16(g, b, size, 1));
+		kp_command_building_morph(g, player, single_selected(g), u16(g, b, size, 1));
 		break;
 	case RESEARCH_COMMAND: case UPGRADE_COMMAND:
-		kp_command_research(g, player, single_selected(g, player), byte_at(g, b, size, 1), id == UPGRADE_COMMAND);
+		kp_command_research(g, player, single_selected(g), byte_at(g, b, size, 1), id == UPGRADE_COMMAND);
 		break;
 	case CANCEL_RESEARCH_COMMAND: case CANCEL_UPGRADE_COMMAND:
-		kp_command_cancel_research(g, player, single_selected(g, player), id == CANCEL_UPGRADE_COMMAND);
+		kp_command_cancel_research(g, player, single_selected(g), id == CANCEL_UPGRADE_COMMAND);
 		break;
 	case MERGE_ARCHON_COMMAND: case MERGE_DARK_ARCHON_COMMAND:
 		kp_command_merge(g, player, id == MERGE_DARK_ARCHON_COMMAND);
@@ -775,12 +836,28 @@ void kp_execute_command(KpGame *g, int64_t player, const uint8_t *b, size_t size
 	case UNLOAD_COMMAND: unload_passenger(g, kp_unit_from_ref(g, u16(g, b, size, 1))); break;
 	case CLOAK_COMMAND: case DECLOAK_COMMAND: cloak_selection(g, id == CLOAK_COMMAND); break;
 	case BURROW_COMMAND: case UNBURROW_COMMAND: burrow_selection(g, id == BURROW_COMMAND, flag(b, size, 1)); break;
+	case CHAT_COMMAND: { /* the dispatcher 0x475d30's DisplayChatMessage 0x46a860 (a network player's text, which
+	                      * HandleChatMessage 0x475b40 recorded in the replay): the record of byte 1 says it, from the
+	                      * replay's blocks (0x4769b0) or the live turns (0x4768a0); the lines are the interface's.
+	                      * TODO: a live game's chat: SNetSendMessage's messages beside the turns, each recorded by
+	                      * 0x475b40 as this command; the turn hub carries turns only (kp_hub.h) */
+		char text[CHAT_TEXT];
+		size_t n = 0;
+		int64_t sender = byte_at(g, b, size, 1);
+		while (n < sizeof text - 1 && 2 + n < size && b[2 + n] != 0) {
+			text[n] = (char)b[2 + n];
+			n++;
+		}
+		text[n] = 0;
+		kp_chat_display(g, text, sender, g->w->replay ? 1 : 0);
+		break;
+	}
 	default: {
 		int64_t address = EXECUTOR;
 		for (i = 0; i < (int)(sizeof HANDLERS / sizeof HANDLERS[0]); i++) {
 			if (HANDLERS[i].id == id) address = HANDLERS[i].address;
 		}
-		kp_game_fail(g, "commands: command 0x%02x of player %lld (0x%llx)", id, (long long)player, (long long)address);
+		kp_game_fail(g, "commands: command 0x%02x of record %lld (0x%llx)", id, (long long)record, (long long)address);
 	}
 	}
 }

@@ -1,6 +1,6 @@
 /*
- * Load Replay's Import and Export over the platform's file picker (kp_flow.h's pick_replay and export_replay; plan
- * phase RP, stage RP4): SDL's file dialogs on the computers and Android (a content:// URI there, which SDL's file
+ * Import (Load Replay's replays, Play Custom's maps) and Load Replay's Export over the platform's file picker
+ * (kp_flow.h's pick_file and export_replay; plan phase RP, stage RP4, and phase M, stage M4): SDL's file dialogs on the computers and Android (a content:// URI there, which SDL's file
  * streams open, its display name asked of the content resolver and the save dialog given the replay's name through
  * Koprulu's lines in SDLActivity, tools/native/android_app.sh), and on the web a file input and a download (the File System Access API's save picker where the
  * browser has it, which lets the player name the file). SDL may answer a dialog on another thread: the answer waits
@@ -21,11 +21,21 @@
 #endif
 
 #define PICK_PATH 1100
-#define WEB_IMPORT_FILE "/kp_import.rep" /* the page's picked file, in the memory file system until it is copied */
+#define WEB_IMPORT_FILE "/kp_import" /* the page's picked file, in the memory file system until it is copied */
 #define PICK_CURSOR_MS 1000 /* how long the hidden system cursor is reapplied after a dialog closes */
 
+/* The import of the kind picked last (KP_FLOW_PICK_*): its file to the flow. */
+static int import_kind = KP_FLOW_PICK_REPLAY;
+
+static void import_bytes(KpApp *a, const char *name, const uint8_t *bytes, size_t size)
+{
+	if (import_kind == KP_FLOW_PICK_MAP) (void)kp_flow_import_map(&a->flow, name, bytes, size, NULL, 0);
+	else (void)kp_flow_import_replay(&a->flow, name, bytes, size, NULL, 0);
+}
+
 #ifndef __EMSCRIPTEN__
-static const SDL_DialogFileFilter FILTERS[] = { { "StarCraft replays", "rep" } };
+static const SDL_DialogFileFilter REPLAY_FILTERS[] = { { "StarCraft replays", "rep" } };
+static const SDL_DialogFileFilter MAP_FILTERS[] = { { "StarCraft maps", "scm;scx" } };
 
 /* What a dialog answered, waiting for the main thread; and the bytes an export writes once it has a path. */
 static struct {
@@ -45,25 +55,26 @@ static void dialog_answer(void *userdata, const char *const *files, int filter)
 {
 	(void)userdata;
 	(void)filter;
-	if (files == NULL) SDL_Log("replay picker: %s", SDL_GetError());
+	if (files == NULL) SDL_Log("file picker: %s", SDL_GetError());
 	SDL_LockMutex(pick.lock);
 	snprintf(pick.path, sizeof pick.path, "%s", files != NULL && files[0] != NULL ? files[0] : "");
 	pick.answered = 1;
 	SDL_UnlockMutex(pick.lock);
 }
 #else
-/* The page's file input: the picked file's bytes go to WEB_IMPORT_FILE and its name to Module.kp_import_name. */
-EM_JS(void, web_pick_replay, (void), {
+/* The page's file input for the extensions accept lists: the picked file's bytes go to WEB_IMPORT_FILE and its name to
+ * Module.kp_import_name. */
+EM_JS(void, web_pick_file, (const char *accept), {
 	var input = document.createElement("input");
 	input.type = "file";
-	input.accept = ".rep";
+	input.accept = UTF8ToString(accept);
 	input.onchange = function() {
 		var file = input.files && input.files[0];
 		if (!file) return;
 		file.arrayBuffer().then(function(buf) {
-			FS.writeFile("/kp_import.rep", new Uint8Array(buf));
+			FS.writeFile("/kp_import", new Uint8Array(buf));
 			Module.kp_import_name = file.name;
-		}).catch(function(e) { console.error("replay import: " + e); });
+		}).catch(function(e) { console.error("import: " + e); });
 	};
 	input.click();
 });
@@ -130,7 +141,7 @@ static void android_call(const char *method, const char *returns, const char *te
 		}
 	}
 	if (env && (*env)->ExceptionCheck(env)) {
-		SDL_Log("replay picker: %s failed", method);
+		SDL_Log("file picker: %s failed", method);
 		(*env)->ExceptionClear(env);
 	}
 	if (arg) (*env)->DeleteLocalRef(env, arg);
@@ -139,11 +150,12 @@ static void android_call(const char *method, const char *returns, const char *te
 }
 #endif
 
-static void host_pick_replay(void *ctx)
+static void host_pick_file(void *ctx, int kind)
 {
 #ifdef __EMSCRIPTEN__
 	(void)ctx;
-	web_pick_replay();
+	import_kind = kind;
+	web_pick_file(kind == KP_FLOW_PICK_MAP ? ".scm,.scx" : ".rep");
 #else
 	KpApp *a = (KpApp *)ctx;
 	SDL_LockMutex(pick.lock);
@@ -154,8 +166,10 @@ static void host_pick_replay(void *ctx)
 	pick.open = 1;
 	pick.kind = PICK_IMPORT;
 	pick.answered = 0;
+	import_kind = kind;
 	SDL_UnlockMutex(pick.lock);
-	SDL_ShowOpenFileDialog(dialog_answer, NULL, a->window, FILTERS, 1, NULL, false);
+	SDL_ShowOpenFileDialog(dialog_answer, NULL, a->window, kind == KP_FLOW_PICK_MAP ? MAP_FILTERS : REPLAY_FILTERS, 1,
+		NULL, false);
 #endif
 }
 
@@ -188,25 +202,25 @@ static void host_export_replay(void *ctx, const char *name, const uint8_t *bytes
 #ifdef SDL_PLATFORM_ANDROID
 	android_call("kpSetFileDialogName", "V", name, NULL, 0);
 #endif
-	SDL_ShowSaveFileDialog(dialog_answer, NULL, a->window, FILTERS, 1, location);
+	SDL_ShowSaveFileDialog(dialog_answer, NULL, a->window, REPLAY_FILTERS, 1, location);
 #endif
 }
 
 void kp_app_pick_setup(KpApp *a)
 {
 	KpFlowHost *h = &a->flow.host;
-	h->pick_replay = NULL;
+	h->pick_file = NULL;
 	h->export_replay = NULL;
 	/* a scripted or hidden run is the original's screen; iOS has no SDL file dialog */
 	if (a->flags.headless || a->flags.script[0] || a->flags.script_live[0] || kp_flow_dev_checks(&a->flags)) return;
 #if defined(SDL_PLATFORM_IOS)
-	(void)host_pick_replay;
+	(void)host_pick_file;
 	(void)host_export_replay;
 #else
 #ifndef __EMSCRIPTEN__
 	if (!pick.lock && !(pick.lock = SDL_CreateMutex())) return;
 #endif
-	h->pick_replay = host_pick_replay;
+	h->pick_file = host_pick_file;
 	h->export_replay = host_export_replay;
 #endif
 }
@@ -215,11 +229,11 @@ void kp_app_pick_frame(KpApp *a)
 {
 #ifdef __EMSCRIPTEN__
 	char name[PICK_PATH];
-	if (a->flow.host.pick_replay && web_take_import(name, (int)sizeof name)) {
+	if (a->flow.host.pick_file && web_take_import(name, (int)sizeof name)) {
 		size_t size = 0;
 		uint8_t *bytes = kp_read_file(WEB_IMPORT_FILE, &size);
-		if (bytes) (void)kp_flow_import_replay(&a->flow, name, bytes, size, NULL, 0);
-		else SDL_Log("replay import %s: cannot be read", name);
+		if (bytes) import_bytes(a, name, bytes, size);
+		else SDL_Log("import %s: cannot be read", name);
 		free(bytes);
 		(void)remove(WEB_IMPORT_FILE);
 	}
@@ -262,8 +276,8 @@ void kp_app_pick_frame(KpApp *a)
 			if (shown[0]) snprintf(name, sizeof name, "%s", shown);
 		}
 #endif
-		if (data) (void)kp_flow_import_replay(&a->flow, name, (const uint8_t *)data, size, NULL, 0);
-		else SDL_Log("replay import %s: %s", path, SDL_GetError());
+		if (data) import_bytes(a, name, (const uint8_t *)data, size);
+		else SDL_Log("import %s: %s", path, SDL_GetError());
 		SDL_free(data);
 	} else if (path[0] && kind == PICK_EXPORT) {
 		if (SDL_SaveFile(path, bytes, size)) SDL_Log("replay export: %s", path);

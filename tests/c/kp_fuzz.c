@@ -36,7 +36,7 @@
 static const char *const COMMAND_MAPS[] = { "scenarios/build_terran", "scenarios/bench_combat", "scenarios/ai_queen" };
 #define COMMAND_MAP_COUNT ((int)(sizeof COMMAND_MAPS / sizeof COMMAND_MAPS[0]))
 
-static const char *const NAMES[KP_FUZZ_TARGETS] = { "rep", "chk", "save", "commands" };
+static const char *const NAMES[KP_FUZZ_TARGETS] = { "rep", "chk", "save", "commands", "turns" };
 
 /* the seeds' plain orders: stop and hold position */
 static const uint8_t STOP[2] = { 0x1a, 0 }, HOLD[2] = { 0x2b, 0 };
@@ -198,6 +198,7 @@ int kp_fuzz_init(int target, char *why, size_t why_size)
 	int k;
 	switch (target) {
 	case KP_FUZZ_REP: return 0;
+	case KP_FUZZ_TURNS: return 0;
 	case KP_FUZZ_CHK: (void)need_data(why, why_size); why[0] = 0; return 0; /* with the data when present */
 	case KP_FUZZ_SAVE: return save_start(why, why_size);
 	case KP_FUZZ_COMMANDS:
@@ -257,6 +258,8 @@ static int run_chk(const uint8_t *d, size_t size)
 	char e[KP_ERROR_SIZE];
 	(void)kp_chk_read(&c, d, size, profile, 0, e, sizeof e);
 	(void)kp_chk_read(&c, d, size, profile, 1, e, sizeof e);
+	if (kp_chk_load(&c, d, size, profile, 1, KP_CHK_MELEE, e, sizeof e) == 0) kp_chk_free(&c);
+	if (kp_chk_load(&c, d, size, profile, 1, KP_CHK_UMS, e, sizeof e) == 0) kp_chk_free(&c);
 	if (data) {
 		KpMission m;
 		KpError err;
@@ -266,6 +269,17 @@ static int run_chk(const uint8_t *d, size_t size)
 			(void)kp_mission_check_ai(&m, &data->shared.data.ai, &err);
 		}
 		kp_mission_free(&m);
+		{
+			static const uint8_t NO_PACKS[1] = { 0 };
+			static const KpChkLoad LOADS[] = { KP_CHK_MELEE, KP_CHK_UMS };
+			int k;
+			for (k = 0; k < 2; k++) {
+				copy = (uint8_t *)malloc(size ? size : 1);
+				if (copy && size) memcpy(copy, d, size);
+				if (kp_mission_from_map(&m, &data->files, copy, size, "fuzz", LOADS[k], NO_PACKS, 1, &err) == 0)
+					kp_mission_free(&m);
+			}
+		}
 	}
 	return 0;
 }
@@ -433,6 +447,108 @@ static int run_commands(const uint8_t *d, size_t size, char *why, size_t why_siz
 	return game_reset(fg, why, why_size);
 }
 
+/* --- turns --- */
+
+#define TURN_WINDOW 64 /* the turns whose lists are compared: past the most two seats can be apart (2 * 14) */
+
+typedef struct {
+	int64_t turn[TURN_WINDOW];
+	uint64_t digest[TURN_WINDOW];
+} TurnDigests;
+
+static uint64_t list_digest(const KpCommand *list, int count)
+{
+	uint64_t h = 0xcbf29ce484222325ULL;
+	int k;
+	size_t j;
+	for (k = 0; k < count; k++) {
+		h = (h ^ (uint64_t)list[k].player) * 0x100000001b3ULL;
+		for (j = 0; j < list[k].size; j++) h = (h ^ list[k].bytes[j]) * 0x100000001b3ULL;
+		h = (h ^ 0xff) * 0x100000001b3ULL;
+	}
+	return h;
+}
+
+/* A turn the seat ran: the same list as every other seat's turn of that number, by the Storm IDs from 7 down. */
+static int turn_ran(KpTurnHub *h, TurnDigests *td, int seat, const KpCommand *list, int count, char *why, size_t why_size)
+{
+	int64_t turn = h->received[seat] - 1;
+	uint64_t d = list_digest(list, count);
+	int k, at = (int)(turn % TURN_WINDOW);
+	int32_t last = KP_HUB_SEATS;
+	for (k = 0; k < count; k++) {
+		int32_t storm = -1;
+		int j;
+		for (j = 0; j < h->seats; j++) {
+			if (h->record[j] == list[k].player) storm = h->storm[j];
+		}
+		if (storm < 0 || storm > last) return failed(why, why_size, "turn %lld: Storm ID %d after %d", (long long)turn, storm, last);
+		last = storm;
+	}
+	if (td->turn[at] == turn) {
+		if (td->digest[at] != d) return failed(why, why_size, "turn %lld: seat %d's list differs", (long long)turn, seat);
+	} else {
+		td->turn[at] = turn;
+		td->digest[at] = d;
+	}
+	return 0;
+}
+
+/* The bounds: no seat with more turns in transit than QueueTurnCommand lets it have, no sender past a turn a seat has
+ * not received (the stream's ring keeps KP_HUB_RING). */
+static int hub_bounds(const KpTurnHub *h, char *why, size_t why_size)
+{
+	int64_t least = h->received[0];
+	int k;
+	for (k = 1; k < h->seats; k++) {
+		if (h->received[k] < least) least = h->received[k];
+	}
+	for (k = 0; k < h->seats; k++) {
+		if (kp_hub_in_transit(h, k) > KP_HUB_TRANSIT_LIMIT) return failed(why, why_size, "seat %d: %lld turns in transit", k, (long long)kp_hub_in_transit(h, k));
+		if (h->sent_count[k] - least > KP_HUB_RING) return failed(why, why_size, "seat %d's stream past the ring", k);
+	}
+	return 0;
+}
+
+/* {u8 seats - 1 | (frames per turn - 1) << 3, u8 the first Storm ID}, then operations {u8 seat | kind << 3}: kind 0 a
+ * command {u8 n, n bytes} of the seat, 1 a frame, 2 the first turn, 3 up to 8 frames (bits 5-7 + 1). */
+static int run_turns(const uint8_t *d, size_t size, char *why, size_t why_size)
+{
+	static TurnDigests td;
+	KpTurnHub *h;
+	size_t at = 2;
+	int k, rc = 0;
+	if (size < 2) return 0;
+	if (!(h = kp_hub_new(1 + (d[0] & 7), 1 + ((d[0] >> 3) & 3)))) return failed(why, why_size, "out of memory");
+	for (k = 0; k < h->seats; k++) (void)kp_hub_seat(h, k, k, (int32_t)((d[1] + k) & 7));
+	if (kp_hub_begin(h) != 0) rc = failed(why, why_size, "the hub does not start");
+	for (k = 0; k < TURN_WINDOW; k++) td.turn[k] = -1;
+	while (rc == 0 && at < size) {
+		uint8_t op = d[at++];
+		int seat = (op & 7) % h->seats, kind = (op >> 3) & 3, n = 1, got;
+		const KpCommand *list;
+		int count;
+		if (kind == 0) {
+			size_t len = at < size ? d[at++] : 0;
+			if (len > size - at) len = size - at;
+			(void)kp_hub_submit(h, seat, d + at, len);
+			at += len;
+		} else if (kind == 2) {
+			if (kp_hub_first_turn(h, seat, &list, &count) == KP_HUB_TURN) rc = turn_ran(h, &td, seat, list, count, why, why_size);
+		} else {
+			if (kind == 3) n = 1 + (op >> 5);
+			for (k = 0; k < n && rc == 0; k++) {
+				got = kp_hub_frame(h, seat, &list, &count);
+				if (got == KP_HUB_NO_MEMORY) rc = failed(why, why_size, "out of memory");
+				else if (got == KP_HUB_TURN) rc = turn_ran(h, &td, seat, list, count, why, why_size);
+			}
+		}
+		if (rc == 0) rc = hub_bounds(h, why, why_size);
+	}
+	kp_hub_free(h);
+	return rc;
+}
+
 int kp_fuzz_run(int target, const uint8_t *d, size_t size, char *why, size_t why_size)
 {
 	why[0] = 0;
@@ -442,6 +558,7 @@ int kp_fuzz_run(int target, const uint8_t *d, size_t size, char *why, size_t why
 	case KP_FUZZ_CHK: return run_chk(d, size);
 	case KP_FUZZ_SAVE: return run_save(d, size, why, why_size);
 	case KP_FUZZ_COMMANDS: return run_commands(d, size, why, why_size);
+	case KP_FUZZ_TURNS: return run_turns(d, size, why, why_size);
 	default: return failed(why, why_size, "no target %d", target);
 	}
 }
@@ -546,6 +663,11 @@ static void synthetic_seeds(Seeds *sd)
 		return;
 	}
 	seed(sd, KP_FUZZ_CHK, "synthetic.chk", -1, map, map_size);
+	{ /* three seats, 2 frames a turn: hotkeys and a latency, the first turns, frames of each */
+		static const uint8_t TURNS[] = { 0x0a, 5, 0x00, 3, 0x13, 1, 0, 0x01, 2, 0x55, 2, 0x02, 3, 0x13, 2, 0, 0x10, 0x11, 0x12,
+			0xf8, 0xf9, 0xfa, 0x00, 3, 0x13, 3, 0, 0xf8, 0xf9, 0xfa, 0xf8, 0xf9, 0xfa };
+		seed(sd, KP_FUZZ_TURNS, "synthetic.turns", -1, TURNS, sizeof TURNS);
+	}
 	{
 		KpRepGame game;
 		KpRep rep;

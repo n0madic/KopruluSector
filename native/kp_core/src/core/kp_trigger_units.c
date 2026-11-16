@@ -13,6 +13,7 @@
 #define ALL_UNITS 999999
 #define WHOLE_PLAYER 255 /* the location of Kill Unit and Remove Unit (0x4b6840) */
 #define ALL_MODIFIED 65535 /* the quantity of Give and the Modify actions without one (0x4b5a50) */
+#define ANY_UNIT 229 /* the trigger unit type Any Unit */
 /* the alliance values */
 #define ALLY 1
 #define ALLIED_VICTORY 2
@@ -352,7 +353,7 @@ void kp_trigger_move_units(KpGame *g, const uint8_t *a)
 
 /* ModifyUnitsCallback 0x4b7750 over a location's units: each unit of the selector's owners and type gets fn(value)
  * until the quantity (0 is 65535) is spent; a unit counts when fn accepts it. */
-static void modify_units(KpGame *g, const uint8_t *a, int (*fn)(KpGame *, int64_t, int64_t), int64_t value)
+static void modify_units_of(KpGame *g, const uint8_t *a, int64_t type, int (*fn)(KpGame *, int64_t, int64_t), int64_t value)
 {
 	int64_t units[KP_UNITS], flags, owners, quantity = a[KP_ACTION_MODIFIER] != 0 ? a[KP_ACTION_MODIFIER] : ALL_MODIFIED;
 	int count, k;
@@ -362,11 +363,17 @@ static void modify_units(KpGame *g, const uint8_t *a, int (*fn)(KpGame *, int64_
 	for (k = 0; k < count && quantity > 0; k++) {
 		int64_t n = units[k];
 		if (kp_location_excludes(g, n, flags) || !kp_trigger_owned_by(owners, g->u.owner[n])
-			|| !kp_trigger_type_matches(g, g->u.type[n], kp_le_u16(a + KP_ACTION_UNIT))) {
+			|| !kp_trigger_type_matches(g, g->u.type[n], type)) {
 			continue;
 		}
 		if (fn(g, n, value)) quantity--;
 	}
+}
+
+/* The same over the action's unit type */
+static void modify_units(KpGame *g, const uint8_t *a, int (*fn)(KpGame *, int64_t, int64_t), int64_t value)
+{
+	modify_units_of(g, a, kp_le_u16(a + KP_ACTION_UNIT), fn, value);
 }
 
 /* TrigActGiveUnits 0x4b5a50 */
@@ -413,12 +420,51 @@ static int modify_shields(KpGame *g, int64_t n, int64_t percent)
 	return 1;
 }
 
-/* TrigActModifyHitPoints 0x4b5b00, TrigActModifyEnergy 0x4b5bb0, TrigActModifyShields 0x4b5c60 */
+/* ModifyResourceAmountCallback 0x4b83e0: a resource container's amount (+0xd0, a WORD) is the amount's low 16 bits, a
+ * mineral field's picture follows (UpdateMineralFieldAnimation 0x4247b0). */
+static int modify_resource_amount(KpGame *g, int64_t n, int64_t amount)
+{
+	KpUnits *u = &g->u;
+	if (kp_band(KP_DAT(g, units, special_ability_flags, u->type[n]), DAT_RESOURCE_CONTAINER) == 0) return 0;
+	u->union_0xd0[n] = kp_bor(kp_band(u->union_0xd0[n], kp_bnot(0xffff)), kp_band(amount, 0xffff));
+	if (kp_mineral_field(u->type[n])) kp_update_mineral_animation(g, n);
+	return 1;
+}
+
+/* ModifyHangarCallback 0x4b8050: a Carrier, Gantrithor, Reaver or Warbringer gets up to count (signed) children of its
+ * kind while the production gate lets it (CanTrainUnit 0x4b32a0, the hangar's limit among the requirements), each made
+ * at its sprite (CreateUnit 0x424900), completed in place and docked (DockNewChild 0x41cc80); a child the pool could
+ * not make still counts. Accepted when at least one passed the gate. */
+static int modify_hangar(KpGame *g, int64_t n, int64_t count)
+{
+	KpUnits *u = &g->u;
+	KpImages *w = g->w;
+	int64_t t = u->type[n], made = 0, child, c;
+	int32_t s;
+	if (t != KP_TYPE_CARRIER && t != KP_TYPE_GANTRITHOR && t != KP_TYPE_REAVER && t != KP_TYPE_WARBRINGER) return 0;
+	for (; made < kp_s32v(count); made++) {
+		child = kp_hangar_child_type(t);
+		if (kp_can_train_unit(g, child, u->owner[n], n) != 1) break;
+		s = kp_unit_sprite(g, n);
+		c = kp_unit_create(g, child, kp_s16v(w->spr.x[s]), kp_s16v(w->spr.y[s]), u->owner[n]);
+		if (c == 0) continue;
+		kp_unit_complete_in_place(g, c); /* 0x424da0 */
+		kp_set_union_unit(g, c, 0, n);   /* the child's +0xc0: its hangar */
+		kp_hangar_add(g, n, c);
+	}
+	g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
+	return made != 0;
+}
+
+/* TrigActModifyHitPoints 0x4b5b00, TrigActModifyEnergy 0x4b5bb0, TrigActModifyShields 0x4b5c60,
+ * TrigActModifyResourceAmount 0x4b5d10 (every unit type, Any Unit 229), TrigActModifyHangarCount 0x4b5dc0 */
 void kp_trigger_modify(KpGame *g, const uint8_t *a)
 {
 	switch (a[KP_ACTION_TYPE]) {
 	case KP_ACT_MODIFY_HP: modify_units(g, a, modify_hp, u32_at(a + KP_ACTION_NUMBER)); break;
 	case KP_ACT_MODIFY_ENERGY: modify_units(g, a, modify_energy, u32_at(a + KP_ACTION_NUMBER)); break;
+	case KP_ACT_MODIFY_RESOURCES: modify_units_of(g, a, ANY_UNIT, modify_resource_amount, u32_at(a + KP_ACTION_NUMBER)); break;
+	case KP_ACT_MODIFY_HANGAR: modify_units(g, a, modify_hangar, u32_at(a + KP_ACTION_NUMBER)); break;
 	default: modify_units(g, a, modify_shields, u32_at(a + KP_ACTION_NUMBER)); break;
 	}
 }
@@ -509,24 +555,23 @@ static void set_alliance(KpGame *g, int64_t p, int64_t status)
 }
 
 /* TrigActSetAllianceStatus 0x4b5e90: the selected players one by one against the changing matrix, then
- * ClearAlliedOrderTargets 0x4721c0 over the current player's units (the colors 0x41d7b0 are the interface's). */
+ * ClearAlliedOrderTargets 0x4721c0 over the current player's units and, for the local player, the circles' colours
+ * (RefreshAllianceColors 0x41d7b0). */
 void kp_trigger_alliance(KpGame *g, const uint8_t *a)
 {
-	KpUnits *u = &g->u;
-	int64_t selector = u32_at(a + KP_ACTION_PLAYER), status = kp_le_u16(a + KP_ACTION_UNIT), current = g->trig.player, p, n;
+	int64_t selector = u32_at(a + KP_ACTION_PLAYER), status = kp_le_u16(a + KP_ACTION_UNIT), current = g->trig.player;
+	int64_t candidates[KP_PLAYERS];
+	int n, k;
 	if (selector < KP_SEL_UNKNOWN) {
 		if (!kp_trigger_group(selector)) {
 			if (selector != KP_SEL_CURRENT) set_alliance(g, selector, status);
 		} else {
-			for (p = 0; p < KP_PLAYERS; p++) {
-				if (kp_trigger_group_takes(g, selector, p)) set_alliance(g, p, status);
+			n = kp_trigger_candidates(g, candidates);
+			for (k = 0; k < n; k++) {
+				if (kp_trigger_group_takes(g, selector, candidates[k])) set_alliance(g, candidates[k], status);
 			}
 		}
 	}
-	for (n = g->player_units[current]; n != 0; n = u->player_next[n]) {
-		int64_t target = u->order_unit[n];
-		if (target == 0 || KP_DAT(g, orders, use_weapon_targeting, u->order[n]) == 0) continue;
-		if (kp_alliance(g, current, u->owner[target]) == 0) continue;
-		if (!kp_is_enemy(g, n, target)) u->order_unit[n] = 0; /* 0x420950 */
-	}
+	kp_clear_allied_targets(g, current);
+	if (current == g->local_player) kp_refresh_alliance_colors(g);
 }

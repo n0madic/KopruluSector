@@ -23,12 +23,17 @@ camera-dependent fields are left out there (Koprulu's presentation refreshes the
 or `runs` campaign missions run idle with a dump at every step (tests/golden/oracle/runs, in the scenarios' shape),
 `chains` the games of the campaign chains (tests/golden/oracle/chains; --only takes a chain or a game), `plays` the
 scripted wins of the campaign rows (tests/golden/oracle/plays), `replays` the original playing its own replays
-(tests/golden/oracle/replays, run in a replay's mode); --root defaults to the kind's emulator output.
+(tests/golden/oracle/replays, run in a replay's mode), `custom` the custom games of the emulator's Play Custom screen
+(tests/golden/oracle/custom: a map of the install with the lobby's setup), `public` the original playing the public
+replays (tests/golden/oracle/public: each replay's own map and header, run in a replay's mode), `public-full` the
+six of the multiplayer game types played to their end (tests/golden/oracle/public-full, a dump every 500th step);
+--root defaults to the kind's emulator output.
 --speech LOC: plays the emulator ran with a language's speech (emu/plays-LOC, tests/golden/oracle/plays-LOC), Koprulu
 takes the TIME of the language's maps in --speech-data (a StarCraft: Remastered install or a repack with the language's
 group; default KOPRULU_SCR).
 
-Usage: python3 tools/state_check.py [--kind initial|scenarios|runs|chains|plays|replays] [--root STATES]
+Usage: python3 tools/state_check.py [--kind initial|scenarios|runs|chains|plays|replays|custom|public|public-full]
+       [--root STATES]
        [--only terran-m02,...] [--step N|A-B|A-B/K|all|all/K] [--write-golden] [--speech LOC [--speech-data DIR]]
 """
 from __future__ import annotations
@@ -82,6 +87,23 @@ PLAY_GOLDEN = ROOT / "tests" / "golden" / "oracle" / "plays"
 # flag 0x67cc90 and full vision); their goldens have the plays' shape.
 REPLAY_ROOT = EMU_ROOT / "replays"
 REPLAY_GOLDEN = ROOT / "tests" / "golden" / "oracle" / "replays"
+# The custom games the emulator played through its Play Custom screen (`custom MAP OUT ...`, sc_emulator/custom.py,
+# phase M): a map of the install's maps folder (custom.json's "map"), the lobby's records StartGame took (setup.json,
+# KP_SETUP for kp_oracle), run's shape. Their maps are read from KOPRULU_MAPS, else the emulator's install's.
+CUSTOM_ROOT = EMU_ROOT / "custom"
+CUSTOM_GOLDEN = ROOT / "tests" / "golden" / "oracle" / "custom"
+CUSTOM_MAPS = Path(os.environ.get("KOPRULU_MAPS", str(EMU_ROOT.parent / "full" / "app" / "maps")))
+# The public replays the emulator played through Load Replay (koprulu-private/emu/replays-public/run.sh, phase M0):
+# the .rep files under PUBLIC_REPLAYS, each run named after its path; Koprulu starts the replay's own map with its
+# header's setup (kp_oracle's maps/<file>.rep) in a replay's mode.
+PUBLIC_ROOT = EMU_ROOT / "replays-public"
+PUBLIC_GOLDEN = ROOT / "tests" / "golden" / "oracle" / "public"
+PUBLIC_REPLAYS = EMU_ROOT.parent / "replays-public"
+# The six public replays of the multiplayer game types the emulator played to their end (replays-public-full/run.sh),
+# a dump every 500th step.
+PUBLIC_FULL_ROOT = EMU_ROOT / "replays-public-full"
+PUBLIC_FULL_GOLDEN = ROOT / "tests" / "golden" / "oracle" / "public-full"
+PUBLIC_KINDS = ("public", "public-full")
 FINGERPRINT, FINGERPRINT_LATER = "fingerprint", "fingerprint_later"
 # The categories the fingerprint covers: those of the oracle's first version (kp_oracle.c FINGERPRINT_CATEGORIES, the
 # same list). The plays' raw dumps are gone, so a category added later stays out of it and their goldens stand; the
@@ -102,6 +124,9 @@ KINDS = {
     "chains": (CHAIN_ROOT, CHAIN_GOLDEN),
     "plays": (PLAY_ROOT, PLAY_GOLDEN),
     "replays": (REPLAY_ROOT, REPLAY_GOLDEN),
+    "custom": (CUSTOM_ROOT, CUSTOM_GOLDEN),
+    "public": (PUBLIC_ROOT, PUBLIC_GOLDEN),
+    "public-full": (PUBLIC_FULL_ROOT, PUBLIC_FULL_GOLDEN),
 }
 # A language's speech (`play ... --speech LOC:MISSION`, sc_emulator/speech.py, localization's stage L5): the plays the
 # emulator ran with the language's TIME go to EMU_ROOT/plays-<loc>, their goldens to tests/golden/oracle/plays-<loc>,
@@ -148,8 +173,52 @@ DRAWN_FIELDS = {"image": ("x", "y"), "unit": ("last_event_timer", "last_event_co
 
 def mission_key(mission: str) -> str:
     """The key kp_oracle starts a mission by (kp_data.h): a catalog name's "missions/<name>", a scenario's
-    "scenarios/<name>" (a key stays)."""
-    return mission if mission.startswith(("scenarios/", "missions/")) else f"missions/{mission}"
+    "scenarios/<name>", a custom map's "maps/<path>" (a key stays)."""
+    return mission if mission.startswith(("scenarios/", "missions/", "maps/")) else f"missions/{mission}"
+
+
+def custom_map(d: Path) -> str:
+    """A custom game's map, its path under the install's maps folder as the runs' games.txt names it
+    (name|cd|map|arguments; custom.json keeps the map's file name only)."""
+    games = d.parent / "games.txt"
+    for line in games.read_text().splitlines() if games.exists() else ():
+        fields = line.split("|")
+        if len(fields) >= 3 and fields[0] == d.name:
+            return fields[2]
+    return json.loads((d / "custom.json").read_text())["map"]
+
+
+def custom_key(d: Path) -> str:
+    """A custom game's key for kp_oracle (KP_ORACLE_MAPS): maps/<its map's path under CUSTOM_MAPS>."""
+    return f"maps/{CUSTOM_MAPS / custom_map(d)}"
+
+
+def custom_setup(d: Path) -> dict:
+    """The lobby's records StartGame took (setup.json's "start_game"), a custom golden's "setup"."""
+    setup = json.loads((d / "setup.json").read_text())["start_game"]
+    return {k: v for k, v in setup.items() if k != "frame"}
+
+
+def custom_lobby(d: Path) -> dict:
+    """The Play Custom screen of a custom game (setup.json's "combos", the driver's choices in order, and "screen",
+    each combo box's items, selection and usability at Ok), a custom golden's "lobby": the lobby that Koprulu's screen
+    builds from the same choices is compared with the original's records (test_flow.play_custom_screens_are_the_originals,
+    stage M4)."""
+    setup = json.loads((d / "setup.json").read_text())
+    return {"combos": [{k: c[k] for k in ("control", "selected")} for c in setup.get("combos", [])],
+            "screen": setup.get("screen", {})}
+
+
+def public_replay(d: Path) -> Path:
+    """A public replay's run's .rep file: the run is named after its path under PUBLIC_REPLAYS as run.sh names it
+    (no suffix, SSCAIT-replays/ dropped, '/', '+' and ' ' as '-')."""
+    for f in sorted(PUBLIC_REPLAYS.rglob("*")):
+        if f.suffix.lower() != ".rep":
+            continue
+        rel = str(f.relative_to(PUBLIC_REPLAYS).with_suffix("")).replace("SSCAIT-replays/", "")
+        if re.sub(r"[/+ ]", "-", rel) == d.name:
+            return f
+    raise FileNotFoundError(f"no public replay for {d.name}")
 
 
 def plays_golden(golden: Path) -> bool:
@@ -354,6 +423,7 @@ def write_scenario_golden(name: str, mission: str, seed: int, expansion: int, co
                 data["steps"][step][FINGERPRINT_LATER] = fingerprint(crcs, later=True)
         else:
             data["steps"][step] = dict(crcs)
+    golden.mkdir(parents=True, exist_ok=True)
     (golden / f"{name}.json").write_text(golden_json(data))
 
 
@@ -437,7 +507,13 @@ def check_mission(d: Path, index: dict, steps: list[int], write: bool, kind: str
         state = State(dump)
         if seed is None:
             seed = state.header["initial_seed"]
-        mission = f"scenarios/{name}" if kind == "scenarios" else index[state.header["mission"]]
+        if kind == "custom":
+            mission = custom_key(d)
+            env = {**(env or {}), "KP_SETUP": str(d / "setup.json")}
+        elif kind in PUBLIC_KINDS:
+            mission = f"maps/{public_replay(d)}"
+        else:
+            mission = f"scenarios/{name}" if kind == "scenarios" else index[state.header["mission"]]
         expansion = state.read(native_state.EXPANSION, 1)[0]
         error, kop = koprulu_model(mission, seed, expansion, step, d / "commands.jsonl", env)
         if error:
@@ -482,6 +558,8 @@ def check_mission(d: Path, index: dict, steps: list[int], write: bool, kind: str
         if not (d / "ai.jsonl").exists():
             ai_trace = None
     if write and scenario:
+        if kind == "custom":  # the map's path under the install's maps folder (kp_oracle's opts.maps)
+            mission = f"maps/{custom_map(d)}"
         write_scenario_golden(name, f"missions/{mission}" if run else mission, seed, expansion,
                               d / "commands.jsonl", scenario_crcs, trace,
                               # a chain's game runs one step more (its result step: the next game's carry), with the
@@ -545,8 +623,18 @@ def check_runs(a: argparse.Namespace, ap: argparse.ArgumentParser, runs: list[tu
         if not (d / "states").is_dir() or (only and name not in only and d.parent.name not in only):
             continue
         extra, env = None, None
-        if a.kind == "replays":
+        if a.kind in PUBLIC_KINDS:
+            try:
+                public_replay(d)
+            except FileNotFoundError:
+                log.info("%-14s not a public replay's run: skipped", name)  # a probe left in the runs' folder
+                continue
+        if a.kind in ("replays",) + PUBLIC_KINDS:
             extra, env = {"replay": 1}, {"KP_REPLAY": "1"}
+        if a.kind == "custom" and (d / "states" / "s00001.state").exists():
+            # the turn counter the menus left (a Use Map Settings game's briefing turns it), as a chain's game takes it
+            turn = native_state.Decoder(State(d / "states" / "s00001.state")).u32(native_state.TURN_COUNTER)
+            extra, env = {"turn": turn, "setup": custom_setup(d), "lobby": custom_lobby(d)}, chain_env(turn, None)
         if a.kind == "chains" and (d / "states" / "s00001.state").exists():
             extra, env, error = chain_context(d, name, before, index, carry_dir)
             if error:
@@ -576,6 +664,7 @@ def check_runs(a: argparse.Namespace, ap: argparse.ArgumentParser, runs: list[tu
             # A partial run updates its entries of the index and keeps the others.
             kept = set(json.loads(path.read_text())) - set(rejected)
             accepted = sorted(kept | set(accepted))
+        path.parent.mkdir(parents=True, exist_ok=True)  # a kind whose runs wrote no golden yet
         path.write_text(golden_json(accepted))
     log.info("%d equal, %d differ or fail", equal, failed)
     return 0 if failed == 0 else 1

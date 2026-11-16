@@ -1,6 +1,8 @@
-/* The list boxes (lbox.cpp, atlas P43 0x4c5ff0..0x4c73c0): the stock type-12 procedure and draw, the items' three
+/* The list boxes (lbox.cpp, atlas P43 0x4c5b80..0x4c73c0): the stock type-12 procedure and draw, the items' three
  * arrays, the selection (user code 11), the hover row the mouse tracks with timer 0x2b, the keys, the page and the
- * vertical scroll bar InitListBox 0x4c68c0 creates for a tall list. */
+ * vertical scroll bar InitListBox 0x4c68c0 creates for a tall list; the combo boxes (type 13) over the same items: the
+ * closed field of one row, the list dropped open below it (above it when the dialog has no room) while the left button
+ * is held. */
 #include "kp_text.h"
 #include "kp_ui.h"
 
@@ -34,6 +36,34 @@
 #define VK_UP 0x26
 #define VK_DOWN 0x28
 #define BAR_ARROWS 0x60000000u      /* the bar's arrows shown pressed (kp_ui_scrollbar.c's ACTION_LOW | ACTION_HIGH) */
+#define TYPE_COMBO 13
+#define COMBO_UP 1                  /* +0x4c bit 0: the list opens upward */
+#define COMBO_TEXT_X 4              /* the field's text and the rows' (DrawComboBoxField's EDX, the drop list's offset) */
+#define COMBO_ARROW_Y 4
+#define COMBO_ARROW_PAD 4           /* the arrow area: the arrow frame's width plus 4 */
+/* the field's frames (DrawComboBoxField 0x4c5b80) of the tall rows, then of the others: dropped open (opening upward,
+ * downward), hovered, otherwise; the arrow's: open, hovered, disabled, otherwise */
+#define FIELD_TALL_UP 44
+#define FIELD_TALL_DOWN 47
+#define FIELD_TALL_HOVER 56
+#define FIELD_TALL 53
+#define ARROW_TALL 50
+#define ARROW_TALL_HOVER 51
+#define ARROW_TALL_DISABLED 52
+#define FIELD_UP 68
+#define FIELD_DOWN 71
+#define FIELD_HOVER 80
+#define FIELD 77
+#define ARROW 74
+#define ARROW_HOVER 75
+#define ARROW_DISABLED 76
+/* the drop list's row frames (DrawComboBoxDropList 0x4c5d40): first, middle, last */
+#define DROP_TALL_FIRST 35
+#define DROP_TALL_MIDDLE 38
+#define DROP_TALL_LAST 41
+#define DROP_FIRST 59
+#define DROP_MIDDLE 62
+#define DROP_LAST 65
 
 static KpUiList *ls(const KpUiControl *c) { return c->list; }
 static int32_t self_of(KpUi *ui, const KpUiControl *c) { return (int32_t)(c - ui->controls); }
@@ -48,13 +78,27 @@ static void rel(const KpUi *ui, const KpUiControl *c, const KpUiEvent *e, int32_
 
 static void update_bar(KpUi *ui, KpUiControl *c);
 
-/* RecalcListLayout 0x4c6db0 (a list box: no combo extension). */
+static int is_combo(const KpUiControl *c) { return c->type == TYPE_COMBO; }
+
+/* RecalcListLayout 0x4c6db0: a combo box's rectangle is extended by its rows for the page (upward when the dialog's
+ * bottom has no room for them, and the control enabled), then taken back. */
 static void recalc(KpUi *ui, KpUiControl *c)
 {
 	KpUiList *l = ls(c);
-	int32_t page;
+	int32_t page, n = 0;
 	if (l == NULL || (c->flags & FLAG_SUSPENDED)) return;
-	page = l->row_h > 0 ? (c->bottom - c->top + 1) / l->row_h : 0;
+	if (is_combo(c)) {
+		n = l->count * l->row_h;
+		if (c->bottom + n > ui->controls[c->parent].bottom) {
+			c->top = (int16_t)(c->top - n);
+			l->up |= COMBO_UP;
+		} else {
+			l->up = 0;
+			c->bottom = (int16_t)(c->bottom + n);
+		}
+		kp_ui_set_enabled(ui, self_of(ui, c), 1);
+	}
+	page = l->row_h > 0 ? (int16_t)(c->bottom - c->top + 1) / l->row_h : 0;
 	l->page = (uint8_t)page;
 	l->last_top = 0;
 	c->bottom = (int16_t)(c->top + (l->row_h > page * l->row_h ? l->row_h : page * l->row_h));
@@ -65,6 +109,10 @@ static void recalc(KpUi *ui, KpUiControl *c)
 	if (l->top > l->last_top) l->top = l->last_top;
 	c->flags |= FLAG_SUSPENDED;
 	update_bar(ui, c);
+	if (is_combo(c)) {
+		if (l->up & COMBO_UP) c->top = (int16_t)(c->top + n);
+		else c->bottom = (int16_t)(c->bottom - n);
+	}
 	c->flags &= ~FLAG_SUSPENDED;
 	kp_ui_mark_dirty(ui, self_of(ui, c));
 }
@@ -129,13 +177,13 @@ static int send_value(KpUi *ui, KpUiControl *c, uint32_t value)
 	return kp_ui_send_user(ui, self_of(ui, c), KP_UI_VALUE_CHANGED, value);
 }
 
-/* ListRowAtCursor 0x4c62d0. */
+/* ListRowAtCursor 0x4c62d0: a combo box's rows start below its field when it opens downward. */
 static int row_at(KpUi *ui, KpUiControl *c, const KpUiEvent *e)
 {
 	KpUiList *l = ls(c);
-	int32_t x, y, r;
+	int32_t x, y, r, start = is_combo(c) && !(l->up & COMBO_UP) ? c->top + l->row_h : c->top;
 	rel(ui, c, e, &x, &y);
-	if (y < c->top) {
+	if (y < start) {
 		c->flags &= ~FLAG_TRACKING;
 		r = l->hover > l->top ? l->top : (l->hover ? l->hover - 1 : 0);
 	} else if (y > c->bottom) {
@@ -144,18 +192,26 @@ static int row_at(KpUi *ui, KpUiControl *c, const KpUiEvent *e)
 		else r = l->hover < l->count - 1 ? l->hover + 1 : l->hover;
 	} else {
 		if (x > c->left && x < c->right) c->flags |= FLAG_TRACKING;
-		r = l->top + (int16_t)((y - c->top) / l->row_h);
+		r = l->top + (int16_t)(y - start) / l->row_h;
 	}
-	if (r >= l->count) r = l->count - 1;
+	if ((uint8_t)r >= l->count) r = l->count - 1;
 	return r & 0xff;
 }
 
-/* IsCursorInListRows 0x4c73c0. */
+/* IsCursorInListRows 0x4c73c0: the rows' rectangle, narrowed by the shown bar's width, a combo box's field left out. */
 static int in_rows(KpUi *ui, KpUiControl *c, const KpUiEvent *e)
 {
-	int32_t x, y;
+	KpUiList *l = ls(c);
+	int32_t x, y, right = c->right, top = c->top, bottom = c->bottom;
 	rel(ui, c, e, &x, &y);
-	return x >= c->left && x <= c->right && y >= c->top && y <= c->bottom;
+	if (l->bar >= 0 && (ui->controls[l->bar].flags & KP_UI_VISIBLE)) {
+		right = (int16_t)(right - (ui->controls[l->bar].right - ui->controls[l->bar].left));
+	}
+	if (is_combo(c)) {
+		if (l->up & COMBO_UP) bottom = (int16_t)(bottom - l->row_h);
+		else top = (int16_t)(top + l->row_h);
+	}
+	return x >= c->left && x <= right && y >= top && y <= bottom;
 }
 
 static void hover_to(KpUi *ui, KpUiControl *c, int r)
@@ -400,6 +456,165 @@ void kp_ui_list_draw(KpUi *ui, KpUiControl *c, int32_t x, int32_t y, const int16
 	ui->text.font = NULL;
 }
 
+/* --- the combo boxes (type 13) --- */
+
+/* OpenComboBox 0x4c5f00: the rectangle extended over the rows (and the field frame's height past the drop frame's) on
+ * the side the list opens to, the list dropped open. */
+static void combo_open(KpUi *ui, KpUiControl *c)
+{
+	KpUiList *l = ls(c);
+	int tall = (c->flags & FLAG_TALL) != 0;
+	int32_t field = tall ? ui->theme.field_h - ui->theme.combo_h : ui->theme.wide_field_h - ui->theme.wide_combo_h;
+	uint16_t extra = (uint16_t)((int16_t)(l->count * l->row_h) + field);
+	if (l->up & COMBO_UP) c->top = (int16_t)(c->top - extra);
+	else c->bottom = (int16_t)(c->bottom + extra);
+	kp_ui_mark_invalid(ui, self_of(ui, c));
+	c->flags = (c->flags & ~FLAG_TRACKING) | KP_UI_DROPPED;
+}
+
+/* CollapseComboBox 0x4c5fb0: the field's rectangle again. */
+static void combo_collapse(KpUiControl *c)
+{
+	if (!(c->flags & KP_UI_DROPPED)) return;
+	c->flags &= ~KP_UI_DROPPED;
+	c->top = c->list->field_top;
+	c->bottom = (int16_t)(c->list->field_top + c->list->row_h);
+}
+
+int kp_ui_combo_proc(KpUi *ui, KpUiControl *c, KpUiEvent *e)
+{
+	/* ComboBoxProc 0x4c63b0: the press drops the list open, the release closes it (the list's own release then selects
+	 * the hovered row), a double click does nothing */
+	int32_t self = self_of(ui, c);
+	switch (e->type) {
+	case KP_UI_LEFT_DOWN:
+		if (c->list != NULL) combo_open(ui, c);
+		return kp_ui_list_proc(ui, c, e);
+	case KP_UI_LEFT_UP: /* CloseComboBox 0x4c5f70 */
+		kp_ui_mark_dirty(ui, self);
+		if (c->list != NULL) combo_collapse(c);
+		return kp_ui_list_proc(ui, c, e);
+	case KP_UI_LEFT_DOUBLE:
+		return 1;
+	case KP_UI_USER:
+		break;
+	default:
+		return kp_ui_list_proc(ui, c, e);
+	}
+	switch (e->code) {
+	case KP_UI_CREATE:
+		if (c->list == NULL || c->list->count == 0) kp_ui_set_enabled(ui, self, 0);
+		break;
+	case KP_UI_FOCUS_LOST:
+		if (c->list != NULL) combo_collapse(c);
+		break;
+	case KP_UI_POST_LOAD: /* the list's own, then the closed field of one row */
+		(void)kp_ui_list_proc(ui, c, e);
+		c->flags |= KP_UI_PLAIN;
+		if (c->list != NULL) {
+			c->list->field_top = c->top;
+			c->bottom = (int16_t)(c->top + c->list->row_h);
+		}
+		(void)kp_ui_type_interact(-1)(ui, c, e); /* ControlDefaultInteract 0x4c1e90 */
+		return 1;
+	default:
+		break;
+	}
+	return kp_ui_list_proc(ui, c, e);
+}
+
+/* DrawComboBoxField 0x4c5b80: the field's bar at its closed rectangle (the field frame's height), the arrow, the
+ * selected item's text 4 pixels in, left of the arrow (drawn as enabled, its colour 3 or the hover's 4). */
+static void combo_field_draw(KpUi *ui, KpUiControl *c, const int16_t clip[4])
+{
+	KpUiList *l = ls(c);
+	int tall = (c->flags & FLAG_TALL) != 0;
+	int field, arrow;
+	int32_t tile, area;
+	int16_t top = c->top, bottom = c->bottom, rect[4];
+	if (c->flags & KP_UI_DROPPED) {
+		field = tall ? ((l->up & COMBO_UP) ? FIELD_TALL_UP : FIELD_TALL_DOWN) : ((l->up & COMBO_UP) ? FIELD_UP : FIELD_DOWN);
+		arrow = tall ? ARROW_TALL : ARROW;
+	} else if (c->flags & KP_UI_HOVER) {
+		field = tall ? FIELD_TALL_HOVER : FIELD_HOVER;
+		arrow = tall ? ARROW_TALL_HOVER : ARROW_HOVER;
+	} else {
+		field = tall ? FIELD_TALL : FIELD;
+		arrow = (c->flags & KP_UI_DISABLED) ? (tall ? ARROW_TALL_DISABLED : ARROW_DISABLED) : (tall ? ARROW_TALL : ARROW);
+	}
+	tile = tall ? ui->theme.combo_w : ui->theme.wide_combo_w;
+	area = (tall ? ui->theme.arrow_w : ui->theme.wide_arrow_w) + COMBO_ARROW_PAD;
+	kp_ui_select_control_font(ui, c);
+	c->top = l->field_top;
+	c->bottom = (int16_t)(l->field_top + ui->theme.field_h);
+	kp_ui_three_part_bar(ui, c->left, c->top, c->right - c->left + 1, tile, field, clip, KP_UI_TRANSPARENT);
+	kp_ui_draw_theme_frame(ui, arrow, (int16_t)(c->right - area), (int16_t)(c->top + COMBO_ARROW_Y), clip, KP_UI_TRANSPARENT);
+	if (l->count != 0 && l->selected != KP_UI_LIST_NONE) {
+		int wrap = ui->text.wrap;
+		uint32_t flags = c->flags;
+		c->text = l->text[l->selected];
+		ui->text.wrap = 0;
+		c->flags &= ~KP_UI_DISABLED;
+		rect[0] = c->left;
+		rect[1] = c->top;
+		rect[2] = (int16_t)(c->right - area);
+		rect[3] = c->bottom;
+		kp_ui_draw_control_text(ui, c, COMBO_TEXT_X, 0, rect, FORMAT_ITEM);
+		c->flags = flags;
+		ui->text.wrap = wrap;
+	}
+	c->top = top;
+	c->bottom = bottom;
+}
+
+/* DrawComboBoxDropList 0x4c5d40: a row strip per item from the side away from the field (opening upward from the
+ * extended top, item 0 first; otherwise from the extended bottom, the last item first), the first strip's frame the
+ * end's, the others the middle's, each row's item drawn 4 pixels in. */
+static void combo_list_draw(KpUi *ui, KpUiControl *c, const int16_t clip[4])
+{
+	KpUiList *l = ls(c);
+	int tall = (c->flags & FLAG_TALL) != 0, up = (l->up & COMBO_UP) != 0, k, index, step;
+	int32_t tile = tall ? ui->theme.combo_w : ui->theme.wide_combo_w;
+	int16_t row[4];
+	uint8_t spacing = ui->text.spacing;
+	kp_ui_select_control_font(ui, c);
+	ui->text.spacing = 1;
+	row[0] = c->left;
+	row[2] = c->right;
+	if (up) {
+		row[1] = c->top;
+		row[3] = (int16_t)(c->top + l->row_h);
+		index = 0;
+		step = 1;
+	} else {
+		row[3] = c->bottom;
+		row[1] = (int16_t)(c->bottom - l->row_h);
+		index = (uint8_t)(l->count - 1);
+		step = -1;
+	}
+	for (k = 0; k == 0 || k < l->count; k++) { /* the first strip even for no item */
+		int frame = k != 0 ? (tall ? DROP_TALL_MIDDLE : DROP_MIDDLE)
+			: up ? (tall ? DROP_TALL_FIRST : DROP_FIRST) : (tall ? DROP_TALL_LAST : DROP_LAST);
+		kp_ui_three_part_bar(ui, row[0], row[1], row[2] - row[0] + 1, tile, frame, clip, KP_UI_TRANSPARENT);
+		(l->draw_item != NULL ? l->draw_item : draw_item)(ui, c, (uint8_t)index, row, COMBO_TEXT_X, 0);
+		row[1] = (int16_t)(row[1] + step * l->row_h);
+		row[3] = (int16_t)(row[3] + step * l->row_h);
+		index += step;
+	}
+	ui->text.spacing = spacing;
+}
+
+void kp_ui_combo_draw(KpUi *ui, KpUiControl *c, int32_t x, int32_t y, const int16_t clip[4])
+{
+	/* DrawComboBox 0x4c6700 */
+	(void)x;
+	(void)y;
+	if (c->list == NULL) return;
+	combo_field_draw(ui, c, clip);
+	if (c->flags & KP_UI_DROPPED) combo_list_draw(ui, c, clip);
+	ui->text.font = NULL;
+}
+
 /* --- the items --- */
 
 static KpUiControl *list_of(KpUi *ui, int32_t list) { return list >= 0 && ui->controls[list].list ? &ui->controls[list] : NULL; }
@@ -429,6 +644,22 @@ int kp_ui_list_add(KpUi *ui, int32_t list, const uint8_t *text, uint8_t flags)
 	l->text[at] = keep(l, at, text, flags);
 	l->flags[at] = flags;
 	l->count++;
+	if (is_combo(c)) { /* the rectangle extended by the rows around the layout (upward without room below) */
+		int32_t n = l->row_h * l->count;
+		if (c->bottom + n > ui->controls[c->parent].bottom) {
+			c->top = (int16_t)(c->top - n);
+			recalc(ui, c);
+			c->top = (int16_t)(c->top + n);
+			l->up |= COMBO_UP;
+		} else {
+			c->bottom = (int16_t)(c->bottom + n);
+			recalc(ui, c);
+			c->bottom = (int16_t)(c->bottom - n);
+			l->up = 0;
+		}
+		kp_ui_set_enabled(ui, list, 1);
+		return at;
+	}
 	recalc(ui, c);
 	return at;
 }
@@ -453,6 +684,16 @@ void kp_ui_list_insert(KpUi *ui, int32_t list, int index, const uint8_t *text, u
 	l->flags[at] = flags;
 	l->data[at] = 0;
 	l->count++;
+	if (is_combo(c)) { /* the rectangle extended downward around the layout, whichever way the list opens */
+		int32_t n = l->row_h * l->count;
+		if (c->bottom + n > ui->controls[c->parent].bottom) l->up |= COMBO_UP;
+		else l->up = 0;
+		kp_ui_set_enabled(ui, list, 1);
+		c->bottom = (int16_t)(c->bottom + n);
+		recalc(ui, c);
+		c->bottom = (int16_t)(c->bottom - n);
+		return;
+	}
 	recalc(ui, c);
 }
 

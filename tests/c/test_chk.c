@@ -11,7 +11,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
+#include <dirent.h>
+#include <sys/stat.h>
 
+#include "kp_data.h"
 #include "kp_files.h"
 #include "kp_sha256.h"
 #include "../../native/kp_core/src/core/kp_campaign.h"
@@ -165,34 +169,43 @@ static void fixture_mission_from_its_chk(KpT *T)
 
 /* The fixture's scenario with chunk `tag`'s payload replaced (payload NULL: the chunk left out), or with a chunk added
  * at the end (append); the buffer has room for one more chunk header. */
-static uint8_t *variant(KpT *T, const char *tag, const void *payload, size_t n, int append, size_t *size)
+/* base's chunks with each chunk tag replaced by payload (n bytes), or dropped for payload NULL, owned by the test. */
+static uint8_t *replaced(KpT *T, const uint8_t *base, size_t base_size, const char *tag, const void *payload, size_t n,
+	size_t *size)
 {
-	size_t base_size, at = 0, out = 0;
-	const uint8_t *base = kp_t_read(T, FIXTURE_CHK, &base_size);
+	size_t at = 0, out = 0;
 	uint8_t *v = (uint8_t *)owned(T, base_size + CHUNK_HEADER + n);
 	while (at + CHUNK_HEADER <= base_size) {
 		size_t len = (size_t)base[at + 4] | (size_t)base[at + 5] << 8 | (size_t)base[at + 6] << 16
 			| (size_t)base[at + 7] << 24;
-		if (!append && memcmp(base + at, tag, 4) == 0) {
-			if (payload) {
-				memcpy(v + out, tag, 4);
-				le32(v + out + 4, (uint32_t)n);
-				memcpy(v + out + CHUNK_HEADER, payload, n);
-				out += CHUNK_HEADER + n;
-			}
-		} else {
+		if (memcmp(base + at, tag, 4) != 0) {
 			memcpy(v + out, base + at, CHUNK_HEADER + len);
 			out += CHUNK_HEADER + len;
+		} else if (payload) {
+			memcpy(v + out, tag, 4);
+			le32(v + out + 4, (uint32_t)n);
+			memcpy(v + out + CHUNK_HEADER, payload, n);
+			out += CHUNK_HEADER + n;
 		}
 		at += CHUNK_HEADER + len;
 	}
-	if (append) { /* payload NULL: the header alone, its payload past the end */
-		memcpy(v + out, tag, 4);
-		le32(v + out + 4, (uint32_t)n);
-		if (payload && n) memcpy(v + out + CHUNK_HEADER, payload, n);
-		out += CHUNK_HEADER + (payload ? n : 0);
-	}
 	*size = out;
+	return v;
+}
+
+static uint8_t *variant(KpT *T, const char *tag, const void *payload, size_t n, int append, size_t *size)
+{
+	size_t base_size;
+	const uint8_t *base = kp_t_read(T, FIXTURE_CHK, &base_size);
+	uint8_t *v;
+	if (!append) return replaced(T, base, base_size, tag, payload, n, size);
+	v = (uint8_t *)owned(T, base_size + CHUNK_HEADER + n);
+	memcpy(v, base, base_size);
+	/* payload NULL: the header alone, its payload past the end */
+	memcpy(v + base_size, tag, 4);
+	le32(v + base_size + 4, (uint32_t)n);
+	if (payload && n) memcpy(v + base_size + CHUNK_HEADER, payload, n);
+	*size = base_size + CHUNK_HEADER + (payload ? n : 0);
 	return v;
 }
 
@@ -254,6 +267,60 @@ static void chk_variants_are_refused(KpT *T)
 	refused(T, v, size + CHUNK_HEADER, 1, "negative size -8");
 }
 
+/* A custom map's loads (scdata/tests/test_chk.py's game loads over the version 205 fixture): an unread chunk is
+ * skipped, STR keeps the last chunk, MTXM and MASK lay theirs over each other, an appending section's repeat is
+ * refused; a melee load reads no triggers. */
+static void chk_game_loads(KpT *T)
+{
+	static const uint8_t STR[2] = { 0, 0 }, TILES[2] = { 1, 2 }, FOG[1] = { 7 };
+	const KpDefsProfile *profile = kp_t_fixture_profile(T);
+	const KpChkSection *s, *base_tiles;
+	uint8_t *v, *unit = (uint8_t *)owned(T, 36);
+	size_t size, chk_size;
+	const uint8_t *chk;
+	KpChk c, base;
+	char err[KP_ERROR_SIZE];
+	if (!kp_t_ready(T, "test_chk", FIXTURES)) return;
+	chk = kp_t_read(T, FIXTURE_CHK, &chk_size);
+	kp_t_eq(T, kp_chk_read(&base, chk, chk_size, profile, 1, err, sizeof err), 0, "the fixture: %s", err);
+	base_tiles = kp_chk_section(&base, "MTXM");
+
+	v = variant(T, "ABCD", "", 0, 1, &size);
+	kp_t_eq(T, kp_chk_load(&c, v, size, profile, 1, KP_CHK_UMS, err, sizeof err), 0, "an unread tag: %s", err);
+	kp_chk_free(&c);
+	v = variant(T, "STR ", STR, sizeof STR, 1, &size);
+	kp_t_eq(T, kp_chk_load(&c, v, size, profile, 1, KP_CHK_UMS, err, sizeof err), 0, "a second STR: %s", err);
+	s = kp_chk_section(&c, "STR ");
+	kp_t_ok(T, s && bytes_eq(s->data, s->size, STR, sizeof STR) && !s->owned, "the last STR read");
+	kp_chk_free(&c);
+	v = variant(T, "MTXM", TILES, sizeof TILES, 1, &size);
+	kp_t_eq(T, kp_chk_load(&c, v, size, profile, 1, KP_CHK_UMS, err, sizeof err), 0, "a second MTXM: %s", err);
+	s = kp_chk_section(&c, "MTXM");
+	kp_t_ok(T, s && base_tiles && s->owned && s->size == base_tiles->size && memcmp(s->data, TILES, 2) == 0
+			&& memcmp(s->data + 2, base_tiles->data + 2, s->size - 2) == 0,
+		"the second MTXM over the first");
+	kp_chk_free(&c);
+	v = variant(T, "MASK", FOG, sizeof FOG, 1, &size);
+	kp_t_eq(T, kp_chk_load(&c, v, size, profile, 1, KP_CHK_UMS, err, sizeof err), 0, "a second MASK: %s", err);
+	s = kp_chk_section(&c, "MASK");
+	kp_t_ok(T, s && s->owned && s->data[0] == 7, "the second MASK over the first");
+	kp_chk_free(&c);
+	v = variant(T, "MTXM", NULL, 100, 1, &size);
+	kp_t_eq(T, kp_chk_load(&c, v, size, profile, 1, KP_CHK_UMS, err, sizeof err), -1, "a truncated second MTXM");
+	kp_t_ok(T, strstr(err, "'MTXM' at") != NULL, "the reason: %s", err);
+	v = variant(T, "UNIT", unit, 36, 1, &size);
+	kp_t_eq(T, kp_chk_load(&c, v, size, profile, 1, KP_CHK_UMS, err, sizeof err), -1, "a second UNIT");
+	kp_t_ok(T, strstr(err, "duplicate section 'UNIT'") != NULL, "the reason: %s", err);
+
+	kp_t_eq(T, kp_chk_load(&c, chk, chk_size, profile, 1, KP_CHK_MELEE, err, sizeof err), 0, "a melee load: %s", err);
+	kp_t_ok(T, !kp_chk_section(&c, "TRIG") && !kp_chk_section(&c, "MASK") && kp_chk_section(&c, "COLR"),
+		"the melee group's sections");
+	kp_chk_free(&c);
+	v = variant(T, "UNIT", NULL, 0, 0, &size);
+	kp_t_eq(T, kp_chk_load(&c, v, size, profile, 1, KP_CHK_MELEE, err, sizeof err), -1, "a melee map without UNIT");
+	kp_t_ok(T, strstr(err, "missing required section 'UNIT'") != NULL, "the reason: %s", err);
+}
+
 /* The fixture's scenario v (size bytes) loaded as its mission: 0, else -1 with the reason in why. */
 static int load_variant(KpT *T, const uint8_t *v, size_t size, char *why, size_t why_size)
 {
@@ -313,8 +380,8 @@ static int with_trigger(KpT *T, size_t at, uint8_t value, long at32, uint32_t v3
 	return with_patches(T, p, at32 >= 0 ? 2 : 1, why, why_size);
 }
 
-/* scdata/analyze/triggers.py validate: the reachable conditions and actions past the tables or outside the V1
- * profile are refused; ignored ones are left */
+/* scdata/analyze/triggers.py validate: the reachable conditions and actions past the tables are refused; ignored ones
+ * are left, as are Opponents and the actions 52 and 53 (phase M's stage M2) */
 static void trigger_validation(KpT *T)
 {
 	enum { COND_TYPE = 0x0f, COND_FIELDS = 0x0e, ACT = TRIGGER_ACTIONS, ACT_NUMBER = 0x14, ACT_TYPE = 0x1a };
@@ -322,12 +389,11 @@ static void trigger_validation(KpT *T)
 	if (!kp_t_ready(T, "test_chk", FIXTURES)) return;
 	kp_t_eq(T, with_trigger(T, COND_TYPE, 24, -1, 0, why, sizeof why), -1, "condition 24");
 	kp_t_ok(T, strstr(why, "trigger 0 condition 0: type 24 (the table has 24)") != NULL, "%s", why);
-	kp_t_eq(T, with_trigger(T, COND_TYPE, 14, -1, 0, why, sizeof why), -1, "opponents");
-	kp_t_ok(T, strstr(why, "condition 0: opponents is outside the V1 profile") != NULL, "%s", why);
+	kp_t_eq(T, with_trigger(T, COND_TYPE, 14, -1, 0, why, sizeof why), 0, "opponents: %s", why);
 	kp_t_eq(T, with_trigger(T, ACT + ACT_TYPE, 60, -1, 0, why, sizeof why), -1, "action 60");
 	kp_t_ok(T, strstr(why, "trigger 0 action 0: type 60 (the table has 60)") != NULL, "%s", why);
-	kp_t_eq(T, with_trigger(T, ACT + ACT_TYPE, 52, -1, 0, why, sizeof why), -1, "action 52");
-	kp_t_ok(T, strstr(why, "action 0: modify_unit_resource_amount is outside the V1 profile") != NULL, "%s", why);
+	kp_t_eq(T, with_trigger(T, ACT + ACT_TYPE, 52, -1, 0, why, sizeof why), 0, "action 52: %s", why);
+	kp_t_eq(T, with_trigger(T, ACT + ACT_TYPE, 53, -1, 0, why, sizeof why), 0, "action 53: %s", why);
 	kp_t_eq(T, with_trigger(T, ACT + ACT_TYPE, 46, ACT + ACT_NUMBER, 256, why, sizeof why), -1, "Order to 256");
 	kp_t_ok(T, strstr(why, "action 0: Order to location 256") != NULL, "%s", why);
 	kp_t_eq(T, with_trigger(T, ACT + ACT_TYPE, 46, ACT + ACT_NUMBER, 255, why, sizeof why), 0, "Order to 255: %s", why);
@@ -343,8 +409,8 @@ static void trigger_validation(KpT *T)
 
 /* The runtime's stops a scenario decides (ADR 0023) are refused when its mission loads: the counters of a direct
  * slot past the players or of a unit type past the table, Kill and Remove Unit of such a slot, Set Alliance with slot
- * 12, Set Deaths past the aggregates, a leaderboard's unit type, a Flag, a map string without its terminator, a start
- * location of slot 12; the same records the runtime takes are left. */
+ * 12, Set Deaths past the aggregates, a leaderboard's unit type, a map string without its terminator, a start location
+ * of slot 12; the same records the runtime takes are left, Flags among them (Capture the Flag's, phase M's stage M2). */
 static void runtime_stops_are_refused(KpT *T)
 {
 	enum {
@@ -377,7 +443,7 @@ static void runtime_stops_are_refused(KpT *T)
 		{ { { A_TYPE, 20, 1 }, { A_UNIT, 228, 2 } }, "action 0: a leaderboard of unit type 228" },
 		{ { { A_TYPE, 34, 1 }, { A_UNIT, 228, 2 }, { A_LOCATION, 1, 1 } }, "a leaderboard of unit type 228" },
 		{ { { A_TYPE, 18, 1 }, { A_UNIT, 228, 2 } }, NULL }, /* Control At without a location changes nothing */
-		{ { { A_TYPE, 44, 1 }, { A_UNIT, 215, 2 }, { A_LOCATION, 1, 1 } }, "action 0: a Flag (unit 215)" },
+		{ { { A_TYPE, 44, 1 }, { A_UNIT, 215, 2 }, { A_LOCATION, 1, 1 } }, NULL }, /* a Flag */
 		{ { { A_TYPE, 11, 1 }, { A_UNIT, 215, 2 } }, NULL }, /* no location: nothing is made */
 		{ { { A3 + 0x1a, 22, 1 }, { A3 + 0x10, 12, 4 } }, NULL }, /* after the first action of type 0: never run */
 		{ { { A_TYPE, 22, 1 }, { A_PLAYER, 12, 4 }, { A + 0x1c, 2, 1 } }, NULL }, /* ignored */
@@ -407,9 +473,10 @@ static void runtime_stops_are_refused(KpT *T)
 	v = variant(T, "UNIT", record[1], sizeof record[1], 0, &size);
 	kp_t_eq(T, load_variant(T, v, size, why, sizeof why), 0, "a start location of slot 11: %s", why);
 	v = variant(T, "UNIT", record[2], sizeof record[2], 0, &size);
-	kp_t_eq(T, load_variant(T, v, size, why, sizeof why), -1, "a Flag");
-	kp_t_ok(T, strstr(why, "UNIT: unit 0: a Flag (unit 215) is outside the V1 profile") != NULL, "%s", why);
-	/* the fixture's STR (4 strings, its last byte a terminator) with string 4 past the end, then at the last byte */
+	kp_t_eq(T, load_variant(T, v, size, why, sizeof why), 0, "a Flag: %s", why);
+	/* the fixture's STR (4 strings, its last byte a terminator) with string 4 past the end, then at the last byte, then
+	 * without the last terminator: each loads, as the original's (a string past STR reads empty, one STR does not end
+	 * ends at STR's end: ADR 0024) */
 	chk = kp_t_read(T, FIXTURE_CHK, &chk_size);
 	for (k = 0; k + CHUNK_HEADER <= chk_size; k += CHUNK_HEADER + n) {
 		n = (size_t)chk[k + 4] | (size_t)chk[k + 5] << 8 | (size_t)chk[k + 6] << 16 | (size_t)chk[k + 7] << 24;
@@ -419,14 +486,13 @@ static void runtime_stops_are_refused(KpT *T)
 	if (strs_size < 10) return;
 	strs[8] = (uint8_t)(strs_size + 7), strs[9] = 0;
 	v = variant(T, "STR ", strs, strs_size, 0, &size);
-	kp_t_eq(T, load_variant(T, v, size, why, sizeof why), -1, "string 4 past STR");
-	kp_t_ok(T, strstr(why, "STR: string 4 at offset") != NULL && strstr(why, "is not terminated inside STR"), "%s", why);
+	kp_t_eq(T, load_variant(T, v, size, why, sizeof why), 0, "string 4 past STR: %s", why);
 	strs[8] = (uint8_t)(strs_size - 1);
 	v = variant(T, "STR ", strs, strs_size, 0, &size);
 	kp_t_eq(T, load_variant(T, v, size, why, sizeof why), 0, "string 4 empty at the last byte: %s", why);
 	strs[strs_size - 1] = 'x';
 	v = variant(T, "STR ", strs, strs_size, 0, &size);
-	kp_t_eq(T, load_variant(T, v, size, why, sizeof why), -1, "STR without its last terminator");
+	kp_t_eq(T, load_variant(T, v, size, why, sizeof why), 0, "STR without its last terminator: %s", why);
 }
 
 /* --- the installs --- */
@@ -498,6 +564,196 @@ static void installs_missions_equal(KpT *T)
 		compared++;
 	}
 	kp_t_eq(T, compared, CAMPAIGN_MISSIONS, "the campaign's missions compared");
+}
+
+/* --- custom maps (ADR 0024) --- */
+
+typedef struct {
+	KpT *T;
+	const KpFiles *files;
+	int maps, melee, ums;
+} MapsWalk;
+
+static void map_loads(MapsWalk *w, const char *path)
+{
+	static const KpChkLoad LOADS[] = { KP_CHK_MELEE, KP_CHK_UMS };
+	int k;
+	w->maps++;
+	for (k = 0; k < 2; k++) {
+		KpDataMap map;
+		KpMission m;
+		KpError err;
+		if (kp_data_map_open(&map, w->files, path, &err) != 0) {
+			kp_t_ok(w->T, 0, "%s", err.msg);
+			return;
+		}
+		if (kp_data_map_mission(&map, LOADS[k], &m, &err) == 0) {
+			if (k == 0) w->melee++; else w->ums++;
+			kp_mission_free(&m);
+		} else {
+			kp_t_ok(w->T, 0, "%s %s: %s", k == 0 ? "melee" : "ums", path, err.msg);
+		}
+		kp_data_map_close(&map);
+	}
+}
+
+static void maps_walk(MapsWalk *w, const char *dir)
+{
+	DIR *d = opendir(dir);
+	struct dirent *e;
+	char path[1024];
+	kp_t_ok(w->T, d != NULL, "%s", dir);
+	if (!d) return;
+	while ((e = readdir(d)) != NULL) {
+		size_t n = strlen(e->d_name);
+		struct stat st;
+		if (e->d_name[0] == '.') continue;
+		snprintf(path, sizeof path, "%s/%s", dir, e->d_name);
+		if (stat(path, &st) != 0) continue;
+		if (S_ISDIR(st.st_mode)) maps_walk(w, path);
+		else if (n > 4 && (strcasecmp(e->d_name + n - 4, ".scm") == 0 || strcasecmp(e->d_name + n - 4, ".scx") == 0))
+			map_loads(w, path);
+	}
+	closedir(d);
+}
+
+/* Every map of the 1.17 install's maps folder loads as a melee game's and as a use map settings game's (Capture the
+ * Flag's Flags and the Opponents condition since phase M's stage M2). */
+static void install_maps_load(KpT *T)
+{
+	const char *root = getenv("KP_TEST_ORIGINAL");
+	char dir[1024];
+	KpFiles f;
+	MapsWalk w;
+	memset(&w, 0, sizeof w);
+	if (!root || !root[0]) kp_t_skip(T, "no KP_TEST_ORIGINAL");
+	kp_res_files(kp_t_install(T, "KP_TEST_ORIGINAL"), &f);
+	w.T = T;
+	w.files = &f;
+	snprintf(dir, sizeof dir, "%s/maps", root);
+	maps_walk(&w, dir);
+	kp_t_ok(T, w.maps > 0, "the install's maps");
+	kp_t_eq(T, w.melee, w.maps, "every map as a melee game's");
+	kp_t_eq(T, w.ums, w.maps, "every map as a use map settings game's");
+	kp_t_log(T, "%d maps: %d load as melee games', %d as use map settings games'", w.maps, w.melee, w.ums);
+}
+
+/* A custom map's mission from the fixture's scenario: a use map settings load's parts are the campaign's; a melee load
+ * reads no triggers, locations or briefing and its fog mask is all 0xff; MTXM's chunks are laid over each other, and
+ * a map whose tiles they leave unwritten is refused. */
+static void map_missions(KpT *T)
+{
+	static const uint8_t TILES[2] = { 1, 2 }, NO_PACKS[1] = { 0 };
+	Source src;
+	KpFiles f;
+	KpMission *a = (KpMission *)owned(T, sizeof *a), *b = (KpMission *)owned(T, sizeof *b);
+	KpError err;
+	size_t chk_size, size, k;
+	const uint8_t *chk;
+	uint8_t *copy, *v;
+	if (!kp_t_ready(T, "test_chk", FIXTURES)) return;
+	chk = kp_t_read(T, FIXTURE_CHK, &chk_size);
+	f = fixture_files(T, &src, chk, chk_size);
+	kp_t_ok(T, kp_mission_from_files(a, &f, KP_T_FIXTURE_MISSION, &err) == 0, "the campaign's: %s", err.msg);
+	kp_t_defer(T, mission_free, a);
+	copy = (uint8_t *)malloc(chk_size);
+	if (copy) memcpy(copy, chk, chk_size);
+	kp_t_ok(T, kp_mission_from_map(b, &f, copy, chk_size, "fixture", KP_CHK_UMS, NO_PACKS, 1, &err) == 0, "ums: %s", err.msg);
+	kp_t_defer(T, mission_free, b);
+	{
+		const KpBytes *pa[] = { &a->tiles, &a->mask, &a->sprites, &a->units, &a->locations, &a->strings, &a->triggers,
+			&a->briefing, &a->properties, &a->walk },
+			*pb[] = { &b->tiles, &b->mask, &b->sprites, &b->units, &b->locations, &b->strings, &b->triggers,
+				&b->briefing, &b->properties, &b->walk };
+		for (k = 0; k < sizeof pa / sizeof pa[0]; k++)
+			kp_t_ok(T, bytes_eq(pa[k]->data, pa[k]->size, pb[k]->data, pb[k]->size), "use map settings: part %u",
+				(unsigned)k);
+	}
+	kp_mission_free(b);
+	copy = (uint8_t *)malloc(chk_size);
+	if (copy) memcpy(copy, chk, chk_size);
+	kp_t_ok(T, kp_mission_from_map(b, &f, copy, chk_size, "fixture", KP_CHK_MELEE, NO_PACKS, 1, &err) == 0, "melee: %s",
+		err.msg);
+	kp_t_ok(T, bytes_eq(a->tiles.data, a->tiles.size, b->tiles.data, b->tiles.size), "melee: the tiles");
+	kp_t_eq(T, b->triggers.size, 0, "melee: no triggers");
+	kp_t_eq(T, b->locations.size, 0, "melee: no locations");
+	kp_t_eq(T, b->briefing.size, 0, "melee: no briefing");
+	kp_t_eq(T, b->mask.size, (uint32_t)b->width * b->height, "melee: the mask's size");
+	for (k = 0; k < b->mask.size && b->mask.data[k] == 0xff; k++) {
+	}
+	kp_t_eq(T, k, b->mask.size, "melee: the mask all 0xff");
+	kp_mission_free(b);
+	v = variant(T, "MTXM", TILES, sizeof TILES, 1, &size);
+	copy = (uint8_t *)malloc(size);
+	if (copy) memcpy(copy, v, size);
+	kp_t_ok(T, kp_mission_from_map(b, &f, copy, size, "fixture", KP_CHK_UMS, NO_PACKS, 1, &err) == 0, "a second MTXM: %s",
+		err.msg);
+	kp_t_ok(T, b->tiles.size == a->tiles.size && memcmp(b->tiles.data, TILES, 2) == 0
+			&& memcmp(b->tiles.data + 2, a->tiles.data + 2, a->tiles.size - 2) == 0,
+		"the second MTXM over the first");
+	kp_mission_free(b);
+	v = variant(T, "MTXM", TILES, sizeof TILES, 0, &size);
+	copy = (uint8_t *)malloc(size);
+	if (copy) memcpy(copy, v, size);
+	kp_t_eq(T, kp_mission_from_map(b, &f, copy, size, "fixture", KP_CHK_UMS, NO_PACKS, 1, &err), -1, "a short MTXM");
+	kp_t_ok(T, strstr(err.msg, "MTXM: 2 bytes leave tiles") != NULL, "the reason: %s", err.msg);
+	copy = (uint8_t *)malloc(chk_size);
+	if (copy) memcpy(copy, chk, chk_size);
+	kp_t_eq(T, kp_mission_from_map(b, &f, copy, chk_size, "fixture", KP_CHK_HEADER, NO_PACKS, 1, &err), -1,
+		"the header's load is no game's");
+}
+
+/* A map's header for the lists (LoadMapHeader 0x46b5c0 from LoadMapEntryInfo 0x45d870): the header group alone (a map
+ * without the game's sections reads), its size, tileset (ERA's low 3 bits), owners and races (User Select marked), the
+ * counts (players: owner types 3..7, 0x478e70; computers: types 1 and 5, 0x478ea0; humans: type 6, 0x479550) and the
+ * first human slot, SPRP's title and description by their strings (none: ""); a version past the build's or a
+ * scenario without OWNR is refused with the version still read. */
+#define HEADER_SLOTS 12
+static void map_header_reads_the_lists_fields(KpT *T)
+{
+	/* slots 0..7: inactive, computer, rescuable, human, neutral, human, computer, unused; 8..11 inactive */
+	static const uint8_t OWNR[HEADER_SLOTS] = { 0, 1, 3, 6, 7, 6, 5, 4, 0, 0, 0, 0 };
+	static const uint8_t SIDE[HEADER_SLOTS] = { 0, 1, 2, 5, 7, 5, 2, 1, 0, 0, 0, 0 };
+	static const uint8_t DIM[4] = { 96, 0, 64, 0 }, ERA[2] = { 0x0d, 0 }, SPRP[4] = { 1, 0, 2, 0 },
+		NO_TITLE[4] = { 0, 0, 2, 0 };
+	/* STR: u16 count 2, two offsets, then the strings */
+	static const uint8_t STRS[] = { 2, 0, 6, 0, 18, 0, 'F', 'i', 'x', 't', 'u', 'r', 'e', ' ', 'M', 'a', 'p', 0,
+		'I', 't', 's', ' ', 't', 'e', 'x', 't', 0 };
+	static const struct { const char *tag; const uint8_t *data; size_t n; } PARTS[] = {
+		{ "OWNR", OWNR, sizeof OWNR }, { "SIDE", SIDE, sizeof SIDE }, { "DIM ", DIM, sizeof DIM },
+		{ "ERA ", ERA, sizeof ERA }, { "SPRP", SPRP, sizeof SPRP }, { "STR ", STRS, sizeof STRS },
+		{ "UNIT", NULL, 0 } }; /* no game section: the header still reads */
+	const KpDefsProfile *profile = kp_t_fixture_profile(T);
+	KpMapHeader h;
+	char err[KP_ERROR_SIZE];
+	const uint8_t *v;
+	size_t size, k;
+	int p;
+	if (!kp_t_ready(T, "test_chk", FIXTURES)) return;
+	v = kp_t_read(T, FIXTURE_CHK, &size);
+	for (k = 0; k < sizeof PARTS / sizeof PARTS[0]; k++) v = replaced(T, v, size, PARTS[k].tag, PARTS[k].data, PARTS[k].n, &size);
+	kp_t_eq(T, kp_map_header(&h, v, size, profile, 1, err, sizeof err), 0, "the header: %s", err);
+	kp_t_eq(T, h.version, 205, "its version");
+	kp_t_ok(T, h.width == 96 && h.height == 64, "its size %ux%u", h.width, h.height);
+	kp_t_eq(T, h.tileset, 5, "ERA's low 3 bits");
+	for (p = 0; p < KP_MAP_HEADER_SLOTS; p++) {
+		kp_t_ok(T, h.owners[p] == OWNR[p] && h.races[p] == SIDE[p], "slot %d's owner and race", p);
+		kp_t_eq(T, h.user_select[p], SIDE[p] == KP_MAP_RACE_USER_SELECT, "slot %d's User Select", p);
+	}
+	kp_t_eq(T, h.players, 6, "the slots of owner types 3..7");
+	kp_t_eq(T, h.computers, 2, "the computers: types 1 and 5");
+	kp_t_eq(T, h.humans, 2, "the humans: type 6");
+	kp_t_eq(T, h.first_human, 3, "the first human slot");
+	kp_t_eq_str(T, h.title, "Fixture Map", "SPRP's title");
+	kp_t_eq_str(T, h.description, "Its text", "SPRP's description");
+	v = replaced(T, v, size, "SPRP", NO_TITLE, sizeof NO_TITLE, &size);
+	kp_t_eq(T, kp_map_header(&h, v, size, profile, 1, err, sizeof err), 0, "no title: %s", err);
+	kp_t_eq_str(T, h.title, "", "no title: the lists take the file's name");
+	kp_t_eq(T, kp_map_header(&h, v, size, profile, 0, err, sizeof err), -1, "without Brood War");
+	kp_t_eq(T, h.version, 205, "the version still read (the lists' gluAll 60)");
+	v = replaced(T, v, size, "OWNR", NULL, 0, &size);
+	kp_t_eq(T, kp_map_header(&h, v, size, profile, 1, err, sizeof err), -1, "no OWNR");
+	kp_t_eq(T, h.first_human, -1, "no human slot read");
 }
 
 /* --- the terrain's derived parts against the original's (docs/research/evidence) --- */
@@ -746,11 +1002,15 @@ static void derived_terrain_is_the_originals(KpT *T)
 static const KpTest TESTS[] = {
 	{ "the_fixture_mission_is_built_from_its_chk", fixture_mission_from_its_chk, 0 },
 	{ "chk_variants_are_refused_as_the_native_loader_does", chk_variants_are_refused, 0 },
+	{ "chk_game_loads_are_the_originals", chk_game_loads, 0 },
+	{ "a_custom_maps_mission", map_missions, 0 },
+	{ "a_maps_header_has_the_lists_fields", map_header_reads_the_lists_fields, 0 },
 	{ "unreachable_or_unsupported_triggers_are_validated", trigger_validation, 0 },
 	{ "runtime_stops_are_refused", runtime_stops_are_refused, 0 },
 	{ "the_1_17_missions_are_built_from_its_files", original_missions, 0 },
 	{ "the_remastered_missions_are_built_from_its_files", remastered_missions, 0 },
 	{ "the_1_17_and_remastered_missions_are_equal", installs_missions_equal, 0 },
 	{ "the_campaign_maps_derived_terrain_is_the_originals", derived_terrain_is_the_originals, 0 },
+	{ "the_install_maps_load", install_maps_load, 0 },
 };
 KP_SUITE(kp_suite_chk, "test_chk", TESTS);

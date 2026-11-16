@@ -1262,6 +1262,7 @@ int kp_cli_score_replay(int argc, char **argv)
 	kp_trace_clocks(&g.u, &g.clocks);
 	ui->now = (uint32_t)kp_trace_header(&g.file, "start", 0);
 	score_data(data, &d);
+	d.mission = kp_trace_header(&g.file, "mission", 0); /* 0x526524: the chains' campaign rows keep Save Replay off */
 	kp_ui_score_open(ui, &d);
 	take(&g);
 	differences = glue_run(&g, score_capture, NULL, NULL);

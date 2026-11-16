@@ -136,6 +136,7 @@ KpUi *kp_ui_new_data(const KpUiData *d, char *err, size_t err_size)
 	}
 	for (i = 0; i < 256; i++) ui->remap[i] = (uint8_t)i;
 	for (i = 0; i < 12 * 8; i++) ui->player_colours[i / 8][i % 8] = (uint8_t)(8 + i % 8); /* until the host's */
+	for (i = 0; i < 12; i++) ui->minimap.colour_rows[i] = (uint8_t)i; /* until kp_ui_set_minimap */
 	kp_rng_portrait_init(&ui->portrait.rng); /* the console portrait's RNG lives as long as the process */
 	ui->portrait.mode = KP_UI_PORTRAITS_ANIMATED;
 	kp_ui_glue_init(ui);
@@ -215,7 +216,6 @@ KpUi *kp_ui_new_data(const KpUiData *d, char *err, size_t err_size)
 		uint32_t n = 0;
 		const uint8_t *musi = kp_ui_data_table(d, "MUSI", &n);
 		if (musi != NULL) kp_ui_music_tables(ui, musi, n);
-		ui->music.rotation = -1;
 		/* InitDefaultVolumes 0x49dfa0's ApplyVolumeOptions (ResumeMusic's track 0 plays nothing) */
 		ui->music.resumed = ui->sound.device && ui->sound.music != 0;
 	}
@@ -262,8 +262,9 @@ KpUi *kp_ui_new_data(const KpUiData *d, char *err, size_t err_size)
 	for (i = 0; i < KP_UI_EVENT_TYPES; i++) ui->capture[i] = -1;
 	ui->modeless = -1;
 	ui->menus.popup = ui->menus.screen = -1;
-	ui->menus.replay_dialog = ui->menus.replay_list = -1;
+	ui->menus.create_dialog = ui->menus.map_list = -1;
 	ui->score.dialog = -1;
+	ui->replay_save.list = -1;
 	for (i = 0; i < 4; i++) ui->press[i].control = -1;
 	for (i = 0; i < KP_UI_EDITS; i++) ui->edits[i].control = -1;
 	/* the strings, the sound records and the portraits d has */
@@ -396,6 +397,20 @@ int kp_ui_apply_theme(KpUi *ui, const char *grp_path)
 	ui->theme.tick_w = w;
 	frame_size(f->data, f->size, 77, &w, &h);
 	ui->theme.wide_row_w = w;
+	frame_size(f->data, f->size, 35, &w, &h);
+	ui->theme.combo_w = w;
+	ui->theme.combo_h = h;
+	frame_size(f->data, f->size, 47, &w, &h);
+	ui->theme.field_h = h;
+	frame_size(f->data, f->size, 50, &w, &h);
+	ui->theme.arrow_w = w;
+	frame_size(f->data, f->size, 59, &w, &h);
+	ui->theme.wide_combo_w = w;
+	ui->theme.wide_combo_h = h;
+	frame_size(f->data, f->size, 71, &w, &h);
+	ui->theme.wide_field_h = h;
+	frame_size(f->data, f->size, 74, &w, &h);
+	ui->theme.wide_arrow_w = w;
 	frame_size(f->data, f->size, 103, &w, &h);
 	ui->theme.tile_piece = w;
 	frame_size(f->data, f->size, 133, &w, &h);
@@ -812,6 +827,13 @@ void kp_ui_mark_dirty(KpUi *ui, int32_t control)
 {
 	/* MarkControlDirty 0x4c2840 */
 	if (ui->controls[control].flags & KP_UI_DIRTY) return;
+	ui->controls[control].flags |= KP_UI_DIRTY;
+	invalidate(ui, control);
+}
+
+void kp_ui_mark_invalid(KpUi *ui, int32_t control)
+{
+	/* MarkDirtyAndInvalidate 0x4c2270: the rectangle repainted even when the control was dirty already */
 	ui->controls[control].flags |= KP_UI_DIRTY;
 	invalidate(ui, control);
 }
@@ -1632,7 +1654,8 @@ KpUiInteract kp_ui_type_interact(int type)
 	case 8: return kp_ui_edit_proc;
 	case 9: case 10: case 11: return static_interact;
 	case 12: return kp_ui_list_proc;
-	default: return control_default; /* type 13, a combo box: not ported (see kp_ui_type_draw) */
+	case 13: return kp_ui_combo_proc;
+	default: return control_default;
 	}
 }
 
@@ -1890,6 +1913,8 @@ int kp_ui_present(KpUi *ui)
 	ui->image_log.repaint = ui->image_log.serial + 1; /* what it draws lies under what it draws after */
 	for (i = count - 1; i >= 0; i--) { /* from the bottom dialog up */
 		KpUiControl *dl = &ui->controls[order[i]];
+		struct { int32_t control; int rect; } deferred[KP_UI_REGION];
+		int deferred_count = 0, j;
 		if (!(dl->flags & DIALOG_NESTED)) target = order[i]; /* 0x6ce788: a nested dialog's blit target */
 		for (k = 0; k < n; k++) {
 			int32_t c;
@@ -1904,9 +1929,18 @@ int kp_ui_present(KpUi *ui)
 					|| !overlaps(rects[k], dl->left + ch->left, dl->top + ch->top, dl->left + ch->right, dl->top + ch->bottom)) {
 					continue;
 				}
+				if ((ch->flags & KP_UI_DROPPED) && deferred_count < KP_UI_REGION) { /* an open combo box: after the rest */
+					deferred[deferred_count].control = c;
+					deferred[deferred_count++].rect = k;
+					continue;
+				}
 				draw_clipped(ui, order[i], ch, rects[k]);
 				draws++;
 			}
+		}
+		for (j = 0; j < deferred_count; j++) { /* the dialog's deferred controls with their rectangles, in order */
+			draw_clipped(ui, order[i], &ui->controls[deferred[j].control], rects[deferred[j].rect]);
+			draws++;
 		}
 	}
 	/* the blit pass, from the top dialog down (BlitDialogToScreen 0x4c5630): a nested glue dialog (a popup) is

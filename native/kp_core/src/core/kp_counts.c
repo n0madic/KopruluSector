@@ -1,10 +1,10 @@
 /* Unit counters, supply and score statistics (kp_game.h). */
 #include "kp_game_internal.h"
+#include "kp_gametype.h"
 
 #define STATUS_HALLUCINATION 0x40000000
 #define SUBUNIT 0x10
 #define DOUBLE_SUPPLY 0x400
-#define SUPPLY_MAX 400
 
 /* Per-player arrays by native address (0x5290c4 + 0x30 * k). */
 #define PSTAT(addr) (((addr) - 0x5290c4) / 0x30)
@@ -37,6 +37,7 @@ static int not_produced_buildings(int64_t t)
 
 void kp_counts_init(KpGame *g)
 {
+	int64_t max[3][KP_PLAYERS];
 	int i, p;
 	for (i = 0; i < KP_UNIT_TYPES * KP_PLAYERS; i++) {
 		g->count_all[i] = g->count_completed[i] = g->count_kills[i] = g->count_deaths[i] = 0;
@@ -44,8 +45,9 @@ void kp_counts_init(KpGame *g)
 	for (i = 0; i < KP_PSTAT_ARRAYS; i++) {
 		for (p = 0; p < KP_PLAYERS; p++) g->pstat[i][p] = 0;
 	}
+	kp_gametype_supply_max(g, max);
 	for (i = 0; i < 3; i++) {
-		for (p = 0; p < KP_PLAYERS; p++) g->pstat[SUPPLY_MAX_ARRAYS[i]][p] = SUPPLY_MAX;
+		for (p = 0; p < KP_PLAYERS; p++) g->pstat[SUPPLY_MAX_ARRAYS[i]][p] = max[i][p];
 	}
 }
 

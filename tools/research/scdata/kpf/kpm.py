@@ -13,7 +13,6 @@ from typing import Callable
 
 from ..formats import wav
 from ..formats.chk import Scenario
-from ..errors import ConverterError
 
 log = logging.getLogger(__name__)
 
@@ -29,23 +28,18 @@ TRIG_WAV_ACTIONS = frozenset({7, 8})
 MBRF_WAV_ACTIONS = frozenset({2, 8})
 
 
-class KpmError(ConverterError, ValueError):
-    """A map string runs past its section."""
-
-
 def map_string(strs: bytes, index: int) -> bytes | None:
-    """`GetMapString` 0x445670: low 16 bits, 1-based, 0 -> None, past the count -> empty string."""
+    """`GetMapString` 0x445670: low 16 bits, 1-based, 0 -> None, past the count -> empty string. The original reads
+    its heap past its copy of STR; here (kp_map_string, ADR 0024) a string or offset slot past STR is empty and a
+    string STR does not end ends at STR's end."""
     index &= 0xFFFF
     if index == 0:
         return None
-    count = struct.unpack_from("<H", strs, 0)[0]
-    if index - 1 >= count:
+    if len(strs) < 2 or index - 1 >= struct.unpack_from("<H", strs, 0)[0] or 2 * index + 2 > len(strs):
         return b""
     offset = struct.unpack_from("<H", strs, 2 * index)[0]
     end = strs.find(b"\0", offset)
-    if end < 0:
-        raise KpmError(f"map string {index} is not terminated inside STR")
-    return strs[offset:end]
+    return strs[offset:end if end >= 0 else len(strs)]
 
 
 def wav_string_ids(sections: dict[str, bytes]) -> list[int]:

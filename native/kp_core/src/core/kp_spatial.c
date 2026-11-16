@@ -274,7 +274,10 @@ int kp_units_in_rect(KpGame *g, int64_t left, int64_t top, int64_t right, int64_
 	KpUnits *u = &g->u;
 	int64_t stamp = sp->stamp + 1, count = sp->count, y0, y1, x;
 	int k = 0;
-	if (stamp >= 4294967296LL) stamp = 1;
+	if (stamp >= 4294967296LL) { /* the marks cleared at the wrap: no query's result depends on the ones before it */
+		for (x = 0; x <= KP_UNITS; x++) sp->seen[x] = 0;
+		stamp = 1;
+	}
 	sp->stamp = stamp;
 	y0 = search(sp->y_at, count, top, 1);
 	/* the first entry at or after `bottom`: the native walk up from y0, as a lower bound */

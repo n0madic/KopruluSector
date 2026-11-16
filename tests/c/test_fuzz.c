@@ -76,14 +76,15 @@ static void kept_rep_inputs(KpT *T) { kept_inputs(T, KP_FUZZ_REP); }
 static void kept_chk_inputs(KpT *T) { kept_inputs(T, KP_FUZZ_CHK); }
 static void kept_save_inputs(KpT *T) { kept_inputs(T, KP_FUZZ_SAVE); }
 static void kept_command_inputs(KpT *T) { kept_inputs(T, KP_FUZZ_COMMANDS); }
+static void kept_turn_inputs(KpT *T) { kept_inputs(T, KP_FUZZ_TURNS); }
 
 /* The seeds made from the data (kp_fuzz_write_seeds, as tools/fuzz.sh makes build/fuzz/seeds) through their
  * targets: none fails, every save the game made loads (both forms), and each target has the seeds it should. */
 static void data_seeds_run(KpT *T)
 {
 	/* rep: + recorded; chk: + 7 maps; save: a file and a native save a point; commands: + a player's units and an
-	 * order past orders.dat a map */
-	static const int AT_LEAST[KP_FUZZ_TARGETS] = { 2, 8, 2 * KP_FUZZ_SAVE_SEED_POINTS, 9 };
+	 * order past orders.dat a map; turns: the synthetic one */
+	static const int AT_LEAST[KP_FUZZ_TARGETS] = { 2, 8, 2 * KP_FUZZ_SAVE_SEED_POINTS, 9, 1 };
 	const char *root;
 	char why[KP_ERROR_SIZE];
 	int target, written;
@@ -162,6 +163,7 @@ static const KpTest TESTS[] = {
 	{ "kept_chk_inputs", kept_chk_inputs, 0 },
 	{ "kept_save_inputs", kept_save_inputs, 0 },
 	{ "kept_command_inputs", kept_command_inputs, 0 },
+	{ "kept_turn_inputs", kept_turn_inputs, 0 },
 	{ "data_seeds_run", data_seeds_run, 0 },
 	{ "seal_makes_the_hash_table", seal_makes_the_hash_table, 0 },
 };

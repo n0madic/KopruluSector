@@ -50,7 +50,12 @@
 #     trigger wait ending), the touch layer (touch.kps: terran01 played by synthetic fingers), a list's scrolling (lists.kps:
 #     the keystroke help scrolled by the wheel and a finger, a tap selecting its row), the music (music.kps: the
 #     title's after a ready room's Cancel and a quit mission, the game's after the room's Start and a load), a replay
-#     (replay.kps: a game's LastReplay.rep played back to the same simulation state, its console and its end) and, with KOPRULU_SCR,
+#     (replay.kps: a game's LastReplay.rep played back to the same simulation state, its console and its end), with an
+#     install that has its maps folder a Play Custom game (custom_melee.kps: the glue's screen by clicks and drop-downs,
+#     the game, its replay through Load Replay to the same state; custom_victory.kps: a game won, its score screen and
+#     its replay to its end) and a network game's two seats in one process
+#     (seats_melee.kps with --map on its (2)Boxer.scm and --seats 2: each seat's orders, the seat switched, the seats'
+#     shared hashes the same every frame) and, with KOPRULU_SCR,
 #     the HD art (hd_glue.kps, hd_game.kps on each race, hd_replay.kps: the glue's screens, the game's screens and menus and a replay's with no SD
 #     pixel where HD art exists, over Remastered's install, the world's packs laid out from its anims and the
 #     interface's frames by the placement table, and over its repack's sets and interface groups; each language's walk
@@ -720,6 +725,22 @@ if [ -n "${KOPRULU_APP:-}" ]; then
     diff <(grep -E '^SPIKE script play_tail\.kps:[0-9]+: sound:' build/script_play_4.log) \
       <(grep -E '^SPIKE script play_tail\.kps:[0-9]+: sound:' build/script_play_4_original.log)
     grep -qE '^SPIKE script play_tail\.kps:[0-9]+: sound: .*sounds\.streamed [1-9]' build/script_play_4_original.log
+    # Play Custom over the install's maps folder (phase M, stages M4 and M7): a game from the glue's screen, its replay
+    # played back through Load Replay to the same state (an install without its maps folder has nothing to list)
+    if [ -d "$KOPRULU_ORIGINAL/maps" ] || [ -d "$KOPRULU_ORIGINAL/Maps" ]; then
+      app_script custom_melee 0 "$APP" --data "$KOPRULU_ORIGINAL"
+      [ -s build/script/custom_melee/pref/replays/LastReplay.rep ]
+      # the game won (stage M7): the cheat's victory, the score screen, its replay to the same state and to its end
+      app_script custom_victory 0 "$APP" --data "$KOPRULU_ORIGINAL"
+      # a network game's two seats in one process (stage M6): the hub's turns, the seat switched, no difference
+      for maps in "$KOPRULU_ORIGINAL/maps" "$KOPRULU_ORIGINAL/Maps"; do
+        if [ -f "$maps/(2)Boxer.scm" ]; then
+          app_script seats_melee 0 "$APP" --data "$KOPRULU_ORIGINAL" --map "$maps/(2)Boxer.scm" --seats 2
+          grep -qF 'seats: seat 1 shown' build/script_seats_melee.err
+          break
+        fi
+      done
+    fi
   }
   # the same runs over the repack with no install beside it write the same files and play the same sounds
   unit_original_repack() {

@@ -10,7 +10,6 @@
 #define AIR 0x4
 #define ALL_PLAYERS 0xff
 #define SPRITE_SELECTED 0x08
-#define SPRITE_DASHED 0x06
 #define VISION_RECORDS_MAX KP_SIGHT_RECORDS
 
 static const int64_t HEIGHT_REQUIRED[3] = { 0x07000000, 0x05000000, 0x01000000 }; /* by source height */
@@ -503,9 +502,8 @@ void kp_unit_update_sprite_visibility(KpGame *g, int64_t n)
 		kp_event_selection_sent(g);
 	}
 	kp_sprite_remove_circle(w, s);
-	if (kp_band(w->spr.flags[s], SPRITE_DASHED) != 0) {
-		kp_game_fail(g, "vision: shared dashed selection circles of a team game (0x416cd0)");
-	}
+	/* the allies' dashed circle goes too while the unit stays in their rows; nothing brings it back on sight */
+	(void)kp_sprite_remove_ally_circles(w, s);
 	if ((kp_band(u->status[n], 2) != 0 || (t >= KP_TYPE_FIRST_TRAP && t <= KP_TYPE_LAST_TRAP)) && !kp_unit_is_dead(g, n)) {
 		kp_fog_create(w, (int32_t)t, s);
 	}

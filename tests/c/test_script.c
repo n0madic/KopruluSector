@@ -66,7 +66,7 @@ static const struct {
 
 static const char *const OP_NAMES[] = { "key", "text", "move", "click", "rclick", "press", "release", "finger", "tap",
 	"wheel", "touch", "choose", "pause", "resume", "camera", "world", "fog", "save", "load", "load-file", "replay", "menu", "options-dialog",
-	"activate", "select", "end-placement", "cancel-targeting", "audit", "hang", "wait-frames", "wait-time", "wait",
+	"activate", "select", "end-placement", "cancel-targeting", "seat", "audit", "hang", "wait-frames", "wait-time", "wait",
 	"until", "shot", "state", "ui", "log", "mark", "pick", "expect", "check", "quit" };
 typedef char op_names_cover_the_ops[sizeof OP_NAMES / sizeof OP_NAMES[0] == KP_SCRIPT_OPS ? 1 : -1];
 
@@ -375,6 +375,18 @@ static void parse_reads_the_wheel(KpT *T)
 		&& s->steps[3].p.y == 0, "its right end without one");
 }
 
+/* seat N: the seat --seats shows, an input step. */
+static void parse_reads_the_seat(KpT *T)
+{
+	KpScript *s;
+	Rec R;
+	rec_init(&R);
+	s = parse_ok(T, &R, "seat 1\nseat 0\nseat 7\n");
+	kp_t_eq(T, s->count, 3, "the steps");
+	kp_t_ok(T, s->steps[0].op == KP_SCRIPT_SEAT && s->steps[0].n == 1 && s->steps[1].n == 0 && s->steps[2].n == 7, "the seats");
+	kp_t_eq(T, kp_script_class(KP_SCRIPT_SEAT), KP_SCRIPT_INPUT, "an input");
+}
+
 static void parse_refuses_bad_lines(KpT *T)
 {
 	static const struct {
@@ -385,6 +397,8 @@ static void parse_refuses_bad_lines(KpT *T)
 		{ "wait frames 99999999999999999999", "is no number in 1..10000000" },
 		{ "wait frames 0", "is no number in 1..10000000" },
 		{ "wait seconds 0", "is no time in seconds" },
+		{ "seat 8", "is no number in 0..7" },
+		{ "seat -1", "is no number in 0..7" },
 		{ "wait seconds 1.2345", "is no time in seconds" },
 		{ "text \"unclosed", "a string without its closing quote" },
 		{ "text \"a\"b", "a string runs into a word" },
@@ -846,6 +860,7 @@ static const KpTest TESTS[] = {
 	{ "parse_reads_the_commands", parse_reads_the_commands, 0 },
 	{ "parse_defaults", parse_defaults, 0 },
 	{ "parse_reads_the_wheel", parse_reads_the_wheel, 0 },
+	{ "parse_reads_the_seat", parse_reads_the_seat, 0 },
 	{ "parse_refuses_bad_lines", parse_refuses_bad_lines, 0 },
 	{ "parse_reads_includes", parse_reads_includes, 0 },
 	{ "a_line_is_the_files", a_line_is_the_files, 0 },

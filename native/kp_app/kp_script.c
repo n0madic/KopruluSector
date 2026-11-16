@@ -662,6 +662,14 @@ static int p_select(Parse *P, Words *W, int at)
 
 static int p_hang(Parse *P, Words *W, int at) { return take_seconds(P, W, "the hang's seconds", 0, &STEP(at)->n); }
 
+static int p_seat(Parse *P, Words *W, int at)
+{
+	int32_t seat;
+	if (take_int32(P, W, "the seat", 0, KP_SCRIPT_SEATS - 1, &seat) != 0) return -1;
+	STEP(at)->n = seat;
+	return 0;
+}
+
 /* within EXPR (ms), every S: each once, in either order. */
 static int wait_options(Parse *P, Words *W, int at, int every)
 {
@@ -827,6 +835,7 @@ static const struct {
 	{ "select", KP_SCRIPT_SELECT, p_select },
 	{ "end-placement", KP_SCRIPT_END_PLACEMENT, p_none },
 	{ "cancel-targeting", KP_SCRIPT_CANCEL_TARGETING, p_none },
+	{ "seat", KP_SCRIPT_SEAT, p_seat },
 	{ "audit", KP_SCRIPT_AUDIT, p_audit },
 	{ "hang", KP_SCRIPT_HANG, p_hang },
 	{ "wait", KP_SCRIPT_WAIT, p_wait },

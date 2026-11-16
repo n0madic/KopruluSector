@@ -77,6 +77,16 @@ int kp_state_lines(KpGame *g, int drawn, KpBuf *out);
  * with the error. */
 int kp_oracle_chain_opts(KpOracleOpts *opts, KpCarry *carry, KpError *err);
 
+/* A custom game's setup from the environment's KP_SETUP (tools/state_check.py --kind custom): the emulator's
+ * setup.json, whose "start_game" holds the lobby's records as StartGame 0x443f40 takes them (the template's hex,
+ * twelve players with storm, type, race, force and name, the custom races and their flag). The custom races are applied
+ * as the lobby does (kp_setup_custom_races); opts->host.setup then points at *setup and the local Storm ID is 0. 0
+ * without KP_SETUP, -1 with the error. */
+int kp_oracle_setup_opts(KpOracleOpts *opts, KpGameSetup *setup, KpError *err);
+/* The lobby's records of a setup object (the emulator's setup.json "start_game", a custom golden's "setup": the
+ * template's hex, the 12 players, the custom races applied as kp_setup_custom_races does). 0, or -1 with err. */
+int kp_oracle_setup_from_json(const KpJson *v, KpGameSetup *s, KpError *err);
+
 /* --- golden runs --- */
 
 /* A golden run's game and its runner over the golden's replay, with the trigger and AI traces collected when asked
@@ -84,6 +94,7 @@ int kp_oracle_chain_opts(KpOracleOpts *opts, KpCarry *carry, KpError *err);
 typedef struct {
 	KpReplay replay;
 	KpOracleGame game;
+	KpGameSetup setup; /* a custom game's (the golden's "setup") */
 	KpRunner run;
 	int tracing;
 	KpBuf trace, ai_trace; /* the trace lines joined by "\n" */
@@ -94,7 +105,9 @@ typedef struct {
 	void *ud;
 } KpGoldenRun;
 
-/* Starts golden g's run (opts as kp_oracle_game_start's; trace: collect the traces); -1 with the error. */
+/* Starts golden g's run (opts as kp_oracle_game_start's; trace: collect the traces); -1 with the error. A custom game's
+ * golden (tools/state_check.py --kind custom: mission "maps/<path under opts->maps>") starts from its "setup", the
+ * lobby's records as KP_SETUP's "start_game" holds them. */
 int kp_golden_run_start(KpGoldenRun *gr, const char *root, const KpJson *g, const KpOracleOpts *opts, int trace,
 	KpError *err);
 void kp_golden_run_free(KpGoldenRun *gr);

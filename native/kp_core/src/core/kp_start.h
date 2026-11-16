@@ -47,6 +47,12 @@ typedef struct {
 	int64_t count_all[KP_CARRY_COUNTS], count_completed[KP_CARRY_COUNTS];
 	int64_t count_pstat[KP_CARRY_PSTATS][12];
 	int64_t ai_reach_source[KP_CARRY_PLAYERS]; /* 0x6b68e0, which InitAiRegions 0x4b0640 leaves */
+	/* the music's rotation 0x503354 plus one (0: -1, the process's games before the first custom game's draw), which
+	 * LoadConsoleSkinAndPickMusic 0x443680 advances in each custom game (KpGame.music_rotation) */
+	int64_t music_rotation;
+	/* the game RNG's state 0x67393c as the game left it (a first game's 0): a Use Map Settings lobby whose local slot is
+	 * User Select resolves its random races from it before the next game's seed (SetLocalRaceAndResolve 0x479c90) */
+	int64_t rng_state;
 } KpCarry;
 typedef struct {
 	int64_t units[KP_RULE_UNIT_FIELDS][KP_RULE_UNITS];
@@ -61,6 +67,57 @@ typedef struct {
 /* All override sections of the mission in order over dat's units table (subunit1, ground_weapon, air_weapon). -1
  * with the error text in err. */
 int kp_rules_effects(KpRuleEffects *e, const KpMission *m, const KpDat *dat, int expansion, KpError *err);
+
+/* A game's setup (ADR 0024): what the original's game creation leaves for StartGame 0x443f40. The template record
+ * 0x67293d (the game header 0x6728d0 + 0x6d; a .got file's bytes 65..96, a replay header's +0x81), the multiplayer
+ * byte 0x672664, and per slot the player record 0x6726c8's Storm ID, type (KP_CTRL_*: a lobby's 5, 6 and 8 too), race,
+ * force and name.
+ *
+ * `started` says whose records they are. 0: the lobby's, as StartGame's step 6 finds them (after the single-player
+ * custom races 0x443b90, kp_setup_custom_races): the start resolves the random races, the slot types, the random
+ * starts and the colours (kp_gametype.c) and keeps the started game's records in the game's copy (g->setup, started 1).
+ * 1: a started game's (a replay's header, a save's MAPC, a campaign's from its map): the start leaves them. */
+#define KP_TEMPLATE_SIZE 32
+#define KP_TEMPLATE_TYPE 0x00          /* the game type (WORD) */
+#define KP_TEMPLATE_SUBTYPE 0x02       /* WORD */
+#define KP_TEMPLATE_VICTORY 0x08       /* 0x672945 */
+#define KP_TEMPLATE_RESOURCES 0x09     /* 0x672946 */
+#define KP_TEMPLATE_STARTING_UNITS 0x0c /* 0x672949 */
+#define KP_TEMPLATE_FIXED_POSITIONS 0x0d /* 0x67294a */
+#define KP_TEMPLATE_RESTRICTION 0x0e   /* 0x67294b */
+#define KP_TEMPLATE_ALLIES 0x0f        /* 0x67294c */
+#define KP_TEMPLATE_TEAMS 0x10         /* 0x67294d */
+#define KP_TEMPLATE_CHEATS 0x11        /* 0x67294e */
+#define KP_TEMPLATE_TOURNAMENT 0x12    /* 0x67294f */
+#define KP_TEMPLATE_VALUE 0x04         /* 0x672941: the subtype's display value (Greed's resources, Slaughter's minutes) */
+#define KP_TEMPLATE_RESOURCE_VALUE 0x17 /* 0x672954: the starting resources (DWORD) */
+#define KP_SETUP_SLOTS 12
+#define KP_PLAYER_NAME 25 /* a player record's name field */
+#define KP_SETUP_NAME 32  /* a slot's name kept: the field's bytes, NUL padded */
+typedef struct {
+	uint8_t template_record[KP_TEMPLATE_SIZE];
+	int64_t multiplayer;
+	int64_t slots; /* the map's player slots the lobby offered (game header +0x25): a campaign's 1 */
+	int64_t started;
+	int64_t storm[KP_SETUP_SLOTS], type[KP_SETUP_SLOTS], race[KP_SETUP_SLOTS], force[KP_SETUP_SLOTS];
+	char name[KP_SETUP_SLOTS][KP_SETUP_NAME];
+	int64_t user_select[8]; /* 0x673f08: the slots whose map race was User Select (LoadMapHeader 0x46b5c0; a replay
+	                         * header's +0x271) */
+	int64_t color[8];       /* 0x5264fc: the colour row each player draws with; the start's (0x41d570, shuffled by
+	                         * 0x41d460), a started setup's as it is */
+	int64_t race_summary[8]; /* 0x5264a0: the races of slots 0..7 in the lobby's order after the random races
+	                          * (RecordSlotSummary 0x47e290), before a team game moves its records: its starting units,
+	                          * supply maxima and the seat's race read them */
+	int64_t leader[5];       /* 0x5264ab: a team game's leader of force 1..4, the slot the team plays as
+	                          * (SetupTeamGameSlots 0x4b2db0; KP_NO_LEADER none, [0] unused) */
+} KpGameSetup;
+#define KP_NO_LEADER 0xff
+/* The Use Map Settings template a single-player campaign game runs under (CreateSinglePlayerGame 0x443970; every 1.17
+ * campaign replay's header holds it): type 0x0a, subtype 1, fog 2, fixed positions 1, restrictions 3, allies 1,
+ * cheats 1. */
+extern const uint8_t KP_TEMPLATE_UMS[KP_TEMPLATE_SIZE];
+/* IsUseMapSettings 0x447db0 of a template record: victory, starting units and tournament all 0. */
+int kp_template_ums(const uint8_t *template_record);
 
 /* The inputs of a game start. The data must outlive the game; dat is the game's own copy (the UMS overrides
  * and the acquisition ranges change it), rng and crt are seeded with the game's initial seed. */
@@ -86,6 +143,12 @@ typedef struct {
 	                        * left, 0 in the process's first game */
 	int replay;            /* a replay's playback: the replay flag 0x67cc90 and full vision (StartGame 0x443f40 step
 	                        * 13: 0x67cc84 = 0x672668 = 0xff, 0x67cc88 = 0) */
+	const KpGameSetup *setup; /* a custom map's game (ADR 0024); NULL: a campaign mission's (KP_TEMPLATE_UMS, the
+	                           * slots of its CHK's owners) */
+	const struct KpVictoryFiles *victory; /* the victory trigger files (kp_template.h) a game type other than Use Map
+	                                       * Settings loads (SetupVictoryConditions 0x448530); NULL: none in the data */
+	int64_t local_storm; /* the Storm ID of the local human (0x508d58) among a lobby setup's records: a single-player
+	                      * game's 0 */
 } KpStartInput;
 
 struct KpGame;

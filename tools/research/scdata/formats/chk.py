@@ -9,6 +9,19 @@ Campaign maps are loaded with the header, briefing and use-map-settings groups. 
 chunk whose tag is neither read by those groups nor in the corpus allowlist of ignored
 tags is an error, as is a duplicate of a read tag (the native dispatcher would run its
 callback twice; no campaign map has one, so the converter does not model it).
+
+A custom map (phase M) is loaded as the original loads it for a game: the header group, then
+the melee group, or the use-map-settings group with the briefing group (`game=True`). The
+original skips chunks no row reads, so unknown tags pass. A read tag may repeat: the
+original runs its handler once per chunk in file order. `STR ` keeps the last chunk
+(LoadStringSection 0x468ce0 frees the previous table), and so do the fixed-size copies and
+FORC (LoadForceSection 0x469320 zeroes its 20 bytes first). `MTXM` and `MASK` write each
+chunk over the array without clearing it (LoadTileMapSection 0x469170, LoadFogMaskSection
+0x469260), so a shorter later chunk replaces a prefix: the section is the chunks laid over
+each other, and the mission's reader decides what the bytes no chunk wrote are. A repeat of
+any other read tag is refused as outside the supported corpus: the trigger, unit and doodad
+sections append, COLR permutes twice, the settings sections merge by their default flags, and
+which VER the version probe reads is not modelled.
 """
 from __future__ import annotations
 
@@ -21,7 +34,11 @@ from pathlib import Path
 from ..errors import ConverterError
 
 DEFS_DIR = Path(__file__).resolve().parents[4] / "defs" / "chk"
+GROUPS = ("header", "briefing", "melee", "ums")  # CHKL's group indexes
 CAMPAIGN_GROUPS = ("header", "briefing", "ums")
+MELEE_GROUPS = ("header", "melee")
+# A handler's payload rule "repeat" (the module's docstring): what a game load does with a second chunk; CHKL's codes
+REPEATS = {None: 0, "last": 1, "over": 2}
 CHUNK_HEADER = 8
 VERSION_TAG = "VER "
 ERA_TAG = "ERA "
@@ -91,8 +108,9 @@ class LoaderTables:
 class Scenario:
     version: int
     chunks: tuple[Chunk, ...]
-    sections: dict[str, bytes]  # every read tag -> payload, in native dispatch order
-    ignored: tuple[str, ...]  # allowlisted tags present in the file, in file order
+    sections: dict[str, bytes]  # every read tag -> payload, in native dispatch order (a game load: as the handlers
+    # leave it, MTXM the chunks over each other)
+    ignored: tuple[str, ...]  # allowlisted tags present in the file, in file order (a game load: every unread tag)
 
     def u16(self, tag: str, index: int = 0) -> int:
         return struct.unpack_from("<H", self.sections[tag], 2 * index)[0]
@@ -139,11 +157,12 @@ def load(
     vcod_sha256: str | None,
     expansion: bool = True,
     groups: tuple[str, ...] = CAMPAIGN_GROUPS,
+    game: bool = False,
 ) -> Scenario:
     """Validate `data` against the native tables and return the sections the game reads.
 
     `vcod_sha256` is the digest of the executable's VCOD resource (`LoaderTables.vcod_sha256`); None skips that
-    comparison (synthetic tests).
+    comparison (synthetic tests). `game`: a custom map's load as the original's (the module's docstring).
     """
     chunks = enumerate_chunks(data)
     by_tag: dict[str, list[Chunk]] = {}
@@ -171,14 +190,14 @@ def load(
     rows = descriptor.rows(groups)
     read_tags = {row.tag for row in rows}
     for c in chunks:
-        if c.tag not in read_tags and c.tag not in tables.ignored_tags:
+        if not game and c.tag not in read_tags and c.tag not in tables.ignored_tags:
             raise ChkError(f"section {c.tag!r} is neither read by the version {version} loader nor allowlisted")
     for row in rows:
         if row.required and row.tag not in by_tag:
             raise ChkError(f"missing required section {row.tag!r} (version {version})")
-    for tag in read_tags:
-        if len(by_tag.get(tag, ())) > 1:
-            raise ChkError(f"duplicate section {tag!r} (outside the supported corpus)")
+    for row in rows:
+        if len(by_tag.get(row.tag, ())) > 1 and not (game and tables.handlers[row.handler]["payload"].get("repeat")):
+            raise ChkError(f"duplicate section {row.tag!r} (outside the supported corpus)")
 
     sections: dict[str, bytes] = {}
     for row in rows:
@@ -187,6 +206,9 @@ def load(
             if rule.get("reads", True):
                 body = payload(c)
                 _check_payload(row.tag, rule, body, vcod_sha256)
+                if rule.get("repeat") == "over":
+                    prior = sections.get(row.tag, b"")
+                    body = body + prior[len(body):]
                 sections[row.tag] = body
     era = struct.unpack("<H", sections[ERA_TAG])[0]
     if era > ERA_MAX_WITHOUT_EXPANSION and not expansion:
@@ -197,24 +219,26 @@ def load(
 
 
 NO_LIMIT = 0xFFFFFFFF
-# A row of CHKL: tag, required, reads, vcod, eq, max, multiple (NO_LIMIT and 0 where the rule has none).
-LOADER_ROW = struct.Struct("<4s3B3I")
+# A row of CHKL: tag, group (its index in GROUPS), required, reads, vcod, repeat (REPEATS), eq, max, multiple (NO_LIMIT
+# and 0 where the rule has none).
+LOADER_ROW = struct.Struct("<4s5B3I")
 
 
-def loader_section(tables: LoaderTables, groups: tuple[str, ...] = CAMPAIGN_GROUPS) -> bytes:
+def loader_section(tables: LoaderTables) -> bytes:
     """CHKL, the loader tables the runtime reads a scenario by (native/kp_core kp_chk.c, ADR 0018 stage D4): u8
-    descriptor count; per descriptor (by version) u16 version, u8 expansion required, u8 row count and the groups' rows
-    in `load`'s order (LOADER_ROW, each with its handler's payload rule); u8 count and the ignored tags; the SHA-256 of
-    the executable's VCOD resource."""
+    descriptor count; per descriptor (by version) u16 version, u8 expansion required, u8 row count and the rows of
+    every group in GROUPS order, each group's in its table's order (LOADER_ROW, each with its group and its handler's
+    payload rule); u8 count and the ignored tags; the SHA-256 of the executable's VCOD resource. The runtime picks the
+    groups of a load as `load` does."""
     out = bytearray([len(tables.descriptors)])
     for version, d in sorted(tables.descriptors.items()):
-        rows = d.rows(groups)
+        rows = [(GROUPS.index(g), row) for g in GROUPS for row in d.groups[g]]
         out += struct.pack("<HBB", version, d.expansion_required, len(rows))
-        for row in rows:
+        for group, row in rows:
             rule = tables.handlers[row.handler]["payload"]
-            out += LOADER_ROW.pack(row.tag.encode("latin1"), row.required, rule.get("reads", True),
-                                   bool(rule.get("vcod")), rule.get("eq", NO_LIMIT), rule.get("max", NO_LIMIT),
-                                   rule.get("multiple", 0))
+            out += LOADER_ROW.pack(row.tag.encode("latin1"), group, row.required, rule.get("reads", True),
+                                   bool(rule.get("vcod")), REPEATS[rule.get("repeat")], rule.get("eq", NO_LIMIT),
+                                   rule.get("max", NO_LIMIT), rule.get("multiple", 0))
     ignored = sorted(tables.ignored_tags)
     out += bytes([len(ignored)]) + b"".join(t.encode("latin1") for t in ignored)
     return bytes(out) + bytes.fromhex(tables.vcod_sha256)

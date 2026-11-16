@@ -55,6 +55,34 @@ class ChkTest(unittest.TestCase):
             with self.subTest(tag=tag, message=message), self.assertRaisesRegex(chk.ChkError, message):
                 load(build({**V59, tag: payload}))
 
+    def test_game_load_skips_unknown_tags(self):
+        data = build([*V59.items(), ("JUNK", b"x")])
+        with self.assertRaisesRegex(chk.ChkError, "neither read"):
+            load(data)
+        assert load(data, game=True).ignored == ("JUNK",)
+
+    def test_game_load_repeats(self):
+        """A game load runs each handler per chunk: STR keeps the last, MTXM and MASK lay the chunks over each
+        other, an appending section's repeat is refused."""
+        data = build([*V59.items(), ("STR ", b"\x00\x00"), ("MTXM", b"\x01\x02"), ("MASK", b"\x07")])
+        with self.assertRaisesRegex(chk.ChkError, "duplicate section 'STR '"):
+            load(data)
+        s = load(data, game=True)
+        assert s.sections["STR "] == b"\x00\x00"
+        assert s.sections["MTXM"] == b"\x01\x02" + bytes(126)
+        assert s.sections["MASK"] == b"\x07"
+        with self.assertRaisesRegex(chk.ChkError, "duplicate section 'UNIT'"):
+            load(build([*V59.items(), ("UNIT", bytes(36))]), game=True)
+
+    def test_melee_groups(self):
+        """A melee load reads the header and melee groups: no triggers, locations or settings needed."""
+        sections = {t: p for t, p in V59.items() if t in ("VER ", "DIM ", "ERA ", "OWNR", "SIDE", "STR ", "SPRP", "FORC",
+                                                          "VCOD", "MTXM", "THG2", "UNIT")}
+        s = load(build({**sections, "TRIG": bytes(2400)}), groups=chk.MELEE_GROUPS, game=True)
+        assert "TRIG" not in s.sections and s.ignored == ("TRIG",)
+        with self.assertRaisesRegex(chk.ChkError, "missing required section 'UNIT'"):
+            load(build({t: p for t, p in sections.items() if t != "UNIT"}), groups=chk.MELEE_GROUPS, game=True)
+
     def test_missing_required(self):
         sections = dict(V59)
         del sections["UPRP"]
@@ -93,19 +121,20 @@ class ChkTest(unittest.TestCase):
             load(data, expansion=False)
 
     def test_loader_section(self):
-        """CHKL (the runtime's kp_chk reads it): each descriptor's campaign rows with their payload rules, the ignored
-        tags, the VCOD digest."""
+        """CHKL (the runtime's kp_chk reads it): each descriptor's rows of every group with their group and payload rules,
+        the ignored tags, the VCOD digest."""
         data = chk.loader_section(TABLES)
         assert data[0] == len(TABLES.descriptors)
         pos = 1
         for version, d in sorted(TABLES.descriptors.items()):
             got_version, expansion, count = struct.unpack_from("<HBB", data, pos)
-            rows = d.rows(chk.CAMPAIGN_GROUPS)
+            rows = [(g, row) for g in chk.GROUPS for row in d.groups[g]]
             assert (got_version, bool(expansion), count) == (version, d.expansion_required, len(rows))
             pos += 4
-            for row in rows:
-                tag, required, reads, vcod, eq, most, multiple = chk.LOADER_ROW.unpack_from(data, pos)
+            for g, row in rows:
+                tag, group, required, reads, vcod, repeat, eq, most, multiple = chk.LOADER_ROW.unpack_from(data, pos)
                 rule = TABLES.handlers[row.handler]["payload"]
+                assert chk.GROUPS[group] == g and repeat == chk.REPEATS[rule.get("repeat")]
                 assert tag.decode("latin1") == row.tag and bool(required) == row.required
                 assert bool(reads) == rule.get("reads", True) and bool(vcod) == bool(rule.get("vcod"))
                 assert (eq, most, multiple) == (rule.get("eq", chk.NO_LIMIT), rule.get("max", chk.NO_LIMIT),

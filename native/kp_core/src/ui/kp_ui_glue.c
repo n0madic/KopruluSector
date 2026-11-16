@@ -179,8 +179,9 @@ void kp_ui_glue_release_dialog(KpUi *ui, int32_t dialog)
 
 static void error_tick(KpUi *ui, int32_t owner)
 {
-	/* 0x458790: the deferred network error (none offline) */
+	/* 0x458790: then the deferred network error (FlushDeferredNetError 0x474980) */
 	kp_ui_delete_timer(&ui->timers, owner, ERROR_TIMER);
+	kp_ui_menus_flush_net_error(ui);
 }
 
 void kp_ui_glue_activate(KpUi *ui, int32_t dialog, int theme)

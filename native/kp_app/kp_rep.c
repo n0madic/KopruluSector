@@ -160,7 +160,7 @@ done:
 
 /* --- the tail --- */
 
-#define TAIL_INTS (2 * KP_CARRY_PLAYERS + 5 + 2 * KP_CARRY_COUNTS + KP_CARRY_PSTATS * 12 + KP_CARRY_PLAYERS)
+#define TAIL_INTS (2 * KP_CARRY_PLAYERS + 5 + 2 * KP_CARRY_COUNTS + KP_CARRY_PSTATS * 12 + KP_CARRY_PLAYERS + 2)
 #define TAIL_PAYLOAD (4 + 4 + 32 + 4 + 8 * TAIL_INTS + 8 + 4 + 8 * 8 + 4 + 4)
 
 /* KpCarry is int64_t fields only: its values in declaration order */
@@ -323,12 +323,6 @@ int kp_rep_brood_war(const KpRep *r) { return r->header[KP_REP_BROOD_WAR]; }
 void kp_rep_set_frames(KpRep *r, uint32_t frames) { wr32(r->header + KP_REP_FRAMES, frames); }
 void kp_rep_set_seed(KpRep *r, uint32_t seed) { wr32(r->header + KP_REP_SEED, seed); }
 
-/* The game header's bytes from +0x6d on in every 1.17 campaign replay: the game type 0x0a (Use Map Settings), subtype
- * 1, and the template's victory, resources, unit stats, fog 2, starting units, fixed positions 1, restrictions 3,
- * allies 1, teams, cheats 1 */
-static const uint8_t UMS_TEMPLATE[] = { 0x0a, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 1, 3, 1, 0, 1, 0 };
-#define UMS_TEMPLATE_AT (KP_REP_GAME + 0x6d)
-
 /* strlen up to max (strnlen is POSIX, not C99: the web build has none) */
 static size_t text_len(const char *text, size_t max)
 {
@@ -347,6 +341,7 @@ static void put_text(uint8_t *at, const char *text, size_t field)
 void kp_rep_header(KpRep *r, const KpRepGame *game)
 {
 	uint8_t *h = r->header;
+	const uint8_t *t = game->template_record ? game->template_record : KP_TEMPLATE_UMS;
 	int k;
 	memset(h, 0, KP_REP_HEADER_SIZE);
 	h[KP_REP_BROOD_WAR] = (uint8_t)(game->brood_war != 0);
@@ -360,15 +355,14 @@ void kp_rep_header(KpRep *r, const KpRepGame *game)
 	h[KP_REP_MAP_SIZE + 2] = (uint8_t)game->map_h;
 	h[KP_REP_MAP_SIZE + 3] = (uint8_t)(game->map_h >> 8);
 	h[KP_REP_SLOTS - 1] = 1; /* the active players */
-	h[KP_REP_SLOTS] = 1;
+	h[KP_REP_SLOTS] = (uint8_t)(game->slots > 0 ? game->slots : 1);
 	h[KP_REP_SPEED] = (uint8_t)game->speed;
-	h[KP_REP_GAME + 0x28] = 0x0a; /* the game type and subtype, again in the template */
-	h[KP_REP_GAME + 0x2a] = 1;
+	memcpy(h + KP_REP_GAME_TYPE, t + KP_TEMPLATE_TYPE, 4); /* the type and subtype, again in the template */
 	h[KP_REP_TILESET] = (uint8_t)game->tileset;
 	h[KP_REP_TILESET + 1] = (uint8_t)(game->tileset >> 8);
 	h[KP_REP_PRESENT] = 1;
 	put_text(h + KP_REP_MAP_NAME, game->map_name, KP_REP_MAP_NAME_SIZE);
-	memcpy(h + UMS_TEMPLATE_AT, UMS_TEMPLATE, sizeof UMS_TEMPLATE);
+	memcpy(h + KP_REP_TEMPLATE, t, KP_TEMPLATE_SIZE);
 	for (k = 0; k < KP_REP_PLAYERS; k++) {
 		KpRepPlayer p;
 		if (k < 8) {
@@ -380,7 +374,32 @@ void kp_rep_header(KpRep *r, const KpRepGame *game)
 		p.slot = (uint32_t)k;
 		kp_rep_set_player(r, k, &p);
 	}
-	for (k = 0; k < 8; k++) wr32(h + KP_REP_COLORS + 4 * k, (uint32_t)k);
+	for (k = 0; k < 8; k++) {
+		wr32(h + KP_REP_COLORS + 4 * k, (uint32_t)(game->colors ? game->colors[k] : k));
+		h[KP_REP_USER_SELECT + k] = (uint8_t)(game->user_select ? game->user_select[k] : 0);
+	}
+}
+
+void kp_rep_setup(const KpRep *r, KpGameSetup *s)
+{
+	int k;
+	memset(s, 0, sizeof *s);
+	memcpy(s->template_record, r->header + KP_REP_TEMPLATE, KP_TEMPLATE_SIZE);
+	s->slots = r->header[KP_REP_SLOTS];
+	for (k = 0; k < KP_SETUP_SLOTS && k < KP_REP_PLAYERS; k++) {
+		KpRepPlayer p;
+		kp_rep_player(r, k, &p);
+		s->storm[k] = p.storm;
+		s->type[k] = p.type;
+		s->race[k] = p.race;
+		s->force[k] = p.force;
+		memcpy(s->name[k], p.name, KP_REP_NAME); /* NUL-terminated by kp_rep_player */
+	}
+	for (k = 0; k < 8; k++) {
+		s->color[k] = rd32(r->header + KP_REP_COLORS + 4 * k);
+		s->user_select[k] = r->header[KP_REP_USER_SELECT + k];
+	}
+	s->started = 1;
 }
 
 void kp_rep_player(const KpRep *r, int index, KpRepPlayer *p)

@@ -58,6 +58,7 @@ extern "C" {
 #define KP_F_HIDDEN 0x40
 #define KP_F_FOLLOW 0x80
 #define KP_SF_CIRCLE 0x01
+#define KP_SF_ALLIES 0x06 /* a team game's allied selections of the sprite, 0..3 (bits 1-2) */
 #define KP_SF_SELECTED 0x08
 #define KP_SF_DEPTH 0x10
 #define KP_SF_HIDDEN 0x20
@@ -355,6 +356,14 @@ void kp_sprite_add_circle(KpImages *w, int32_t s, int32_t color);
 int32_t kp_sprite_remove_health_bar(KpImages *w, int32_t s);
 void kp_sprite_change_id(KpImages *w, int32_t s, int32_t id);
 int32_t kp_selection_circle_create(KpImages *w, int32_t s, int32_t color, int32_t first);
+/* A team game's dashed circle (images 0x23b..0x244, the selection circles' pool) of the sprite's allied selections,
+ * counted in KP_SF_ALLIES: AddAllyCircle 0x415190 counts one more up to cap (the team's size less one) and makes the
+ * circle in colour for the first (a full pool clears the count); RemoveAllyCircles 0x416cd0 clears the count and frees
+ * the circle, returning its colour (0 for none); DecrementAllySelection 0x416d20 counts one less and frees the circle
+ * at 0. */
+void kp_sprite_add_ally_circle(KpImages *w, int32_t s, int32_t color, int32_t cap);
+int32_t kp_sprite_remove_ally_circles(KpImages *w, int32_t s);
+void kp_sprite_decrement_ally_circle(KpImages *w, int32_t s);
 /* The placement preview's images on a sprite (the ghost and box pools): CreatePlacementPreviewImages 0x40ebd0 puts on
  * top of sprite s image 581 drawing frame 0 of `image`'s GRP and, when the box pool has a record, image 583 outlining
  * a width x height footprint, both at offset (xoff, yoff); returns the ghost or KP_NONE with the pool empty.

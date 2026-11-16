@@ -65,8 +65,7 @@ static void pick_up(KpGame *g, int64_t w, int64_t p)
 		kp_remove_cargo_images(g, w);
 		u->resource_type[w] = 0;
 	}
-	/* TODO: ShowFlagTakenMessage 0x421760 when Capture the Flag maps come into scope (outside the V1 profile) */
-	if (t == KP_TYPE_FLAG) kp_game_fail(g, "powerup: a Flag is taken (0x421760)");
+	if (t == KP_TYPE_FLAG) kp_ctf_flag_taken(g, u->owner[p]); /* ShowFlagTakenMessage 0x421760 */
 	image = t == KP_TYPE_URAJ_CRYSTAL ? URAJ_IMAGE : t == KP_TYPE_KHALIS_CRYSTAL ? KHALIS_IMAGE : t + POWERUP_IMAGE_BASE;
 	kp_unit_hide(g, p); /* 0x422ba0 */
 	kp_issue_order(g, p, KP_ORD_NOTHING);
@@ -110,8 +109,7 @@ void kp_order_powerup_return(KpGame *g, int64_t p)
 			u->build_time[p]--;
 			return;
 		}
-		/* TODO: ShowFlagReturnedMessage 0x4216e0 when Capture the Flag maps come into scope (outside the V1 profile) */
-		kp_game_fail(g, "powerup: a Flag returns home (0x4216e0)");
+		kp_ctf_flag_returned(g, u->owner[p]); /* ShowFlagReturnedMessage 0x4216e0 */
 		home = kp_union_get(g, p, U_HOME, 4);
 		kp_unit_relocate(g, p, kp_s16v(home), kp_s16v(kp_shrv(home, 16)));
 		kp_issue_order(g, p, KP_ORD_POWERUP_IDLE);

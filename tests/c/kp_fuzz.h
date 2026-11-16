@@ -5,14 +5,18 @@
  *
  *   rep       a replay file: kp_rep_read, kp_session_replay_start, then the turn source's feed of every frame; a file
  *             read is written back and must read again;
- *   chk       a scenario: kp_chk_read with and without the expansion, and kp_mission_from_chk when the game's data is
- *             present;
+ *   chk       a scenario: kp_chk_read with and without the expansion, a custom map's melee and use-map-settings
+ *             loads (kp_chk_load), and kp_mission_from_chk and kp_mission_from_map's two loads when the game's data
+ *             is present;
  *   save      the first byte's low bit picks the form: 0 a save file (its KPF's CRCs made right, kp_save_check, then
  *             kp_save_load into a recorded session), 1 edits of the game's own native save (8 MB, past libFuzzer's
  *             inputs) by its sections, {u8 section, u24 offset, u8 n, n bytes}, its hash table then made right by
  *             kp_save_seal and the save given to kp_load;
  *   commands  the first byte picks the scenario; then chunks {u8 player | steps << 3, u8 n, n bytes} whose bytes
- *             kp_record_split walks into the player's commands, the steps after each chunk run by the session.
+ *             kp_record_split walks into the player's commands, the steps after each chunk run by the session;
+ *   turns     a network game's turn hub (kp_hub.h; phase M, stage M6) of 1 to 8 seats: the seats' commands, first
+ *             turns and frames in the input's order, each turn's list the same on every seat and by the Storm IDs from
+ *             7 down, no seat past QueueTurnCommand's bound of turns in transit nor its stream's ring.
  *
  * save and commands need the game's data (kp_oracle_data("."), run from the source tree's root); the games start once
  * a process and each input begins from their snapshot. A crash or a sanitizer's report is a finding. A game the
@@ -28,7 +32,7 @@
 extern "C" {
 #endif
 
-enum { KP_FUZZ_REP, KP_FUZZ_CHK, KP_FUZZ_SAVE, KP_FUZZ_COMMANDS, KP_FUZZ_TARGETS };
+enum { KP_FUZZ_REP, KP_FUZZ_CHK, KP_FUZZ_SAVE, KP_FUZZ_COMMANDS, KP_FUZZ_TURNS, KP_FUZZ_TARGETS };
 
 /* The target's name ("rep", ...), and the target of a name (-1 none). */
 const char *kp_fuzz_name(int target);

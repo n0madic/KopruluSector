@@ -1,0 +1,84 @@
+# A Play Custom game won and its replay played to its end (docs/phase-multiplayer.md, stage M7). As custom_melee.kps,
+# the glue's screen opens on the install's maps folder (--data's) with its first map preselected and the races set
+# Terran by the drop-downs (no creep: its borders are the seat's); Ok starts the game against the computer at once.
+# The simulation's state CRC is marked at a step; the cheat "there is no cow level" wins the single player's game
+# (ApplyPendingResults 0x4be020), the victory dialog's Return opens the score screen. Its Save Replay (a custom game's,
+# SaveReplayButtonProc 0x4620c0) opens the save-replay dialog over it: the run's replays folder lists nothing (the
+# dialog leaves LastReplay out), a typed name, OK copies LastReplay.rep to it and the button is disabled. The score's
+# Ok leads to the campaign menu (a custom game has no next scenario). Load Replay lists the saved replay first (before
+# LastReplay) and plays it: the same state at the marked step, and the replay's end where the game ended. tools/ci.sh
+# runs it with --data on a 1.17 install that has its maps folder and wants exit code 0 and "0 failures".
+options originals
+clock fixed
+
+wait screen gluMain
+click control glumain.single
+wait dialog gluGameMode and still
+click control glugamemode.original
+wait dialog gluPEdit and still
+text "Script"
+click control gluPEdit.1
+wait screen gluLogin
+click control glulogin.ok
+wait screen gluCmpgn
+click control glucmpgn.custom
+wait screen gluCustm
+# the preselected map's information and slots (PreviewMapEntry 0x45b970's 100 ms timer), then both races Terran (the
+# opened race list's centre is its second row, as in custom_melee.kps)
+wait seconds 0.5
+press control gluCustm.28
+move control gluCustm.28 0 0
+release control gluCustm.28 0 0
+wait frames 5
+press control gluCustm.29
+move control gluCustm.29 0 0
+release control gluCustm.29 0 0
+wait seconds 0.5
+click control glucustm.ok
+wait game
+wait frames 30
+expect units:0 > 0 and units:1 > 0 and creep.tiles == 0
+wait tick >= 160
+pause
+mark played
+log played tick sim.crc
+resume
+
+# the victory by the cheat: the message line opened, its text, Return
+key Return
+wait frames 10
+text "there is no cow level"
+wait frames 10
+key Return
+wait dialog
+mark won
+log won tick
+key Return
+wait score
+wait frames 30
+click control gluscore.save-replay
+wait dialog savegame
+wait frames 10
+expect list.count == 0
+click control savegame.name
+text "Custom win"
+click control ok
+wait nodialog and score
+click control gluscore.ok
+wait screen gluCmpgn
+
+click control glucmpgn.replay
+wait screen gluCustm
+wait seconds 0.5
+expect list.count == 2 and list.selected == 0
+click control glucustm.ok
+wait game and replay
+expect replay.frames == @won.tick
+wait tick >= @played.tick
+pause
+log replayed tick sim.crc
+expect tick == @played.tick
+expect sim.crc == @played.sim.crc
+resume
+wait replay.ended == 1
+log ended tick replay.frames

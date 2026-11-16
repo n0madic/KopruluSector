@@ -796,11 +796,11 @@ static int matches(const uint8_t *data, size_t size, const KpDefsInput *in)
 /* Whether the simulation is built from the file (a normalized name), so an install's copy must be the manifest's to
  * the byte, a repack's its listing's: the DAT tables, the scripts and dialog BINs, the missions' CHK, the tilesets' CV5
  * and VF4 (the walk raster), the GRPs and LO files grpmeta reads (the saves' identity has its CRC), the string tables
- * (images.tbl names the GRPs). The rest only shows or plays (sounds, movies, pictures, the tilesets' VX4, VR4 and WPE,
+ * (images.tbl names the GRPs), the game templates (.got) and the victory triggers (.trg). The rest only shows or plays (sounds, movies, pictures, the tilesets' VX4, VR4 and WPE,
  * fonts, texts): its size is checked. */
 static int simulation_input(const char *key)
 {
-	static const char *const KINDS[] = { ".dat", ".bin", ".chk", ".cv5", ".vf4", ".grp", ".tbl" };
+	static const char *const KINDS[] = { ".dat", ".bin", ".chk", ".cv5", ".vf4", ".grp", ".tbl", ".got", ".trg", ".lst" };
 	const char *dot = strrchr(key, '.');
 	size_t k;
 	if (!dot || strchr(dot, '/')) return 0;

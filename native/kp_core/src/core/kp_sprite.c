@@ -15,6 +15,8 @@
 #define BOX_IMAGE 0x247
 #define CIRCLE_FIRST 0x231
 #define CIRCLE_LAST 0x23a
+#define DASHED_FIRST 0x23b /* an ally's selection: the dashed circles */
+#define DASHED_LAST 0x244
 #define BAR_SEGMENT 3
 #define BAR_MIN_WIDTH 19
 #define BAR_ROWS 5
@@ -788,6 +790,47 @@ void kp_sprite_add_circle(KpImages *w, int32_t s, int32_t color)
 	if (kp_selection_circle_create(w, s, color, CIRCLE_FIRST) != KP_NONE) w->spr.flags[s] += KP_SF_CIRCLE;
 }
 
+/* ReleaseFirstDashedFromTail 0x4169c0: the dashed circle nearest the tail freed (0x40f570), its colour (0 for none). */
+static int32_t release_dashed(KpImages *w, int32_t s)
+{
+	int32_t i = w->spr.images[s].tail, color;
+	while (i != KP_NONE) {
+		if (w->img.id[i] >= DASHED_FIRST && w->img.id[i] <= DASHED_LAST) {
+			color = w->img.param[i] & 0xff;
+			kp_selection_circle_release(w, i);
+			return color;
+		}
+		i = w->img.prev[i];
+	}
+	return 0;
+}
+
+void kp_sprite_add_ally_circle(KpImages *w, int32_t s, int32_t color, int32_t cap)
+{
+	int32_t f = w->spr.flags[s];
+	if (((f & KP_SF_ALLIES) >> 1) == cap) return;
+	f = (f & ~KP_SF_ALLIES) | (((f & 0xfe) + 2) & KP_SF_ALLIES); /* the count + 1 in its two bits */
+	w->spr.flags[s] = f;
+	if ((f & KP_SF_ALLIES) <= 2 && kp_selection_circle_create(w, s, color, DASHED_FIRST) == KP_NONE) {
+		w->spr.flags[s] &= ~KP_SF_ALLIES;
+	}
+}
+
+int32_t kp_sprite_remove_ally_circles(KpImages *w, int32_t s)
+{
+	if (!(w->spr.flags[s] & KP_SF_ALLIES)) return 0;
+	w->spr.flags[s] &= ~KP_SF_ALLIES;
+	return release_dashed(w, s);
+}
+
+void kp_sprite_decrement_ally_circle(KpImages *w, int32_t s)
+{
+	int32_t c = (w->spr.flags[s] & KP_SF_ALLIES) >> 1;
+	if (c == 0) return;
+	w->spr.flags[s] = (w->spr.flags[s] & ~KP_SF_ALLIES) | (((c - 1) << 1) & KP_SF_ALLIES);
+	if (!(w->spr.flags[s] & KP_SF_ALLIES)) (void)release_dashed(w, s);
+}
+
 int32_t kp_sprite_remove_health_bar(KpImages *w, int32_t s)
 {
 	int32_t i;
@@ -904,8 +947,9 @@ void kp_sprite_change_id(KpImages *w, int32_t s, int32_t id)
 		color = kp_sprite_remove_circle(w, s);
 		if (kp_selection_circle_create(w, s, color, CIRCLE_FIRST) != KP_NONE) w->spr.flags[s] |= KP_SF_CIRCLE;
 	}
-	if ((w->spr.flags[s] & 0x06) != 0 && w->spr.images[s].head != KP_NONE) {
-		kp_images_fail(w, "images: the dashed circle of a sprite that changes its id (0x415f90)");
+	if ((w->spr.flags[s] & KP_SF_ALLIES) != 0 && w->spr.images[s].tail != KP_NONE) { /* the count kept */
+		color = release_dashed(w, s);
+		if (kp_selection_circle_create(w, s, color, DASHED_FIRST) == KP_NONE) w->spr.flags[s] &= ~KP_SF_ALLIES;
 	}
 }
 

@@ -396,7 +396,8 @@ int64_t kp_event_sequence(KpGame *g) { return g->events.sequence; }
 void kp_set_local_player(KpGame *g, int64_t p)
 {
 	if (p < 0 || p >= KP_PLAYERS) kp_game_fail(g, "game: no player %lld", (long long)p);
-	g->local_player = p;
+	/* between commands the command's record is the seat's (InitLocalPlayerAndChatTargets 0x443be0, a turn's end) */
+	g->local_player = g->local_record = g->command_record = p;
 	g->local_vision = (int64_t)1 << p;
 	g->w->local_player = (int32_t)p;
 	if (!g->w->replay) g->w->local_vision = (int32_t)g->local_vision;
@@ -417,18 +418,25 @@ void kp_replay_set_vision(KpGame *g, int64_t mask, int reveal)
 	for (n = g->lists[KP_LIST_ACTIVE].head; n != 0; n = g->u.next[n]) kp_unit_update_sprite_visibility(g, n);
 }
 
+/* ShowLocalErrorMessage 0x46ae50's gate: the local player's line, and in a team game only the seat that issued the
+ * command (0x508d48 = 0x508d54; outside a command the seat's own). */
+int kp_error_is_local(KpGame *g, int64_t player)
+{
+	return player == g->local_player && g->command_record == g->local_record;
+}
+
 void kp_report_error(KpGame *g, int64_t player, int64_t id)
 {
-	if (player == g->local_player) kp_event(g, KP_EVENT_ERROR, player, id, 0, NULL);
+	if (kp_error_is_local(g, player)) kp_event(g, KP_EVENT_ERROR, player, id, 0, NULL);
 }
 
 /* ShowErrorWithSound 0x4461f0: for the local player outside a replay, the advisor's sound (none for 0), then the
- * error line. */
+ * error line (0x46ae50). */
 void kp_report_error_sound(KpGame *g, int64_t player, int64_t sound, int64_t id)
 {
 	if (player != g->local_player || g->w->replay) return;
 	kp_advisor_sound(g, sound, 0, KP_TALK_NONE, 0, 0);
-	kp_event(g, KP_EVENT_ERROR, player, id, 0, NULL);
+	if (g->command_record == g->local_record) kp_event(g, KP_EVENT_ERROR, player, id, 0, NULL);
 }
 
 void kp_report_unplaced(KpGame *g, int64_t t, int64_t x, int64_t y)

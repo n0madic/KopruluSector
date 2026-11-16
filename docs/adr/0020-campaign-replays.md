@@ -20,7 +20,7 @@ The original records every game's commands and writes `LastReplay.rep` when the 
    - the last block never dispatched.
 
    1.17's command loss is reproduced for every file. There is no "fixed" mode: a file Koprulu writes then plays the same in the original.
-3. **Save Replay after a campaign game stays disabled**, as in the original. Enabling it would change the score screen that `kp_oracle score_replay` compares with the original's captures. The file is named by exporting it (stage RP4).
+3. **Save Replay after a campaign game stays disabled**, as in the original. Enabling it would change the score screen that `kp_oracle score_replay` compares with the original's captures. The file is named by exporting it (stage RP4). After a custom game the original's dialog runs, ported after phase M ([phase-multiplayer.md](../phase-multiplayer.md#save-replay-after-a-custom-game-after-m7-2026-11-16)).
 4. **Koprulu's tail goes after the CHK** (`KPRX`), which the original never reads (shown on the emulator). It holds the simulation's revision, the data's hash, the carried globals the header does not hold, the briefing's objectives, and the loads.
 5. **A recorded game's save keeps its record** in a `REPL` section. Its absence in an older save starts an empty record. A replay of a game with loads is marked unverified.
 6. **The format lives in `kp_app_core`** (`kp_rep.c`, `kp_record.c`) and calls pklib directly. `kp_core` gains the replay's state (the flag, full vision, the speed multiplier and pause, the commands 0x10, 0x11, 0x55 and 0x56) and no format or compression.

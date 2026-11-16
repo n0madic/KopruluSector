@@ -162,6 +162,9 @@ static int assemble(KpMission *m, const KpBytes part[], const char *name, KpErro
 /* --- the mission from its scenario (ADR 0018, stage D4; scdata/missions.py, kpf/kpm.py build) --- */
 
 #define META_SIZE 68 /* kpm.META <4H12s12s20s2H8sB3x */
+#define META_FORC 32
+#define META_FORC_NAMES (META_FORC + 8) /* FORC: 8 players' forces, then 4 names */
+#define META_SPRP 52
 #define TRIGGER_SIZE 2400
 #define CONDITION_COUNT 16
 #define CONDITION_SIZE 20
@@ -180,11 +183,8 @@ static int assemble(KpMission *m, const KpBytes part[], const char *name, KpErro
 /* the condition and action tables of EvaluateTriggerConditions 0x4bded0 and the runner 0x4bdf10 (atlas P40) */
 #define CONDITION_TYPES 24
 #define ACTION_TYPES 60
-#define CONDITION_OPPONENTS 14
 #define ACTION_MOVE_UNIT 39
 #define ACTION_ORDER 46
-#define ACTION_MODIFY_RESOURCE_AMOUNT 52
-#define ACTION_MODIFY_HANGAR_COUNT 53
 #define ACTION_SET_NEXT_SCENARIO 41
 #define LOCATIONS 255
 #define WAVS_ENTRY 12
@@ -262,8 +262,7 @@ static const char *condition_stops(const uint8_t *c, char *why, size_t why_size)
 /* An action that stops the game when it runs (ADR 0023): Kill and Remove Unit of a direct slot past the players
  * (kp_trigger_units.c kill_player_units), Set Alliance with slot 12 (set_alliance), Set Deaths of a unit type past the
  * aggregates for a slot below 8 (kp_trigger_set_deaths), a leaderboard of units or kills of a type past the table
- * (lb_get); and a Flag created, refused as Capture the Flag is outside the V1 profile (the runtime stops once a worker
- * takes it or it goes home, kp_powerup.c). NULL when none. */
+ * (lb_get). NULL when none. */
 static const char *action_stops(const uint8_t *a, char *why, size_t why_size)
 {
 	uint32_t kind = a[ACTION_TYPE], player = kp_le_u32(a + ACTION_PLAYER), unit = kp_le_u16(a + ACTION_UNIT);
@@ -287,17 +286,12 @@ static const char *action_stops(const uint8_t *a, char *why, size_t why_size)
 		snprintf(why, why_size, "a leaderboard of unit type %u", (unsigned)unit);
 		return why;
 	}
-	if ((kind == ACT_CREATE_UNIT || kind == ACT_CREATE_UNIT_WITH_PROPERTIES) && located && unit == KP_TYPE_FLAG) {
-		snprintf(why, why_size, "a Flag (unit %d) is outside the V1 profile", KP_TYPE_FLAG);
-		return why;
-	}
 	return NULL;
 }
 
 /* scdata/analyze/triggers.py validate: what the original's tables would index past (a reachable condition above type
- * 23, an action above 59, an Order past the 255 locations, a Move Unit to location 256) and what the V1 profile has no
- * handler for (Opponents; Modify Unit Resource Amount and Hangar Count); and what the runtime stops the game at
- * (condition_stops, action_stops). Entries the runners never reach are left. */
+ * 23, an action above 59, an Order past the 255 locations, a Move Unit to location 256); and what the runtime stops
+ * the game at (condition_stops, action_stops). Entries the runners never reach are left. */
 static int validate_triggers(const uint8_t *trig, uint32_t size, char *err, size_t err_size)
 {
 	uint32_t t, j;
@@ -318,11 +312,6 @@ static int validate_triggers(const uint8_t *trig, uint32_t size, char *err, size
 					(unsigned)j, (unsigned)c[CONDITION_TYPE], CONDITION_TYPES);
 				return -1;
 			}
-			if (c[CONDITION_TYPE] == CONDITION_OPPONENTS) {
-				snprintf(err, err_size, "TRIG: trigger %u condition %u: opponents is outside the V1 profile", (unsigned)t,
-					(unsigned)j);
-				return -1;
-			}
 			if (condition_stops(c, why, sizeof why)) {
 				snprintf(err, err_size, "TRIG: trigger %u condition %u: %s", (unsigned)t, (unsigned)j, why);
 				return -1;
@@ -335,14 +324,6 @@ static int validate_triggers(const uint8_t *trig, uint32_t size, char *err, size
 			if (kind >= ACTION_TYPES) {
 				snprintf(err, err_size, "TRIG: trigger %u action %u: type %u (the table has %d)", (unsigned)t, (unsigned)j,
 					(unsigned)kind, ACTION_TYPES);
-				return -1;
-			}
-			if (kind == ACTION_MODIFY_RESOURCE_AMOUNT || kind == ACTION_MODIFY_HANGAR_COUNT) {
-				/* TODO: when custom and UMS maps come into scope, implement them in kp_triggers.c (converter's
-				 * triggers.UNSUPPORTED_ACTIONS goes with them) */
-				snprintf(err, err_size, "TRIG: trigger %u action %u: %s is outside the V1 profile", (unsigned)t,
-					(unsigned)j,
-					kind == ACTION_MODIFY_RESOURCE_AMOUNT ? "modify_unit_resource_amount" : "modify_unit_hangar_count");
 				return -1;
 			}
 			if (kind == ACTION_ORDER && number > LOCATIONS) {
@@ -364,30 +345,8 @@ static int validate_triggers(const uint8_t *trig, uint32_t size, char *err, size
 	return 0;
 }
 
-/* The map strings as kp_map_string reads them for any consumer (the triggers, the briefing, the map's and the forces'
- * names, the interface): every id up to STR's count whose offset slot is inside STR names a string terminated inside
- * it (the stop "map string N is not terminated inside STR", kp_triggers.c). */
-static int validate_strings(const uint8_t *strs, uint32_t size, char *err, size_t err_size)
-{
-	uint32_t count, n, last;
-	if (size < 2) return 0;
-	for (last = size; last > 0 && strs[last - 1] != 0; last--) {
-	}
-	count = kp_le_u16(strs);
-	for (n = 1; n <= count && 2 * n + 2 <= size; n++) {
-		uint32_t offset = kp_le_u16(strs + 2 * n);
-		if (offset >= last) { /* no terminator at or after the offset */
-			snprintf(err, err_size, "STR: string %u at offset %u is not terminated inside STR", (unsigned)n,
-				(unsigned)offset);
-			return -1;
-		}
-	}
-	return 0;
-}
-
 /* The preplaced units refused (ADR 0023): a start location of a slot past the players, which the start stops at
- * (kp_start.c load_units), and a Flag of any owner, as Capture the Flag is outside the V1 profile (the runtime stops once
- * a worker takes it or it goes home, kp_powerup.c). */
+ * (kp_start.c load_units). */
 static int validate_units(const uint8_t *units, uint32_t size, char *err, size_t err_size)
 {
 	uint32_t i;
@@ -396,11 +355,6 @@ static int validate_units(const uint8_t *units, uint32_t size, char *err, size_t
 		if (type == KP_TYPE_START_LOCATION && owner >= PLAYER_SLOTS) {
 			snprintf(err, err_size, "UNIT: unit %u: a start location of player %u", (unsigned)(i / UNIT_RECORD),
 				(unsigned)owner);
-			return -1;
-		}
-		if (type == KP_TYPE_FLAG) {
-			snprintf(err, err_size, "UNIT: unit %u: a Flag (unit %d) is outside the V1 profile",
-				(unsigned)(i / UNIT_RECORD), KP_TYPE_FLAG);
 			return -1;
 		}
 	}
@@ -453,8 +407,9 @@ static int wav_string_ids(const KpChkSection *trig, const KpChkSection *mbrf, ui
 	return n;
 }
 
-/* GetMapString 0x445670 (kpm.map_string) over STR's bytes: the string's bytes and 1, 0 for none (index 0, or past the
- * count: empty), -1 when it is not terminated inside STR */
+/* GetMapString 0x445670 (kp_map_string, kpm.map_string) over STR's bytes: 0 for none or the empty string (index 0, past
+ * the count, or past STR: the original reads its heap there), else 1 with the string's bytes up to its terminator or
+ * STR's end (ADR 0024) */
 static int map_string_in(const uint8_t *strs, size_t strs_size, uint32_t index, const uint8_t **text, size_t *n)
 {
 	uint32_t offset;
@@ -462,14 +417,12 @@ static int map_string_in(const uint8_t *strs, size_t strs_size, uint32_t index, 
 	*text = NULL;
 	*n = 0;
 	index &= 0xffff;
-	if (index == 0) return 0;
-	if (strs_size < 2) return -1;
-	if (index - 1 >= kp_le_u16(strs)) return 0;
-	if (2 * (size_t)index + 2 > strs_size) return -1;
+	if (index == 0 || strs_size < 2 || index - 1 >= kp_le_u16(strs) || 2 * (size_t)index + 2 > strs_size) return 0;
 	offset = kp_le_u16(strs + 2 * index);
-	if (offset >= strs_size || !(end = (const uint8_t *)memchr(strs + offset, 0, strs_size - offset))) return -1;
+	if (offset >= strs_size) return 0;
 	*text = strs + offset;
-	*n = (size_t)(end - *text);
+	end = (const uint8_t *)memchr(*text, 0, strs_size - offset);
+	*n = end ? (size_t)(end - *text) : strs_size - offset;
 	return 1;
 }
 
@@ -478,8 +431,9 @@ static int map_string(const KpChkSection *strs, uint32_t index, const uint8_t **
 	return map_string_in(strs->data, strs->size, index, text, n);
 }
 
-/* The path a WAV action builds from its string (the WAVS builder's and the players'): <directory>\<string>. 1 with
- * the path in out, 0 for no string or an empty one, -1 for a string not terminated inside STR or a path too long. */
+/* The path a WAV action builds from its string (the WAVS builder's and the players'): <directory>\<string>, or the
+ * string alone for the directory "" (a custom map's). 1 with the path in out, 0 for no string or an empty one, -1 for a
+ * path too long. */
 static int wav_path(const uint8_t *strs, size_t strs_size, const char *directory, uint32_t string_id, char *out,
 	size_t size)
 {
@@ -488,7 +442,10 @@ static int wav_path(const uint8_t *strs, size_t strs_size, const char *directory
 	int s = map_string_in(strs, strs_size, string_id, &text, &len);
 	if (s <= 0 || len == 0) return s;
 	if (strlen(directory) + 1 + len >= size) return -1;
-	snprintf(out, size, "%s\\%.*s", directory, (int)len, (const char *)text);
+	if (directory[0])
+		snprintf(out, size, "%s\\%.*s", directory, (int)len, (const char *)text);
+	else /* a custom map's: the file in its MPQ */
+		snprintf(out, size, "%.*s", (int)len, (const char *)text);
 	return 1;
 }
 
@@ -518,13 +475,8 @@ static uint8_t *mission_wavs(const KpFiles *f, const char *directory, const KpCh
 		size_t len;
 		char path[KP_ERROR_SIZE];
 		KpWavInfo w;
-		int found = 0, s = map_string(strs, ids[k], &text, &len);
-		if (s < 0) {
-			snprintf(err->msg, sizeof err->msg, "mission: %s: map string %u is not terminated inside STR", directory,
-				(unsigned)ids[k]);
-			goto failed;
-		}
-		if (s > 0 && len > 0) { /* the path the WAV actions build */
+		int found = 0;
+		if (map_string(strs, ids[k], &text, &len) > 0 && len > 0) { /* the path the WAV actions build */
 			if (wav_path(strs->data, strs->size, directory, ids[k], path, sizeof path) < 0) {
 				snprintf(err->msg, sizeof err->msg, "mission: %s: WAV string %u is too long", directory, (unsigned)ids[k]);
 				goto failed;
@@ -594,49 +546,83 @@ static void meta_put(uint8_t *p, const KpChkSection *s, size_t n)
 	memcpy(p, s->data, s->size < n ? s->size : n);
 }
 
-int kp_mission_from_chk(KpMission *m, const KpFiles *f, uint8_t *chk_bytes, size_t chk_size, const char *name,
-	const char *directory, const uint8_t *packs, size_t pack_size, KpError *err)
+/* A scenario's mission by a load's groups: kp_mission_from_chk (the campaign's), kp_mission_from_map (a game's). */
+static int build(KpMission *m, const KpFiles *f, uint8_t *chk_bytes, size_t chk_size, const char *name,
+	const char *directory, const uint8_t *packs, size_t pack_size, KpChkLoad load, KpError *err)
 {
-	/* the sections the mission reads; the loader's tables require them all */
+	/* the sections the mission reads; a campaign load requires them all, a melee one reads no MASK, MRGN, TRIG, MBRF
+	 * or UPRP (they stay empty: the fog mask all 0xff, as without MASK) */
 	static const char *const NEEDED[] = { "VER ", "DIM ", "ERA ", "OWNR", "SIDE", "FORC", "SPRP", "MTXM", "MASK", "THG2",
 		"UNIT", "MRGN", "STR ", "TRIG", "MBRF", "UPRP" };
 	enum { VER, DIM, ERA, OWNR, SIDE, FORC, SPRP, MTXM, MASK, THG2, UNIT, MRGN, STR, TRIG, MBRF, UPRP, NEEDED_COUNT };
+	static const uint32_t MELEE_UNREAD = 1u << MASK | 1u << MRGN | 1u << TRIG | 1u << MBRF | 1u << UPRP;
+	static const uint8_t NONE[1] = { 0 };
 	char path[KP_ERROR_SIZE], why[KP_ERROR_SIZE];
 	KpChk chk;
 	const KpChkSection *s[NEEDED_COUNT], *colr;
+	const uint8_t *src[NEEDED_COUNT]; /* each section's bytes: into chk_bytes, else copied after the parts */
+	uint32_t len[NEEDED_COUNT];
 	KpDerived derived;
 	KpBytes part[PART_COUNT];
-	uint8_t meta[META_SIZE], *rules = NULL, *wavs = NULL, *cv5 = NULL, *vf4 = NULL, *blob;
-	size_t rules_size = 0, wavs_size = 0, cv5_size, vf4_size, total, at, offsets[NEEDED_COUNT];
+	uint8_t meta[META_SIZE], *rules = NULL, *wavs = NULL, *cv5 = NULL, *vf4 = NULL, *mask = NULL, *blob;
+	size_t rules_size = 0, wavs_size = 0, cv5_size, vf4_size, total, at, copied = 0, offsets[NEEDED_COUNT];
+	int inside[NEEDED_COUNT];
 	uint32_t w, h;
-	int i, k, rc = -1;
+	int i, k, rc = -1, game = load != KP_CHK_CAMPAIGN;
 	memset(m, 0, sizeof *m);
+	memset(&chk, 0, sizeof chk);
 	memset(&derived, 0, sizeof derived);
 	if (!chk_bytes) return fail(err, name, "out of memory");
-	if (kp_chk_read(&chk, chk_bytes, chk_size, f->profile, 1, why, sizeof why) != 0) {
+	if (kp_chk_load(&chk, chk_bytes, chk_size, f->profile, 1, load, why, sizeof why) != 0) {
 		fail(err, name, why);
 		goto done;
 	}
 	for (i = 0; i < NEEDED_COUNT; i++) {
-		if (!(s[i] = kp_chk_section(&chk, NEEDED[i]))) {
+		s[i] = kp_chk_section(&chk, NEEDED[i]);
+		src[i] = s[i] ? s[i]->data : NONE;
+		len[i] = s[i] ? s[i]->size : 0;
+		if (!s[i] && !(load == KP_CHK_MELEE && (MELEE_UNREAD >> i & 1u))) {
 			snprintf(why, sizeof why, "the scenario has no '%s' section", NEEDED[i]);
 			fail(err, name, why);
 			goto done;
 		}
-		offsets[i] = (size_t)(s[i]->data - chk_bytes);
 	}
 	colr = kp_chk_section(&chk, "COLR");
 	w = kp_le_u16(s[DIM]->data);
 	h = kp_le_u16(s[DIM]->data + 2);
-	if (s[MTXM]->size != (uint64_t)2 * w * h || s[MASK]->size != (uint64_t)w * h) {
+	if (!game && (s[MTXM]->size != (uint64_t)2 * w * h || s[MASK]->size != (uint64_t)w * h)) {
 		/* the native loader accepts other lengths; no campaign map has one */
 		snprintf(why, sizeof why, "MTXM/MASK sizes %u/%u do not match %ux%u", (unsigned)s[MTXM]->size,
 			(unsigned)s[MASK]->size, (unsigned)w, (unsigned)h);
 		fail(err, name, why);
 		goto done;
 	}
-	if (validate_triggers(s[TRIG]->data, s[TRIG]->size, why, sizeof why) != 0
-		|| validate_strings(s[STR]->data, s[STR]->size, why, sizeof why) != 0
+	if (game) {
+		/* LoadTileMapSection 0x469170 copies over the tile buffer an earlier map filled: a map whose chunks leave
+		 * part of it unwritten would show that map's tiles; LoadFogMaskSection 0x469260 writes past the mask of the
+		 * map's size */
+		if (w == 0 || h == 0 || s[MTXM]->size < (uint64_t)2 * w * h) {
+			snprintf(why, sizeof why, "MTXM: %u bytes leave tiles of the %ux%u map unwritten", (unsigned)s[MTXM]->size,
+				(unsigned)w, (unsigned)h);
+			fail(err, name, why);
+			goto done;
+		}
+		len[MTXM] = 2 * w * h;
+		if (s[MASK] && s[MASK]->size > (uint64_t)w * h) {
+			snprintf(why, sizeof why, "MASK: %u bytes, past the %ux%u map", (unsigned)s[MASK]->size, (unsigned)w,
+				(unsigned)h);
+			fail(err, name, why);
+			goto done;
+		}
+		if (!s[MASK] || s[MASK]->size < (uint64_t)w * h) { /* the rest 0xff, as the mask stays without MASK */
+			if (!(mask = (uint8_t *)malloc((size_t)w * h))) goto oom;
+			memset(mask, 0xff, (size_t)w * h);
+			if (s[MASK]) memcpy(mask, s[MASK]->data, s[MASK]->size);
+			src[MASK] = mask;
+			len[MASK] = w * h;
+		}
+	}
+	if ((s[TRIG] && validate_triggers(s[TRIG]->data, s[TRIG]->size, why, sizeof why) != 0)
 		|| validate_units(s[UNIT]->data, s[UNIT]->size, why, sizeof why) != 0) {
 		fail(err, name, why);
 		goto done;
@@ -648,8 +634,8 @@ int kp_mission_from_chk(KpMission *m, const KpFiles *f, uint8_t *chk_bytes, size
 	meta_put(meta + 4, s[DIM], 4);
 	meta_put(meta + 8, s[OWNR], 12);
 	meta_put(meta + 20, s[SIDE], 12);
-	meta_put(meta + 32, s[FORC], 20); /* the native FORC zero-fills the tail */
-	meta_put(meta + 52, s[SPRP], 4);
+	meta_put(meta + META_FORC, s[FORC], 20); /* the native FORC zero-fills the tail */
+	meta_put(meta + META_SPRP, s[SPRP], 4);
 	if (colr) {
 		meta_put(meta + 56, colr, 8);
 		meta[64] = KP_MISSION_META_COLR;
@@ -665,7 +651,7 @@ int kp_mission_from_chk(KpMission *m, const KpFiles *f, uint8_t *chk_bytes, size
 			memcpy(rules + at + 8, chk.sections[k].data, chk.sections[k].size);
 			at += 8 + chk.sections[k].size;
 		}
-	if (!directory) { /* a test scenario: no WAVs (scdata/scenarios.py builds it with none) */
+	if (!directory || !s[TRIG]) { /* a test scenario (scdata/scenarios.py builds it with none), or a melee map: no WAVs */
 		if (!(wavs = (uint8_t *)calloc(1, wavs_size = 2))) goto oom;
 	} else if (!(wavs = mission_wavs(f, directory, s[STR], s[TRIG], s[MBRF], &wavs_size, err))) {
 		goto done;
@@ -676,23 +662,30 @@ int kp_mission_from_chk(KpMission *m, const KpFiles *f, uint8_t *chk_bytes, size
 		if (!(cv5 = kp_files_need(f, path, &cv5_size, err))) goto done;
 		snprintf(path, sizeof path, "tileset\\%s.vf4", tileset);
 		if (!(vf4 = kp_files_need(f, path, &vf4_size, err))) goto done;
-		if (kp_derive_terrain(w, h, s[MTXM]->data, cv5, cv5_size, vf4, vf4_size, &derived, why, sizeof why) != 0) {
+		if (kp_derive_terrain(w, h, src[MTXM], cv5, cv5_size, vf4, vf4_size, &derived, why, sizeof why) != 0) {
 			fail(err, name, why);
 			goto done;
 		}
 	}
-	/* one blob: the scenario (the raw payloads point into it), then the parts built here */
+	for (i = 0; i < NEEDED_COUNT; i++) {
+		inside[i] = src[i] >= chk_bytes && src[i] < chk_bytes + chk_size;
+		offsets[i] = inside[i] ? (size_t)(src[i] - chk_bytes) : 0;
+		if (!inside[i]) copied += len[i];
+	}
+	/* one blob: the scenario (the raw payloads point into it), the parts built here, then the payloads the load laid
+	 * over each other or made */
 	total = chk_size + META_SIZE + rules_size + wavs_size + derived.walk_size + derived.regions_size
-		+ derived.contours_size + pack_size;
-	if (!(blob = (uint8_t *)realloc(chk_bytes, total))) goto oom;
+		+ derived.contours_size + pack_size + copied;
+	if (!(blob = (uint8_t *)realloc(chk_bytes, total ? total : 1))) goto oom;
 	chk_bytes = NULL;
 	m->blob = blob;
 	m->size = total;
 	m->chk_size = chk_size;
+	m->load = load;
 	at = chk_size;
 #define APPEND(out, bytes, n) \
 	do { \
-		memcpy(blob + at, (bytes), (n)); \
+		if (n) memcpy(blob + at, (bytes), (n)); \
 		(out).data = blob + at; \
 		(out).size = (uint32_t)(n); \
 		at += (n); \
@@ -704,24 +697,115 @@ int kp_mission_from_chk(KpMission *m, const KpFiles *f, uint8_t *chk_bytes, size
 	APPEND(part[PART_RGNS], derived.regions, derived.regions_size);
 	APPEND(part[PART_CONT], derived.contours, derived.contours_size);
 	APPEND(part[PART_PACK], packs, pack_size);
+	{
+		KpBytes raw[NEEDED_COUNT];
+		for (i = 0; i < NEEDED_COUNT; i++) {
+			if (inside[i]) {
+				raw[i].data = blob + offsets[i];
+				raw[i].size = len[i];
+			} else {
+				APPEND(raw[i], src[i], len[i]);
+			}
+		}
+		m->tiles = raw[MTXM], m->mask = raw[MASK], m->sprites = raw[THG2], m->units = raw[UNIT];
+		m->locations = raw[MRGN], m->strings = raw[STR], m->triggers = raw[TRIG], m->briefing = raw[MBRF];
+		m->properties = raw[UPRP];
+	}
 #undef APPEND
-#define RAW(field, index) (m->field.data = blob + offsets[index], m->field.size = s[index]->size)
-	RAW(tiles, MTXM), RAW(mask, MASK), RAW(sprites, THG2), RAW(units, UNIT), RAW(locations, MRGN);
-	RAW(strings, STR), RAW(triggers, TRIG), RAW(briefing, MBRF), RAW(properties, UPRP);
-#undef RAW
-	rc = assemble(m, part, directory, err);
+	rc = assemble(m, part, directory && directory[0] ? directory : name, err);
 	goto done;
 oom:
 	fail(err, name, "out of memory");
 done:
 	if (rc != 0) kp_mission_free(m);
+	kp_chk_free(&chk);
 	free(chk_bytes);
+	free(mask);
 	free(rules);
 	free(wavs);
 	free(cv5);
 	free(vf4);
 	kp_derived_free(&derived);
 	return rc;
+}
+
+int kp_mission_from_chk(KpMission *m, const KpFiles *f, uint8_t *chk_bytes, size_t chk_size, const char *name,
+	const char *directory, const uint8_t *packs, size_t pack_size, KpError *err)
+{
+	return build(m, f, chk_bytes, chk_size, name, directory, packs, pack_size, KP_CHK_CAMPAIGN, err);
+}
+
+int kp_mission_from_map(KpMission *m, const KpFiles *f, uint8_t *chk_bytes, size_t chk_size, const char *name,
+	KpChkLoad load, const uint8_t *packs, size_t pack_size, KpError *err)
+{
+	if (load == KP_CHK_CAMPAIGN || load == KP_CHK_HEADER) {
+		free(chk_bytes);
+		memset(m, 0, sizeof *m);
+		return fail(err, name, "a custom map is loaded as a melee or use map settings game");
+	}
+	return build(m, f, chk_bytes, chk_size, name, "", packs, pack_size, load, err);
+}
+
+/* A map string's bytes into out (at most size - 1 of them, NUL-terminated; "" for none) */
+static void map_string_copy(const KpChkSection *strs, uint32_t index, char *out, size_t size)
+{
+	const uint8_t *text;
+	size_t n;
+	out[0] = 0;
+	if (strs == NULL || !map_string(strs, index, &text, &n)) return;
+	if (n >= size) n = size - 1;
+	memcpy(out, text, n);
+	out[n] = 0;
+}
+
+int kp_map_header(KpMapHeader *h, const uint8_t *chk, size_t size, const KpDefsProfile *profile, int expansion,
+	char *err, size_t err_size)
+{
+	const KpChkSection *dim, *era, *ownr, *side, *sprp, *strs;
+	KpChk c;
+	int p;
+	memset(h, 0, sizeof *h);
+	h->first_human = -1;
+	if (kp_chk_load(&c, chk, size, profile, expansion, KP_CHK_HEADER, err, err_size) != 0) {
+		h->version = c.version;
+		return -1;
+	}
+	h->version = c.version;
+	dim = kp_chk_section(&c, "DIM ");
+	era = kp_chk_section(&c, "ERA ");
+	ownr = kp_chk_section(&c, "OWNR");
+	side = kp_chk_section(&c, "SIDE");
+	sprp = kp_chk_section(&c, "SPRP");
+	strs = kp_chk_section(&c, "STR ");
+	if (dim == NULL || dim->size < 4 || era == NULL || ownr == NULL || ownr->size < KP_MAP_HEADER_SLOTS || side == NULL
+		|| side->size < KP_MAP_HEADER_SLOTS) {
+		snprintf(err, err_size, "the map's header has no DIM, ERA, OWNR or SIDE");
+		kp_chk_free(&c);
+		return -1;
+	}
+	h->width = (uint16_t)kp_le_u16(dim->data);
+	h->height = (uint16_t)kp_le_u16(dim->data + 2);
+	h->tileset = (uint16_t)(kp_le_u16(era->data) & 7);
+	for (p = 0; p < KP_MAP_HEADER_SLOTS; p++) {
+		uint8_t type = ownr->data[p];
+		h->owners[p] = type;
+		h->races[p] = side->data[p];
+		h->user_select[p] = side->data[p] == KP_MAP_RACE_USER_SELECT; /* 0x478a20 from the header's step 3 */
+		/* 0x478e70: the slots of a player (rescuable, either, open, neutral); 0x478ea0: the computers; 0x479550: the
+		 * open slots of the player table the header filled (0x479bf0 keeps the types) */
+		if (type >= 3 && type <= 7) h->players++;
+		if (type == 1 || type == 5) h->computers++;
+		if (type == 6) {
+			h->humans++;
+			if (h->first_human < 0) h->first_human = (int8_t)p;
+		}
+	}
+	if (sprp != NULL && sprp->size >= 4) { /* the info's WORDs +0 and +2: the scenario's name and description */
+		map_string_copy(strs, kp_le_u16(sprp->data), h->title, sizeof h->title);
+		map_string_copy(strs, kp_le_u16(sprp->data + 2), h->description, sizeof h->description);
+	}
+	kp_chk_free(&c);
+	return 0;
 }
 
 int kp_mission_from_files(KpMission *m, const KpFiles *f, const char *directory, KpError *err)

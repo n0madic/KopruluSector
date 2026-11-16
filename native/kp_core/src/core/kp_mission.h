@@ -10,6 +10,7 @@
 #include <stdint.h>
 
 #include "kp_aiscript.h"
+#include "kp_chk.h"
 #include "kp_files.h"
 #include "kp_kpf.h"
 
@@ -65,6 +66,7 @@ typedef struct {
 	uint8_t *blob; /* owned: the scenario and the parts built from it */
 	size_t size;
 	size_t chk_size; /* the scenario's bytes at the blob's start, as read (a replay's map) */
+	KpChkLoad load; /* how the scenario was read: KP_CHK_CAMPAIGN, or a custom map's game (a save keeps its MAPC) */
 	uint32_t chk_version, era, width, height, tileset;
 	uint8_t owners[12], races[12];
 	uint8_t force_player[8], force_flags[4];
@@ -95,6 +97,31 @@ int kp_mission_from_files(KpMission *m, const KpFiles *f, const char *directory,
  * (kp_mission_packs_payload). Returns -1 with err set. */
 int kp_mission_from_chk(KpMission *m, const KpFiles *f, uint8_t *chk, size_t chk_size, const char *name,
 	const char *directory, const uint8_t *packs, size_t pack_size, KpError *err);
+/* A custom map's mission (ADR 0024): its scenario (taken as by kp_mission_from_chk) read as the original reads it for a
+ * game of load, KP_CHK_MELEE (the melee group: no triggers, briefing, settings or locations, the fog mask all 0xff) or
+ * KP_CHK_UMS (use map settings); its WAV strings name files of f by themselves (the map's MPQ first, kp_app), its
+ * strings checked as the game reads them (a melee map's: SPRP's and FORC's). Returns -1 with err set. */
+int kp_mission_from_map(KpMission *m, const KpFiles *f, uint8_t *chk, size_t chk_size, const char *name,
+	KpChkLoad load, const uint8_t *packs, size_t pack_size, KpError *err);
+/* A map's header as LoadMapHeader 0x46b5c0 reads it for the map lists (LoadMapEntryInfo 0x45d870, ADR 0024): the
+ * header group of its scenario (KP_CHK_HEADER), its slots 0..7 and their counts, its name and description (SPRP's
+ * strings in the map's encoding, cut to the list's buffers). */
+#define KP_MAP_HEADER_SLOTS 8
+#define KP_MAP_HEADER_TITLE 32       /* the entry's title +0x49 */
+#define KP_MAP_HEADER_DESCRIPTION 256 /* its description +0x69 */
+#define KP_MAP_RACE_USER_SELECT 5
+typedef struct {
+	uint16_t version;             /* VER, also when the read failed (0: none): a later one is the expansion's (> 59) */
+	uint16_t width, height, tileset; /* DIM, ERA & 7 (0x5264b4, 0x5264b6, 0x5264bc) */
+	uint8_t owners[KP_MAP_HEADER_SLOTS], races[KP_MAP_HEADER_SLOTS]; /* OWNR, SIDE */
+	uint8_t user_select[KP_MAP_HEADER_SLOTS]; /* 0x673f08: SIDE's User Select slots */
+	uint8_t players, computers, humans; /* 0x478e70 (types 3..7), 0x478ea0 (1 and 5), 0x479550 (6) */
+	int8_t first_human;           /* the first open slot (type 6), -1 none */
+	char title[KP_MAP_HEADER_TITLE], description[KP_MAP_HEADER_DESCRIPTION];
+} KpMapHeader;
+/* 0, or -1 with err (h->version still the VER read). */
+int kp_map_header(KpMapHeader *h, const uint8_t *chk, size_t size, const KpDefsProfile *profile, int expansion,
+	char *err, size_t err_size);
 /* A PACK payload of the profile's compiled table fourcc by its key, matched in lower case with '\\' for '/' (MPAK: each
  * campaign mission's packs by its directory; SPAK: each test scenario's by its name; recorded from the reference install
  * by scdata/missions.py write_packs): its size in *size, or NULL when the table has no such key. */

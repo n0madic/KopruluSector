@@ -82,8 +82,8 @@ int kp_trigger_group_takes(KpGame *g, int64_t selector, int64_t p)
  * count. */
 int kp_trigger_players(KpGame *g, int64_t selector, int64_t *out)
 {
-	int64_t s = kp_u32v(selector), p;
-	int count = 0;
+	int64_t s = kp_u32v(selector), candidates[KP_PLAYERS];
+	int count = 0, n, k;
 	if (s == KP_SEL_CURRENT) {
 		out[0] = g->trig.player;
 		return 1;
@@ -92,8 +92,9 @@ int kp_trigger_players(KpGame *g, int64_t selector, int64_t *out)
 		out[0] = s;
 		return 1;
 	}
-	for (p = 0; p < KP_PLAYERS; p++) {
-		if (kp_trigger_group_takes(g, s, p)) out[count++] = p;
+	n = kp_trigger_candidates(g, candidates);
+	for (k = 0; k < n; k++) {
+		if (kp_trigger_group_takes(g, s, candidates[k])) out[count++] = candidates[k];
 	}
 	return count;
 }
@@ -183,7 +184,38 @@ static int64_t counter_sum(KpGame *g, int64_t selector, int64_t type, int64_t (*
 static int64_t deaths(KpGame *g, int64_t p, int64_t unit) { return unit_counter(g, p, unit, 0); }
 static int64_t kills(KpGame *g, int64_t p, int64_t unit) { return unit_counter(g, p, unit, 1); }
 
+/* CountOpponents 0x4ba060 of one direct owner o: none for a slot of 8 or more or a rescuable or neutral one; else the
+ * players marked by o's coalition (o and its mutual allies among the active players, rescuable and neutral ones left
+ * out): each member marks every other active player, rescuable and neutral ones left out, that is not its mutual ally
+ * (both alliance bytes 2). The count of the marks. */
+static int64_t opponents(KpGame *g, int64_t o, int64_t unused)
+{
+	int marked[8] = { 0 };
+	int64_t active[KP_PLAYERS], m, q, c, count = 0;
+	int n, i, j;
+	(void)unused;
+	if (o < 0 || o >= 8) return 0;
+	c = kp_controller(g, o);
+	if (c == KP_CTRL_NEUTRAL || c == KP_CTRL_RESCUE) return 0;
+	n = kp_trigger_active_players(g, active); /* FirstActivePlayer 0x4b3160, NextActivePlayer 0x4b3170 */
+	for (i = 0; i < n; i++) {
+		m = active[i];
+		c = kp_controller(g, m);
+		if (c == KP_CTRL_NEUTRAL || c == KP_CTRL_RESCUE) continue;
+		if (m != o && !(kp_alliance(g, m, o) == ALLIED_VICTORY && kp_alliance(g, o, m) == ALLIED_VICTORY)) continue;
+		for (j = 0; j < n; j++) {
+			q = active[j];
+			c = kp_controller(g, q);
+			if (q == m || c == KP_CTRL_NEUTRAL || c == KP_CTRL_RESCUE) continue;
+			if (!(kp_alliance(g, q, m) == ALLIED_VICTORY && kp_alliance(g, m, q) == ALLIED_VICTORY)) marked[q] = 1;
+		}
+	}
+	for (q = 0; q < 8; q++) count += marked[q];
+	return count;
+}
+
 int64_t kp_trigger_resources(KpGame *g, int64_t selector, int64_t type) { return counter_sum(g, selector, type, resources); }
+int64_t kp_trigger_opponents(KpGame *g, int64_t selector) { return counter_sum(g, selector, 0, opponents); }
 int64_t kp_trigger_score(KpGame *g, int64_t selector, int64_t type) { return counter_sum(g, selector, type, score); }
 int64_t kp_trigger_deaths(KpGame *g, int64_t selector, int64_t unit) { return counter_sum(g, selector, unit, deaths); }
 int64_t kp_trigger_kills(KpGame *g, int64_t selector, int64_t unit) { return counter_sum(g, selector, unit, kills); }

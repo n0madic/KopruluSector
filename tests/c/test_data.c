@@ -517,6 +517,27 @@ static void mission_map_strings(KpT *T)
 	kp_t_eq_str(T, kp_map_string(g, 65536 + 1), "name", "the id's low WORD");
 }
 
+/* Map strings past the game's copy of STR (ADR 0024): the original reads its heap past its copy, Koprulu's copy has a
+ * zero byte past STR (kp_triggers_init): a string past STR reads empty, one STR does not end ends at STR's end. A
+ * protected melee map's last STR chunk can be a byte long. */
+static void map_strings_past_str(KpT *T)
+{
+	/* count 3: "ab" at 8, string 2 at 0x20 (past STR), string 3 at 11 runs to STR's end; the copy's zero after */
+	static const uint8_t STRS[13] = { 3, 0, 8, 0, 0x20, 0, 11, 0, 'a', 'b', 0, 'c', 'd' };
+	uint8_t copy[sizeof STRS + 1] = { 0 };
+	KpGame *g = (KpGame *)calloc(1, sizeof *g);
+	kp_t_ok(T, g != NULL, "out of memory");
+	kp_t_defer(T, free, g);
+	memcpy(copy, STRS, sizeof STRS);
+	g->trig.strings = copy;
+	g->trig.strings_size = sizeof STRS;
+	kp_t_eq_str(T, kp_map_string(g, 1), "ab", "inside STR");
+	kp_t_eq_str(T, kp_map_string(g, 2), "", "past STR");
+	kp_t_eq_str(T, kp_map_string(g, 3), "cd", "up to STR's end");
+	g->trig.strings_size = 1; /* a byte: no count */
+	kp_t_eq_str(T, kp_map_string(g, 1), "", "a STR of one byte");
+}
+
 static void mission_derived_sections(KpT *T)
 {
 	KpMission *m;
@@ -1195,6 +1216,72 @@ static void defs_tables_are_compiled(KpT *T)
 		"no other table");
 }
 
+/* --- the game templates and the victory triggers (ADR 0024) --- */
+
+/* A .got file's checks (ReadTemplateFile 0x4482a0) and templates.lst's tokenizer (NextQuotedString 0x447950). */
+static void templates_parse_as_the_original(KpT *T)
+{
+	static const uint8_t LIST[] = "\"Melee(1).got\"\r\n\"a.b.got\"\r\n\"unterminated";
+	uint8_t got[KP_TEMPLATE_FILE_SIZE];
+	KpTemplate t;
+	char entry[KP_TEMPLATE_ENTRY], small[4];
+	size_t at = 0;
+	memset(got, 0, sizeof got);
+	got[0] = KP_TEMPLATE_FILE_VERSION;
+	memcpy(got + 1, "Melee", 5);
+	memcpy(got + 33, "Label", 5);
+	got[65 + KP_TEMPLATE_TYPE] = 2;
+	got[65 + KP_TEMPLATE_SUBTYPE] = 1;
+	got[65 + KP_TEMPLATE_RESOURCE_VALUE] = 50;
+	kp_t_eq(T, kp_template_file(got, sizeof got, &t), 1, "a template");
+	kp_t_ok(T, strcmp(t.name, "Melee") == 0 && strcmp(t.label, "Label") == 0 && t.record[KP_TEMPLATE_TYPE] == 2
+			&& t.record[KP_TEMPLATE_RESOURCE_VALUE] == 50, "its name, label and record");
+	kp_t_eq(T, kp_template_file(got, sizeof got - 1, &t), 0, "96 bytes refused");
+	got[0] = 2;
+	kp_t_eq(T, kp_template_file(got, sizeof got, &t), 0, "version 2 refused");
+	got[0] = KP_TEMPLATE_FILE_VERSION;
+	got[65 + KP_TEMPLATE_TYPE] = KP_TEMPLATE_TYPE_LIMIT;
+	kp_t_eq(T, kp_template_file(got, sizeof got, &t), 0, "type 0x81 refused");
+	got[65 + KP_TEMPLATE_TYPE] = 0x80;
+	got[65 + KP_TEMPLATE_SUBTYPE] = KP_TEMPLATE_SUBTYPE_LIMIT;
+	kp_t_eq(T, kp_template_file(got, sizeof got, &t), 0, "subtype 8 refused");
+	kp_t_ok(T, kp_template_next_entry(LIST, sizeof LIST - 1, &at, entry, sizeof entry) && strcmp(entry, "Melee(1).got") == 0,
+		"the first entry");
+	kp_t_ok(T, kp_template_next_entry(LIST, sizeof LIST - 1, &at, entry, sizeof entry) && strcmp(entry, "a.b.got") == 0,
+		"the second entry");
+	kp_t_eq(T, kp_template_next_entry(LIST, sizeof LIST - 1, &at, entry, sizeof entry), 0, "no closing quote: the end");
+	at = 0;
+	kp_t_eq(T, kp_template_next_entry(LIST, sizeof LIST - 1, &at, small, sizeof small), 0, "no room for the entry");
+}
+
+/* The retail data's templates (Patch_rt's templates.lst over BrooDat's .got files) and victory files: the list's 30
+ * templates in its order, Use Map Settings' record the campaign's (KP_TEMPLATE_UMS), FindTemplateRecord's lookups. */
+static void templates_of_the_data(KpT *T)
+{
+	const KpData *d = kp_t_data(T);
+	const KpTemplate *melee, *ums, *greed;
+	int k;
+	kp_t_eq(T, d->templates.count, 30, "the list's templates");
+	kp_t_ok(T, strcmp(d->templates.list[0].name, "Top vs Bottom") == 0 && strcmp(d->templates.list[0].label, "Teams") == 0,
+		"Top vs Bottom first, as templates.lst lists it");
+	melee = kp_templates_find(&d->templates, 2, 0, 1);
+	kp_t_ok(T, melee && strcmp(melee->name, "Melee") == 0 && melee->record[KP_TEMPLATE_STARTING_UNITS] == 2
+			&& melee->record[KP_TEMPLATE_RESOURCE_VALUE] == 50 && melee->record[KP_TEMPLATE_RESTRICTION] == 3,
+		"Melee: starting units 2, 50 resources, offered offline (restriction 3)");
+	ums = kp_templates_find(&d->templates, 0x0a, 0, 1);
+	kp_t_ok(T, ums && memcmp(ums->record, KP_TEMPLATE_UMS, KP_TEMPLATE_SIZE) == 0 && kp_template_ums(ums->record),
+		"Use Map Settings(1).got is the campaign's template (LoadUseMapSettingsTemplate 0x447b90)");
+	greed = kp_templates_find(&d->templates, 6, 0, 4);
+	kp_t_ok(T, greed && greed->record[KP_TEMPLATE_VICTORY_VALUE] == 0x10 && greed->record[KP_TEMPLATE_VICTORY_VALUE + 1] == 0x27,
+		"Greed(4): 10000");
+	kp_t_ok(T, kp_templates_find(&d->templates, 9, 0, 1) == NULL, "no ladder template offline (Battle.net's)");
+	for (k = 0; k < KP_VICTORY_FILES; k++) {
+		kp_t_ok(T, d->shared.victory.data[k] && d->shared.victory.size[k] > 0 && d->shared.victory.size[k] % KP_VICTORY_RECORD == 0, "%s",
+			KP_VICTORY_FILE_NAMES[k]);
+	}
+	kp_t_eq(T, d->shared.victory.size[0], 2 * KP_VICTORY_RECORD, "Melee.trg: two triggers");
+}
+
 static const KpTest TESTS[] = {
 	{ "kpf_header", kpf_header, 0 },
 	{ "kpf_section_payloads", kpf_section_payloads, 0 },
@@ -1210,6 +1297,7 @@ static const KpTest TESTS[] = {
 	{ "mission_rules_in_dispatch_order", mission_rules_in_dispatch_order, 0 },
 	{ "mission_sounds", mission_sounds, 0 },
 	{ "mission_map_strings", mission_map_strings, 0 },
+	{ "map_strings_past_str", map_strings_past_str, 0 },
 	{ "mission_derived_sections", mission_derived_sections, 0 },
 	{ "mission_packs", mission_packs, 0 },
 	{ "mission_copy", mission_copy, 0 },
@@ -1229,5 +1317,7 @@ static const KpTest TESTS[] = {
 	{ "palettes_game_tables", palettes_game_tables, 0 },
 	{ "defs_tables_are_compiled", defs_tables_are_compiled, 0 },
 	{ "packs_entries_of_the_compiled_tables", packs_entries_of_the_compiled_tables, 0 },
+	{ "templates_parse_as_the_original", templates_parse_as_the_original, 0 },
+	{ "templates_of_the_data", templates_of_the_data, 0 },
 };
 KP_SUITE(kp_suite_data, "test_data", TESTS);

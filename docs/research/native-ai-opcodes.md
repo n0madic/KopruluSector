@@ -144,7 +144,7 @@ Remaining concrete dependencies are recorded per opcode, with native addresses a
 
 ## Opcode index
 
-`C` marks membership in the conservative campaign-reachable set. `B/W/D` mean unsigned byte / little-endian word / little-endian dword. The structured entry supplies exact PC/wait effects, calls, writes, and limitations for each row.
+Since phase M's stage M3 every opcode is ported (`kp_aiscript.c`, [phase M](../phase-multiplayer.md#m3-the-melee-ai-as-built)); the helper-scope column records this research, not the port. `C` marks membership in the conservative campaign-reachable set. `B/W/D` mean unsigned byte / little-endian word / little-endian dword. The structured entry supplies exact PC/wait effects, calls, writes, and limitations for each row.
 | Opcode | C | Name | Native scalar operands | Entry VA | Helper scope |
 |---|---|---|---|---|---|
 | 0x0 | C | goto | target:u16le | 0x493c5c | local effect |

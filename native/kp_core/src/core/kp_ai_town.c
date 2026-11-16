@@ -184,8 +184,12 @@ int kp_ai_producer_busy(KpGame *g, int64_t n)
 	return kp_band(g->u.status[n], STATUS_COMPLETED) == 0 || o == KP_ORD_ARCHON_SUMMON || o == KP_ORD_RESET_COLLISION;
 }
 
+#define FIRST_TOWN_DEPTH 5
+#define TOWN_DEPTH 2
+
 /* StartTown 0x487030: player p's town at (x, y) with every live, completed, unoccupied unit without AI; NONE when
- * the player has no units or the pool is empty. A player's first town first frees its parentless guards. */
+ * the player has no units or the pool is empty. A player's first town first frees its parentless guards. A
+ * non-campaign town claims the regions around it (five ground steps for the first town, else two) and its route cuts. */
 int64_t kp_ai_start_town(KpGame *g, int64_t p, int64_t x, int64_t y, int64_t area)
 {
 	KpUnits *u = &g->u;
@@ -203,8 +207,9 @@ int64_t kp_ai_start_town(KpGame *g, int64_t p, int64_t x, int64_t y, int64_t are
 		if (!kp_unit_inactive(g, n) && !kp_ai_producer_busy(g, n) && u->ai[n] == 0) kp_ai_town_assign(g, k, n);
 	}
 	if (!kp_ai_campaign(g, t->owner[k])) {
-		/* TODO: a non-campaign town's territory 0x4979b0 and strategic targets 0x4b0be0 (outside the campaigns) */
-		kp_game_fail(g, "ai: a non-campaign town's territory (0x4979b0, 0x4b0be0)");
+		int64_t tx = kp_s16v(t->x[k]), ty = kp_s16v(t->y[k]);
+		kp_ai_claim_territory(g, t->owner[k], tx, ty, first ? FIRST_TOWN_DEPTH : TOWN_DEPTH); /* 0x4979b0 */
+		kp_ai_defend_route_cuts(g, t->owner[k], tx, ty); /* 0x4b0be0 */
 	}
 	return k;
 }

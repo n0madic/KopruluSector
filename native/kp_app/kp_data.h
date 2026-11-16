@@ -20,6 +20,7 @@
 #include "kp_mission.h"
 #include "kp_present.h"
 #include "kp_res.h"
+#include "kp_template.h"
 #include "kp_ui_data.h"
 
 #ifdef __cplusplus
@@ -56,6 +57,7 @@ typedef struct {
 	KpPalettes palettes;
 	KpCampaign campaign;
 	KpUiData ui;
+	KpTemplates templates;   /* the game templates (templates.lst and its .got files; ADR 0024) */
 	KpDataMission missions[KP_DATA_MISSIONS];
 	int mission_count;
 } KpData;
@@ -80,6 +82,32 @@ const KpDataMission *kp_data_find(const KpData *d, const char *key);
  * malloc'd, taken also on failure; NULL for a campaign mission). 0, or -1 with the error (m released). */
 int kp_data_mission(const KpData *d, const KpDataMission *entry, uint8_t *chk, size_t chk_size, KpMission *m,
 	KpError *err);
+
+/* A custom map (ADR 0024): an .scm/.scx file, an MPQ whose staredit\scenario.chk is the scenario and whose other files
+ * are the sounds its strings name, or a scenario alone (a replay's, a save's MAPC). files reads the map's own files
+ * first, then the data's. */
+#define KP_DATA_MAP_SCENARIO "staredit\\scenario.chk"
+#define KP_DATA_MAP_PACKS "doodads,effects,neutral,protoss,terran,zerg" /* a custom map may place any race's units */
+typedef struct {
+	struct KpMpq *mpq; /* NULL: a scenario alone */
+	const KpFiles *base;
+	KpFiles files;
+	uint8_t *chk; /* the scenario alone's, until the mission takes it */
+	size_t chk_size;
+	char name[64]; /* the file's name without its folder, or the caller's */
+} KpDataMap;
+
+/* Opens the map at path over base (a KpData's files; borrowed): 0, or -1 with the error (nothing to close). */
+int kp_data_map_open(KpDataMap *map, const KpFiles *base, const char *path, KpError *err);
+/* A scenario alone (malloc'd, taken also on failure) under name, over base: 0, or -1 with the error. */
+int kp_data_map_from_chk(KpDataMap *map, const KpFiles *base, uint8_t *chk, size_t chk_size, const char *name,
+	KpError *err);
+/* The map's scenario, malloc'd (a copy of a scenario alone's), or NULL with the error. */
+uint8_t *kp_data_map_chk(KpDataMap *map, size_t *size, KpError *err);
+/* The map's mission for a game of load (KP_CHK_MELEE, KP_CHK_UMS; kp_mission_from_map with KP_DATA_MAP_PACKS): 0, or -1
+ * with the error (m released). The map stays open while a game plays it: its sounds are read through files. */
+int kp_data_map_mission(KpDataMap *map, KpChkLoad load, KpMission *m, KpError *err);
+void kp_data_map_close(KpDataMap *map);
 
 #ifdef __cplusplus
 }

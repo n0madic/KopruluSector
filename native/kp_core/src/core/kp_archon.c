@@ -42,7 +42,7 @@ void kp_command_merge(KpGame *g, int64_t player, int dark)
 {
 	int64_t units[KP_SLOTS], templars[KP_SLOTS] = { 0 }, type = dark ? KP_TYPE_DARK_TEMPLAR : KP_TYPE_HIGH_TEMPLAR;
 	int64_t order = dark ? KP_ORD_DARK_ARCHON_MELD : KP_ORD_ARCHON_WARP;
-	int count = kp_selected_units(g, player, units), n = 0, k;
+	int count = kp_selected_units(g, g->command_record, units), n = 0, k;
 	if (count == 0) return;
 	/* only the first selected unit's tech is checked; its error feedback is the interface's */
 	if (kp_can_use_tech(g, dark ? KP_TECH_DARK_ARCHON_MELD : KP_TECH_ARCHON_WARP, player, units[0]) != 1) return;

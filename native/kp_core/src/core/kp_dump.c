@@ -1876,6 +1876,14 @@ static const KpDumpField DUMP_FIELDS[] = {
 		"its draws are the creep variants' and the interface's (the oracle's \"crt\" events)" },
 	/* TODO: the DAT values and lazy tables the game writes while it runs */
 	{ "offsets", KP_DUMP_MODEL, "weapons.dat's forward offsets in memory, which attkshiftproj 0x411023 writes" },
+	{ "g->setup.*", KP_DUMP_MODEL, "the game's setup (ADR 0024): the template 0x67293d, the multiplayer byte 0x672664 and the "
+		"player records 0x6726c8 as the game's creation left them, the lobby's races 0x5264a0 and a team game's leaders "
+		"0x5264ac; the model reads the runtime's players" },
+	{ "g->pauses", KP_DUMP_MODEL, "a network game's pauses left 0x5349f8 (ADR 0025): a single player's never change" },
+	{ "g->circle_colors", KP_DUMP_MODEL, "the selection circles' colours 0x52904a from the local player's alliances "
+		"(RefreshAllianceColors 0x41d7b0, at the start and on an alliance change), the local player's view: the seat's "
+		"state, out of the shared hash (ADR 0025)" },
+	{ "w->circle_colors", KP_DUMP_MODEL, "the images world's copy of 0x52904a by owner (the fog ghosts' flash)" },
 	{ "g->req_offsets[k]", KP_DUMP_MODEL, "the requirement offsets of the lazy initializers 0x407d50, 0x407f20, 0x4080d0, 0x408280" },
 	{ "g->req_offsets_ready", KP_DUMP_MODEL, "the lazy initializers' flags" },
 	/* TODO: the path searches' state, kept between searches */

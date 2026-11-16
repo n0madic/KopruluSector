@@ -117,8 +117,10 @@ enum
 	KP_TYPE_LAIR = 132,
 	KP_TYPE_HIVE = 133,
 	KP_TYPE_NYDUS_CANAL = 134,
+	KP_TYPE_HYDRALISK_DEN = 135,
 	KP_TYPE_GREATER_SPIRE = 137,
 	KP_TYPE_SPIRE = 141,
+	KP_TYPE_SPAWNING_POOL = 142,
 	KP_TYPE_CREEP_COLONY = 143,
 	KP_TYPE_SPORE_COLONY = 144,
 	KP_TYPE_SUNKEN_COLONY = 146,
@@ -538,14 +540,21 @@ enum
 	KP_ERR_EXPANSION = 26
 };
 
-/* The player controllers (the runtime player types 0x6726d0; 4 is openbw's unused rescue active). */
+/* The player controllers (the runtime player types 0x6726d0; 4 is openbw's unused rescue active), and the lobby's slot
+ * types a game's creation leaves before StartGame 0x443f40 (LobbySetComputerSlot 0x478d30 5, LobbyOpenSlot 0x479760 6,
+ * LobbyCloseSlot 0x478c50 8; atlas P27). */
 enum
 {
+	KP_CTRL_NONE = 0,
 	KP_CTRL_COMPUTER = 1,
 	KP_CTRL_HUMAN = 2,
 	KP_CTRL_RESCUE = 3,
 	KP_CTRL_RESCUE_ACTIVE = 4,
+	KP_CTRL_LOBBY_COMPUTER = 5,
+	KP_CTRL_OPEN = 6,
 	KP_CTRL_NEUTRAL = 7,
+	KP_CTRL_CLOSED = 8,
+	KP_CTRL_OBSERVER = 9, /* a network game's observer (a chat line's tag, no shared vision of its own: 0x447600) */
 	KP_CTRL_DEFEATED_HUMAN = 10,
 	KP_CTRL_DEFEATED_COMPUTER = 11
 };

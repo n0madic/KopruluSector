@@ -121,7 +121,7 @@ static int candidate(KpGame *g, int64_t n, int64_t x, int64_t y, const int64_t b
 }
 
 /* FindStartAreaForResource 0x4955b0: the first area resource n attaches to, 0 for none. */
-static int64_t start_area(KpGame *g, int64_t n)
+int64_t kp_ai_start_area(KpGame *g, int64_t n)
 {
 	KpAreas *a = &g->areas;
 	int64_t k;
@@ -263,7 +263,7 @@ void kp_ai_areas_generate(KpGame *g)
 		if (kp_unit_inactive(g, n) || !resource(g, n)) continue; /* IsUnitInactive 0x41fe40 */
 		kp_union_set(g, n, R_AREA, 1, 0);
 		klass[k] = mineral(g, n) ? CLASS_MINERAL : CLASS_GAS;
-		area = start_area(g, n);
+		area = kp_ai_start_area(g, n);
 		if (area == 0) continue;
 		if (mineral(g, n)) {
 			a->mineral_total[area] = kp_u32v(a->mineral_total[area] + amount(g, n));

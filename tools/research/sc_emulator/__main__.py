@@ -73,6 +73,21 @@ def cmd_boot2(a):
     print("coverage:", {k: (v if not isinstance(v, list) else len(v)) for k, v in summ.items()})
 
 
+def cmd_custom(a):
+    from .custom import CustomSpec, run_custom
+    path = Path(a.map)
+    slots = []
+    for item in filter(None, a.slots.split(",")):
+        kind, _, race = item.partition(":")
+        slots.append((kind, race or "random"))
+    spec = CustomSpec(path.read_bytes(), path.name, expansion=a.expansion, game_type=a.type, subtype=a.subtype,
+                      race=a.race, slots=slots)
+    r = run_custom(Path(a.out), spec, frames=a.frames, max_wall=a.max_wall,
+                   state_steps=parse_steps(a.state) if a.state else (),
+                   shots=tuple(int(x) for x in a.shots.split(",") if x))
+    print(r["finished"], "last", r["last_frame"], r["wall_seconds"])
+
+
 def cmd_mission(a):
     from .mission import MissionSpec, run_mission
     spec = MissionSpec(a.name, a.warp, a.cd)
@@ -236,7 +251,8 @@ def cmd_replay(a):
     r = run_replay(Path(a.out), Path(a.rep).read_bytes(), a.name, a.cd, a.expansion, max_wall=a.max_wall,
                    oracle=a.oracle, state_steps=a.state_steps,
                    shots=tuple(int(x) for x in a.shots.split(",") if x),
-                   presses=tuple((int(f), k) for f, k in (x.split(":") for x in a.keys.split(",") if x)))
+                   presses=tuple((int(f), k) for f, k in (x.split(":") for x in a.keys.split(",") if x)),
+                   frames=a.frames, steps=parse_steps(a.state) if a.state else ())
     print(r["finished"], "end", r["end_frame"], "victory", r["victory_frame"], "last", r["last_frame"], r["wall_seconds"])
 
 
@@ -302,6 +318,21 @@ def main(argv=None):
     rp.add_argument("--state-steps", type=int, default=1000)
     rp.add_argument("--shots", default="", help="frames whose screen to save, as 60,200")
     rp.add_argument("--keys", default="", help="keys to press at frames, as 80:u,150:p,150:p")
+    rp.add_argument("--frames", type=int, default=0, help="stop once the game reached this frame (0: the replay's end)")
+    rp.add_argument("--state", default="", help="object step numbers or ranges A-B[/K] to dump the state at "
+                    "(instead of --oracle's first --state-steps)")
+    cu = sub.add_parser("custom", help="play a custom game through the original's Play Custom screen (custom.py)")
+    cu.add_argument("map", help="a .scm or .scx file")
+    cu.add_argument("out")
+    cu.add_argument("--expansion", action="store_true", help="Brood War (--cd expansion; the map in maps\\BroodWar)")
+    cu.add_argument("--type", default="", help="the game type list's item text, e.g. Melee")
+    cu.add_argument("--subtype", default="", help="the subtype list's item text")
+    cu.add_argument("--race", default="", help="the player's race: zerg, terran, protoss or random")
+    cu.add_argument("--slots", default="", help="the opponents in slot order, as computer:zerg,closed,computer:random")
+    cu.add_argument("--frames", type=int, default=2000)
+    cu.add_argument("--state", default="", help="object step numbers or ranges A-B[/K] to dump the state at")
+    cu.add_argument("--shots", default="", help="frames whose screen to save, as 60,200")
+    cu.add_argument("--max-wall", type=float, default=7200)
     sc = sub.add_parser("scenario")
     sc.add_argument("spec", help="tests/scenarios/<name>.json")
     sc.add_argument("--out-root", default="", help="output root instead of emu/scenarios")
@@ -333,7 +364,7 @@ def main(argv=None):
     ca.add_argument("--out-root", default="", help="output root instead of the missions directory")
     a = ap.parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if a.verbose else logging.INFO, format="%(levelname)s %(name)s: %(message)s")
-    {"boot": cmd_boot, "boot2": cmd_boot2, "mission": cmd_mission, "campaigns": cmd_campaigns, "apis": cmd_apis, "aggregate": cmd_aggregate, "chain": cmd_chain, "menus": cmd_menus, "replay": cmd_replay, "scenario": cmd_scenario, "play": cmd_play}[a.cmd](a)
+    {"boot": cmd_boot, "boot2": cmd_boot2, "mission": cmd_mission, "campaigns": cmd_campaigns, "apis": cmd_apis, "aggregate": cmd_aggregate, "chain": cmd_chain, "menus": cmd_menus, "replay": cmd_replay, "custom": cmd_custom, "scenario": cmd_scenario, "play": cmd_play}[a.cmd](a)
 
 
 if __name__ == "__main__":

@@ -7,7 +7,8 @@ normal start the driver goes through the glue by input: the main menu's Single P
 typing its name's first letter, then Ok. StartGame 0x443f40 then reads the file (ReadReplayFile 0x480690) and plays
 it (FeedReplayCommands 0x4769b0).
 
-`shots` saves the screen at those frames' ends (`frame-<f>.png`); `presses` presses a key once the game reached a frame
+`frames` stops the run once the game reached that frame (0: at the replay's end); `steps` dumps the state of those
+object steps instead of the first `state_steps`. `shots` saves the screen at those frames' ends (`frame-<f>.png`); `presses` presses a key once the game reached a frame
 (the replay's buttons: P pause and play, U faster, D slower, stat_txt.tbl 1541..1544) and saves the screen a second
 later (`key-<f>-<key>.png`).
 
@@ -50,15 +51,16 @@ DIALOG_LIST = 0x6CE6D8
 def run_replay(out: Path, rep: bytes, name: str = "A", cd: str = "original", expansion: bool = False,
                max_wall: float = 7200,
                extra_frames: int = 48, oracle: bool = False, state_steps: int = 1000,
-               shots: tuple[int, ...] = (), presses: tuple[tuple[int, str], ...] = ()) -> dict:
+               shots: tuple[int, ...] = (), presses: tuple[tuple[int, str], ...] = (), frames: int = 0,
+               steps: tuple[int, ...] = ()) -> dict:
     out.mkdir(parents=True, exist_ok=True)
     s = Session(process.Config(command_line='"C:\\StarCraft\\StarCraft.exe"', cd=cd))
     m = s.m
     m.services["fs"].preload(f"{REPLAY_DIR}\\{name}.rep", rep)
     inp = Input(s)
-    if oracle:
+    if oracle or steps:
         from . import state
-        state.install(s, tuple(range(1, state_steps + 1)), out / "states")
+        state.install(s, steps or tuple(range(1, state_steps + 1)), out / "states")
     with open(out / "trace.jsonl", "w") as trace, open(out / "dispatch.jsonl", "w") as dispatch:
         st = {"last_frame": -1, "end_frame": None, "victory_frame": None, "feeds": 0, "paused": False, "frame_t": 0}
         events: list[dict] = []
@@ -165,7 +167,10 @@ def run_replay(out: Path, rep: bytes, name: str = "A", cd: str = "original", exp
                     inp.key(ord(k.upper()))
                     inp.wait(1000)
                     render.save_primary_surface(m, out / f"key-{f}-{k}.png")
-                if st["end_frame"] is not None and (st["last_frame"] >= st["end_frame"] + extra_frames
+                if frames and st["last_frame"] >= frames:
+                    render.save_primary_surface(m, out / "end.png")
+                    finished = "frame limit"
+                elif st["end_frame"] is not None and (st["last_frame"] >= st["end_frame"] + extra_frames
                                                     or st["victory_frame"] is not None
                                                     and m.clock_us // 1000 - events[-1]["t"] >= 5000):
                     render.save_primary_surface(m, out / "end.png")

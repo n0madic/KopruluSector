@@ -62,12 +62,13 @@ The host runs the script after a frame is drawn and before it is shown.
 | Action | `pause`, `resume` | The game's clock |
 | | `camera X Y`, `camera by DX DY`, `camera max` | The view's centre on the world's X Y; moved by DX DY; at the map's bottom-right |
 | | `world on\|off`, `fog on\|off` | The world's images drawn; the fog |
-| | `save "NAME"`, `load "NAME"`, `load-file "NAME"` | The game saved, loaded in the game, loaded from its file (the glue's Load Saved) |
-| | `replay "NAME"` | The replays folder's `NAME.rep` (`.rep` added when the name lacks it) played as Load Replay's Ok plays it: its mission started from the file, in the glue or over the game in play. A file that cannot be played (missing, damaged, outside version 1) aborts the run |
+| | `save "NAME"`, `load "NAME"`, `load-file "NAME"` | The game saved, loaded in the game, loaded from its file as the glue's Load Saved loads it (with the glue's screen open the run aborts: a glue run goes through Load Saved's screen) |
+| | `replay "NAME"` | The replays folder's `NAME.rep` (`.rep` added when the name lacks it) played as Load Replay's Ok plays it: its mission started from the file, over the game in play or after it (a `--mission` run). A file that cannot be played (missing, damaged, outside version 1) aborts the run, and so does the glue's screen open (a glue run goes through Load Replay: `click control glucmpgn.replay`, then the list's Ok) |
 | | `menu NAME`, `options-dialog NAME` | A game menu, an options dialog opened |
 | | `activate NAME` | The open menu's control activated as its click does |
 | | `select NAME RADIUS` | The camera on the player's unit of the kind, a box of the radius over it; no such unit is the step's failure |
 | | `end-placement`, `cancel-targeting` | A building's placement, an order's target ended |
+| | `seat N` | With `--map PATH --seats N` (stage M6, `kp_flow_show_seat`): seat N (0..7; 0 the player's) shown, with its own console and the view on its screen; the seat shown before runs on without an interface. Refused without seats or with no such seat |
 | | `audit hd` | The canvases count the draws outside the image log |
 | | `hang S` | The frame takes S seconds (the watchdog's test) |
 | Wait | `wait frames N` | N frames (1 or more) |
@@ -144,7 +145,9 @@ Names are in any case. A value read where what it is read from is missing has no
 | `moved:PICK` | the game | The world pixels the picked unit moved since its pick (rounded down); no value with no pick, or with its unit gone |
 | `pad.open`, `pad.count`, `pad.shown:N` | the console | The touch pad's groups opened; its buttons shown; 1 when its button N (0..11, `KP_UI_PAD_*`) is; another N is a parse error |
 | `gamma` | the interface | The gamma (100 the original's) |
-| `list.top`, `list.selected` | the interface | The topmost visible dialog's first visible list (in a game the modeless dialog's, in the glue the popup's or the screen's): its first row shown; its selected row, 255 none. No value with no list shown |
+| `list.top`, `list.selected`, `list.count` | the interface | The topmost visible dialog's first visible list (in a game the modeless dialog's, in the glue the popup's or the screen's): its first row shown; its selected row, 255 none; its number of rows. No value with no list shown |
+| `seat` | the game | The seat shown (`--seats`, `seat N`), 0 without seats |
+| `local.player` | the game | The game's local player (the seat's) |
 | `portraits` | the interface | The portraits' mode: 0 none, 1 still, 2 animated |
 | `video.graphics`, `video.fog`, `video.water`, `video.font`, `video.lighting` | the interface | The video options: -1 auto, else the choice's value |
 | `video.serial`, `video.commits` | the interface | The video options' changes; the video dialog's OKs kept |
@@ -186,10 +189,12 @@ A control is named in the table or as `DIALOG.ID`: a dialog's name and the contr
 | `glumain.single` | `gluMain` 3 |
 | `glugamemode.original`, `.expansion` | `gluGameMode` 6, 7 |
 | `glulogin.ok`, `.cancel`, `.new`, `.delete` | `gluLogin` 4, 5, 6, 7 |
-| `glucmpgn.load`, `.player`, `.replay` | `gluCmpgn` 5, 9, 11 |
-| `gluexpcmpgn.load`, `.player`, `.replay` | `gluExpCmpgn` 5, 9, 11 |
-| `glucustm.list`, `.ok`, `.cancel` | `gluCustm` 5, 12, 13 (Load Replay) |
+| `glucmpgn.load`, `.player`, `.custom`, `.replay` | `gluCmpgn` 5, 9, 10, 11 |
+| `gluexpcmpgn.load`, `.player`, `.custom`, `.replay` | `gluExpCmpgn` 5, 9, 10, 11 |
+| `glucustm.list`, `.ok`, `.cancel`, `.type`, `.subtype` | `gluCustm` 5, 12, 13, 17, 18 (Play Custom and Load Replay) |
 | `gluload.ok`, `.cancel`, `.delete` | `gluLoad` 4, 5, 7 |
+| `gluscore.ok`, `.save-replay` | `gluScore` 7, 61 |
+| `savegame.list`, `.name`, `.delete` | `savegame` 1, 2, 3 (the in-game Save Game dialog, or Save Replay after a custom game) |
 
 A glue popup's controls are placed where the popup is composited into its screen. A control on no dialog open now fails its step (`no video.12 open (open: …)`).
 

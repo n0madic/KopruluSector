@@ -1,0 +1,71 @@
+# A Play Custom game through the glue (docs/phase-multiplayer.md, stage M4). The original campaign menu's Play Custom
+# opens glue state 11 on the install's maps folder (--data's). Its first map is preselected with the type list's
+# default (offline without a saved choice the last melee template, Free For All: FillGameTypeList 0x456910) and the
+# screen's computer in the map's other slot. The drop-downs are set as a person sets them (ComboBoxProc 0x4c63b0: the
+# press opens the list, the release selects the row under it): the player's race and
+# the computer's Terran, so no creep spreads (its borders follow the viewer's sight: seat state since
+# stage M6, out of the seats' shared hash but in sim.crc).
+# Ok starts the game at once, without a ready room: the player's and the computer's start units stand. The
+# simulation's state CRC is marked at a step; Quit Mission writes LastReplay.rep and opens the campaign menu (a custom
+# game has no run). Load Replay lists LastReplay.rep first and its Ok plays the custom game from its own map (campaign
+# row 0) to the marked step with the same state. tools/ci.sh runs it with --data on a 1.17 install that has its maps
+# folder and wants exit code 0 and "0 failures".
+options originals
+clock fixed
+
+wait screen gluMain
+click control glumain.single
+wait dialog gluGameMode and still
+click control glugamemode.original
+wait dialog gluPEdit and still
+text "Script"
+click control gluPEdit.1
+wait screen gluLogin
+click control glulogin.ok
+wait screen gluCmpgn
+click control glucmpgn.custom
+wait screen gluCustm
+# the preselected map's information and slots (PreviewMapEntry 0x45b970's 100 ms timer)
+wait seconds 0.5
+# opened, a race list's rectangle covers its field and its four rows (16 + 4 x 16 pixels), so its centre is the second
+# row's: Terran (Zerg -16, Protoss +16, Random +32)
+press control gluCustm.28
+move control gluCustm.28 0 0
+release control gluCustm.28 0 0
+wait frames 5
+press control gluCustm.29
+move control gluCustm.29 0 0
+release control gluCustm.29 0 0
+wait seconds 0.5
+ui custom
+shot custom
+click control glucustm.ok
+wait game
+wait frames 30
+log started tick units:0 units:1 creep.tiles
+expect units:0 > 0 and units:1 > 0 and creep.tiles == 0
+wait tick >= 160
+pause
+mark played
+log played tick sim.crc
+state played
+resume
+wait tick >= 200
+menu quit-mission
+wait dialog quit2mnu
+activate ok
+wait screen gluCmpgn
+
+click control glucmpgn.replay
+wait screen gluCustm
+wait seconds 0.5
+ui replays
+click control glucustm.ok
+wait game and replay
+expect replay.frames >= @played.tick
+wait tick >= @played.tick
+pause
+log replayed tick sim.crc
+state replayed
+expect tick == @played.tick
+expect sim.crc == @played.sim.crc

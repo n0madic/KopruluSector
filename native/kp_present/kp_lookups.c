@@ -226,7 +226,8 @@ static int32_t player_of(int32_t owner)
 int32_t kp_lookups_owner(const KpLookups *l, int32_t owner)
 {
 	int32_t p = player_of(owner);
-	return l->team_row[p] != 0 ? l->team_row[p] : p + 1;
+	if (l->team_row[p] != 0) p = l->team_row[p] - 1;
+	return l->colour_row[p] != 0 ? l->colour_row[p] : p + 1; /* the remap rows: 0 the identity, then tunit's rows */
 }
 
 int32_t kp_lookups_owner_wrapped(const KpLookups *l, int32_t owner, int32_t wraps)
@@ -244,6 +245,17 @@ int kp_lookups_set_player_rows(KpLookups *l, const uint8_t *rows)
 		uint8_t row = rows != NULL && rows[k] < KP_LOOKUP_PLAYER_ROWS ? (uint8_t)(rows[k] + 1) : 0;
 		if (l->team_row[k] != row) changed = 1;
 		l->team_row[k] = row;
+	}
+	return changed;
+}
+
+int kp_lookups_set_colour_rows(KpLookups *l, const uint8_t *rows)
+{
+	int32_t k, changed = 0;
+	for (k = 0; k < KP_LOOKUP_PLAYER_ROWS; k++) {
+		uint8_t row = rows != NULL && rows[k] < KP_LOOKUP_PLAYER_ROWS && rows[k] != k ? (uint8_t)(rows[k] + 1) : 0;
+		if (l->colour_row[k] != row) changed = 1;
+		l->colour_row[k] = row;
 	}
 	return changed;
 }

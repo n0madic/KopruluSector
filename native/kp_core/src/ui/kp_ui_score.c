@@ -51,6 +51,7 @@
 #define FORMAT_TAB 0x22
 #define STR_ELAPSED 0x10        /* gluAll: "Elapsed Time: %s" */
 #define STR_REPLAY 0xb2
+#define STR_REPLAY_SAVED 0xb1   /* gluAll: "Replay Saved" */
 #define ORIGINAL_NAMES 0x1d   /* network.tbl: the computers' names, terran, zerg, protoss by colour */
 #define EXPANSION_NAMES 0x91
 #define NO_STORM_PLAYER 0xffffffffu
@@ -550,14 +551,25 @@ static int total_proc(KpUi *ui, KpUiControl *c, KpUiEvent *e)
 
 static int save_replay_proc(KpUi *ui, KpUiControl *c, KpUiEvent *e)
 {
-	/* SaveReplayButtonProc 0x4620c0: disabled after a replay, a loaded game or a campaign mission. TODO: the
-	 * replay's save (0x4809d0) */
-	if (e->type == KP_UI_USER && e->code == KP_UI_CREATE) {
-		if (sc(ui)->data.replay || ui->game == NULL || kp_scalar(ui->game, KP_MISSION_INDEX) != KP_NIL) {
-			c->flags |= KP_UI_DISABLED;
-		}
+	/* SaveReplayButtonProc 0x4620c0: disabled after a replay, a loaded game or a campaign mission (0x526524 != 0; the
+	 * spawn flag is 0), else it runs the save-replay dialog over the local race's and result's frame */
+	const KpUiScoreData *d = &sc(ui)->data;
+	if (e->type == KP_UI_USER && e->code == KP_UI_CREATE && (d->replay || d->from_save || d->mission != 0)) {
+		c->flags |= KP_UI_DISABLED;
+	} else if (e->type == KP_UI_USER && e->code == KP_UI_CLOSE) {
+		(void)kp_ui_replay_save_open(ui, d->race % 3, d->result == RESULT_VICTORY);
+		return 1;
 	}
 	return kp_ui_text_button_proc(ui, c, e);
+}
+
+void kp_ui_score_replay_saved(KpUi *ui)
+{
+	/* SaveReplayButtonProc 0x4620c0 after a saved replay: "Replay Saved", disabled */
+	int32_t id = sc(ui)->dialog >= 0 ? control(ui, ID_SAVE_REPLAY) : -1;
+	if (id < 0) return;
+	kp_ui_set_control_text(ui, id, kp_ui_tbl(ui, KP_UI_GLUALL, STR_REPLAY_SAVED));
+	kp_ui_set_enabled(ui, id, 0);
 }
 
 static void elapsed_time(KpUi *ui)
@@ -704,17 +716,28 @@ void kp_ui_score_free(KpUi *ui)
 }
 
 /* AssignDefaultComputerPlayerNames 0x4074a0's name of computer slot p by race (zerg 8, protoss 16 further on) */
-static const char *computer_name(KpUi *ui, int expansion, int p, int race)
+static const char *computer_name(KpUi *ui, int expansion, int colour, int race)
 {
 	int base = expansion ? EXPANSION_NAMES : ORIGINAL_NAMES, offset = race == 0 ? 8 : race == 2 ? 16 : 0;
-	return (const char *)kp_ui_tbl(ui, KP_UI_NETWORK, (uint8_t)(base + offset + p));
+	return (const char *)kp_ui_tbl(ui, KP_UI_NETWORK, (uint8_t)(base + offset + colour)); /* the index a byte */
 }
 
-const char *kp_ui_default_player_name(KpUi *ui, int expansion, int64_t mission, int p, int type, int race)
+const char *kp_ui_default_player_name(KpUi *ui, int expansion, int64_t mission, int p, int colour, int type, int race)
 {
 	if (p < 0 || p >= 8 || !(type == 1 || type == 3 || type == 4 || type == 7)) return NULL;
 	if (p == 2 && (mission == 15 || mission == 17)) return NULL;
-	return computer_name(ui, expansion, p, race);
+	return computer_name(ui, expansion, colour, race);
+}
+
+const uint8_t *kp_ui_record_name(KpUi *ui, int64_t p)
+{
+	KpGame *g = ui->game;
+	const char *name;
+	if (g == NULL || p < 0 || p >= KP_SETUP_SLOTS) return (const uint8_t *)"";
+	if (g->setup.name[p][0] != 0) return (const uint8_t *)g->setup.name[p];
+	name = kp_ui_default_player_name(ui, (int)g->expansion, kp_scalar(g, KP_MISSION_INDEX), (int)p,
+		kp_ui_map_colour(ui, p), (int)g->setup.type[p], (int)g->setup.race[p]);
+	return (const uint8_t *)(name != NULL ? name : "");
 }
 
 void kp_ui_score_data(KpUi *ui, struct KpGame *g, int result, const char *player_name, uint32_t elapsed,
@@ -731,6 +754,7 @@ void kp_ui_score_data(KpUi *ui, struct KpGame *g, int result, const char *player
 	out->race = (int)g->players.race[g->local_player];
 	out->local_storm = 0; /* offline: the human is Storm player 0, the computers have none */
 	out->replay = g->w->replay != 0; /* 0x66b414 */
+	out->mission = kp_scalar(g, KP_MISSION_INDEX); /* 0x526524; a loaded save (0x66b410) is the host's */
 	/* GetElapsedSeconds 0x47a780: the clock's seconds less those UnpauseGame 0x47cc10 took off (0x47a620); a replay's
 	 * by its frames (0x480d70) */
 	if (out->replay) out->elapsed = kp_ui_replay_seconds(g);
@@ -738,13 +762,13 @@ void kp_ui_score_data(KpUi *ui, struct KpGame *g, int result, const char *player
 	for (p = 0; p < 8; p++) {
 		KpUiRosterEntry *e = &out->roster[p];
 		uint32_t c = (uint32_t)g->players.controller[p];
-		out->player_colours[p] = (uint8_t)p;
+		out->player_colours[p] = (uint8_t)kp_ui_map_colour(ui, p); /* MapPlayerColor 0x41d560 */
 		/* the slot's type as it stands, a player RetirePlayer 0x4bd7a0 defeated (10, 11) listed beside the others */
 		if (is_human(c)) {
 			const char *name = out->replay && ui->slot_names[p][0] ? (const char *)ui->slot_names[p] : player_name; /* the header's */
 			(void)kp_text_copy_chars(e->name, sizeof e->name, name != NULL ? name : "", ROSTER_NAME_CHARS);
 		} else if (is_computer(c)) {
-			const char *name = computer_name(ui, (int)g->expansion, p, (int)g->players.race[p]);
+			const char *name = computer_name(ui, (int)g->expansion, kp_ui_map_colour(ui, p), (int)g->players.race[p]);
 			(void)kp_text_copy_chars(e->name, sizeof e->name, name != NULL ? name : "", ROSTER_NAME_CHARS);
 			if (e->name[0] == 0) continue; /* offline: a computer without a name is not listed */
 		} else {

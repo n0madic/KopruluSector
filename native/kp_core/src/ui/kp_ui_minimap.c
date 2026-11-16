@@ -205,16 +205,35 @@ static uint8_t player_colour(KpUi *ui, int64_t p)
 	return kp_alliance(g, g->local_player, p) ? colour(ui, UI_ALLY) : colour(ui, UI_ENEMY);
 }
 
-/* The player a draw colour of player p is, in the minimap's colour mode 2 (SetDrawColor 0x41d740, 0x41d4f0): the colour
- * class 2 for the viewer, 7 for an ally (the alliance byte 0x534914), 0 for the others, as the first player slot
- * 0x5264fc gives that colour: the table is the identity in a game of one human (the score's too), so the class is the
- * slot. In the other modes the player's own. */
+/* The player a draw colour of player p is, in the minimap's colour mode 2 (SetDrawColor 0x41d740, GetOwnerColorIndex
+ * 0x41d4f0): the colour class 2 for the viewer, 7 for an ally (the alliance byte 0x534914), 0 for the others, as the
+ * first player slot 0..7 the game's colours 0x5264fc give that colour (the class itself when none). In the other modes
+ * the player's own. */
 int kp_ui_player_row(KpUi *ui, int64_t p)
 {
 	KpGame *g = ui->game;
+	int cls, i;
 	if (mm(ui)->colour_mode != 2 || g == NULL) return (int)p;
-	if (p == g->local_player) return 2;
-	return kp_alliance(g, g->local_player, p) ? 7 : 0;
+	cls = p == g->local_player ? 2 : kp_alliance(g, g->local_player, p) ? 7 : 0;
+	for (i = 0; i < 8; i++) {
+		if (g->setup.color[i] == cls) return i;
+	}
+	return cls;
+}
+
+void kp_ui_colour_rows(const uint8_t *colour_slots, const int64_t *colours, uint8_t rows[12])
+{
+	uint8_t moved[12];
+	int i;
+	for (i = 0; i < 12; i++) moved[i] = (uint8_t)(i < 8 && colour_slots != NULL && colour_slots[i] < 12 ? colour_slots[i] : i);
+	for (i = 0; i < 12; i++) {
+		rows[i] = i < 8 && colours != NULL && colours[i] >= 0 && colours[i] < 8 ? moved[colours[i]] : moved[i];
+	}
+}
+
+int kp_ui_map_colour(const KpUi *ui, int64_t p)
+{
+	return p >= 0 && p < 8 && ui->game != NULL ? (int)ui->game->setup.color[p] : (int)p;
 }
 
 int kp_ui_team_rows(KpUi *ui, uint8_t rows[KP_UI_PLAYER_ROWS])
@@ -711,12 +730,9 @@ static int ally_reveal_box(KpUi *ui, KpUiControl *c, KpUiEvent *e)
 static int ally_slots(KpUi *ui, int64_t out[8])
 {
 	KpGame *g = ui->game;
-	int64_t p;
-	int n = 0, k, left;
-	int64_t all[8];
-	for (p = 0; p < 8; p++) {
-		if (kp_trigger_player_active(g, p)) all[n++] = p; /* FirstActivePlayer 0x4b3160's slots */
-	}
+	int n, k, left;
+	int64_t all[KP_PLAYERS];
+	n = kp_trigger_active_players(g, all); /* FirstActivePlayer 0x4b3160's slots */
 	kp_rng_crt_init(g->crt, g->rng->initial_seed);
 	for (k = 0, left = n; k < n; k++, left--) {
 		int r = (int)(kp_rng_crt_rand(g->crt) % (uint32_t)left);
@@ -1035,7 +1051,7 @@ static int pcx_head(KpUi *ui, const char *path, uint8_t *out, size_t size)
 }
 
 int kp_ui_set_minimap(KpUi *ui, const uint8_t *mmni, size_t mmni_size, const uint8_t *rgb, const uint8_t *cycled,
-	const uint8_t *dark, const uint8_t *colour_slots)
+	const uint8_t *dark, const uint8_t *colour_slots, const int64_t *colours)
 {
 	KpUiMinimap *m = mm(ui);
 	uint8_t loaded[12];
@@ -1048,15 +1064,12 @@ int kp_ui_set_minimap(KpUi *ui, const uint8_t *mmni, size_t mmni_size, const uin
 		|| pcx_head(ui, "game\\tblink.pcx", m->blink_rows, sizeof m->blink_rows) != 0) {
 		return -1;
 	}
-	memcpy(m->player_colours, loaded, sizeof loaded);
-	if (colour_slots != NULL) { /* ApplyColorSlotPermutation 0x41d5d0 */
-		for (i = 7; i >= 0; i--) {
-			if (colour_slots[i] != i && colour_slots[i] < 12) {
-				m->player_colours[i] = loaded[colour_slots[i]];
-				m->colour_table[i] = colour_slots[i]; /* 0x461b70 */
-			}
-		}
+	memset(m->colour_table, 0, sizeof m->colour_table);
+	for (i = 7; i >= 0 && colour_slots != NULL; i--) { /* ApplyColorSlotPermutation 0x41d5d0 */
+		if (colour_slots[i] != i && colour_slots[i] < 12) m->colour_table[i] = colour_slots[i]; /* 0x461b70 */
 	}
+	kp_ui_colour_rows(colour_slots, colours, m->colour_rows); /* then ApplyColorAssignmentToRows 0x41d690 */
+	for (i = 0; i < 12; i++) m->player_colours[i] = loaded[m->colour_rows[i]];
 	/* InitMinimap 0x46e260's palette map: a colour-cycled index becomes the nearest static colour (0x4666c0) */
 	for (i = 0; i < 256; i++) {
 		int j;

@@ -51,7 +51,7 @@ int kp_hud_colours(KpUi *ui, const KpHudMap *map)
 	kp_ui_resolve_colours(ui, t->rgb, t->cycled);
 	if (kp_ui_game_effects(ui, t->rgb, t->cycled) != 0) return -1;
 	if (kp_ui_set_minimap(ui, t->mmni, t->mmni_size, t->rgb, t->cycled, map->palettes->tilesets[map->tileset_index & 7].dark,
-		map->colors) != 0) {
+		map->colors, map->player_colors) != 0) {
 		snprintf(ui->error, sizeof ui->error, "ui: no tminimap.pcx or tblink.pcx");
 		return -1;
 	}
@@ -104,9 +104,13 @@ int kp_hud_init(KpHud *h, KpUi *ui, KpCanvas *shared, KpGame *g, const KpHudMap 
 	race = g->players.race[g->local_player];
 	if (race < 0 || race > 2) race = 1;
 	if (kp_hud_colours(ui, map) != 0) return -1;
-	/* the placement ghost's colours, by owner as the world's images */
+	/* the placement ghost's colours, by owner as the world's images: the rows of game\tunit.pcx the map's colour slots
+	 * and the game's colours moved (kp_ui_colour_rows) */
 	if (map->palettes->tunit_size >= sizeof ui->player_colours) {
-		memcpy(ui->player_colours, map->palettes->tunit, sizeof ui->player_colours);
+		int k;
+		for (k = 0; k < 12; k++) {
+			memcpy(ui->player_colours[k], map->palettes->tunit + 8 * ui->minimap.colour_rows[k], sizeof ui->player_colours[k]);
+		}
 	}
 	kp_ui_font_set(ui, 1);
 	if (kp_ui_apply_theme(ui, RACE_GRPS[race]) != 0) {
@@ -691,11 +695,16 @@ void kp_hud_capture_lost(KpHud *h)
 
 /* --- the glue --- */
 
-/* The profile's IDs as the interface's character list. */
+/* The profile's IDs as the interface's character list, and its Play Custom choices as the screen's registry values
+ * ("Custom Type", "Game Subtype"). */
 static void characters(KpUi *ui, const KpProfile *p)
 {
+	KpUiCreate *c = &ui->menus.create;
 	ui->menus.profile_count = kp_profile_login_list(p, ui->menus.profiles, KP_UI_PROFILES);
 	ui->menus.profiles_changed = 0;
+	snprintf(c->custom_type, sizeof c->custom_type, "%s", p->custom_type);
+	snprintf(c->game_subtype, sizeof c->game_subtype, "%s", p->game_subtype);
+	c->registry_changed = 0;
 }
 
 void kp_glue_init(KpGlue *g, KpUi *ui, KpProfile *profile, uint32_t now_ms)
@@ -759,10 +768,11 @@ int kp_glue_room(KpGlue *g, KpGame *game, int state)
 	return 0;
 }
 
-void kp_glue_score(KpGlue *g, KpGame *game, int result, uint32_t elapsed)
+void kp_glue_score(KpGlue *g, KpGame *game, int result, uint32_t elapsed, int from_save)
 {
 	KpUiScoreData d;
 	kp_ui_score_data(g->ui, game, result, g->profile->name[0] ? g->profile->name : DEFAULT_NAME, elapsed, &d);
+	d.from_save = from_save;
 	kp_ui_score_open(g->ui, &d);
 	g->screen = KP_GLUE_SCORE;
 	g->has_composed = 0;
@@ -777,6 +787,12 @@ static void take_profile(KpGlue *g, const char *player)
 	snprintf(owner, sizeof owner, "%s", kp_profile_save_owner(g->profile));
 	ui->menus.profiles_changed = 0; /* the host reads the list here */
 	kp_profile_from_login_list(g->profile, ui->menus.profiles, ui->menus.profile_count, player);
+	if (ui->menus.create.registry_changed) { /* the screen's lists wrote their registry values (their code 1) */
+		KpUiCreate *c = &ui->menus.create;
+		snprintf(g->profile->custom_type, sizeof g->profile->custom_type, "%s", c->custom_type);
+		snprintf(g->profile->game_subtype, sizeof g->profile->game_subtype, "%s", c->game_subtype);
+		c->registry_changed = 0;
+	}
 	/* another ID logged in (or the logged-in one deleted): its saves, the original's save\<name>\ (the list stays
 	 * otherwise: the load screen's choice is a row of it) */
 	if (strcmp(owner, kp_profile_save_owner(g->profile)) != 0) kp_glue_saves(ui, g->profile);
@@ -835,6 +851,10 @@ static KpGlueEvent poll(KpGlue *g)
 			g->screen = KP_GLUE_NONE;
 			ev.kind = KP_GLUE_REPLAY;
 			ev.save = m->replay_choice;
+		} else if (action == KP_UI_MENU_CUSTOM) { /* Play Custom's Ok on a map: its game, at once or from a ready room */
+			g->screen = KP_GLUE_NONE;
+			ev.kind = KP_GLUE_CUSTOM;
+			ev.save = m->create.choice;
 		} else {
 			/* the next state's screen (View Intro does nothing without a host that plays cinematics) */
 			kp_ui_menus_enter(ui, m->state);

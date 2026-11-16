@@ -1,0 +1,31 @@
+# A network game's two seats in one process (docs/phase-multiplayer.md, stage M6; ADR 0025). tools/ci.sh runs it with
+# --map on the install's (2)Boxer.scm and --seats 2: the melee lobby's computer is the second seat, both seats' sessions
+# run over one turn hub, the window shows seat 0. After each frame the app compares the seats' shared hashes; a
+# difference stops the game, which fails the run. Each seat moves its workers: seat 0's, then seat 1's after the
+# switch (its own console, its own local player), then seat 0 again. tools/ci.sh wants exit code 0 and "0 failures".
+options originals
+clock fixed
+
+wait game
+wait tick >= 10
+mark start
+log start tick seat local.player units:0 units:1
+expect seat == 0
+select worker 96
+expect selected > 0
+rclick center 160 96
+wait tick >= @start.tick + 48
+seat 1
+wait frames 2
+mark other
+log other tick seat local.player selected
+expect seat == 1 and local.player != @start.local.player
+select worker 96
+expect selected > 0
+rclick center -160 96
+wait tick >= @other.tick + 96
+seat 0
+wait tick >= @other.tick + 144
+log end tick seat local.player sim.crc
+expect seat == 0 and local.player == @start.local.player
+state end

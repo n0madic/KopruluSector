@@ -17,7 +17,8 @@ enum {
 	V_CREEP_TILES, V_CREEP_RECEDING, V_TRIGGER_WAITING, V_PORTRAIT_MS, V_TARGETING, V_PLACING, V_GROUPS_HELD, V_PAD_OPEN,
 	V_PAD_COUNT, V_PAD_SHOWN, V_GAMMA, V_PORTRAITS, V_VIDEO_GRAPHICS, V_VIDEO_FOG, V_VIDEO_WATER, V_VIDEO_FONT,
 	V_VIDEO_LIGHTING, V_VIDEO_SERIAL, V_VIDEO_COMMITS, V_TEXT_VECTOR, V_SELECTION_HAS, V_SELECTION_FIRST, V_MOVED,
-	V_GROUP_HELD, V_REPLAY_ENDED, V_REPLAY_FRAMES, V_SIM_CRC, V_LIST_TOP, V_LIST_SELECTED, V_COUNT
+	V_GROUP_HELD, V_REPLAY_ENDED, V_REPLAY_FRAMES, V_SIM_CRC, V_LIST_TOP, V_LIST_SELECTED, V_LIST_COUNT, V_SEAT,
+	V_LOCAL_PLAYER, V_COUNT
 };
 enum { NEED_UI, NEED_WORLD, NEED_GAME, NEED_CONSOLE }; /* what a value is read from */
 static const struct {
@@ -63,6 +64,9 @@ static const struct {
 	{ "sim.crc", KP_SCRIPT_ARG_NONE, NEED_GAME },          /* the state's CRCs folded, the local interface's aside */
 	{ "list.top", KP_SCRIPT_ARG_NONE, NEED_UI },           /* the top dialog's list (top_list): its first row shown */
 	{ "list.selected", KP_SCRIPT_ARG_NONE, NEED_UI },      /* its selected row, 255 none */
+	{ "list.count", KP_SCRIPT_ARG_NONE, NEED_UI },         /* its rows */
+	{ "seat", KP_SCRIPT_ARG_NONE, NEED_GAME },             /* --seats' seat shown (kp_flow_show_seat), 0 without seats */
+	{ "local.player", KP_SCRIPT_ARG_NONE, NEED_GAME },     /* the game's local player (the seat's) */
 };
 #define GROUPS 10
 #define PLAYERS 12
@@ -158,17 +162,27 @@ static const struct {
 	{ "glulogin.delete", "gluLogin", 7 },
 	{ "glucmpgn.load", "gluCmpgn", 5 },
 	{ "glucmpgn.player", "gluCmpgn", 9 },
+	{ "glucmpgn.custom", "gluCmpgn", 10 },
 	{ "glucmpgn.replay", "gluCmpgn", 11 },
 	{ "gluexpcmpgn.load", "gluExpCmpgn", 5 },
 	{ "gluexpcmpgn.player", "gluExpCmpgn", 9 },
+	{ "gluexpcmpgn.custom", "gluExpCmpgn", 10 },
 	{ "gluexpcmpgn.replay", "gluExpCmpgn", 11 },
-	/* Load Replay (RunCreateGameScreen 0x455550 in its replay mode, glue state 12) */
+	/* Play Custom and Load Replay (RunCreateGameScreen 0x455550, glue states 11 and 12) */
 	{ "glucustm.list", "gluCustm", 5 },
 	{ "glucustm.ok", "gluCustm", 12 },
 	{ "glucustm.cancel", "gluCustm", 13 },
+	{ "glucustm.type", "gluCustm", 17 },
+	{ "glucustm.subtype", "gluCustm", 18 },
 	{ "gluload.ok", "gluLoad", 4 },
 	{ "gluload.cancel", "gluLoad", 5 },
 	{ "gluload.delete", "gluLoad", 7 },
+	/* the score screen (SaveReplayButtonProc 0x4620c0) and its save-replay dialog (rez\savegame.bin over the glue) */
+	{ "gluscore.ok", "gluScore", 7 },
+	{ "gluscore.save-replay", "gluScore", 61 },
+	{ "savegame.list", "savegame", 1 },
+	{ "savegame.name", "savegame", 2 },
+	{ "savegame.delete", "savegame", 3 },
 };
 #define CONTROL_COUNT ((int)(sizeof CONTROLS / sizeof CONTROLS[0]))
 
@@ -519,6 +533,8 @@ int kp_script_flow_value(const KpFlow *f, const KpScriptRun *run, const KpScript
 	case V_MINIMAP_X: *out = ui->minimap.view_x; break;
 	case V_MINIMAP_Y: *out = ui->minimap.view_y; break;
 	case V_SELECTED: *out = kp_local_selection_count(g); break;
+	case V_SEAT: *out = f->seats.shown; break;
+	case V_LOCAL_PLAYER: *out = g->local_player; break;
 	case V_UNITS:
 		if (ref->arg < 0 || ref->arg >= PLAYERS) {
 			snprintf(why, size, "no player %lld (0..%d)", (long long)ref->arg, PLAYERS - 1);
@@ -572,11 +588,13 @@ int kp_script_flow_value(const KpFlow *f, const KpScriptRun *run, const KpScript
 		break;
 	case V_LIST_TOP:
 	case V_LIST_SELECTED:
+	case V_LIST_COUNT:
 		if ((x = top_list(ui)) < 0) {
 			snprintf(why, size, "no list shown");
 			return -1;
 		}
-		*out = ref->id == V_LIST_TOP ? kp_ui_list_top(ui, x) : ui->controls[x].list->selected;
+		*out = ref->id == V_LIST_TOP ? kp_ui_list_top(ui, x)
+			: ref->id == V_LIST_COUNT ? kp_ui_list_count(ui, x) : ui->controls[x].list->selected;
 		break;
 	case V_REPLAY_ENDED: *out = kp_session_replay_ended(f->session); break;
 	case V_REPLAY_FRAMES: *out = (int64_t)kp_session_replay_frames(f->session); break;
@@ -951,6 +969,7 @@ int kp_script_flow_act(KpFlow *f, KpScriptRun *run, const KpScriptStep *step, ch
 		}
 		kp_flow_clamp_camera(f);
 		return 0;
+	case KP_SCRIPT_SEAT: return kp_flow_show_seat(f, (int)step->n, why, size);
 	case KP_SCRIPT_PAUSE:
 	case KP_SCRIPT_RESUME:
 		if (!f->session || !f->session->g) break;
@@ -964,10 +983,18 @@ int kp_script_flow_act(KpFlow *f, KpScriptRun *run, const KpScriptStep *step, ch
 		snprintf(step->op == KP_SCRIPT_SAVE ? f->pending_save : f->pending_load, KP_PROFILE_SAVE_NAME, "%s", step->text);
 		return 0;
 	case KP_SCRIPT_LOAD_FILE:
+	case KP_SCRIPT_REPLAY:
+		/* TODO: the glue's screen ends by its own slide-out (screen_ended); a game started under it would leave its
+		 * menus over the game, so from the glue a script goes through the screens a person uses (Load Saved, Load
+		 * Replay) */
+		if (kp_flow_glue_active(f)) {
+			snprintf(why, size, "the glue's screen is open: go through %s", step->op == KP_SCRIPT_REPLAY ? "Load Replay"
+				: "Load Saved");
+			return -1;
+		}
+		if (step->op == KP_SCRIPT_REPLAY) return kp_flow_play_replay(f, step->text, why, size);
 		if (!save_name_fits(step->text, why, size) || kp_flow_load_saved(f, step->text, why, size) != 0) return -1;
 		return 0;
-	case KP_SCRIPT_REPLAY:
-		return kp_flow_play_replay(f, step->text, why, size);
 	case KP_SCRIPT_MENU:
 	case KP_SCRIPT_OPTIONS_DIALOG:
 		if (!in_game(f)) break;

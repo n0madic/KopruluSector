@@ -5,6 +5,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "kp_mpq.h"
+
 const char *const KP_DATA_VECTOR_FONT_FILES[KP_DATA_VECTOR_FONTS][2] = {
 	{ "fonts\\Exo2.ttf", "exo2/Exo2.ttf" },
 	{ "fonts\\Michroma-Regular.ttf", "michroma/Michroma-Regular.ttf" },
@@ -40,7 +42,8 @@ int kp_data_build(KpData *d, KpRes *res, const KpUiFile *vector_fonts, int vecto
 		|| kp_host_shared_from_files(&d->shared, &d->files, &d->dat, err) != 0
 		|| kp_palettes_from_files(&d->palettes, &d->files, err) != 0
 		|| kp_campaign_from_files(&d->campaign, &d->files, err) != 0
-		|| kp_ui_data_from_files(&d->ui, &d->files, &d->dat, vector_fonts, vector_font_count, err) != 0) {
+		|| kp_ui_data_from_files(&d->ui, &d->files, &d->dat, vector_fonts, vector_font_count, err) != 0
+		|| kp_templates_from_files(&d->templates, &d->files, err) != 0) {
 		kp_data_free(d);
 		return -1;
 	}
@@ -133,4 +136,110 @@ int kp_data_mission(const KpData *d, const KpDataMission *entry, uint8_t *chk, s
 		return -1;
 	}
 	return kp_mission_from_chk(m, &d->files, chk, chk_size, entry->name, NULL, packs, (size_t)pack_size, err);
+}
+
+/* --- custom maps (ADR 0024) --- */
+
+static uint8_t *map_read(void *ctx, const char *name, size_t *size, char *err, size_t err_size)
+{
+	const KpDataMap *map = (const KpDataMap *)ctx;
+	uint8_t *b;
+	if (map->mpq) {
+		err[0] = '\0';
+		if ((b = kp_mpq_read(map->mpq, name, size, err, err_size)) != NULL || err[0]) return b;
+	}
+	return map->base->read(map->base->ctx, name, size, err, err_size);
+}
+
+static uint8_t *map_head(void *ctx, const char *name, size_t want, size_t *got, uint64_t *total, char *err,
+	size_t err_size)
+{
+	const KpDataMap *map = (const KpDataMap *)ctx;
+	uint8_t *b;
+	size_t size;
+	if (!(map->mpq && kp_mpq_has(map->mpq, name)) && map->base->head)
+		return map->base->head(map->base->ctx, name, want, got, total, err, err_size);
+	if (!(b = map_read(ctx, name, &size, err, err_size))) return NULL;
+	*got = size < want ? size : want;
+	*total = size;
+	return b;
+}
+
+static void map_init(KpDataMap *map, const KpFiles *base, const char *name)
+{
+	memset(map, 0, sizeof *map);
+	map->base = base;
+	map->files.read = map_read;
+	map->files.head = map_head;
+	map->files.ctx = map;
+	map->files.profile = base->profile;
+	snprintf(map->name, sizeof map->name, "%s", name);
+}
+
+int kp_data_map_open(KpDataMap *map, const KpFiles *base, const char *path, KpError *err)
+{
+	const char *name = path + strlen(path);
+	char why[KP_ERROR_SIZE];
+	while (name > path && name[-1] != '/' && name[-1] != '\\') name--;
+	map_init(map, base, name);
+	if (!(map->mpq = kp_mpq_open(path, 0, why, sizeof why))) {
+		snprintf(err->msg, sizeof err->msg, "map: %s: %s", map->name, why);
+		return -1;
+	}
+	if (!kp_mpq_has(map->mpq, KP_DATA_MAP_SCENARIO)) {
+		snprintf(err->msg, sizeof err->msg, "map: %s: no %s", map->name, KP_DATA_MAP_SCENARIO);
+		kp_data_map_close(map);
+		return -1;
+	}
+	return 0;
+}
+
+int kp_data_map_from_chk(KpDataMap *map, const KpFiles *base, uint8_t *chk, size_t chk_size, const char *name,
+	KpError *err)
+{
+	map_init(map, base, name);
+	if (!chk) {
+		snprintf(err->msg, sizeof err->msg, "map: %s: out of memory", map->name);
+		return -1;
+	}
+	map->chk = chk;
+	map->chk_size = chk_size;
+	return 0;
+}
+
+uint8_t *kp_data_map_chk(KpDataMap *map, size_t *size, KpError *err)
+{
+	char why[KP_ERROR_SIZE];
+	uint8_t *b;
+	if (!map->mpq) { /* a copy: a game started again (a load, a restart) builds its mission again */
+		if (!(b = (uint8_t *)malloc(map->chk_size ? map->chk_size : 1))) {
+			snprintf(err->msg, sizeof err->msg, "map: %s: out of memory", map->name);
+			return NULL;
+		}
+		if (map->chk_size) memcpy(b, map->chk, map->chk_size);
+		*size = map->chk_size;
+		return b;
+	}
+	why[0] = '\0';
+	if (!(b = kp_mpq_read(map->mpq, KP_DATA_MAP_SCENARIO, size, why, sizeof why)))
+		snprintf(err->msg, sizeof err->msg, "map: %s: %s", map->name, why[0] ? why : "no scenario");
+	return b;
+}
+
+int kp_data_map_mission(KpDataMap *map, KpChkLoad load, KpMission *m, KpError *err)
+{
+	uint8_t packs[1 + KP_DATA_PACKS];
+	size_t chk_size;
+	uint8_t *chk;
+	int pack_size = kp_mission_packs_payload(KP_DATA_MAP_PACKS, packs, sizeof packs);
+	memset(m, 0, sizeof *m);
+	if (pack_size < 0 || !(chk = kp_data_map_chk(map, &chk_size, err))) return -1;
+	return kp_mission_from_map(m, &map->files, chk, chk_size, map->name, load, packs, (size_t)pack_size, err);
+}
+
+void kp_data_map_close(KpDataMap *map)
+{
+	(void)kp_mpq_close(map->mpq);
+	free(map->chk);
+	memset(map, 0, sizeof *map);
 }

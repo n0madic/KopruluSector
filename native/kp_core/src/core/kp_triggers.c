@@ -5,6 +5,7 @@
  * P41; docs/research/native-triggers.md). A copy keeps its whole 2400-byte record, as the original's node does: its
  * execution flags and continuation byte and the flags of its actions change in place. */
 #include "kp_game_internal.h"
+#include "kp_gametype.h"
 #include "kp_text.h"
 
 #include <stdlib.h>
@@ -64,29 +65,20 @@ static const int64_t SPEED_MS[] = { 167, 111, 83, 67, 56, 48, 42, 501 };
 #define SWITCHES 256
 #define LEADERBOARD_NONE 0xffffffffLL /* the entries' 0xff fill */
 #define RNG_RANDOM_SWITCH 57
+#define DAT_SUBUNIT 0x10
+#define DAT_POWERUP 0x800
+#define STRING_ELIMINATED 0x35        /* rez\network.tbl: "%s was eliminated." */
+#define STRING_PLAYER_ELIMINATED 0x36 /* "Player %d was eliminated." */
 /* the Escape skip works in the original campaigns only (mission index 0x526524 < 32, 0x4bda80) */
 #define SKIPPABLE_MISSIONS 32
 /* the results */
+#define RESULT_DROPPED 1
 #define RESULT_DEFEAT 2
 #define RESULT_VICTORY 3
 #define RESULT_IGNORE_DEFEAT 4
 #define RESULT_DRAW 5
 
-/* The handlers of the condition table 0x50e058 and the action table 0x50df68 (the addresses a failure names). */
-static const uint32_t CONDITION_HANDLERS[] = {
-	0x4b8e70, 0x4b8e90, 0x4b8ed0, 0x4b8f20, 0x4b8f80, 0x4b8fd0, 0x4b9070, 0x4b90e0, 0x4b9160, 0x4b91c0, 0x4b9220, 0x4b9280,
-	0x4b92e0, 0x4b8e80, 0x4b9320, 0x4b9360, 0x4b93b0, 0x4b9420, 0x4b94a0, 0x4b9510, 0x4b9580, 0x4b9020, 0x4b8e70, 0x4b8e80,
-};
-static const uint32_t ACTION_HANDLERS[] = {
-	0x4b8e70, 0x4b5ef0, 0x4b5f20, 0x4b5fc0, 0x4b5fd0, 0x4b6020, 0x4b6080, 0x4b60e0, 0x4b6240, 0x4b6300, 0x4b6350, 0x4b64d0,
-	0x4b6670, 0x4b6690, 0x4b6720, 0x4b6760, 0x4b6780, 0x4b67c0, 0x4b67c0, 0x4b67c0, 0x4b67c0, 0x4b67c0, 0x4b6840, 0x4b6870,
-	0x4b68c0, 0x4b68f0, 0x4b6940, 0x4b6990, 0x4b69e0, 0x4b5620, 0x4b5660, 0x4b5690, 0x4b56b0, 0x4b67c0, 0x4b67c0, 0x4b67c0,
-	0x4b67c0, 0x4b67c0, 0x4b56f0, 0x4b5840, 0x4b67c0, 0x4b5900, 0x4b5930, 0x4b59c0, 0x4b64d0, 0x4b6550, 0x4b65a0, 0x4b8e70,
-	0x4b5a50, 0x4b5b00, 0x4b5bb0, 0x4b5c60, 0x4b5d10, 0x4b5dc0, 0x4b5e70, 0x4b5e80, 0x4b5f70, 0x4b5e90, 0x4b5ed0, 0x4b5ee0,
-};
 /* the tables cover every id */
-typedef char kp_condition_table_check[sizeof CONDITION_HANDLERS / sizeof CONDITION_HANDLERS[0] == KP_COND_TYPES ? 1 : -1];
-typedef char kp_action_table_check[sizeof ACTION_HANDLERS / sizeof ACTION_HANDLERS[0] == KP_ACT_TYPES ? 1 : -1];
 
 static uint8_t *record(KpGame *g, int64_t copy) { return g->trig.records + (size_t)copy * KP_TRIGGER_RECORD; }
 static uint32_t u32_at(const uint8_t *p) { return kp_le_u32(p); }
@@ -114,8 +106,8 @@ static int64_t local_slot(KpGame *g)
 	return p >= 0 && p < KP_TRIGGER_PLAYERS ? p : -1;
 }
 
-/* The test of FirstActivePlayer 0x4b3160 / NextActivePlayer 0x4b3170 of a single-player game: a slot 0-7 of
- * controller 1, 2, 3, 4 or 7 that is not finished (0x4bd590). */
+/* The test of FirstActivePlayer 0x4b3160 / NextActivePlayer 0x4b3170: a slot 0-7 of controller 1, 2, 3, 4 or 7 that
+ * is not finished (0x4bd590). */
 int kp_trigger_player_active(KpGame *g, int64_t p)
 {
 	int64_t c;
@@ -125,9 +117,17 @@ int kp_trigger_player_active(KpGame *g, int64_t p)
 		|| c == KP_CTRL_NEUTRAL) && !kp_player_finished(g, p);
 }
 
-/* The next active slot after *cursor, 8 at the end. */
+/* NextActivePlayer 0x4b3170: the next active slot after *cursor, 8 at the end; a team game's are its teams' leaders in
+ * the forces' order (0x5264ac, the cursor over the forces), the members never. */
 static int64_t next_active(KpGame *g, int64_t *cursor)
 {
+	if (kp_setup_team_game(&g->setup)) {
+		while (++*cursor < 4) {
+			int64_t p = g->setup.leader[*cursor + 1];
+			if (p < 8 && kp_trigger_player_active(g, p)) return p;
+		}
+		return 8;
+	}
 	while (++*cursor < 8) {
 		if (kp_trigger_player_active(g, *cursor)) return *cursor;
 	}
@@ -137,6 +137,21 @@ static int64_t first_active(KpGame *g, int64_t *cursor)
 {
 	*cursor = -1;
 	return next_active(g, cursor);
+}
+
+int kp_trigger_active_players(KpGame *g, int64_t out[KP_PLAYERS])
+{
+	int64_t cursor, p;
+	int n = 0;
+	for (p = first_active(g, &cursor); p < 8; p = next_active(g, &cursor)) out[n++] = p;
+	return n;
+}
+
+int kp_trigger_candidates(KpGame *g, int64_t out[KP_PLAYERS])
+{
+	int n = kp_trigger_active_players(g, out), p;
+	for (p = 8; p < KP_PLAYERS; p++) out[n++] = p;
+	return n;
 }
 
 /* The comparison of a condition (unsigned 32-bit): 0 at least, 1 at most, 10 exactly, anything else false. */
@@ -296,10 +311,38 @@ static void carried(KpGame *g, const KpCarry *c)
 	memcpy(t->count_pstat, c->count_pstat, sizeof t->count_pstat);
 }
 
+/* The records' copies for the player lists (LoadTriggerSection 0x468de0 over the TRIG, the victory files' loader
+ * 0x447f70): the lists emptied, then each record's copies appended in order. */
+static void fill_lists(KpGame *g, const uint8_t *data, uint32_t records)
+{
+	KpTriggers *t = &g->trig;
+	int64_t p, at = 0, tail[KP_TRIGGER_PLAYERS], count = 0;
+	uint32_t k;
+	for (p = 0; p < 8; p++) {
+		t->head[p] = -1;
+		tail[p] = -1;
+	}
+	for (k = 0; k < records; k++) count += copies_of(g, data + (size_t)k * KP_TRIGGER_RECORD);
+	free(t->records);
+	free(t->next);
+	free(t->place);
+	t->records = (uint8_t *)malloc((size_t)(count ? count : 1) * KP_TRIGGER_RECORD);
+	t->next = (int64_t *)malloc((size_t)(count ? count : 1) * sizeof *t->next);
+	t->place = (int64_t *)malloc((size_t)(count ? count : 1) * sizeof *t->place);
+	if (!t->records || !t->next || !t->place) kp_game_fail(g, "triggers: out of memory");
+	t->count = count;
+	for (k = 0; k < records; k++) expand(g, data + (size_t)k * KP_TRIGGER_RECORD, tail, &at);
+}
+
+void kp_triggers_replace(KpGame *g, const uint8_t *records, size_t size)
+{
+	fill_lists(g, records, (uint32_t)(size / KP_TRIGGER_RECORD));
+}
+
 void kp_triggers_init(KpGame *g, const KpMission *m, const KpCarry *carry)
 {
 	KpTriggers *t = &g->trig;
-	int64_t cursor, p, at = 0, tail[KP_TRIGGER_PLAYERS], count = 0;
+	int64_t cursor, p;
 	uint32_t k, records = m->triggers.size / KP_TRIGGER_RECORD;
 	int i;
 	if (m->triggers.size % KP_TRIGGER_RECORD != 0) {
@@ -319,8 +362,6 @@ void kp_triggers_init(KpGame *g, const KpMission *m, const KpCarry *carry)
 		t->participants[p] = 0;
 		t->wait_active[p] = t->wait_remaining[p] = 0;
 		t->lb_entries[p][0] = t->lb_entries[p][1] = LEADERBOARD_NONE;
-		t->head[p] = -1;
-		tail[p] = -1;
 	}
 	for (p = first_active(g, &cursor); p < 8; p = next_active(g, &cursor)) t->participants[p] = 1;
 	t->paused = 0;
@@ -344,18 +385,13 @@ void kp_triggers_init(KpGame *g, const KpMission *m, const KpCarry *carry)
 	memset(t->properties, 0, sizeof t->properties);
 	memcpy(t->properties, m->properties.data,
 		m->properties.size < sizeof t->properties ? m->properties.size : sizeof t->properties);
-	t->strings = (uint8_t *)malloc(m->strings.size ? m->strings.size : 1);
+	/* LoadStringSection 0x468ce0's copy, with a zero byte past it (kp_map_string) */
+	t->strings = (uint8_t *)calloc(1, m->strings.size + 1);
 	if (!t->strings) kp_game_fail(g, "triggers: out of memory");
 	memcpy(t->strings, m->strings.data, m->strings.size);
 	t->strings_size = m->strings.size;
 	/* LoadTriggerSection 0x468de0: the records in order */
-	for (k = 0; k < records; k++) count += copies_of(g, m->triggers.data + (size_t)k * KP_TRIGGER_RECORD);
-	t->records = (uint8_t *)malloc((size_t)(count ? count : 1) * KP_TRIGGER_RECORD);
-	t->next = (int64_t *)malloc((size_t)(count ? count : 1) * sizeof *t->next);
-	t->place = (int64_t *)malloc((size_t)(count ? count : 1) * sizeof *t->place);
-	if (!t->records || !t->next || !t->place) kp_game_fail(g, "triggers: out of memory");
-	t->count = count;
-	for (k = 0; k < records; k++) expand(g, m->triggers.data + (size_t)k * KP_TRIGGER_RECORD, tail, &at);
+	fill_lists(g, m->triggers.data, records);
 	t->lead_objectives = briefing_lead(g, &m->briefing);
 	briefing_init(g, &m->briefing);
 }
@@ -382,9 +418,9 @@ const char *kp_map_string(KpGame *g, int64_t id)
 	count = kp_le_u16(t->strings);
 	if (n > count || 2 * n + 2 > t->strings_size) return "";
 	offset = kp_le_u16(t->strings + 2 * n);
-	if (offset >= t->strings_size || memchr(t->strings + offset, 0, t->strings_size - offset) == NULL) {
-		kp_game_fail(g, "triggers: map string %u is not terminated inside STR", (unsigned)n);
-	}
+	/* The original reads its heap past its copy of STR: past the copy the string is empty here, and one STR does not
+	 * end ends at the zero byte past the copy (ADR 0024; a protected map's last STR chunk can be a byte long) */
+	if (offset >= t->strings_size) return "";
 	return (const char *)t->strings + offset;
 }
 
@@ -436,11 +472,10 @@ static int condition(KpGame *g, const uint8_t *c)
 		return kp_trigger_score_ranking(g, c[C_RESOURCE], type == KP_COND_HIGHEST_SCORE);
 	case KP_COND_MOST_RESOURCES: case KP_COND_LEAST_RESOURCES: /* TrigCondMostResources 0x4b9220, TrigCondLeastResources 0x4b9580 */
 		return kp_trigger_resources_ranking(g, c[C_RESOURCE], type == KP_COND_MOST_RESOURCES);
+	case KP_COND_OPPONENTS: /* TrigCondOpponents 0x4b9320: the count's low byte */
+		return compare(kp_band(kp_trigger_opponents(g, u32_at(c + C_PLAYER)), 0xff), c);
 	default:
-		if (type >= KP_COND_TYPES) kp_game_fail(g, "triggers: condition type %d (table 0x50e058)", type);
-		/* TODO: Opponents (CountOpponents 0x4ba060) when a map that needs it comes into scope; outside the V1 profile
-		 * the converter rejects it (scdata/analyze/triggers.py UNSUPPORTED_CONDITIONS) */
-		kp_game_fail(g, "triggers: condition %d (0x%x)", type, (unsigned)CONDITION_HANDLERS[type]);
+		kp_game_fail(g, "triggers: condition type %d (table 0x50e058)", type);
 		return 0;
 	}
 }
@@ -761,25 +796,26 @@ void kp_replay_leaderboard(KpGame *g, int action, uint16_t unit)
 	set_leaderboard(g, a);
 }
 
-/* TrigActPauseGame 0x4b6020 of a single-player game: PauseGame 0x47cbb0 under a trigger (the accelerators and the
- * cursor layer are the interface's). Deviation (ADR 0020): in a replay PauseGame also pauses the replay (0x480e00(1)),
- * and RunPendingFrames 0x444e30 then runs no triggers, so the original's replay stands for good here; Koprulu pauses
- * only the game, and the replay goes on as the recorded game did. */
+/* TrigActPauseGame 0x4b6020: in a single-player game PauseGame 0x47cbb0 under a trigger (the accelerators and the
+ * cursor layer are the interface's); nothing in a multiplayer game. Deviation (ADR 0020): in a replay PauseGame also
+ * pauses the replay (0x480e00(1)), and RunPendingFrames 0x444e30 then runs no triggers, so the original's replay
+ * stands for good here; Koprulu pauses only the game, and the replay goes on as the recorded game did. */
 static void pause_game(KpGame *g)
 {
 	KpTriggers *t = &g->trig;
-	if (t->paused != 0 || computer_like(g, t->player) || skipping(g)) return;
+	if (g->setup.multiplayer != 0 || t->paused != 0 || computer_like(g, t->player) || skipping(g)) return;
 	if (kp_scalar(g, KP_PAUSED) != 1) kp_scalar_set(g, KP_PAUSED, 1);
 	current_flags_or(g, EXEC_PAUSED_GAME);
 	t->paused = 1;
 	kp_event(g, KP_EVENT_TRIGGER_PAUSE, 1, 0, 0, NULL);
 }
 
-/* TrigActUnpauseGame 0x4b6080, which the runner also calls when a trigger that paused the game ends. */
+/* TrigActUnpauseGame 0x4b6080, which the runner also calls when a trigger that paused the game ends; nothing in a
+ * multiplayer game. */
 static void unpause_game(KpGame *g)
 {
 	KpTriggers *t = &g->trig;
-	if (t->paused == 0 || computer_like(g, t->player)) return;
+	if (g->setup.multiplayer != 0 || t->paused == 0 || computer_like(g, t->player)) return;
 	current_flags_clear(g, EXEC_PAUSED_GAME);
 	t->paused = 0;
 	kp_scalar_set(g, KP_PAUSED, 0); /* UnpauseGame 0x47cc10 without discounting the paused time */
@@ -819,8 +855,10 @@ static void display_text(KpGame *g, const uint8_t *a)
 	show_text(g, a, text_duration(kp_map_string(g, u32_at(a + KP_ACTION_STRING))));
 }
 
-/* TrigActTransmission 0x4b60e0 of a single-player game: the player waits until the interface ends the portrait
- * (kp_trigger_release_wait) or Escape skips it; the second visit ends the action. */
+/* TrigActTransmission 0x4b60e0: in a single-player game the player waits until the interface ends the portrait
+ * (kp_trigger_release_wait) or Escape skips it; in a multiplayer game for the action's time, which the clocks count
+ * down on every player's machine (0x4b616e: the multiplayer byte picks the time over 0xffffffff). The second visit
+ * ends the action. */
 static int transmission(KpGame *g, uint8_t *a)
 {
 	KpTriggers *t = &g->trig;
@@ -840,7 +878,7 @@ static int transmission(KpGame *g, uint8_t *a)
 	}
 	a[KP_ACTION_FLAGS] |= ACTION_WAITING;
 	t->wait_active[p] = 1;
-	t->wait_remaining[p] = WAIT_FOREVER;
+	t->wait_remaining[p] = g->setup.multiplayer != 0 ? ms : WAIT_FOREVER;
 	if (p != g->local_player) return 0;
 	play_wav(g, a);
 	unit = kp_trigger_unit_at(g, a[KP_ACTION_LOCATION] - 1, KP_SEL_ALL, kp_le_u16(a + KP_ACTION_UNIT));
@@ -857,17 +895,24 @@ static int transmission(KpGame *g, uint8_t *a)
 	return 0;
 }
 
-/* TrigActCenterView 0x4b6350 of a single-player game: the local player's camera pans to the location and the trigger
- * waits until it arrives (the interface's kp_trigger_release_wait). */
+/* TrigActCenterView 0x4b6350: in a single-player game the local player's camera pans to the location and the trigger
+ * waits until it arrives (the interface's kp_trigger_release_wait); in a multiplayer game the local player's screen
+ * moves there at once (SetScreenPosition 0x40b450 clamps it) and the action ends without a wait. */
 static int center_view(KpGame *g, uint8_t *a)
 {
 	KpTriggers *t = &g->trig;
 	int64_t p = t->player, x, y;
 	if (a[KP_ACTION_LOCATION] == 0 || kp_scalar(g, KP_PAUSED) == 1 || computer_like(g, p)) return 1;
+	if (g->setup.multiplayer != 0) {
+		if (p != g->local_player) return 1;
+		kp_location_center(g, a[KP_ACTION_LOCATION] - 1, &x, &y);
+		kp_event(g, KP_EVENT_CAMERA, x - SCREEN_HALF_W, y - SCREEN_HALF_H, KP_CAMERA_SET, NULL);
+		return 1;
+	}
 	if (t->wait_active[p] != 0) return 0;
 	if ((a[KP_ACTION_FLAGS] & ACTION_WAITING) != 0) {
 		a[KP_ACTION_FLAGS] &= (uint8_t)~ACTION_WAITING;
-		kp_event(g, KP_EVENT_CAMERA, 0, 0, 1, NULL);
+		kp_event(g, KP_EVENT_CAMERA, 0, 0, KP_CAMERA_END, NULL);
 		return 1;
 	}
 	if (skipping(g)) return 1;
@@ -879,7 +924,7 @@ static int center_view(KpGame *g, uint8_t *a)
 		y -= SCREEN_HALF_H;
 		if (y < 0) y = 0;
 		else if (y + SCREEN_H >= g->map_h_px) y = g->map_h_px - SCREEN_H - 1;
-		kp_event(g, KP_EVENT_CAMERA, x, y, 0, NULL);
+		kp_event(g, KP_EVENT_CAMERA, x, y, KP_CAMERA_PAN, NULL);
 	}
 	a[KP_ACTION_FLAGS] |= ACTION_WAITING;
 	t->wait_active[p] = 1;
@@ -1009,7 +1054,8 @@ static int action(KpGame *g, uint8_t *a)
 	case KP_ACT_SET_INVINCIBILITY:
 		kp_trigger_invincibility(g, a);
 		return 1;
-	case KP_ACT_MODIFY_HP: case KP_ACT_MODIFY_ENERGY: case KP_ACT_MODIFY_SHIELDS:
+	case KP_ACT_MODIFY_HP: case KP_ACT_MODIFY_ENERGY: case KP_ACT_MODIFY_SHIELDS: case KP_ACT_MODIFY_RESOURCES:
+	case KP_ACT_MODIFY_HANGAR:
 		kp_trigger_modify(g, a);
 		return 1;
 	case KP_ACT_SET_DOODAD_STATE:
@@ -1047,11 +1093,7 @@ static int action(KpGame *g, uint8_t *a)
 		current_flags_clear(g, EXEC_NO_SKIP);
 		return 1;
 	default:
-		if (type >= KP_ACT_TYPES) kp_game_fail(g, "triggers: action type %d (table 0x50df68)", type);
-		/* TODO: Modify Unit Resource Amount 0x4b5d10 and Modify Unit Hangar Count 0x4b5dc0 when a map that needs
-		 * them comes into scope; outside the V1 profile the converter rejects them (scdata/analyze/triggers.py
-		 * UNSUPPORTED_ACTIONS) */
-		kp_game_fail(g, "triggers: action %d (0x%x)", type, (unsigned)ACTION_HANDLERS[type]);
+		kp_game_fail(g, "triggers: action type %d (table 0x50df68)", type);
 		return 0;
 	}
 }
@@ -1113,26 +1155,67 @@ static void run_list(KpGame *g, int64_t p)
 
 /* --- the pending results --- */
 
-/* RetirePlayer 0x4bd7a0 of a single-player game (neither Capture the Flag nor Sudden Death): the slot's controller
- * becomes defeated and each of its units goes to player 11 (MakeAddonNeutral 0x428db0). */
+/* RetirePlayer 0x4bd7a0: the slot's controller (a team game's every slot of its force) becomes defeated. Outside
+ * Capture the Flag and Sudden Death each of its units goes to player 11 (MakeAddonNeutral 0x428db0); in them each that
+ * is no subunit and still active dies (KillUnit 0x42a4d0), a powerup a worker carries with the worker's cargo
+ * (DestroyWorkerCargo 0x4271d0). In a replay the slot leaves the replay's vision (0x67cc84, 0x672668). */
 static void retire(KpGame *g, int64_t p)
 {
-	int64_t n, next;
-	if (g->players.controller[p] == KP_CTRL_COMPUTER) g->players.controller[p] = KP_CTRL_DEFEATED_COMPUTER;
-	else if (g->players.controller[p] == KP_CTRL_HUMAN) g->players.controller[p] = KP_CTRL_DEFEATED_HUMAN;
-	for (n = g->player_units[p]; n != 0; n = next) {
-		next = g->u.player_next[n];
-		kp_make_neutral(g, n);
+	KpPlayers *pl = &g->players;
+	int64_t n, next, q;
+	for (q = 0; q < KP_TRIGGER_PLAYERS; q++) {
+		if (kp_setup_team_game(&g->setup) ? g->setup.force[q] != g->setup.force[p] : q != p) continue;
+		if (pl->controller[q] == KP_CTRL_COMPUTER) pl->controller[q] = KP_CTRL_DEFEATED_COMPUTER;
+		else if (pl->controller[q] == KP_CTRL_HUMAN) pl->controller[q] = KP_CTRL_DEFEATED_HUMAN;
 	}
-	g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
+	if (!kp_setup_ctf(&g->setup) && !kp_setup_sudden_death(&g->setup)) {
+		for (n = g->player_units[p]; n != 0; n = next) {
+			next = g->u.player_next[n];
+			kp_make_neutral(g, n);
+		}
+		g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
+	} else {
+		for (n = g->player_units[p]; n != 0; n = next) {
+			int64_t flags = KP_DAT(g, units, special_ability_flags, g->u.type[n]);
+			next = g->u.player_next[n];
+			if (kp_band(flags, DAT_SUBUNIT) != 0 || kp_unit_inactive(g, n)) continue;
+			if (kp_band(flags, DAT_POWERUP) != 0 && g->u.union_0xd4[n] != 0) kp_destroy_worker_cargo(g, g->u.union_0xd4[n]);
+			else kp_unit_kill(g, n);
+		}
+	}
+	if (g->w->replay) {
+		g->local_vision = kp_band(g->local_vision, kp_bnot((int64_t)1 << p));
+		g->w->local_vision = (int32_t)kp_band(g->w->local_vision, kp_bnot((int64_t)1 << p));
+	}
 }
 
-/* ApplyPendingResults 0x4be020 of a single-player game. */
+/* AnnouncePlayerDefeat 0x4bd4a0: nothing in a Use Map Settings game; else a team game's force name, a human's name
+ * (every player's in a replay) or a computer's number as a timed message. */
+static void announce_defeat(KpGame *g, int64_t p)
+{
+	int64_t c = g->players.controller[p];
+	if (kp_setup_ums(&g->setup)) return;
+	if (kp_setup_team_game(&g->setup)) kp_event(g, KP_EVENT_FORCE_MESSAGE, STRING_ELIMINATED, g->players.force[p], 0, NULL);
+	else if (c == KP_CTRL_HUMAN || g->w->replay) kp_event(g, KP_EVENT_PLAYER_MESSAGE, STRING_ELIMINATED, p, 0, NULL);
+	else if (c == KP_CTRL_COMPUTER) kp_event(g, KP_EVENT_PLAYER_MESSAGE, STRING_PLAYER_ELIMINATED, p, p + 1, NULL);
+}
+
+void kp_trigger_player_left(KpGame *g, int64_t p, int dropped)
+{
+	if (p < 0 || p >= KP_TRIGGER_PLAYERS) kp_game_fail(g, "triggers: player %lld left", (long long)p);
+	g->trig.head[p] = -1;
+	if (g->results[p] != 0) return;
+	g->results[p] = dropped ? RESULT_DROPPED : RESULT_DEFEAT;
+	retire(g, p);
+}
+
+/* ApplyPendingResults 0x4be020: a single-player game's cheats decide the local player's result; a multiplayer game's
+ * players with a result other than Ignore Defeat lose their trigger lists. */
 static void apply_pending(KpGame *g)
 {
 	KpTriggers *t = &g->trig;
 	int64_t cheats = kp_cheats(g), local = local_slot(g), cursor, p, all = 0, won = 0;
-	if (local >= 0) {
+	if (local >= 0 && g->setup.multiplayer == 0) {
 		if ((cheats & KP_CHEAT_NO_COW_LEVEL) != 0) t->pending[local] = RESULT_VICTORY;
 		else if ((cheats & KP_CHEAT_GAME_OVER_MAN) != 0) t->pending[local] = RESULT_DEFEAT;
 		if ((cheats & KP_CHEAT_STAYING_ALIVE) != 0 && t->pending[local] >= RESULT_DEFEAT) t->pending[local] = 0;
@@ -1160,8 +1243,13 @@ static void apply_pending(KpGame *g)
 	for (p = 0; p < 8; p++) {
 		if (t->pending[p] == 0 || g->results[p] != 0) continue;
 		g->results[p] = t->pending[p];
-		/* AnnouncePlayerDefeat 0x4bd4a0 shows nothing in a Use Map Settings game */
-		if (t->pending[p] == RESULT_DEFEAT) retire(g, p);
+		if (t->pending[p] != RESULT_DEFEAT) continue;
+		announce_defeat(g, p);
+		retire(g, p);
+	}
+	if (g->setup.multiplayer == 0) return;
+	for (p = 0; p < 8; p++) {
+		if (t->pending[p] != 0 && t->pending[p] != RESULT_IGNORE_DEFEAT) t->head[p] = -1; /* FreeTriggerList 0x4609c0 */
 	}
 }
 
@@ -1188,10 +1276,11 @@ static void tick_result(KpGame *g)
 	r = local >= 0 ? g->results[local] : 0;
 	if ((r == RESULT_DEFEAT || r == RESULT_VICTORY || r == RESULT_DRAW) && g->trig.result_dialog == 0) {
 		/* ShowDefeatDialog 0x4bcf80, ShowVictoryDialog 0x4bcff0: CancelCursorModes 0x448c20, then OpenModelessDialog
-		 * 0x46ecc0 pauses a single-player game; the dialog itself and the game's end are the interface's */
+		 * 0x46ecc0 pauses a single-player game (a multiplayer game goes on); the dialog itself and the game's end are the
+		 * interface's */
 		kp_cancel_cursor_modes(g);
 		g->trig.result_dialog = 1;
-		kp_scalar_set(g, KP_PAUSED, 1);
+		if (g->setup.multiplayer == 0) kp_scalar_set(g, KP_PAUSED, 1);
 		kp_event(g, KP_EVENT_GAME_RESULT, r, 0, 0, NULL);
 	}
 }
@@ -1262,8 +1351,13 @@ void kp_trigger_step(KpGame *g)
  * units, then the scheduler with the RNG on; the frame count stays. */
 void kp_paused_tick(KpGame *g, const KpCommand *commands, int count)
 {
-	int64_t n;
 	kp_run_turn(g, commands, count);
+	kp_paused_frame(g);
+}
+
+void kp_paused_frame(KpGame *g)
+{
+	int64_t n;
 	for (n = g->lists[KP_LIST_ACTIVE].head; n != 0; n = g->u.next[n]) kp_flash_selection(g, n);
 	kp_rng_game_set_enabled(g->rng, 1);
 	kp_trigger_step(g);
@@ -1274,7 +1368,9 @@ void kp_paused_tick(KpGame *g, const KpCommand *commands, int count)
 void kp_trigger_release_wait(KpGame *g)
 {
 	int64_t p = local_slot(g);
-	if (p < 0) return;
+	/* a multiplayer game's waits end by their time: the portrait's end releases none (TriggerPortraitExpired 0x4a7300
+	 * tests the multiplayer byte) and Center View pans to none */
+	if (p < 0 || g->setup.multiplayer != 0) return;
 	g->trig.wait_active[p] = g->trig.wait_remaining[p] = 0;
 	g->trig.pass = 1;
 }
@@ -1293,7 +1389,7 @@ static int64_t next_skippable(KpGame *g, int64_t copy, uint32_t excluded)
 static int64_t first_skippable(KpGame *g, uint32_t excluded)
 {
 	int64_t p = local_slot(g);
-	if (p < 0 || kp_scalar(g, KP_MISSION_INDEX) >= SKIPPABLE_MISSIONS) return -1;
+	if (p < 0 || g->setup.multiplayer != 0 || kp_scalar(g, KP_MISSION_INDEX) >= SKIPPABLE_MISSIONS) return -1;
 	return next_skippable(g, g->trig.head[p], excluded);
 }
 
@@ -1322,6 +1418,6 @@ int64_t kp_briefing_lead(KpGame *g) { return g->trig.lead_objectives; }
 
 void kp_briefing_objectives(KpGame *g, int64_t string)
 {
-	int64_t p = local_slot(g);
-	if (p >= 0) g->trig.objectives[p] = kp_u32v(string);
+	int64_t p = g->briefing_player;
+	if (p >= 0 && p < KP_TRIGGER_PLAYERS) g->trig.objectives[p] = kp_u32v(string);
 }

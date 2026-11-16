@@ -11,7 +11,6 @@
 #define STATUS_NOBRK 0x2000
 #define SPRITE_SELECTED 0x08
 #define SPRITE_CIRCLE 0x01
-#define SPRITE_DASHED 0x06
 #define SPRITE_HIDDEN 0x20
 #define SPRITE_SUBUNIT 0x10
 #define TURRET_LO 2
@@ -85,7 +84,8 @@ static void reinitialize(KpGame *g, int64_t n, int64_t t)
 	kp_set_button_set(g, n, kp_band(u->status[n], STATUS_COMPLETED) != 0 ? t : (int64_t)KP_TYPE_NONE);
 }
 
-/* ReinitializeUnitTypeKeepPresentation 0x424bd0: the counts, the selection, its circles and the cloak survive. */
+/* ReinitializeUnitTypeKeepPresentation 0x424bd0: the counts, the selection, its circles (a team game's dashed allied
+ * ones in their old colour: 0x416cd0, then 0x415190 as many times) and the cloak survive. */
 static void reinitialize_keeping(KpGame *g, int64_t n, int64_t t)
 {
 	KpUnits *u = &g->u;
@@ -93,15 +93,14 @@ static void reinitialize_keeping(KpGame *g, int64_t n, int64_t t)
 	int32_t s = kp_unit_sprite(g, n);
 	int64_t visibility = w->spr.visibility[s], timer = w->spr.sel_timer[s], slot = 0, color;
 	int selected = (w->spr.flags[s] & SPRITE_SELECTED) != 0, circle = (w->spr.flags[s] & SPRITE_CIRCLE) != 0;
+	int32_t allies = (w->spr.flags[s] & KP_SF_ALLIES) >> 1, ally_color;
 	KpCloak c;
-	/* TODO: the dashed circles of an ally's selection (0x416cd0, 0x415190) for multiplayer team games: their callers
-	 * gate on 0x4b2d90 or 0x49c2b0, which need the multiplayer byte 0x672664 (0 offline; atlas P05) */
-	if (w->spr.flags[s] & SPRITE_DASHED) kp_game_fail(g, "morph: the dashed circles of a unit (0x416cd0, 0x415190)");
 	if (selected) {
 		slot = w->spr.selection[s];
 		kp_remove_selection_circle(g, n);
 	}
 	color = kp_sprite_remove_circle(w, s);
+	ally_color = kp_sprite_remove_ally_circles(w, s);
 	c = kp_unit_save_cloak(g, n);
 	kp_account_live(g, n, -1);
 	if (kp_band(u->status[n], STATUS_COMPLETED) != 0) kp_account_completed(g, n, -1, 1);
@@ -112,6 +111,7 @@ static void reinitialize_keeping(KpGame *g, int64_t n, int64_t t)
 	s = kp_unit_sprite(g, n);
 	if (selected) kp_add_selection_circle(g, n, slot);
 	else if (circle) kp_sprite_add_circle(w, s, (int32_t)color);
+	for (; allies > 0; allies--) kp_sprite_add_ally_circle(w, s, ally_color, kp_ally_circle_cap(g));
 	w->spr.sel_timer[s] = (int32_t)timer;
 	kp_sprite_set_visibility(w, s, (int32_t)visibility);
 }

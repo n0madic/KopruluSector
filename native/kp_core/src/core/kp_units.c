@@ -3,7 +3,6 @@
 
 #include <string.h>
 
-#define SF_ALLY_COUNT 0x06 /* sprite flags: the allied selections' count */
 #define ST_COMPLETED 0x1
 #define ST_GROUNDED_BUILDING 0x2
 #define ST_AIR 0x4
@@ -425,7 +424,7 @@ int64_t kp_unit_allocate(KpGame *g, int64_t t, int64_t x, int64_t y, int64_t own
 void kp_report_creation_error(KpGame *g, int64_t player)
 {
 	int64_t id = kp_scalar(g, KP_ERROR_CODE);
-	if (id != 0 && id != KP_NIL && player == g->local_player) kp_event(g, KP_EVENT_ERROR, player, id, 1, NULL);
+	if (id != 0 && id != KP_NIL && kp_error_is_local(g, player)) kp_event(g, KP_EVENT_ERROR, player, id, 1, NULL);
 	kp_scalar_set(g, KP_ERROR_CODE, 0);
 }
 
@@ -475,14 +474,15 @@ void kp_replace_unit_images(KpGame *g, int64_t n, int construction)
 }
 
 /* ReplaceSpriteMainImage 0x415590: every image goes, a new main one comes; a selection circle and health bar the
- * sprite had come back with it (0x415a00, 0x416d50). */
+ * sprite had come back with it (0x415a00, 0x416d50), then as many dashed allied circles in their old colour
+ * (0x416cd0, the inlined 0x415190). */
 void kp_sprite_replace_main(KpGame *g, int32_t s, int64_t id, int64_t heading)
 {
 	KpImages *w = g->w;
 	int32_t i, main, circle = w->spr.flags[s] & KP_SF_CIRCLE, bar = w->spr.flags[s] & KP_SF_SELECTED, color;
-	/* TODO: the dashed circles of a team game's allied selections (0x416cd0, 0x415190), outside the V1 profile */
-	if ((w->spr.flags[s] & SF_ALLY_COUNT) != 0) kp_game_fail(g, "unit: replacing the main image under ally circles (0x416cd0)");
+	int32_t allies = (w->spr.flags[s] & KP_SF_ALLIES) >> 1, ally_color;
 	color = bar ? kp_sprite_remove_health_bar(w, s) : kp_sprite_remove_circle(w, s);
+	ally_color = kp_sprite_remove_ally_circles(w, s);
 	i = w->spr.images[s].head;
 	while (i != KP_NONE) {
 		int32_t next = w->img.next[i];
@@ -509,6 +509,7 @@ void kp_sprite_replace_main(KpGame *g, int32_t s, int64_t id, int64_t heading)
 		}
 		kp_sprite_add_circle(w, s, color);
 	}
+	for (; allies > 0; allies--) kp_sprite_add_ally_circle(w, s, ally_color, kp_ally_circle_cap(g));
 	i = w->spr.images[s].head;
 	while (i != KP_NONE) {
 		kp_image_direction_from_angle(w, i, (int32_t)heading);

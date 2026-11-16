@@ -821,6 +821,44 @@ static void set_grouping(KpGame *g, int64_t p, int64_t r, int force)
 	pai->attack_target[p] = kp_band(r + 1, 0xffff);
 }
 
+#define WEAKEST_NEAR 640 /* 0x280: a region this much nearer than the best is taken whatever its strength */
+#define WEAKEST_BOX 512	 /* 0x200: the enemies counted around a region's centre */
+#define WEAKEST_START 99999999
+
+/* ChooseWeakestNearbyRegion 0x4aa350: of the count regions, the index of the one whose enemies around its centre
+ * (their cached air or ground strength, the larger sum) are weakest, or which is 640 nearer the player's first town;
+ * a region more than 640 farther than the best is skipped. 0 without regions or a town. */
+static int64_t weakest_nearby(KpGame *g, int64_t p, int64_t count, const int64_t *regions)
+{
+	int64_t bx, by, k, best = 0, best_d = WEAKEST_START, best_s = WEAKEST_START;
+	if (count == 0 || g->towns.heads[p] < 0) return 0; /* GetFirstTownCenter 0x4872a0 */
+	if (count == 1) return regions[0]; /* the first region, not its index: the caller handles one itself */
+	bx = kp_s16v(g->towns.x[g->towns.heads[p]]);
+	by = kp_s16v(g->towns.y[g->towns.heads[p]]);
+	for (k = 0; k < count; k++) {
+		int64_t cx, cy, d, air = 0, ground = 0, strength, *found;
+		int n, j;
+		kp_ai_region_center(g, kp_band(regions[k], 0xffff), &cx, &cy); /* GetRegionCenter 0x481a30 */
+		d = kp_u32v(kp_approx_distance(bx - cx, by - cy));
+		if (d > kp_u32v(best_d + WEAKEST_NEAR)) continue;
+		found = kp_query_rect(g, kp_s16v(cx - WEAKEST_BOX), kp_s16v(cy - WEAKEST_BOX), kp_s16v(cx + WEAKEST_BOX),
+			kp_s16v(cy + WEAKEST_BOX), &n);
+		for (j = 0; j < n; j++) {
+			if (!kp_player_enemy_of(g, p, found[j])) continue; /* 0x429110 */
+			air = kp_u32v(air + g->u.air_strength[found[j]]); /* 0x4a9a10 */
+			ground = kp_u32v(ground + g->u.ground_strength[found[j]]); /* 0x4a9a20 */
+		}
+		kp_query_release(g, found);
+		strength = air > ground ? air : ground;
+		if (strength < best_s || kp_u32v(d + WEAKEST_NEAR) < best_d) {
+			best_d = d;
+			best_s = strength;
+			best = k;
+		}
+	}
+	return best;
+}
+
 /* ChooseAttackStaging 0x4b1710: one of the targets with a staging region (a campaign's at random) starts grouping
  * there (state 8) towards it. */
 static int choose_staging(KpGame *g, int64_t p, const uint8_t *cls, int64_t x, int64_t y, int shallow, int all, int force)
@@ -838,13 +876,135 @@ static int choose_staging(KpGame *g, int64_t p, const uint8_t *cls, int64_t x, i
 	} else if (kp_ai_campaign(g, p)) {
 		pick = kp_u32v(kp_rng_game_raw(g->rng, RANDOM_STAGING)) % found;
 	} else {
-		/* TODO: a non-campaign attack's ranking ChooseWeakestNearbyRegion 0x4aa350 (melee, outside V1) */
-		kp_game_fail(g, "ai: a non-campaign attack's target ranking (0x4aa350)");
+		pick = weakest_nearby(g, p, found, targets);
 	}
 	set_grouping(g, p, stagings[pick], force);
 	kp_ai_set_region_state(g, p, stagings[pick], KP_RSTATE_GATHER); /* SetRegionState 0x4ab900 */
 	g->air.dest[p][stagings[pick]] = targets[pick];
 	return 1;
+}
+
+#define NO_REGION 2500 /* 0x9c4: the planner's "none" */
+#define ROUTE_OTHER_GROUP 99999999
+#define ROUTE_NONE 100000000
+#define STAGING_TILES 60    /* a staging region on the route has this many tiles */
+#define STAGING_BACK 3      /* ... and stands this many regions before the first with enemies */
+#define LONE_BASE_COST 1000 /* a lone enemy start this strongly defended ... */
+#define LONE_BASE_SECONDS 1500 /* ... is not attacked this early */
+#define DAT_RESOURCE_DEPOT 0x1000
+#define ROSTER_DONE KP_TYPE_NONE /* 228: a roster entry a unit stands for */
+
+/* IsAttackRosterComplete 0x4ab1d0: every type of player p's roster stands for one of its completed, idle units with an
+ * AI record (a sieged tank as a tank; no subunit, none the AI ignores, none on an order that targets enemies). */
+static int roster_complete(KpGame *g, int64_t p)
+{
+	KpUnits *u = &g->u;
+	int64_t out[KP_AI_ROSTER], count = 0, n, k;
+	while (count < KP_AI_ROSTER && g->pai.roster[p][count] != 0) {
+		out[count] = g->pai.roster[p][count] - 1;
+		count++;
+	}
+	for (n = g->player_units[p]; n != 0; n = u->player_next[n]) {
+		int64_t t = u->type[n], o = u->order[n];
+		if (kp_unit_inactive(g, n) || kp_band(KP_DAT(g, units, special_ability_flags, t), DAT_SUBUNIT) != 0) continue;
+		if (t == KP_TYPE_SIEGE_TANK_SIEGED) t = KP_TYPE_SIEGE_TANK;
+		if (kp_band(KP_DAT(g, units, ai_internal, t), KP_AIINT_IGNORE) != 0 || kp_band(u->status[n], STATUS_COMPLETED) == 0) continue;
+		if (o == KP_ORD_ARCHON_SUMMON || o == KP_ORD_RESET_COLLISION || KP_DAT(g, orders, use_weapon_targeting, o) != 0) continue;
+		if (u->ai[n] == 0) continue;
+		for (k = 0; k < count && out[k] != t; k++) {}
+		if (k == count) continue;
+		out[k] = ROSTER_DONE;
+		if (k == count - 1) count--;
+	}
+	for (k = 0; k < count; k++) {
+		if (out[k] != ROSTER_DONE) return 0;
+	}
+	return 1;
+}
+
+/* GetRegionEnemyStrength 0x4aeaf0 with measure 0: the enemy strength the region's record holds. */
+static int64_t region_enemy_strength(KpGame *g, int64_t p, int64_t r)
+{
+	return kp_u32v(g->air.enemy_air[p][r] + g->air.enemy_ground[p][r]);
+}
+
+/* SumRouteEnemyStrength 0x496780: the enemy strength along the route from region src to dst; *target becomes the
+ * first region on it with enemies and *staging the last of 60 tiles three regions before (src and dst until then). */
+static int64_t route_strength(KpGame *g, int64_t p, int64_t src, int64_t dst, int64_t *target, int64_t *staging)
+{
+	KpRoute c;
+	int64_t sx, sy, dx, dy, k, total = 0;
+	*staging = src;
+	*target = dst;
+	if (src == dst) return region_enemy_strength(g, p, src);
+	if (kp_region_group_of(g, src) != kp_region_group_of(g, dst)) return ROUTE_OTHER_GROUP;
+	kp_ai_region_center(g, src, &sx, &sy); /* GetRegionCenter 0x481a30 */
+	kp_ai_region_center(g, dst, &dx, &dy);
+	kp_route_new(&c, 0, sx, sy, dx, dy);
+	c.src_region = src;
+	c.dst_region = dst;
+	if (!kp_search_region_path(g, &c)) return ROUTE_NONE; /* SearchRegionPath 0x491300 */
+	if (kp_s16v(c.region_count) <= 2) return kp_u32v(region_enemy_strength(g, p, src) + region_enemy_strength(g, p, dst));
+	for (k = 0; k < kp_s16v(c.region_count); k++) {
+		int64_t s = region_enemy_strength(g, p, c.regions[k]);
+		if (*target == dst) {
+			if (k >= STAGING_BACK && kp_region_tiles(g, c.regions[k - STAGING_BACK]) >= STAGING_TILES) *staging = c.regions[k - STAGING_BACK];
+			if (s != 0) *target = c.regions[k];
+		}
+		total = kp_u32v(total + s);
+	}
+	return total;
+}
+
+/* ChooseEnemyBaseRoute 0x496320: over the enemies' resource depots at a start area, the target region and staging of
+ * the cheapest route from region src (the nearest area across groups or owners, the cheaper for the same owner);
+ * NO_REGION for a lone, strongly defended enemy start early in the game. */
+static int64_t enemy_base_route(KpGame *g, int64_t p, int64_t src, int64_t *staging_out)
+{
+	int64_t cx, cy, n, best_cost = WEAKEST_START, best_d = WEAKEST_START, best_owner = -1, best_area = 0, count = 0;
+	int64_t result = NO_REGION, staging = NO_REGION;
+	kp_ai_region_center(g, src, &cx, &cy); /* GetRegionCenter 0x481a30 */
+	for (n = g->lists[KP_LIST_ACTIVE].head; n != 0; n = g->u.next[n]) {
+		int64_t area, ax, ay, d, cost, target, stage;
+		if (kp_band(KP_DAT(g, units, special_ability_flags, g->u.type[n]), DAT_RESOURCE_DEPOT) == 0 || !kp_player_enemy_of(g, p, n)) continue;
+		area = kp_ai_start_area(g, n); /* FindStartAreaForResource 0x4955b0 */
+		if (area == 0) continue;
+		count++;
+		ax = kp_s16v(g->areas.x[area]);
+		ay = kp_s16v(g->areas.y[area]);
+		d = kp_u32v(kp_approx_distance(cx - ax, cy - ay));
+		cost = route_strength(g, p, src, kp_band(kp_region_at(g, ax, ay), 0xffff), &target, &stage);
+		if (cost == ROUTE_NONE) continue;
+		if ((cost != ROUTE_OTHER_GROUP && g->u.owner[n] == best_owner) ? cost > best_cost : d >= best_d) continue;
+		best_owner = g->u.owner[n];
+		best_cost = cost;
+		result = target;
+		staging = stage;
+		best_d = d;
+		best_area = area;
+	}
+	*staging_out = staging;
+	if (count < 2 && best_cost > LONE_BASE_COST && kp_u32v(kp_scalar(g, KP_ELAPSED)) < LONE_BASE_SECONDS && best_area != 0
+		&& g->areas.start[best_area] != 0) return NO_REGION;
+	return result;
+}
+
+void kp_ai_plan_expansion_attack(KpGame *g, int64_t p)
+{
+	KpPlayerAi *pai = &g->pai;
+	int64_t area, src, target, staging = NO_REGION;
+	/* HasPendingExpansionAttack 0x483390 */
+	if (pai->expansion_attacks[p] == 0 || kp_band(pai->flags[p], KP_AIF_TARGET_EXPANSION) == 0) return;
+	if (!roster_complete(g, p) || kp_ai_attack_active(g, p)) return;
+	area = kp_ai_nearest_area(g, p, 0, 0); /* FindNearestArea 0x496bf0: a non-campaign player's start area */
+	src = kp_band(kp_region_at(g, kp_s16v(g->areas.x[area]), kp_s16v(g->areas.y[area])), 0xffff);
+	target = enemy_base_route(g, p, src, &staging);
+	if (target == NO_REGION || staging == NO_REGION) return;
+	set_grouping(g, p, staging, 1); /* SetAttackGrouping 0x483a60 */
+	kp_ai_set_region_state(g, p, staging, KP_RSTATE_GATHER); /* SetRegionState 0x4ab900 */
+	g->air.dest[p][staging] = target;
+	pai->flags[p] = kp_band(pai->flags[p], kp_bnot(KP_AIF_TARGET_EXPANSION)); /* UseExpansionAttack 0x4834d0 */
+	if (pai->expansion_attacks[p] != 0) pai->expansion_attacks[p]--;
 }
 
 /* The flags PrepareAttack 0x4af300 tests for a roster entry: the byte at 0x52165c + entry * 4, the type's special

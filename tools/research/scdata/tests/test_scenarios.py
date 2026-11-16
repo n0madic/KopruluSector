@@ -141,14 +141,13 @@ class TriggersTest(unittest.TestCase):
         struct.pack_into("<I", bad, trig.ACTIONS_OFFSET + 0x14, 0x100)
         with self.assertRaises(ValueError):
             trig.validate(bytes(bad))
-        # outside the V1 profile: Opponents, Modify Unit Resource Amount and Modify Unit Hangar Count
+        # Opponents, Modify Unit Resource Amount and Modify Unit Hangar Count are the game's since phase M's stage M2
         for at, kind in ((0x0f, trig.CONDITION_IDS["opponents"]),
                          (trig.ACTIONS_OFFSET + 0x1a, trig.ACTION_IDS["modify_unit_resource_amount"]),
                          (trig.ACTIONS_OFFSET + 0x1a, trig.ACTION_IDS["modify_unit_hangar_count"])):
-            bad = bytearray(good)
-            bad[at] = kind
-            with self.assertRaisesRegex(ValueError, "outside the V1 profile"):
-                trig.validate(bytes(bad))
+            ok = bytearray(good)
+            ok[at] = kind
+            trig.validate(bytes(ok))
         # entries the runners never reach stay as the map has them: ignored ones and those after the end
         unreached = bytearray(good)
         unreached[0x0f] = 24

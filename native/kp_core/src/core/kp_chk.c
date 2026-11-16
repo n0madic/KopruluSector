@@ -10,14 +10,19 @@
 #include "kp_sha256.h"
 
 #define CHUNK_HEADER 8
-#define ROW_SIZE 19 /* chk.LOADER_ROW: tag[4], required, reads, vcod, u32 eq, u32 max, u32 multiple */
-#define ROW_REQUIRED 4
-#define ROW_READS 5
-#define ROW_VCOD 6
-#define ROW_EQ 7
-#define ROW_MAX 11
-#define ROW_MULTIPLE 15
+#define ROW_SIZE 21 /* chk.LOADER_ROW: tag[4], group, required, reads, vcod, repeat, u32 eq, u32 max, u32 multiple */
+#define ROW_GROUP 4
+#define ROW_REQUIRED 5
+#define ROW_READS 6
+#define ROW_VCOD 7
+#define ROW_REPEAT 8
+#define ROW_EQ 9
+#define ROW_MAX 13
+#define ROW_MULTIPLE 17
 #define NO_LIMIT 0xffffffffu
+/* chk.GROUPS and chk.REPEATS */
+enum { GROUP_HEADER, GROUP_BRIEFING, GROUP_MELEE, GROUP_UMS };
+enum { REPEAT_NONE, REPEAT_LAST, REPEAT_OVER };
 #define ERA_MAX_WITHOUT_EXPANSION 4
 
 typedef struct {
@@ -25,10 +30,11 @@ typedef struct {
 	uint32_t header, size;
 } Chunk;
 
-/* The profile's CHKL: the descriptor of a version (its rows), the ignored tags, the VCOD digest. */
+/* The profile's CHKL: the descriptor of a version (its rows), the ignored tags, the VCOD digest; the load's groups. */
 typedef struct {
 	const uint8_t *rows, *ignored, *vcod;
 	int row_count, ignored_count, expansion_required, found;
+	unsigned groups; /* 1 << GROUP_* */
 } Tables;
 
 static int fail(char *err, size_t err_size, const char *what)
@@ -73,11 +79,18 @@ static int tables_of(const uint8_t *t, size_t n, uint32_t version, Tables *out)
 	return 0;
 }
 
+/* A row of the load's groups, or NULL past the last */
+static const uint8_t *load_row(const Tables *t, int r)
+{
+	const uint8_t *row = t->rows + r * ROW_SIZE;
+	return (t->groups >> row[ROW_GROUP]) & 1u ? row : NULL;
+}
+
 static int row_reads(const Tables *t, const char *tag)
 {
 	int r;
 	for (r = 0; r < t->row_count; r++)
-		if (memcmp(t->rows + r * ROW_SIZE, tag, 4) == 0) return 1;
+		if (load_row(t, r) && memcmp(t->rows + r * ROW_SIZE, tag, 4) == 0) return 1;
 	return 0;
 }
 
@@ -128,9 +141,27 @@ static int check_payload(const Chunk *ch, const uint8_t *row, const uint8_t *bod
 	return 0;
 }
 
-static int read_chunks(KpChk *c, const uint8_t *data, size_t size, const KpDefsProfile *profile, int expansion,
-	const Chunk *chunks, int chunk_count, char *err, size_t err_size)
+/* A repeat laid over the earlier chunks: the longest chunk's size, each chunk copied over in file order */
+static int lay_over(KpChkSection *s, const uint8_t *data, const Chunk *chunks, int chunk_count, char *err,
+	size_t err_size)
 {
+	uint32_t most = 0;
+	int k;
+	for (k = 0; k < chunk_count; k++)
+		if (memcmp(chunks[k].tag, s->tag, 4) == 0 && chunks[k].size > most) most = chunks[k].size;
+	if (!s->owned && !(s->owned = (uint8_t *)malloc(most ? most : 1))) return fail(err, err_size, "out of memory");
+	for (k = 0; k < chunk_count; k++)
+		if (memcmp(chunks[k].tag, s->tag, 4) == 0)
+			memcpy(s->owned, data + chunks[k].header + CHUNK_HEADER, chunks[k].size);
+	s->data = s->owned;
+	s->size = most;
+	return 0;
+}
+
+static int read_chunks(KpChk *c, const uint8_t *data, size_t size, const KpDefsProfile *profile, int expansion,
+	KpChkLoad load, const Chunk *chunks, int chunk_count, char *err, size_t err_size)
+{
+	int game = load != KP_CHK_CAMPAIGN;
 	const KpDefsTable *table = profile ? kp_defs_table(profile, "CHKL") : NULL;
 	const Chunk *version_chunk = NULL;
 	const KpChkSection *era;
@@ -153,6 +184,10 @@ static int read_chunks(KpChk *c, const uint8_t *data, size_t size, const KpDefsP
 	c->version = (uint16_t)kp_le_u16(data + version_chunk->header + CHUNK_HEADER);
 	if (tables_of(table->data, table->size, c->version, &t) != 0)
 		return fail(err, err_size, "the profile's CHK loader tables are malformed");
+	/* 0x469970: the melee group, or use map settings with the briefing; LoadMapHeader 0x46b5c0 the header alone */
+	t.groups = 1u << GROUP_HEADER
+		| (load == KP_CHK_HEADER ? 0u
+			: load == KP_CHK_MELEE ? 1u << GROUP_MELEE : 1u << GROUP_BRIEFING | 1u << GROUP_UMS);
 	if (!t.found) {
 		snprintf(err, err_size, "CHK version %u has no native loader descriptor; the original preflight rejects it",
 			(unsigned)c->version);
@@ -162,30 +197,33 @@ static int read_chunks(KpChk *c, const uint8_t *data, size_t size, const KpDefsP
 		snprintf(err, err_size, "CHK version %u requires Brood War", (unsigned)c->version);
 		return -1;
 	}
-	for (k = 0; k < chunk_count; k++)
+	for (k = 0; k < chunk_count && !game; k++)
 		if (!row_reads(&t, chunks[k].tag) && !ignored(&t, chunks[k].tag)) {
 			snprintf(err, err_size, "section '%s' is neither read by the version %u loader nor allowlisted", chunks[k].tag,
 				(unsigned)c->version);
 			return -1;
 		}
 	for (r = 0; r < t.row_count; r++) {
-		const uint8_t *row = t.rows + r * ROW_SIZE;
-		if (row[ROW_REQUIRED] && occurrences(chunks, chunk_count, row) == 0) {
+		const uint8_t *row = load_row(&t, r);
+		if (row && row[ROW_REQUIRED] && occurrences(chunks, chunk_count, row) == 0) {
 			snprintf(err, err_size, "missing required section '%.4s' (version %u)", (const char *)row,
 				(unsigned)c->version);
 			return -1;
 		}
 	}
 	for (r = 0; r < t.row_count; r++) {
-		const uint8_t *row = t.rows + r * ROW_SIZE;
-		if (occurrences(chunks, chunk_count, row) > 1) {
+		const uint8_t *row = load_row(&t, r);
+		if (row && occurrences(chunks, chunk_count, row) > 1 && !(game && row[ROW_REPEAT] != REPEAT_NONE)) {
 			snprintf(err, err_size, "duplicate section '%.4s' (outside the supported corpus)", (const char *)row);
 			return -1;
 		}
 	}
 	/* 0x4c12e0: table order outer, chunk order inner; a tag two groups read keeps its first place */
 	for (r = 0; r < t.row_count; r++) {
-		const uint8_t *row = t.rows + r * ROW_SIZE;
+		const uint8_t *row = load_row(&t, r);
+		int seen = 0, repeats;
+		if (!row) continue;
+		repeats = occurrences(chunks, chunk_count, row);
 		for (k = 0; k < chunk_count; k++) {
 			const Chunk *ch = &chunks[k];
 			const uint8_t *body;
@@ -205,6 +243,10 @@ static int read_chunks(KpChk *c, const uint8_t *data, size_t size, const KpDefsP
 			}
 			s->data = body;
 			s->size = ch->size;
+			/* once every chunk of the tag is bounded and checked */
+			if (++seen == repeats && repeats > 1 && row[ROW_REPEAT] == REPEAT_OVER
+				&& lay_over(s, data, chunks, chunk_count, err, err_size) != 0)
+				return -1;
 		}
 	}
 	if (!(era = kp_chk_section(c, "ERA ")) || era->size != 2) return fail(err, err_size, "the scenario has no ERA");
@@ -215,8 +257,21 @@ static int read_chunks(KpChk *c, const uint8_t *data, size_t size, const KpDefsP
 	return 0;
 }
 
+void kp_chk_free(KpChk *c)
+{
+	int k;
+	for (k = 0; k < c->count; k++) free(c->sections[k].owned);
+	memset(c, 0, sizeof *c);
+}
+
 int kp_chk_read(KpChk *c, const uint8_t *data, size_t size, const KpDefsProfile *profile, int expansion, char *err,
 	size_t err_size)
+{
+	return kp_chk_load(c, data, size, profile, expansion, KP_CHK_CAMPAIGN, err, err_size);
+}
+
+int kp_chk_load(KpChk *c, const uint8_t *data, size_t size, const KpDefsProfile *profile, int expansion,
+	KpChkLoad load, char *err, size_t err_size)
 {
 	uint64_t header = 0; /* in 64 bits: a 32-bit size_t would wrap past a chunk's 2 GB */
 	int count = 0, rc;
@@ -242,8 +297,12 @@ int kp_chk_read(KpChk *c, const uint8_t *data, size_t size, const KpDefsProfile 
 		ch->size = kp_le_u32(data + header + 4);
 		header += CHUNK_HEADER + (uint64_t)ch->size;
 	}
-	rc = read_chunks(c, data, size, profile, expansion, chunks, count, err, err_size);
+	rc = read_chunks(c, data, size, profile, expansion, load, chunks, count, err, err_size);
 	free(chunks);
-	if (rc != 0) memset(c, 0, sizeof *c);
+	if (rc != 0) {
+		uint16_t version = c->version;
+		kp_chk_free(c);
+		c->version = version;
+	}
 	return rc;
 }

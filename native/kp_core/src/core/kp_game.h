@@ -444,8 +444,9 @@ enum {
 	KP_EVENT_TRIGGER_WAV = 7,      /* a = the WAV's string id (PlayStreamedSoundFile 0x49e810) */
 	KP_EVENT_PORTRAIT = 8,         /* a = unit type, b = milliseconds, c = the unit or 0 (ShowTriggerPortrait 0x4a7320) */
 	KP_EVENT_MINIMAP_PING = 9,     /* a = x, b = y, c = color (AddMinimapPing 0x46e8f0) */
-	KP_EVENT_CAMERA = 10,          /* a = x, b = y of the screen's top-left (StartCameraPan 0x49be10); c = 1: the pan
-	                                * ends (EndCameraPan 0x49be50) */
+	KP_EVENT_CAMERA = 10,          /* a = x, b = y of the screen's top-left: c = KP_CAMERA_PAN the pan starts
+	                                * (StartCameraPan 0x49be10), KP_CAMERA_END it ends (EndCameraPan 0x49be50),
+	                                * KP_CAMERA_SET the screen moves there at once (SetScreenPosition 0x40b450) */
 	KP_EVENT_TRIGGER_PAUSE = 11,   /* a = 1 a trigger paused the game, 0 it resumed it (0x4b6020, 0x4b6080) */
 	KP_EVENT_QUIET = 12,           /* a = 1 unit speech muted, 0 unmuted (0x446930, 0x446fd0) */
 	KP_EVENT_TRIGGER_SKIP = 13,    /* Escape skipped the transmissions: the streamed sounds, the portrait and the
@@ -488,8 +489,22 @@ enum {
 	KP_EVENT_CURSOR_MODES = 24,
 	/* ExecPauseGame 0x472c70 / ExecResumeGame 0x472be0 (commands 0x10 and 0x11, a replay's game menu): a = 1 paused, 0
 	 * resumed, b = the issuing player; the grey palette and the network line 0x39 / 0x3a are the interface's */
-	KP_EVENT_COMMAND_PAUSE = 25
+	KP_EVENT_COMMAND_PAUSE = 25,
+	/* A player's network message, shown as a timed message (DisplayTimedMessage 0x46ac90): a = the rez\network.tbl
+	 * string, its %s the name in player b's record, its %d c. Capture the Flag's (ShowFlagCapturedMessage 0x421650,
+	 * ShowFlagReturnedMessage 0x4216e0, ShowFlagTakenMessage 0x421760), a defeat's (AnnouncePlayerDefeat 0x4bd4a0) and a
+	 * player leaving a replay (HandlePlayerLeftGame 0x477a60) */
+	KP_EVENT_PLAYER_MESSAGE = 26,
+	/* A chat command 0x5c (DisplayChatMessage 0x46a860): a = the sender's record (a byte), b = 1 from a replay's
+	 * blocks (the original's normal format), 0 from the live turns; the text the message (up to 79 bytes) */
+	KP_EVENT_CHAT = 27,
+	/* A team game's network message with a force's name (GetForceName 0x4b2bf0, network.tbl 0x12 + the force: "Team
+	 * 1".."Team 4"), shown as a timed message: a = the rez\network.tbl string, b = the force. A defeat's
+	 * (AnnouncePlayerDefeat 0x4bd4a0) and Capture the Flag's (0x421650, 0x4216e0, 0x421760) */
+	KP_EVENT_FORCE_MESSAGE = 28
 };
+/* A camera event's c (KP_EVENT_CAMERA). */
+enum { KP_CAMERA_PAN = 0, KP_CAMERA_END = 1, KP_CAMERA_SET = 2 };
 /* A sound event's a (KP_EVENT_SOUND, KP_EVENT_SOUND_SCREEN, KP_EVENT_SOUND_UNIT): the sound in bits 0..15, the call's
  * minVolume in 16..23, its enable in 24..31 (KP_SOUND_ON, KP_SOUND_OPTION + k, KP_SOUND_OFF), then the talking
  * request that follows: when in 32..33 (KP_TALK_*), its camera flag in 34 and its colour byte in 40..47 (the duration
@@ -595,9 +610,26 @@ struct KpGame {
 	/* A replay's playback speed (SetReplaySpeed 0x481040, command 0x56): the multiplier 0x508e34 (1 at the start, and
 	 * always outside a replay) and the paused byte 0x67cc7c. Neither is saved: a replay has no saves. */
 	int64_t replay_multiplier, replay_paused;
+	/* 0x672985: a pause or a resume command ran in this turn; the turn's end cancels the cursor modes (ExecuteGameTurn
+	 * 0x4768a0 -> CancelCursorModes 0x448c20) and clears it, so it is 0 between turns */
+	int64_t turn_cancels_cursor;
+	/* The seat's own record 0x508d54 (its selection row, name and force; the local player 0x508d50 is the game player
+	 * it plays as, a team game's leader, SetupTeamGameSlots 0x4b2db0), and the record of the command running 0x508d48
+	 * (ExecuteGameTurn 0x4768a0: the issuer's selection row, groups and pauses; KP_COMMAND_PLAYER 0x508d44 is the game
+	 * player that owns and orders). They differ in a team game only. */
+	int64_t local_record, command_record;
 	/* The replay header's frame count 0x67cca1 and game speed 0x67ccda (the host sets them at the playback's start; 0
 	 * outside a replay): the progress and the elapsed time of the replay's panel (0x480e20, 0x480d70). */
 	int64_t replay_frames, replay_header_speed;
+	/* The music's rotation 0x503354 after LoadConsoleSkinAndPickMusic 0x443680 (StartGame 0x443f40's step 8; -1 none
+	 * yet): a custom game advances it (0, 1, 2), the session's first drawing it from the CRT generator the start has
+	 * just seeded, before the units' creep draws theirs. The interface picks the game's music track by it; the next
+	 * game takes it (KpCarry). */
+	int64_t music_rotation;
+	/* The local player's slot the briefing saw (0x512684 while the briefing runs, before StartGame 0x443f40's slot
+	 * steps move the local human): a lobby's local slot, else the local player. Its Set Mission Objectives write
+	 * there (kp_briefing_objectives). */
+	int64_t briefing_player;
 
 	int64_t scalar[KP_SCALAR_COUNT];
 	uint8_t scalar_present[KP_SCALAR_COUNT];
@@ -672,6 +704,10 @@ struct KpGame {
 	KpAiScratch ai_scratch;
 	KpTriggers trig;
 	int64_t results[8]; /* the committed results 0x5349e0 (0 none, 1 dropped, 2 defeated, 3 victory, 4 ignore defeat, 5 draw) */
+	/* a network game's pauses left 0x5349f8 (3 each at a new game's start, ResetPauseCounts 0x47cb90; a pause command spends
+	 * one, DecrementPauseCount 0x47cc60): a single player's are never spent */
+	int64_t pauses[8];
+	KpGameSetup setup; /* the start's (KpStartInput.setup, or the campaign's): what its later reads see */
 };
 
 KpGame *kp_game_new(KpImages *w, KpRngGame *rng);
@@ -961,7 +997,8 @@ int kp_event_peek(KpGame *g, int64_t index, KpEvent *out);
 /* The sequence number of the last event appended. */
 int64_t kp_event_sequence(KpGame *g);
 /* The local player's error notification (0x46ae50) and a unit that could not be placed (KP_EVENT_UNIT_UNPLACED), as
- * events. */
+ * events. kp_error_is_local is 0x46ae50's gate: player is the local player and the command's record the seat's. */
+int kp_error_is_local(KpGame *g, int64_t player);
 void kp_report_error(KpGame *g, int64_t player, int64_t id);
 void kp_report_error_sound(KpGame *g, int64_t player, int64_t sound, int64_t id);
 void kp_report_unplaced(KpGame *g, int64_t t, int64_t x, int64_t y);
@@ -1022,7 +1059,7 @@ const KpDumpField *kp_dump_fields(int *count);
  * leaves the game unchanged when it refuses the save. *out is malloc'd. A save loads only in a build of its version:
  * a change of the walk raises it (tests/c/test_save.c's save_schema_matches_its_version), and there are no
  * migrations (ADR 0021). */
-#define KP_SAVE_VERSION 3
+#define KP_SAVE_VERSION 5
 #define KP_SAVE_NAME 256
 int kp_save(KpGame *g, const char *mission, const char *data, uint8_t **out, size_t *size, KpError *err);
 int kp_load(KpGame *g, const uint8_t *bytes, size_t size, const char *mission, const char *data, KpError *err);
@@ -1053,6 +1090,21 @@ uint64_t kp_save_schema(void);
 #define KP_HASH_VERSION 2
 typedef void (*KpSectionHash)(void *ud, const char *tag, uint64_t hash, size_t bytes);
 int kp_state_hash(KpGame *g, KpSectionHash each, void *ud, uint64_t *total);
+/* The shared state hash (kp_save.c; phase M, stage M6, ADR 0025): the state every seat of one game has the same, so two
+ * seats' hashes differ only when their simulations diverged. The same walk as kp_state_hash's without the seat's state
+ * (the walk's seat fields, KpStateRange.seat: the local selection and its circles' colours, the screen, the placement,
+ * the CRT generator, the remembered terrain and the creep shown, the images' bounds the seat's redraw refreshes, the
+ * unit query's marks, the requirement evaluator's last error and offsets cache, which the interface's queries and
+ * checks write too, the VIEW section), with the bits of a mixed field that
+ * are the seat's masked (a tile's creep shown 0x40000000, a creep tile's variant, a sprite's selection bits 0x0f), and
+ * the images world in a canonical order instead of its slots: the sprites of the rows (in their order) but the fog
+ * ghosts' and the placement cursor's, each with its images but the selection pools' (health bars, circles, placement
+ * ghosts and boxes), every sprite reference (a unit's, a lone thingy's, a sprite's main image) by its place in that
+ * order, the free lists left out (a fog ghost takes a sprite and images from the shared pools, as the original's does).
+ * each(ud, tag, hash, bytes) per section of the walk (NULL: none; the bytes hashed, not the save's), *out (NULL: none)
+ * the fold of all but VIEW. At a step boundary, as kp_state_hash. -1 out of memory. */
+#define KP_SHARED_HASH_VERSION 1
+int kp_shared_hash(KpGame *g, KpSectionHash each, void *ud, uint64_t *out);
 /* In-process snapshots of the state the save walks (the arrays as they are; never written to a file nor taken to
  * another build): the size of the game's snapshot, the snapshot into the caller's buffer of size bytes, and the
  * restore of one into a game of the same mission, which checks the snapshot's header and size against the game before
@@ -1063,11 +1115,11 @@ int kp_snapshot(KpGame *g, uint8_t *buf, size_t size, KpError *err);
 int kp_restore(KpGame *g, const uint8_t *buf, size_t size, KpError *err);
 /* The walk's visits as the game's snapshot places them (the dump's coverage, tests/c/test_save.c): each one's section
  * tag, its name (the expression kp_save.c's walk gives it, with the call's line: a field's elements walked in a loop
- * share both), its bytes in the snapshot and their element's size (an int64_t array's 8). *out is malloc'd; -1 out of
- * memory. */
+ * share both), its bytes in the snapshot, their element's size (an int64_t array's 8) and whether the visit is the
+ * seat's (out of kp_shared_hash; tests/c/test_seats.c). *out is malloc'd; -1 out of memory. */
 typedef struct {
 	const char *tag, *name;
-	int line;
+	int line, seat;
 	size_t offset, bytes, elem;
 } KpSnapshotField;
 int kp_snapshot_fields(KpGame *g, KpSnapshotField **out, size_t *count);
@@ -1080,6 +1132,7 @@ enum { KP_STATE_GAME, KP_STATE_WORLD, KP_STATE_RNG, KP_STATE_BASES };
 enum { KP_STATE_SAVED, KP_STATE_DERIVED, KP_STATE_STATIC, KP_STATE_VIEW, KP_STATE_HOST, KP_STATE_PADDING };
 typedef struct {
 	int base, klass;
+	int seat; /* KP_STATE_SAVED: the seat's (saved, out of the shared hash: kp_shared_hash) */
 	size_t offset, bytes, align;
 	const char *name;
 } KpStateRange;
@@ -1213,8 +1266,9 @@ int32_t kp_carried_image(KpImages *w, int32_t s);
 int64_t kp_remove_cargo_images(KpGame *g, int64_t n);
 int64_t kp_nearest_depot(KpGame *g, int64_t w);
 
-/* kp_larva.c */
+/* kp_larva.c; kp_larva_spawn_start is SpawnStartLarva 0x47e020 of a melee start's Hatchery */
 void kp_secondary_spawning_larva(KpGame *g, int64_t p);
+void kp_larva_spawn_start(KpGame *g, int64_t hatchery);
 void kp_order_larva(KpGame *g, int64_t n);
 void kp_order_zerg_unit_morph(KpGame *g, int64_t n);
 void kp_order_zerg_birth(KpGame *g, int64_t n);
@@ -1222,6 +1276,12 @@ void kp_order_zerg_birth(KpGame *g, int64_t n);
 /* kp_powerup.c */
 void kp_order_powerup_idle(KpGame *g, int64_t p);
 void kp_order_powerup_return(KpGame *g, int64_t p);
+/* kp_ctf.c: Capture the Flag's beacons and messages */
+void kp_order_ctfcop_init(KpGame *g, int64_t n);
+void kp_order_ctfcop_started(KpGame *g, int64_t n);
+void kp_order_ctfcop2(KpGame *g, int64_t n);
+void kp_ctf_flag_taken(KpGame *g, int64_t p);
+void kp_ctf_flag_returned(KpGame *g, int64_t p);
 void kp_drop_powerup(KpGame *g, int64_t w);
 void kp_destroy_worker_cargo(KpGame *g, int64_t w);
 
@@ -1276,6 +1336,7 @@ void kp_command_build(KpGame *g, int64_t player, int64_t order, int64_t tx, int6
 int64_t kp_find_attachable_addon(KpGame *g, int64_t b);
 int kp_facing_waypoint(KpGame *g, int64_t n);
 void kp_worker_error(KpGame *g, int64_t n, int64_t string);
+void kp_worker_placement_error(KpGame *g, int64_t n, int64_t string);
 void kp_cannot_land_voice(KpGame *g, int64_t n);
 void kp_construction_voice(KpGame *g, int64_t n);
 void kp_site_tile(KpGame *g, int64_t t, int64_t x, int64_t y, int64_t *tx, int64_t *ty);
@@ -1329,7 +1390,7 @@ void kp_order_nuke_unit(KpGame *g, int64_t n);
 void kp_order_nuke_track(KpGame *g, int64_t n);
 void kp_ghost_drop_dot(KpGame *g, int64_t n);
 void kp_order_nuke_launch(KpGame *g, int64_t n);
-void kp_command_cancel_nuke(KpGame *g, int64_t player);
+void kp_command_cancel_nuke(KpGame *g);
 /* A Nuclear Missile or Silo, whose links TeardownUnitTypeLinks 0x4253a0 undoes (kp_nuke_teardown). */
 int kp_nuke_linked_type(int64_t t);
 void kp_nuke_teardown(KpGame *g, int64_t n);
@@ -1380,6 +1441,21 @@ void kp_update_pending_units(KpGame *g);
 
 /* kp_selection.c */
 void kp_selection_init(KpGame *g);
+/* RefreshAllianceColors 0x41d7b0 (the start's, an alliance change of the local player's): the selection circles'
+ * colours from the local player's alliances, the local selection's circles redrawn in them (a team game's allied
+ * rows' dashed circles too). */
+void kp_refresh_alliance_colors(KpGame *g);
+/* A team game's dashed circles of the allied selections (IsTeamAllySelectionRow 0x49c2b0: the rows of the seat's
+ * force's other humans): at most kp_ally_circle_cap (GetTeamSize 0x4b2b10 less one) per sprite; RestoreSelectionOverlays
+ * 0x416e20's second step counts them again from the rows after a save. */
+int32_t kp_ally_circle_cap(KpGame *g);
+void kp_restore_ally_circles(KpGame *g);
+/* 0x422eb0: unit n's circle and health bar in local selection slot `slot`, a subunit's on its parent, which takes the
+ * slot. */
+void kp_reselect_slot(KpGame *g, int64_t n, int64_t slot);
+/* ClearSelectionRow 0x49c7d0: record p's selection (0..7; others have none) emptied, an allied row's dashed circles one
+ * less. */
+void kp_clear_selection_row(KpGame *g, int64_t p);
 void kp_command_control_group(KpGame *g, int64_t p, int64_t action, int64_t group);
 void kp_command_select_remove(KpGame *g, int64_t p, const int64_t *refs, int count);
 void kp_command_select_add(KpGame *g, int64_t p, const int64_t *refs, int count);
@@ -1398,8 +1474,20 @@ int kp_selected_units(KpGame *g, int64_t p, int64_t *out);
 void kp_group_formation(KpGame *g, int64_t x, int64_t y, int adjust, KpFormation *f);
 void kp_formation_point(KpGame *g, int64_t n, const KpFormation *f, int64_t *x, int64_t *y);
 
-/* kp_commands.c */
-void kp_execute_command(KpGame *g, int64_t player, const uint8_t *bytes, size_t size);
+/* kp_network.c: ClearAlliedOrderTargets 0x4721c0 (player p's units drop a weapon target that is no longer an enemy),
+ * ExecAlliance 0x4731d0 (when the game allows alliances, player's twelve stances from two bits each, the colours
+ * refreshed, its allied targets dropped), ExecSharedVision 0x473280 (player's vision shared with the slots of mask's
+ * low byte when it may share with each) and ExecLeaveGame 0x472da0 (in a replay only, HandlePlayerLeftGame 0x477a60:
+ * the message, the player leaves the triggers and retires, its selection empties; the reason, a byte in a replay, is
+ * never the dropped one 0x40000006). */
+void kp_clear_allied_targets(KpGame *g, int64_t p);
+void kp_command_alliance(KpGame *g, int64_t player, uint32_t stances);
+void kp_command_vision(KpGame *g, int64_t player, int64_t mask);
+void kp_command_leave(KpGame *g, int64_t player);
+
+/* kp_commands.c: a command of the issuer's record (a turn's KpCommand.player: the seat's record, 0x508d48), which plays
+ * as its game player (KP_COMMAND_PLAYER 0x508d44, kp_setup_record_player: a team game's leader). */
+void kp_execute_command(KpGame *g, int64_t record, const uint8_t *bytes, size_t size);
 /* FindUnitOfTypeAtPoint 0x418210: the unit of a remembered type that stands at a point (0 for none). */
 int64_t kp_fog_unit(KpGame *g, int64_t x, int64_t y, int64_t type);
 /* OrderRightClickAction 0x431200 (order 133). */
@@ -1416,22 +1504,33 @@ void kp_step_objects(KpGame *g);
 void kp_prime(KpGame *g);
 void kp_step_frame(KpGame *g);
 void kp_run_frame(KpGame *g, const KpCommand *commands, int count);
+/* A network game's frame between its turns (PollTurn 0x444cc0 counts a turn's frames 0x666404[speed] down without the
+ * turn manager): RunPendingFrames 0x444e30's iteration without a turn, a paused game's flashes and triggers. */
+void kp_run_frame_between_turns(KpGame *g);
 
 /* kp_triggers.c: the trigger engine. kp_triggers_init resets its state (InitTriggerState 0x4be240) and expands the
  * mission's TRIG records into the player lists (0x4bdb00); kp_trigger_step is the scheduler of a frame (0x4be500)
  * and kp_paused_tick a frame of a paused game (RunPendingFrames 0x444e30: the flashes, then the scheduler). */
 void kp_triggers_init(KpGame *g, const KpMission *m, const KpCarry *carry);
+/* The player lists emptied (FreeAllTriggerLists 0x4be1d0) and filled again from size / 2400 records (0x4bdb00): a
+ * game type's victory triggers (SetupVictoryConditions 0x448530). */
+void kp_triggers_replace(KpGame *g, const uint8_t *records, size_t size);
 void kp_triggers_free(KpGame *g);
 void kp_trigger_step(KpGame *g);
 void kp_paused_tick(KpGame *g, const KpCommand *commands, int count);
+void kp_paused_frame(KpGame *g); /* kp_paused_tick after its turn */
 /* The Transmission's end (the portrait timer 0x4a7300 -> 0x4be3a0) and the Escape skip (0x4bda80) of the local
  * player, which the interface sends; kp_trigger_skippable tells whether a skip would end a trigger that still runs
  * (the interface's Escape does something else without one). */
 void kp_trigger_release_wait(KpGame *g);
 int kp_trigger_skippable(KpGame *g);
 void kp_trigger_skip(KpGame *g);
-/* The briefing's Set Mission Objectives (MBRF action 4, 0x44fdc0) before the game: the local player's objectives,
- * which carry into the mission. kp_briefing_lead is the string the briefing's first tick sets (Start pressed at once,
+/* PlayerDroppedFromGame 0x4be190 (dropped) and PlayerLeftGame 0x4be3e0: player p's trigger list goes (FreeTriggerList
+ * 0x4609c0; its copies stay in the arrays, unreachable) and, without a result yet, the player takes 1 (dropped) or 2
+ * (a defeat) and retires (RetirePlayer 0x4bd7a0). */
+void kp_trigger_player_left(KpGame *g, int64_t p, int dropped);
+/* The briefing's Set Mission Objectives (MBRF action 4, 0x44fdc0) before the game: the objectives of the slot the
+ * briefing saw as the local player's (g->briefing_player), which carry into the mission. kp_briefing_lead is the string the briefing's first tick sets (Start pressed at once,
  * as in the emulator's runs), 0 for none. */
 void kp_briefing_objectives(KpGame *g, int64_t string);
 /* The local player's briefing list (0x5082f8): its count and copy k, which the VM's flags +0x940 and index +0x95f
@@ -1441,12 +1540,19 @@ uint8_t *kp_briefing_record(KpGame *g, int64_t k);
 int64_t kp_briefing_lead(KpGame *g);
 /* kp_trigger_queries.c: the player selectors, the counters, the unit counts and the locations of the triggers. */
 int kp_trigger_player_active(KpGame *g, int64_t p);
+/* The active players in FirstActivePlayer 0x4b3160 / NextActivePlayer 0x4b3170's order (slots 0..7 by number; a team
+ * game's teams' leaders by force), their count. */
+int kp_trigger_active_players(KpGame *g, int64_t out[KP_PLAYERS]);
+/* The players a group selector's aggregators visit: the active players in that order, then slots 8..11. */
+int kp_trigger_candidates(KpGame *g, int64_t out[KP_PLAYERS]);
 int kp_trigger_group(int64_t selector);
 int kp_trigger_group_takes(KpGame *g, int64_t selector, int64_t p);
 int kp_trigger_players(KpGame *g, int64_t selector, int64_t *out);
 int64_t kp_trigger_owners(KpGame *g, int64_t selector);
 int64_t kp_trigger_resources(KpGame *g, int64_t selector, int64_t type);
 int64_t kp_trigger_score(KpGame *g, int64_t selector, int64_t type);
+/* CountOpponents 0x4ba060 summed over a selector's players (a group sums each direct owner's count) */
+int64_t kp_trigger_opponents(KpGame *g, int64_t selector);
 int64_t kp_trigger_deaths(KpGame *g, int64_t selector, int64_t unit);
 int64_t kp_trigger_kills(KpGame *g, int64_t selector, int64_t unit);
 void kp_trigger_set_resources(KpGame *g, int64_t selector, int64_t type, int64_t modifier, int64_t amount);
@@ -1874,6 +1980,12 @@ int kp_ai_place(KpGame *g, int64_t builder, int64_t id, int throttle, int64_t *o
 /* ProduceDefenseAnchors 0x496e10 (kp_ai_placement.c): the regions cutting the routes from region src to player p's
  * nearest enemies (at most limit cuts each). */
 void kp_ai_defense_anchors(KpGame *g, int64_t p, int64_t src, int64_t limit);
+/* ClaimTownTerritory 0x4979b0 (kp_ai_placement.c): a non-campaign town at (x, y) defends its region and the regions
+ * within depth ground steps of it (2 when no defense anchor cuts its routes), the anchors' far sides left out. */
+void kp_ai_claim_territory(KpGame *g, int64_t p, int64_t x, int64_t y, int64_t depth);
+/* DefendRouteCuts 0x4b0be0 (kp_ai_placement.c): the idle regions cutting the routes from (x, y) to each enemy's
+ * nearest unit become strongly defended. */
+void kp_ai_defend_route_cuts(KpGame *g, int64_t p, int64_t x, int64_t y);
 /* The areas' lookups (kp_ai_areas.c): the mineral field count 0x496f20 and geyser count 0x496f40, the reserved flag's
  * release 0x497380, FindNearestArea 0x496bf0 (0 none), FindFirstMineralInArea 0x4964b0, FindAreaGasObjects 0x496510
  * and the worker limit 0x496690 (with_gas) / 0x4966f0 of player p. */
@@ -1881,6 +1993,7 @@ int64_t kp_ai_area_minerals(KpGame *g, int64_t area);
 int64_t kp_ai_area_gas(KpGame *g, int64_t area);
 void kp_ai_area_release(KpGame *g, int64_t area);
 int64_t kp_ai_nearest_area(KpGame *g, int64_t p, int64_t x, int64_t y);
+int64_t kp_ai_start_area(KpGame *g, int64_t n); /* FindStartAreaForResource 0x4955b0: resource n's area, 0 none */
 /* TryReserveArea 0x497360 and ChooseExpansionArea 0x4970e0 (kp_ai_areas.c; 0 none). */
 int kp_ai_area_reserve(KpGame *g, int64_t area);
 /* IsRouteInteriorSafe 0x496ac0 (kp_ai_areas.c). */
@@ -1949,6 +2062,9 @@ void kp_ai_send_suicide(KpGame *g, int64_t p, int mode);
 void kp_ai_evaluate_attacks(KpGame *g);
 void kp_ai_attack_clear(KpGame *g, int64_t p, int timestamp);
 int kp_ai_attack_active(KpGame *g, int64_t p);
+/* PlanExpansionAttack 0x4aa8f0 (kp_ai_military.c): a non-campaign player with an expansion attack left and its roster
+ * ready groups for the enemy base its route reaches through the weakest regions. */
+void kp_ai_plan_expansion_attack(KpGame *g, int64_t p);
 /* A group's moves (kp_ai_military.c): GetGroupSlowestUnit 0x4afaf0, FollowerIsReady 0x4b09c0, LeaderShouldWait
  * 0x4aff20, GroupHasPendingPickup 0x4afec0 and RejoinAssignedRegion 0x4b0e10. */
 int64_t kp_ai_group_slowest(KpGame *g, int64_t n);
@@ -1991,6 +2107,16 @@ int64_t kp_region_tiles(KpGame *g, int64_t r);
 void kp_ai_choose_unload(KpGame *g, int64_t n);
 /* MarkDefenseRegion 0x4b0030 (kp_ai.c). */
 void kp_ai_mark_defense_region(KpGame *g, int64_t p, int64_t r, int strong);
+/* DisplayChatMessage 0x46a860 (kp_commands.c): sound 23 and KP_EVENT_CHAT (a = sender, b = normal: 1 for a replay's
+ * record of a chat, 0 for a live chat or an AI script's debug text); the interface formats and shows the line. */
+void kp_chat_display(KpGame *g, const char *text, int64_t sender, int normal);
+/* The defense requests of the AI scripts (kp_ai.c): MarkBunkerRegions 0x4ade10 and MarkTurretRegions 0x4aded0 (a
+ * guarded region without its owner's unit of type t takes flag; the first stops at three, the second at six, the
+ * bunkers' only in regions with a base), AreBunkerRequestsDone 0x4b05c0 / AreTurretRequestsDone 0x4b0600 (no region
+ * flagged) and ImplodeRegions 0x4ad430. */
+void kp_ai_request_defenses(KpGame *g, int64_t p, int64_t t, int64_t flag, int64_t most, int need_base);
+int kp_ai_defense_requests_done(KpGame *g, int64_t p, int64_t flag);
+void kp_ai_implode(KpGame *g, int64_t p);
 /* CaptainExpand 0x4ad310 (capt_expand; kp_ai.c). */
 void kp_ai_captain_expand(KpGame *g, int64_t p);
 void kp_ai_gather_split(KpGame *g, int64_t p, int64_t *mineral_percent, int64_t *gas_percent);

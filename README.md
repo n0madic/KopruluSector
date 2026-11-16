@@ -2,7 +2,8 @@
 
 A from-scratch reimplementation of the single-player game of **StarCraft + Brood War 1.17**, written in C over SDL3.
 It plays the six original campaigns (Terran, Zerg, Protoss and the three Brood War ones, 64 missions) from the first
-mission to the epilog, on your own copy of the original data.
+mission to the epilog, and Play Custom's games against computers on melee and Use Map Settings maps, with their replays,
+on your own copy of the original data.
 
 - **Faithful to 1.17.0.1.** The simulation, triggers, AI scripts, fog of war and interface follow the original
   executable. They are checked against the original game, which runs in an emulator, step by step. See
@@ -16,7 +17,8 @@ mission to the epilog, on your own copy of the original data.
 - **Every platform:** macOS, Windows, Linux, Android, iOS and the web (WebAssembly). Phones have touch controls and
   zoom.
 
-Not included: multiplayer, Battle.net, replays and custom (UMS) maps.
+Not included: network play and Battle.net. The simulation already runs a network game's rules: several players' seats
+of one game share its state in one process (a development mode, [phase M](docs/phase-multiplayer.md)).
 
 > **No game data is included.** This repository holds only code and its own definitions. You need a legal copy of
 > StarCraft: Brood War 1.17.0.1 or StarCraft: Remastered. The game reads it on your machine, from the install itself
@@ -250,7 +252,8 @@ builds whose saved state differs: the load screen says that such a save is of an
 ## Status
 
 All 64 campaign missions can be played and won. Each one's state matches the original game, which runs in an
-emulator. The details are in [docs/implementation-status.md](docs/implementation-status.md), the decisions are in
+emulator, and so do the custom games against computers and the public replays recorded before 1.21
+([docs/compatibility.md](docs/compatibility.md)). The details are in [docs/implementation-status.md](docs/implementation-status.md), the decisions are in
 [docs/adr/](docs/adr/) and the reverse-engineering notes are in [docs/research/](docs/research/).
 
 Known gaps:
