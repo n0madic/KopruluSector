@@ -18,10 +18,12 @@ Written to <out>/ (koprulu-private/emu/net/<game>/, never committed):
 - lan.pcap, lan.jsonl: every datagram (the coordinator, lan.VirtualLan);
 - net.json: the game, each player's result, the rounds, the comparison of the players' frame digests and state dumps;
 - <player>/: trace.jsonl (frame digests), snet.jsonl (the exe's calls of Storm's SNet functions: arguments, results,
-  outputs), turns.jsonl (the turns sent and received with their commands; 0x05 keep-alive and 0x37 sync split out),
-  screens/ (each glue screen 1.5 s after it settled, uiscreen.install; lobby-*.cap at the driver's moments), states/
-  (state.install's dumps), the oracle's logs (scenario.install_logs: commands, ui, triggers, ai, input), setup.json,
-  player.json, run.log.
+  outputs, SNetInitializeProvider's program data, SNetCreateLadderGame's template; the events Storm gives the exe's
+  handlers; each pass of Storm's network thread and of SNetJoinGame with the datagrams it took, the network thread's
+  with its signal and its next wait; each record's order of entry and depth of nesting), turns.jsonl (the turns sent
+  and received with their commands; 0x05 keep-alive and 0x37 sync split out), screens/ (each glue screen 1.5 s after
+  it settled, uiscreen.install; lobby-*.cap at the driver's moments), states/ (state.install's dumps), the oracle's
+  logs (scenario.install_logs: commands, ui, triggers, ai, input), setup.json, player.json, run.log.
 """
 from __future__ import annotations
 
@@ -91,6 +93,19 @@ SNET = {
 }
 # polled every loop: logged only when they succeed and their record changed
 SNET_POLLED = {107, 109, 112, 113, 114, 115, 121, 122, 144}
+# what differs between two records of one unchanged poll: its time, frame and place in the call order
+VOLATILE = ("t", "t_us", "seq", "depth", "end", "frame")
+# polled, and logged at every call (a failure as a short record): each success consumes a turn or a message, and
+# their failures still run Storm's drops and events and SNetReceiveTurns's resend requests and pings, which kp_snet's
+# replay of a recording (stage N2) repeats; a failed SNetReceiveTurns keeps its arguments and the status words Storm
+# wrote (StarCraft reads them after a failure: who is waited for)
+SNET_FAILURES = {121, 122}
+MAX_TURN_SLOTS = 256  # a failed SNetReceiveTurns's status words read, at most
+# Storm's network thread inside its lock, and where ReceivePackets has a datagram from the provider (install_snet_log)
+PUMP_PASS, PUMP_TIMERS, PUMP_PASS_END = 0x150227CD, 0x150227DB, 0x150227E0
+JOIN_PASS, JOIN_TIMERS, JOIN_PASS_END = 0x15023F71, 0x15023F7D, 0x15023F82
+TAKEN = (0x15021FD1, 0x15022769)
+CLOCK_READS = {"GetTickCount", "timeGetTime", "QueryPerformanceCounter"}
 STRING_ARGS = {101: (0, 1, 2, 7, 8), 138: (0, 1, 2, 9, 10), 118: (1, 2, 3, 4)}
 # Turn command lengths with the ID byte where the turn walker 0x475d30 differs from the table 0x4ef048 (0x4720c0):
 # the sync command 0x37 is 7 bytes in a turn; save and load (6, 7) are 5 bytes and a zero-terminated name
@@ -145,6 +160,7 @@ class GameSpec:
     lobby_timeout_ms: int = 120_000   # virtual time a lobby step may take
     bridge_base: int = 0              # lan.LoopbackBridge's first real port (0: no bridge)
     realtime: bool = False
+    wait_players: int = 0             # the host starts with this many in the chat room (live peers), at least these
 
     @property
     def map_name(self) -> str:
@@ -231,6 +247,12 @@ def install_snet_log(s, out: Path, frame_of) -> dict:
     f_snet, f_turns = open(out / "snet.jsonl", "w", buffering=1), open(out / "turns.jsonl", "w", buffering=1)
     pending: dict[int, list] = {}
     last: dict[int, str] = {}
+    handlers: set[int] = set()
+    counter = [0]
+
+    def next_seq() -> int:
+        counter[0] += 1
+        return counter[0]
     st = {"calls": 0, "turns_received": 0, "turns_sent": 0, "files": (f_snet, f_turns)}
 
     def cstr(p):
@@ -245,9 +267,21 @@ def install_snet_log(s, out: Path, frame_of) -> dict:
             if not exe.contains(ret):
                 return
             args = list(struct.unpack(f"<{nargs}I", m.read(esp + 4, 4 * nargs))) if nargs else []
-            rec = {"t": m.clock_us // 1000, "frame": frame_of(), "fn": name, "args": [f"{a:#x}" for a in args]}
+            # seq: the entry order (a call's record is written when it returns); depth: the calls it is inside (an
+            # event handler of the executable calls SNet inside the call that dispatched the event)
+            depth = sum(1 for e in pending.get(m.current.tid, []) if e[0] > esp)
+            rec = {"t": m.clock_us // 1000, "t_us": m.clock_us, "seq": next_seq(), "depth": depth, "frame": frame_of(),
+                   "fn": name, "args": [f"{a:#x}" for a in args]}
             for k in STRING_ARGS.get(ordinal, ()):
                 rec.setdefault("strings", {})[str(k)] = cstr(args[k])
+            if ordinal == 138:
+                rec["template"] = m.read(args[6], args[7]).hex() if args[6] and args[7] else ""
+            elif ordinal == 117 and args[1]:
+                # SNETPROGRAMDATA: its size first, then names, the program id (+0xC), version (+0x10), maxplayers
+                rec["program"] = m.read(args[1], min(m.r32(args[1]), 0x80)).hex()
+            elif ordinal == 123 and args[1] and args[1] not in handlers:
+                handlers.add(args[1])
+                s.hook(args[1], on_event)
             if ordinal == 128:
                 data = m.read(args[0], args[1]) if args[1] else b""
                 rec["data"] = data.hex()
@@ -257,6 +291,80 @@ def install_snet_log(s, out: Path, frame_of) -> dict:
                 rec["data"] = m.read(args[1], args[2]).hex() if args[2] else ""
             pending.setdefault(m.current.tid, []).append((esp, ordinal, args, rec))
         return on_entry
+
+    def on_event():
+        """A handler the executable registered (SNetRegisterEventHandler), at its entry: the event Storm dispatches,
+        SNETEVENT {id, player, data, size}."""
+        ev = m.r32(m.esp + 4)
+        eid, player, data, size = struct.unpack("<IiII", m.read(ev, 16))
+        depth = sum(1 for e in pending.get(m.current.tid, []) if e[0] > m.esp)
+        st["calls"] += 1
+        f_snet.write(json.dumps({"t": m.clock_us // 1000, "t_us": m.clock_us, "seq": next_seq(), "depth": depth,
+                                 "frame": frame_of(), "fn": "event", "id": eid, "player": player,
+                                 "data": m.read(data, size).hex() if data and size else ""}) + "\n")
+
+    # Storm's network thread 0x15022780, each pass: WaitForSingleObject(event, wait), EnterCriticalSection, then (with a
+    # provider) 0x150227cd with esi = whether the event was signalled, ReceivePackets 0x15021fa0 if it was, RunNetTimers
+    # 0x15020b80 (called at 0x150227db), whose result (back at 0x150227e0) is the next wait. SNetJoinGame's own passes
+    # (PumpUntilControl 0x15023f40, in the executable's thread): each at 0x15023f71 (ebx 1 for the first, which follows
+    # no Sleep(10)), RunNetTimers called at 0x15023f7d, back at 0x15023f82. The datagrams Storm takes from the provider
+    # (its slot +0x2C, returning at 0x15021fd1 and 0x15022769 with the address, data and size pointers' targets at
+    # [ebp-0x14], [ebp-0x10], [ebp-0xc]) go with the pass that took them.
+    # the emulator's own imports: the module's pure parts run without unicorn
+    from unicorn import x86_const as X
+
+    from .hle.kernel32 import TIME_QUERY_COST_US
+    passes: dict[int, dict] = {}  # each thread's pass in progress
+
+    def pass_start(fn: str, **extra):
+        passes[m.current.tid] = {"fn": fn, "t_us": m.clock_us, "seq": next_seq(), "frame": frame_of(), **extra,
+                                 "timers_us": None, "received": [], "clock": []}
+
+    def on_api(spec, _args):
+        """The clock's reads inside a pass, [caller, the virtual microsecond read]: each charges the emulator's
+        TIME_QUERY_COST_US first (hle/kernel32.py), so where Storm reads it decides the milliseconds it gets."""
+        p = passes.get(m.current.tid)
+        if p is not None and spec.name in CLOCK_READS:
+            p["clock"].append([f"{m.r32(m.esp):#x}", m.clock_us + TIME_QUERY_COST_US])
+
+    def on_timers():
+        if m.current.tid in passes:
+            passes[m.current.tid]["timers_us"] = m.clock_us
+
+    def pass_end(**extra):
+        p = passes.pop(m.current.tid, None)
+        if p is None:
+            return
+        st["calls"] += 1
+        f_snet.write(json.dumps({"t": p["t_us"] // 1000, **p, **extra, "end_us": m.clock_us}) + "\n")
+
+    def on_pass():
+        pass_start("pump", signalled=int(bool(m.reg(X.UC_X86_REG_ESI))))
+
+    def on_pass_end():
+        pass_end(wait=m.reg(X.UC_X86_REG_EAX))
+
+    def on_join_pass():
+        pass_start("join_pass", first=int(bool(m.reg(X.UC_X86_REG_EBX))))
+
+    def on_join_pass_end():
+        pass_end()
+
+    def on_taken():
+        if not m.reg(X.UC_X86_REG_EAX):
+            return
+        ebp = m.reg(X.UC_X86_REG_EBP)
+        addr, data, size = m.r32(ebp - 0x14), m.r32(ebp - 0x10), m.r32(ebp - 0xC)
+        if not addr or not data:
+            return
+        port, ip = struct.unpack(">HI", m.read(addr + 2, 6))
+        d = {"from": f"{ip >> 24}.{ip >> 16 & 255}.{ip >> 8 & 255}.{ip & 255}:{port}", "data": m.read(data, size).hex()}
+        if m.current.tid in passes:
+            passes[m.current.tid]["received"].append(d)
+            return
+        st["calls"] += 1
+        f_snet.write(json.dumps({"t": m.clock_us // 1000, "t_us": m.clock_us, "seq": next_seq(), "frame": frame_of(),
+                                 "fn": "taken", **d}) + "\n")
 
     def outputs(ordinal, args, eax) -> dict:
         o = {}
@@ -299,17 +407,26 @@ def install_snet_log(s, out: Path, frame_of) -> dict:
         if not stack:
             return
         esp = m.esp
-        from unicorn import x86_const as X
         eax = m.reg(X.UC_X86_REG_EAX)
         while stack and stack[-1][0] < esp:
             _, ordinal, args, rec = stack.pop()
+            rec["end"] = next_seq()  # what has a seq between the call's and this one happened inside the call
             rec["result"] = eax
             rec.update(outputs(ordinal, args, eax))
             if ordinal in SNET_POLLED:
                 if not eax:
+                    if ordinal in SNET_FAILURES:
+                        st["calls"] += 1
+                        short = {k: rec[k] for k in ("t", "t_us", "seq", "depth", "end", "frame", "fn", "result")}
+                        if ordinal == 122:
+                            _, count, _, _, status = args
+                            short["args"] = rec["args"]
+                            if status and count <= MAX_TURN_SLOTS:
+                                short["status"] = [f"{m.r32(status + 4 * i):#x}" for i in range(count)]
+                        f_snet.write(json.dumps(short) + "\n")
                     continue
-                key = json.dumps({k: v for k, v in rec.items() if k not in ("t", "frame")}, sort_keys=True)
-                if ordinal != 122 and last.get(ordinal) == key:
+                key = json.dumps({k: v for k, v in rec.items() if k not in VOLATILE}, sort_keys=True)
+                if ordinal not in SNET_FAILURES and last.get(ordinal) == key:
                     continue
                 last[ordinal] = key
             if ordinal == 122:
@@ -324,6 +441,15 @@ def install_snet_log(s, out: Path, frame_of) -> dict:
         addr = storm.export(ordinal)
         if addr is not None:
             s.hook(addr, entry(ordinal))
+    m.on_api.append(on_api)
+    s.hook(PUMP_PASS, on_pass)
+    s.hook(PUMP_TIMERS, on_timers)
+    s.hook(PUMP_PASS_END, on_pass_end)
+    s.hook(JOIN_PASS, on_join_pass)
+    s.hook(JOIN_TIMERS, on_timers)
+    s.hook(JOIN_PASS_END, on_join_pass_end)
+    for site in TAKEN:
+        s.hook(site, on_taken)
     sites = snet_return_sites(exe)
     for site in sites:
         s.hook(site, on_return)
@@ -664,7 +790,7 @@ class Driver:
         self.click_control(CREATE_OK)
         self.settle(GLUE_CHAT, "rez\\gluChat.bin")
         self.lobby()
-        n = len(spec.players)
+        n = max(len(spec.players), spec.wait_players)
         if not self.run_until(lambda: self.lobby_players() >= n, spec.lobby_timeout_ms):
             raise RuntimeError(f"{self.lobby_players()} of {n} players in the chat room")
         self.ev("lobby_full", players=self.lobby_players())

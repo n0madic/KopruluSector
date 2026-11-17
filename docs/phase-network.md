@@ -16,7 +16,7 @@ The remake keeps the original's split: `StarCraft.exe` → `storm.dll` (SNet) �
 1. `kp_core`: the simulation and its network branches; new, the sync command `0x37`'s inputs byte for byte (`ComputeSyncValue` `0x47a360`, the sprite visibility checksum `0x417540`–`0x417610`, taken inside the step after the first frame past a turn boundary) and the network players' state (`0x673818`, the drop flags `0x529042`).
 2. `kp_core/src/ui`: the screens of [P17](research/atlas/p17.md)–[P20](research/atlas/p20.md), [P24](research/atlas/p24.md) and [P27](research/atlas/p27.md), reading the network's state through host hooks.
 3. `kp_app`: the game's network code of P24–P27 (turn manager, `0x05`/`0x37`, the lobby protocol, map transfer, chat, leaves).
-4. `kp_app/net`: `kp_snet` (Storm's SNet, the API the executable calls) over providers (`kp_snp_udp`, `kp_snp_relay`, `kp_snp_loop`), all pure state machines (datagrams and time in, datagrams and events out), under a thin socket driver per platform (a network thread on the natives, the main loop on the web).
+4. `kp_app` (network): `kp_snet` (Storm's SNet, the API the executable calls) over the UDP provider `kp_snp_udp`, both pure state machines (datagrams and time in, datagrams and events out), over a transport: the system's sockets (`kp_net_sock`), the relay (stage N5) or, in the tests, an in-process LAN (`kp_net_lan`; [N2](#n2-kp_snet-and-the-udp-provider)). The game's network code runs them on a network thread on the natives and from the main loop on the web.
 5. `tools/relay`: `koprulu-relay`.
 
 ## Stages
@@ -25,7 +25,7 @@ The remake keeps the original's split: `StarCraft.exe` → `storm.dll` (SNet) �
 |---|---|---|
 | N0 | `storm.dll`'s SNet and `standard.snp`'s UDP provider in the atlas (packages S02, U01) | done 2026-11-17 |
 | N1 | the network oracle in the emulator: Winsock HLE, virtual LAN, the Multiplayer menus' driver, recordings | done 2026-11-17 |
-| N2 | `kp_snet` and the UDP and loop providers | |
+| N2 | `kp_snet` and the UDP provider, the socket drivers and the in-process LAN | done 2026-11-17 |
 | N3 | the lobby: screens, protocol, map transfer, network saves | |
 | N4 | the game over the network: `0x05`/`0x37`, `ResolveDesync`, leaves and drops, chat, the network menus | |
 | N5 | `koprulu-relay`, the web, the phones | |
@@ -76,4 +76,75 @@ The [full-game emulator](research/full-game-emulation.md#network-games-phase-n-s
 - **For N4, the sync command `0x37`:** bytes 2–4 (turn and schedule, the hash WORD) are equal on every player; the last three (`rec+3`, the low byte of `rec+8`, `rec+5`) are constant per player from the fourth turn on and differ between players (`98 6c 12` for the host, `00 00 0e` for the joiner in the 1v1). A byte-exact `0x37` needs each player's own values.
 - **For N3, network saves:** each player loads its own copy of the save (with the host's copy the joiner is rejected with reason 2); a loaded game resumes one frame after the save but is not its continuation frame for frame (another RNG state at its first frame).
 - **For N4, drops and desyncs:** a cut cable opens the timeout dialog on both sides, and its Drop Players runs `ResolveDesync` `0x47a630` and `SNetDropPlayer`(the other, `0x40000006`); a desync does the same without the dialog, two frames after the sync commands' hashes differ. In a 1v1 each side drops the other and plays on alone.
-- **Open:** the meaning of `0x37`'s last three bytes and the cause of the loaded game's new RNG state; `--bridge` checked only by a unit test, not yet against another program; a Brood War save (`.mlx`) and a banned player's second join not played; the drop game's idle timeout dialog runs about 40 s of wall time per virtual second (36 min for the game).
+- **Open:** the meaning of `0x37`'s last three bytes and the cause of the loaded game's new RNG state; `--bridge` checked then only by a unit test (Koprulu joined through it in N2); a Brood War save (`.mlx`) and a banned player's second join not played; the drop game's idle timeout dialog runs about 40 s of wall time per virtual second (36 min for the game).
+
+## N2: `kp_snet` and the UDP provider (done 2026-11-17)
+
+Storm's network layer and `standard.snp`'s UDP provider, ported from the atlas's S02 and U01 entries as pure state machines, with their transports.
+
+- **The layers** (`native/kp_app`, in `kp_app_core`):
+  - `kp_net.{h,c}`: what they share. A provider address as Storm keeps it (Winsock's `sockaddr_in`, a player record's `+0x108`), Storm's checksum (`FletcherSum` `0x15021c50`, `ComputePacketChecksum` `0x15021ca0`), and `KpNetIo`, a provider's I/O (a send from one of its sockets, the millisecond clock).
+  - `kp_snp_udp.{h,c}`: the provider `'UDPN'`. Socket A (port 6111) carries the game list: advertisements, list requests, stops, the list's ten-second expiry and the 400 ms between requests. Socket B (port 6112) carries Storm's datagrams. The functions are the slots of `SnpBind`'s table.
+  - `kp_snet.{h,c}`: SNet over the provider. It has the exports StarCraft calls, with their arguments, results and Storm's error codes, and the pump thread's pass `kp_snet_pump`: it files what the provider received and sends acknowledgements, resends, turn requests and pings, and returns its next wait. `kp_snet_join_game` pumps the provider itself, as `SNetJoinGame`'s `PumpUntilControl` does, and waits through the host's sleep. Events go to the host's handler from the calls Storm dispatches them in.
+  - The transports:
+    - `kp_net_sock.{h,c}`: the system's UDP over POSIX sockets and Winsock. On the web it reports that there are no sockets (the relay is stage N5's).
+    - `kp_net_lan.{h,c}`: the in-process LAN of the tests and the fuzz targets. It has hosts, a seeded delay, jitter and loss, and cut cables. A host's own broadcasts come back to it at once, as on Windows.
+- **No loop provider.** The plan had a third provider for the tests (`kp_snp_loop`). Instead the UDP provider itself runs over the in-process LAN, so a Koprulu↔Koprulu test carries the bytes a 1.17 peer would get.
+- **Several programs on one machine** (`kp_net_sock`'s map). Two programs cannot both bind port 6112, so the map gives each virtual host 10.0.0.k two real loopback ports, BASE+2k and BASE+2k+1, as the network oracle's bridge does. Koprulu's own games on one machine use the map too. A program the map does not hold, such as Koprulu against the bridge, binds two adjacent ports of its own; the bridge names it 10.0.1.n.
+- **Where Koprulu differs from the original.** Only for inputs the original mishandles, and to bound the memory that forged addresses would grow; the headers list each case:
+  - a datagram over 504 bytes is dropped (the original's receiving thread ends);
+  - an advertisement whose strings run past its end is ignored (fatal in the original);
+  - a short control command reads zeros past its end;
+  - a handler that deletes the record being dispatched ends the dispatch;
+  - `SNetReceiveTurns`'s slots outside 0–254 have no record (the original compares an id's low byte, so slot 256 + k takes player k's turn a second time);
+  - at most 1024 remote records (`KP_SNET_RECORDS`), 16,384 filed packets (`KP_SNET_NODES`), 4096 queued datagrams (`KP_SNP_QUEUE`) and 256 listed games (`KP_SNP_GAMES`; an advertiser beyond them still takes its id, so the listed games keep the original's ids).
+
+  Not ported: class 3 (`SNetSendDatagram`, `SNetReceiveDatagram`, which StarCraft never calls), Battle.net's name table and the performance counters.
+- **Tests:**
+  - `test_snet` (16 tests):
+    - checksum vectors; the game list following the advertisements, within its bound;
+    - on the in-process LAN: two seats in lockstep; four seats with 10 % loss, whose two runs of one seed are equal; a joiner entering a running game; messages in their order; a leave seen at the same turn by every seat; the host's leave, after which the lowest ID hosts; refused joins; a silent seat dropped; Storm's resend timers; garbage on port 6112 ignored;
+    - on real sockets over 127.0.0.1: three seats (two of the map's hosts and a program outside it) list and join the game, play in lockstep and see a leave at one turn;
+    - the live join (below), and the exports' errors.
+  - `test_net_trace`: the replay of stage N1's recordings (below); `tools/tests/test_net_check.py` checks their converter on synthetic recordings.
+  - The fuzz targets `udp` and `snet` ([ADR 0022's addition](adr/0022-turn-source-and-fuzzing.md#addition-the-networks-targets-phase-n-stage-n2)).
+- **The replay of the oracle's recordings.** Stage N1's games were recorded again into `koprulu-private/emu/net-n2`: the suite's 16, a melee 1v1 of 120 frames and a 1v1 with 5 % loss (seed 7, 300 frames). The SNet log was extended for this:
+  - each record has its order of entry (`seq`), and a call also its order at return (`end`);
+  - Storm's passes are logged (the network thread's `pump`, SNetJoinGame's `join_pass`), with what each took from the provider and its clock reads;
+  - a failed SNetReceiveTurns keeps its arguments and status words.
+
+  `tools/net_check.py` turns each player into a golden (version 5, [golden-oracle.md](golden-oracle.md)). `test_net_trace` gives Koprulu's SNet and provider that player's inputs on the emulator's clock: the datagrams that arrived, StarCraft's calls with what ran inside them, and Storm's passes. **All 40 players of the 18 games replay with no difference** (on the host, under ASan and UBSan, and in wasm):
+  - 22,893 datagrams sent, byte for byte and in order, each within 50 ms of the original's time;
+  - every result and output of 1,150,955 recorded calls and passes, every wait a pass returned, and the 63 events.
+
+  The games include the joins' handshakes, map transfer, chat, kick and ban, the latency command, a save and its load, a leave (`0x0B`), a drop after a cut cable (the turn requests, the pings, `SNetDropPlayer`), a desync and the lossy game's resends. Getting there showed four things the replay must model:
+  - **The emulator's clock.** Each GetTickCount charges 50 µs before it reads the time, so a pass's reads advance its clock as they do in the emulator.
+  - **The emulator's preemptions.** In a network game the emulator preempts the running thread every virtual millisecond at an API return (its second core for the background threads). A pass can therefore have gaps between its clock reads, in which the provider's threads answered game-list datagrams. The replay passes each gap too, and delivers the arrivals before its end (strictly before).
+  - **Storm's command 6** (`0x15023660`, the player info) finds or creates the sender's record before it deletes it, so a record it creates reads the clock. `kp_snet` does the same.
+  - **A failed SNetReceiveTurns still sends.** When a present player's turn is missing and its request is older than the gap, the call sends a resend request (flag 2), even though it fails with "no data". Hence golden version 5.
+- **The live join** (2026-11-17). The emulated 1.17 hosted a game on the loopback bridge (`sc_emulator net MAP live --players Alpha@10.0.0.1:host --wait-players 2 --bridge BASE --realtime`). `KOPRULU_NET_BRIDGE=BASE kp_test test_snet live_bridge_join` then ran Koprulu on the system's sockets, outside the bridge's map:
+  - Koprulu listed "Alpha", joined it through Storm's handshake as player 1 (the host's template arrived), and received 16 of the host's turns, sending one keep-alive turn (`05`) for each turn set, as StarCraft's lobby does;
+  - the original saw the join (event 2), sent `'J'` and `'P'`, received 18 turn sets with Koprulu's keep-alive (status `0x70000`), and on Koprulu's leave got event 3 with reason 3.
+
+  StarCraft's lobby protocol on top of this is stage N3's.
+- **Fuzzing:**
+  - 120 s a target found no crash, sanitizer report, leak or hang: `udp` 2,330,330 inputs, `snet` 1,732,668;
+  - the full CI's 60 s found none either: `udp` 1,205,236 inputs, `snet` 929,937.
+- **Builds and checks:**
+  - `tools/ci.sh` with `KOPRULU_FULL=1` and the product passed in 2189 s: 735 C tests on the host, under ASan, LSan and UBSan and in wasm; 287 Python tests; the seven fuzz targets; the product's scripts;
+  - GCC 15.2 in the Linux image (warnings as errors, and with the sanitizers): `test_snet` and `test_fuzz` pass;
+  - mingw-w64 GCC 16.2: they pass under Wine, the socket test over Winsock included. mingw's GCC also caught a real fault: two tests read a join's error code in the same call that set it, and C leaves the order of arguments open;
+  - the network sources compile for Android (NDK 29) and iOS without a warning;
+  - `tools/boundaries.sh` passes.
+- **The code review** (2026-11-17), all 16 findings fixed:
+  - `kp_snet_receive_turns` gives no record to a slot outside 0–254, and a negative first slot no longer wraps its loop;
+  - the provider gives every unknown advertiser its id before it checks the program or the list's bound, as the original does, in one walk of the list;
+  - `kp_snet_new` requires the clock (the join's waits ran forever without it); the checksum leaves a packet below 2 bytes alone; the in-process LAN's jitter of `0xFFFFFFFF` no longer divides by zero;
+  - the SNet log's dedup of polled calls leaves out every order field again (since `seq`, `t_us`, `depth` and `end` it never matched); filtering `net-n2`'s recordings by it drops 12,924 of 1,151,415 records and every player still replays with no difference. A NULL event handler is not hooked, and `net.py` imports the emulator only where it hooks it, so its pure parts run without unicorn;
+  - `tools/net_check.py` keeps an index's other games only when the index is of its version, and `test_net_trace` fails a listed game of another version;
+  - the tests read every output after the call that sets it, and `test_net_trace` decodes hex with `kp_hex_decode`.
+- **Open:**
+  - the network thread that runs the driver on the natives belongs to the game's network code (stage N4); `kp_net_sock` waits and reads, and its caller pumps;
+  - the web has no transport until the relay (stage N5): `sockets_carry_a_game` is skipped there;
+  - not checked against the original, since its recordings never reach them: the advertisement's withdrawal, commands 10, 12 and 13 (reject, drop, new host; they run between Koprulu seats in `test_snet`'s refused joins, drop and host's leave), the 13-byte turn requests and the relays. They follow the disassembly's entries;
+  - the live join is a manual check: it needs the emulator, so CI skips it without `KOPRULU_NET_BRIDGE`.

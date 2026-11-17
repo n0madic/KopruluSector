@@ -8,7 +8,7 @@
 #include "kp_fuzz.h"
 
 #ifndef KP_FUZZ_TARGET
-#error "KP_FUZZ_TARGET names the target (KP_FUZZ_REP, KP_FUZZ_CHK, KP_FUZZ_SAVE or KP_FUZZ_COMMANDS)"
+#error "KP_FUZZ_TARGET names the target (KP_FUZZ_REP, KP_FUZZ_CHK, KP_FUZZ_SAVE, KP_FUZZ_COMMANDS, KP_FUZZ_TURNS, KP_FUZZ_UDP or KP_FUZZ_SNET)"
 #endif
 
 #define WHY_SIZE 512

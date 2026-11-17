@@ -121,7 +121,8 @@ def cmd_net(a):
         spec = GameSpec(a.name, a.map, players, expansion=a.expansion, game_type=a.type, subtype=a.subtype,
                         frames=a.frames, state_steps=parse_steps(a.state) if a.state else (), seed=a.seed,
                         delay_us=a.delay_us, jitter_us=a.jitter_us, loss=a.loss, wall_limit_s=a.max_wall,
-                        bridge_base=a.bridge, realtime=a.realtime)
+                        bridge_base=a.bridge, realtime=a.realtime, wait_players=a.wait_players,
+                        lobby_timeout_ms=int(a.lobby_timeout * 1000))
     r = run_game(spec, Path(a.out_root) / spec.name if a.out_root else OUT_ROOT / spec.name)
     print(r["reason"], {n: (x or {}).get("finished") for n, x in r["players"].items()}, r["compare"])
 
@@ -395,6 +396,9 @@ def main(argv=None):
     ne.add_argument("--loss", type=float, default=0.0)
     ne.add_argument("--bridge", type=int, default=0, help="real loopback UDP from this port (lan.LoopbackBridge)")
     ne.add_argument("--realtime", action="store_true", help="hold the virtual clocks to the wall clock (live peers)")
+    ne.add_argument("--wait-players", type=int, default=0, help="the host starts with this many players in the chat "
+                    "room (live peers over --bridge)")
+    ne.add_argument("--lobby-timeout", type=float, default=120, help="seconds of virtual time a lobby step may take")
     ne.add_argument("--max-wall", type=float, default=4 * 3600)
     ne.add_argument("--out-root", default="")
     sc = sub.add_parser("scenario")

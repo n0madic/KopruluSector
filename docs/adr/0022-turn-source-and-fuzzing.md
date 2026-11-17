@@ -58,3 +58,12 @@ Every replay, save and map a player opens is untrusted, and so is every frame of
 - A save made by the game loads after `kp_save_seal` exactly as before: a save sealed again is the same bytes. The seal changes no save format and no `KP_SAVE_VERSION`.
 - Running a game on after a fuzzed load is not covered: the save target loads and goes back to its snapshot. A loaded state the walk accepts may still hold values the simulation never makes. `kp_load` checks the indexes and the lists' links it reads, but not every value's range (a TODO in `kp_fuzz.c`).
 
+### Addition: the network's targets (phase N, stage N2)
+
+Phase M added `turns` (the seats' hub, [phase M](../phase-multiplayer.md)). Stage N2 ([phase N](../phase-network.md#n2-kp_snet-and-the-udp-provider)) adds two, in `tests/c/kp_fuzz_net.{h,c}`, with the same entries, drivers, CI step and kept-findings rules as above:
+
+- `udp`: `kp_snp_udp` alone, at 10.0.0.1 among fifteen peers whose datagrams are the input's (either port; a bit of the op makes the length field and the checksum right, so mutations pass Storm's checks), with its clock, the game list walked and looked up, advertisements started and stopped, and datagrams of its own;
+- `snet`: `kp_snet` over the provider, with the same datagrams and clock, the pump thread's passes, turns, messages and the other exports, a join among them (its handshake's wait takes the input's datagrams that came during it).
+
+Their properties: every datagram the stack sends is well-formed (its length field and checksum; a game-list datagram at most the list socket's 532 bytes), the events are in range, what the stack received and handed out is read whole (ASan sees a stale pointer), and its tables stay in their bounds (`KP_SNP_QUEUE`, `KP_SNP_GAMES`, `KP_SNET_RECORDS`). The seeds (`tests/fuzz/seeds/udp/provider`, `snet/host`, `snet/join`) are made by the interpreter itself while the stack plays with a whole Koprulu peer on the in-process LAN, so they hold Koprulu's own traffic and nothing of the original's; `test_fuzz` replays each and checks its digest, and the `snet` seeds must carry at least 20 of the peer's turns.
+

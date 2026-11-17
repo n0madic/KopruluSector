@@ -30,6 +30,7 @@ static const KpSuite *const SUITES[] = {
 	&kp_suite_flow, &kp_suite_locale, &kp_suite_speech, &kp_suite_script, &kp_suite_res, &kp_suite_formats,
 	&kp_suite_original, &kp_suite_chk, &kp_suite_cine, &kp_suite_scr, &kp_suite_movies, &kp_suite_encoders,
 	&kp_suite_convert, &kp_suite_hd, &kp_suite_rep, &kp_suite_gametype, &kp_suite_multiplayer, &kp_suite_seats,
+	&kp_suite_snet, &kp_suite_net_trace,
 };
 #define SUITE_COUNT ((int)(sizeof SUITES / sizeof SUITES[0]))
 #define DEFAULT_LOGS "build/c-tests"

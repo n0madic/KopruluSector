@@ -29,6 +29,7 @@ The user approved the design on 2026-11-15, with stage T3 first; T1 and T2 follo
 - **The seeds** (`kp_fuzz_seeds`, `tests/fuzz/kp_fuzz_seeds.c`): `--synthetic` writes the five committed ones (`tests/fuzz/seeds/`); without it, with the data, 27 (`build/fuzz/seeds/`, never committed).
 - **`test_fuzz`** (6 tests): the committed seeds and kept findings of each target (`kept_*_inputs`; the save target has no synthetic seed, a save is a game's), `data_seeds_run` (the data's seeds: every save loads in both forms, only the orders past orders.dat are refused), `seal_makes_the_hash_table`.
 - **CI:** `tools/ci.sh`'s full mode runs `tools/fuzz.sh` (`KOPRULU_FUZZ_TIME`, 60 s a target) with the LLVM sanitizer step's clang.
+- **Later targets:** `turns` (phase M, the seats' hub) and the network's `udp` and `snet` (phase N, stage N2: [ADR 0022's addition](adr/0022-turn-source-and-fuzzing.md#addition-the-networks-targets-phase-n-stage-n2)); `tools/fuzz.sh` runs all seven.
 
 ## T2 verification
 
