@@ -1498,8 +1498,10 @@ static void custom_screen_is_the_originals(KpUi *ui, const KpJson *capture, cons
 		row = (size_t)s->w * (size_t)rows;
 		n = kp_json_len(bands);
 		for (k = 0; k < n && (size_t)k * row < size; k++) {
-			if (kp_crc32(pixels + (size_t)k * row, row) != (uint32_t)kp_json_int(kp_json_at(bands, k), -1)) {
-				kp_buf_printf(bad, " %d-%d", k * rows, (k + 1) * rows - 1);
+			/* the last band as Python's slice takes it: what is left of the screen when rows does not divide it */
+			size_t at = (size_t)k * row, len = size - at < row ? size - at : row;
+			if (kp_crc32(pixels + at, len) != (uint32_t)kp_json_int(kp_json_at(bands, k), -1)) {
+				kp_buf_printf(bad, " %d-%d", k * rows, (int)((at + len) / (size_t)s->w) - 1);
 			}
 		}
 		kp_buf_printf(bad, "; ");
@@ -1919,6 +1921,69 @@ static void play_custom_imports_a_map(KpT *T)
 	free(bytes);
 }
 
+/* The maps' class (kp_map_class.h, the whole file read and its signature checked) is asked only by a template that
+ * reads it (ValidateGameTemplate 0x45b700's Ladder, Tournament and Server; none offered offline): not by the list's
+ * picks nor by an ordinary game's Ok. Without the 1.17 executable's key every map is of class 0, which a Ladder
+ * template (types 0x11..0x16, 0x447ed0) refuses with gluAll 52. */
+#define TEMPLATE_LADDER 0x11
+#define STR_CREATE_FAILED 52
+static int class_asks;
+static uint32_t (*flow_map_class)(void *host, KpUi *ui, int index);
+
+static uint32_t counted_map_class(void *host, KpUi *ui, int index)
+{
+	class_asks++;
+	return flow_map_class(host, ui, index);
+}
+
+static void map_class_is_asked_only_by_the_templates_that_read_it(KpT *T)
+{
+	Host *H = logged_in_host(T, "Fenix");
+	const KpDataMission *m = mission_entry(H, PROTOSS01);
+	KpUi *ui = H->f.ui;
+	char path[512];
+	uint8_t *chk, type;
+	size_t size = 0;
+	KpError e;
+	int32_t types;
+	int k, ums = -1;
+	snprintf(path, sizeof path, "%s\\staredit\\scenario.chk", m->directory);
+	kp_t_ok(T, (chk = kp_files_need(&H->data->files, path, &size, &e)) != NULL, "%s", e.msg);
+	snprintf(path, sizeof path, "%smaps", H->pref);
+	kp_t_ok(T, kp_t_mkdir(path) == 0, "%s", path);
+	write_custom_map(H, "class.scm", chk, size);
+	free(chk);
+	to_play_custom(H, 0);
+	flow_map_class = ui->map_class;
+	kp_t_ok(T, flow_map_class != NULL, "the flow's map_class");
+	ui->map_class = counted_map_class;
+	class_asks = 0;
+	types = open_control(ui, CUSTOM_TYPE_LIST);
+	for (k = 0; types >= 0 && k < kp_ui_list_count(ui, types); k++) {
+		if (strcmp((const char *)kp_ui_list_text(ui, types, k), TYPE_UMS_TEXT) == 0) ums = k;
+	}
+	kp_t_ok(T, ums >= 0, "Use Map Settings offered");
+	kp_ui_list_select(ui, types, ums);
+	frames(H, CUSTOM_PICK_FRAMES);
+	kp_t_eq(T, class_asks, 0, "the list's map read without its class");
+	kp_t_eq(T, (int)ui->menus.entries[kp_ui_list_data(ui, ui->menus.map_list,
+		kp_ui_list_selection(ui, ui->menus.map_list))].map_class, 0, "an ordinary map's until asked");
+	type = ui->menus.create.record[0];
+	ui->menus.create.record[0] = TEMPLATE_LADDER;
+	click(H, CUSTOM_OK);
+	wait_for(H, "rez\\glupok.bin", MENU_FRAMES);
+	kp_t_eq(T, class_asks, 1, "a Ladder template asks the map's class");
+	kp_t_eq_str(T, ui->menus.popup_text, (const char *)kp_ui_tbl(ui, KP_UI_GLUALL, STR_CREATE_FAILED),
+		"class 0 without the key: refused");
+	key(H, '\r'); /* the popup's Ok */
+	wait_for(H, CUSTOM_SCREEN, MENU_FRAMES);
+	ui->menus.create.record[0] = type;
+	click(H, CUSTOM_OK);
+	room_start(H);
+	kp_t_eq(T, H->f.current, KP_FLOW_CUSTOM, "Use Map Settings' game");
+	kp_t_eq(T, class_asks, 1, "and its Ok asks no class");
+}
+
 /* --map plays a custom map at once without the glue (kp_flow_play_map): its template by name, ASCII case folded, Use
  * Map Settings keeping the map's slots (protoss01's scenario as a map: no ready room without the glue); Melee by
  * default, the player and a computer in each other slot of the map, all Random as Play Custom offers them (an
@@ -1996,6 +2061,18 @@ static void unit_bounds(KpGame *g, int64_t unit, int32_t *x, int32_t *y)
 	*y = g->w->img.y[i];
 }
 
+#define SEAT_SAVE "seat zero"
+
+/* Whether the interface's saves list (kp_glue_saves) has name. */
+static int has_save(const KpUi *ui, const char *name)
+{
+	int k;
+	for (k = 0; k < ui->menus.save_count; k++) {
+		if (strcmp(ui->menus.saves[k], name) == 0) return 1;
+	}
+	return 0;
+}
+
 /* --seats: each hidden seat runs its machine's frame without the window (its console, its view's terrain, its images'
  * bounds), and a seat shown again has the interface, console and view it had. */
 static void seats_keep_their_consoles(KpT *T)
@@ -2045,11 +2122,17 @@ static void seats_keep_their_consoles(KpT *T)
 	kp_t_ok(T, x1 == x0 && y1 == y0, "the hidden seat's redraw refreshed its bounds: (%d,%d), shown (%d,%d)", (int)x1,
 		(int)y1, (int)x0, (int)y0);
 	kp_t_eq(T, second->now, first->now, "the hidden console's frame ran");
+	/* a save on seat 0 changes the profile's saves, which seat 1's dialogs list once it is shown */
+	snprintf(H->f.pending_save, sizeof H->f.pending_save, "%s", SEAT_SAVE);
+	frames(H, 2);
+	kp_t_ok(T, has_save(first, SEAT_SAVE), "saved on seat 0 (%s)", H->last_log);
+	kp_t_ok(T, !has_save(second, SEAT_SAVE), "the hidden seat's list as its console started");
 	/* seat 1 shown: its own interface, its game menu open; seat 0 and back keeps it */
 	cam_x = H->f.seat_views[1].cam_x;
 	cam_y = H->f.seat_views[1].cam_y;
 	kp_t_eq(T, kp_flow_show_seat(&H->f, 1, why, sizeof why), 0, "%s", why);
 	kp_t_ok(T, H->f.ui == second && H->f.seat_views[0].ui == first && H->f.seat_views[1].ui == NULL, "the consoles swapped");
+	kp_t_ok(T, has_save(second, SEAT_SAVE), "seat 1's saves as the profile has them");
 	kp_t_ok(T, H->f.cam_x == cam_x && H->f.cam_y == cam_y, "the seat's view");
 	kp_hud_key(H->f.ui, 1, KP_HUD_VK_F10, 0);
 	kp_hud_key(H->f.ui, 0, KP_HUD_VK_F10, 0);
@@ -4145,6 +4228,7 @@ static const KpTest TESTS[] = {
 	{ "play_custom_imports_a_map", play_custom_imports_a_map, 0 },
 	{ "map_flag_plays_a_custom_map_without_the_glue", map_flag_plays_a_custom_map_without_the_glue, 0 },
 	{ "seats_keep_their_consoles", seats_keep_their_consoles, 0 },
+	{ "map_class_is_asked_only_by_the_templates_that_read_it", map_class_is_asked_only_by_the_templates_that_read_it, 0 },
 	{ "exit_program_ends_the_program_or_opens_the_main_menu", exit_program_ends_the_program_or_opens_the_main_menu, 0 },
 	{ "glue_exit_ends_the_program_or_opens_the_main_menu", glue_exit_ends_the_program_or_opens_the_main_menu, 0 },
 	{ "languages_match_the_systems_names", languages_match_the_systems_names, 0 },

@@ -916,7 +916,8 @@ typedef struct {
 	                                    * PublishMapInfo 0x45dfc0 gives the screen while a replay was read) */
 	uint8_t user_select[KP_UI_SLOT_FLAGS]; /* +0x535: a map's slots whose race is User Select (0x673f08) */
 	int8_t first_human;              /* a map's first slot of owner type 6 among 0..7 (-1 none) */
-	uint32_t map_class;              /* +0x260: the map archive's class (0 an ordinary map) */
+	uint32_t map_class;              /* +0x260: the map archive's class (0 an ordinary map), the host's map_class
+	                                    * once a template that reads it is validated */
 	uint16_t game_type, game_subtype; /* a replay's header +0x6d, +0x6f: its template's type and subtype */
 	uint8_t unverified;              /* Koprulu's, from its KPRX tail: KP_UI_REPLAY_VERIFIED or why the playback is unverified */
 } KpUiMapEntry;
@@ -1297,6 +1298,11 @@ struct KpUi {
 	                                                * again, the player placed in the first open slot: *local_slot):
 	                                                * 0 to start its game, else the gluAll text that refuses it (NULL:
 	                                                * none) */
+	uint32_t (*map_class)(void *host, struct KpUi *ui, int index); /* the class of the map menus.entries[index]
+	                                                * (OpenMapArchive 0x469de0's, which LoadMapEntryInfo 0x45d870
+	                                                * reads with the header): asked only when the chosen template
+	                                                * reads it (ValidateGameTemplate 0x45b700), as a signed map's
+	                                                * check reads its whole file (NULL: 0, an ordinary map) */
 	const struct KpTemplates *templates;            /* the game templates Play Custom lists (the host's; NULL none) */
 	uint16_t (*check_replay)(void *host, int index); /* CreateGameFromEntry 0x45bfc0's reading of a replay at Ok: 0
 	                                                * to start it, else the gluAll text that refuses it */

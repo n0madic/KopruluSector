@@ -112,9 +112,19 @@ class ScriptsTest(unittest.TestCase):
         for bad, why in (("stub Othr x\nx:\n stop", "does not start with start_town"),
                          ("stub Nope x\nx:\n stop", "no script"), ("goto nowhere", "no label"),
                          ("jump 1", "no opcode"), ("wait", "takes 1 operand"), ("x:\nx:\n stop", "defined twice"),
-                         ("region_size 256 0", "does not fit")):
+                         ("region_size 256 0", "does not fit"),
+                         ("wait 12O", "line 1: wait .*'12O' is not an integer"),
+                         ('debug x "ca\u0161"\nx:\n stop', "line 1: debug: .* outside Latin-1"),
+                         ('stub M\u0161le x\nx:\n stop', "line 1: stub: .* outside Latin-1"),
+                         ('debug x "open', "line 1: No closing quotation")):
             with self.assertRaisesRegex(AiError, why):
                 ai_asm.assemble(bad, base, "bad")
+        # a directory record whose entry lies past the file
+        far = bytearray(base)
+        othr = int.from_bytes(far[0:4], "little") + scripts.AI_RECORD
+        far[othr + 4:othr + 8] = (len(far) + 100).to_bytes(4, "little")
+        with self.assertRaisesRegex(AiError, "aiscript.bin's directory: .*outside the file"):
+            ai_asm.assemble("stub Othr x\nx:\n stop", bytes(far), "far")
 
     @unittest.skipIf(not ORIGINAL, "KOPRULU_ORIGINAL not set")
     def test_melee_opcodes_probe(self):

@@ -28,23 +28,11 @@ int kp_data_dir(const char *root, char *out, size_t size)
 	return 0;
 }
 
-/* The maps' signature key from a 1.17 install's executable (none from a repack or Remastered: their maps' class 0).
- * TODO: a network lobby that offers the Ladder, Tournament or Server templates on the web or a phone needs the key
- * there too: kp_convert would carry it from the player's install in the repack (never committed), as it carries the
- * rest of the 1.17 data. */
-static void map_key(KpData *d, KpRes *res)
-{
-	char why[KP_ERROR_SIZE];
-	size_t size = 0;
-	uint8_t *exe = kp_res_executable(res, &size, why, sizeof why);
-	d->has_map_key = exe != NULL && kp_map_key_from_executable(exe, size, d->map_key);
-	free(exe);
-}
-
 int kp_data_build(KpData *d, KpRes *res, const KpUiFile *vector_fonts, int vector_font_count, const char *scenarios,
 	size_t scenarios_size, KpError *err)
 {
 	memset(d, 0, sizeof *d);
+	d->res = res;
 	kp_res_files(res, &d->files);
 	kp_res_raw_files(res, &d->raw);
 	if (!d->files.profile) {
@@ -61,8 +49,23 @@ int kp_data_build(KpData *d, KpRes *res, const KpUiFile *vector_fonts, int vecto
 		return -1;
 	}
 	kp_data_catalog(d, scenarios, scenarios_size);
-	map_key(d, res);
 	return 0;
+}
+
+/* TODO: a network lobby that offers the Ladder, Tournament or Server templates on the web or a phone needs the key
+ * there too: kp_convert would carry it from the player's install in the repack (never committed), as it carries the
+ * rest of the 1.17 data. */
+int kp_data_map_key(const KpData *d, uint8_t key[KP_MAP_KEY_SIZE], char *why, size_t why_size)
+{
+	size_t size = 0;
+	uint8_t *exe;
+	int found;
+	if (why_size) why[0] = 0;
+	if (!d->res || !(exe = kp_res_executable(d->res, &size, why, why_size))) return 0;
+	found = kp_map_key_from_executable(exe, size, key);
+	if (!found) snprintf(why, why_size, "the executable has no map key at 0x%x", (unsigned)KP_MAP_KEY_VA);
+	free(exe);
+	return found;
 }
 
 void kp_data_free(KpData *d)

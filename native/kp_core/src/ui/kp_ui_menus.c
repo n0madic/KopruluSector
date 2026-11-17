@@ -2280,20 +2280,31 @@ static void enter_folder(KpUi *ui, const KpUiMapEntry *e)
 
 static void create_refused(KpUi *ui, int32_t r) { (void)ui; (void)r; } /* the screen stays (every message case) */
 
-/* ValidateGameTemplate 0x45b700 offline: the template's own needs of the map (OnCreateGameOk 0x455240's message) */
-static uint16_t validate_template(KpUi *ui, const KpUiMapEntry *e)
+/* Map entry k's class (+0x260), which LoadMapEntryInfo 0x45d870 reads with the header: the host's, asked only here
+ * when the template reads it (a signed map's check reads the whole file); 0 without the host's map_class. */
+static uint32_t entry_class(KpUi *ui, int k)
+{
+	KpUiMapEntry *e = &mn(ui)->entries[k];
+	e->map_class = ui->map_class != NULL ? ui->map_class(ui->host, ui, k) : 0;
+	return e->map_class;
+}
+
+/* ValidateGameTemplate 0x45b700 offline: the template's own needs of map entry k (OnCreateGameOk 0x455240's message) */
+static uint16_t validate_template(KpUi *ui, int k)
 {
 	KpUiMenus *m = mn(ui);
 	KpUiCreate *c = &m->create;
+	const KpUiMapEntry *e = &m->entries[k];
 	const KpTemplate *t = find_template(ui, c->game_type, c->subtype);
 	if (t == NULL) return STR_CREATE_TEMPLATE;
-	if (c->record[0] >= TEMPLATE_LADDER_FIRST && c->record[0] <= TEMPLATE_LADDER_LAST && e->map_class != MAP_CLASS_LADDER) {
+	if (c->record[0] >= TEMPLATE_LADDER_FIRST && c->record[0] <= TEMPLATE_LADDER_LAST
+		&& entry_class(ui, k) != MAP_CLASS_LADDER) {
 		return STR_CREATE_FAILED; /* 0x80000012 */
 	}
 	if (t->record[KP_TEMPLATE_TOURNAMENT] == 1) {
-		if (e->map_class != MAP_CLASS_TOURNAMENT) return STR_CREATE_FAILED; /* 0x80000003 */
+		if (entry_class(ui, k) != MAP_CLASS_TOURNAMENT) return STR_CREATE_FAILED; /* 0x80000003 */
 	} else if (t->record[0] == TEMPLATE_SERVER && t->record[KP_TEMPLATE_SUB] != 0) {
-		if (!m->expansion || e->map_class != MAP_CLASS_SERVER) return STR_CREATE_FAILED; /* 0x80000011, 0x8000000e */
+		if (!m->expansion || entry_class(ui, k) != MAP_CLASS_SERVER) return STR_CREATE_FAILED; /* 0x80000011, 0x8000000e */
 	}
 	if (e->tileset == TILESET_INSTALLATION && !template_ums(ui, c->game_type, c->subtype)) return STR_CREATE_UMS_ONLY;
 	/* IsTemplateAllowedForMap 0x4480a0: the template's teams fit the map's slots */
@@ -2326,7 +2337,7 @@ static uint16_t create_game(KpUi *ui, int k)
 	} else if (e->players < 2) {
 		return STR_CREATE_NO_COMPUTER;
 	}
-	if ((refusal = validate_template(ui, e)) != 0) return refusal;
+	if ((refusal = validate_template(ui, k)) != 0) return refusal;
 	/* the header read again (LoadMapHeader 0x46b5c0), the player in the first open slot (PlaceLocalHumanForCustomGame
 	 * 0x4bb550), the local game (CreateLocalGame 0x475220): the host's */
 	if (ui->check_map != NULL && (refusal = ui->check_map(ui->host, k, &local)) != 0) return refusal;

@@ -8,7 +8,9 @@
 #include <string.h>
 
 #include "kp_host.h"
+#include "kp_kpf.h"
 #include "kp_mpq.h"
+#include "kp_text.h"
 
 /* --- SHA-1 --- */
 
@@ -91,12 +93,10 @@ typedef struct {
 	uint32_t v[LIMBS];
 } Big;
 
-static uint32_t le32(const uint8_t *p) { return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24; }
-
 static void big_from_bytes(Big *x, const uint8_t *b)
 {
 	int k;
-	for (k = 0; k < LIMBS; k++) x->v[k] = le32(b + 4 * k);
+	for (k = 0; k < LIMBS; k++) x->v[k] = kp_le_u32(b + 4 * k);
 }
 
 static void big_to_bytes(const Big *x, uint8_t *b)
@@ -194,6 +194,27 @@ static int pow_mod(Big *x, const Big *n)
 #define PAD_BYTE 0xbb
 #define PAD_LAST 0x0b
 
+/* The name HashDataAndName 0x49d370 hashes, upper-cased by SStrUpper's ASCII and cut at NAME_MAX_CHARS bytes: its
+ * length. The original hashes the ANSI name FindFirstFileA gave it: here windows-1252 (the legacy text's code page,
+ * kp_text.h) when every character of the UTF-8 name has a byte there, else the name's bytes as they are (a name already
+ * in a code page's bytes; a name of another code page, as a CP949 system's Korean one, is not modelled). */
+static size_t ansi_name(const char *base, char upper[NAME_MAX_CHARS + 1])
+{
+	size_t len = strlen(base), n;
+	char *legacy = (char *)malloc(len + 1);
+	const char *from = base;
+	if (legacy && kp_text_valid_utf8((const uint8_t *)base, len) &&
+		kp_text_to_legacy(base, legacy, len + 1) == kp_text_chars((const uint8_t *)base)) {
+		from = legacy;
+	}
+	for (n = 0; from[n] && n < NAME_MAX_CHARS; n++) {
+		upper[n] = from[n] >= 'a' && from[n] <= 'z' ? (char)(from[n] - ('a' - 'A')) : from[n];
+	}
+	upper[n] = 0;
+	free(legacy);
+	return n;
+}
+
 int kp_map_signature_valid(const char *name, const uint8_t *data, size_t size, const uint8_t key[KP_MAP_KEY_SIZE])
 {
 	uint8_t expected[KP_MAP_KEY_SIZE], got[KP_MAP_KEY_SIZE];
@@ -208,11 +229,8 @@ int kp_map_signature_valid(const char *name, const uint8_t *data, size_t size, c
 	if (size < KP_MAP_KEY_SIZE + 4) return 0;
 	at = size - KP_MAP_KEY_SIZE - 4;
 	tag = data + at;
-	if (le32(tag) != NGIS) return 0;
-	for (n = 0; base[n] && n < NAME_MAX_CHARS; n++) {
-		upper[n] = base[n] >= 'a' && base[n] <= 'z' ? (char)(base[n] - ('a' - 'A')) : base[n];
-	}
-	upper[n] = 0;
+	if (kp_le_u32(tag) != NGIS) return 0;
+	n = ansi_name(base, upper);
 	memset(expected, PAD_BYTE, sizeof expected);
 	expected[KP_MAP_KEY_SIZE - 1] = PAD_LAST;
 	kp_sha1(data, at, upper, n, expected);
@@ -273,19 +291,20 @@ uint32_t kp_map_class(const char *path, const uint8_t *key)
 int kp_map_key_from_executable(const uint8_t *exe, size_t size, uint8_t key[KP_MAP_KEY_SIZE])
 {
 	enum { PE_OFFSET = 0x3c, COFF = 4, SECTIONS = 2, OPTIONAL_SIZE = 16, OPTIONAL = 20, IMAGE_BASE = 28, SECTION = 40 };
-	uint32_t pe, base, rva, count, k;
-	size_t table;
+	/* the bounds in 64 bits: no field of the file, however large, wraps them (size_t is 32 bits on wasm32, armv7) */
+	uint64_t pe, base, rva, count, k, table;
 	if (size < PE_OFFSET + 4 || exe[0] != 'M' || exe[1] != 'Z') return 0;
-	pe = le32(exe + PE_OFFSET);
-	if ((size_t)pe + COFF + OPTIONAL + IMAGE_BASE + 4 > size || memcmp(exe + pe, "PE\0\0", 4) != 0) return 0;
-	count = le32(exe + pe + COFF + SECTIONS) & 0xffffu;
-	table = (size_t)pe + COFF + OPTIONAL + (le32(exe + pe + COFF + OPTIONAL_SIZE) & 0xffffu);
-	base = le32(exe + pe + COFF + OPTIONAL + IMAGE_BASE);
+	pe = kp_le_u32(exe + PE_OFFSET);
+	if (pe + COFF + OPTIONAL + IMAGE_BASE + 4 > size || memcmp(exe + pe, "PE\0\0", 4) != 0) return 0;
+	count = kp_le_u32(exe + pe + COFF + SECTIONS) & 0xffffu;
+	table = pe + COFF + OPTIONAL + (kp_le_u32(exe + pe + COFF + OPTIONAL_SIZE) & 0xffffu);
+	base = kp_le_u32(exe + pe + COFF + OPTIONAL + IMAGE_BASE);
+	if (base > KP_MAP_KEY_VA) return 0;
 	rva = KP_MAP_KEY_VA - base;
 	for (k = 0; k < count && table + (k + 1) * SECTION <= size; k++) {
 		const uint8_t *s = exe + table + k * SECTION;
-		uint32_t va = le32(s + 12), raw_size = le32(s + 16), raw = le32(s + 20);
-		if (rva >= va && rva + KP_MAP_KEY_SIZE <= va + raw_size && (size_t)raw + (rva - va) + KP_MAP_KEY_SIZE <= size) {
+		uint64_t va = kp_le_u32(s + 12), raw_size = kp_le_u32(s + 16), raw = kp_le_u32(s + 20);
+		if (rva >= va && rva + KP_MAP_KEY_SIZE <= va + raw_size && raw + (rva - va) + KP_MAP_KEY_SIZE <= size) {
 			memcpy(key, exe + raw + (rva - va), KP_MAP_KEY_SIZE);
 			return 1;
 		}

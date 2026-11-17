@@ -75,14 +75,22 @@ class CustomSpec:
 
 def install_ai_patch(s: Session, patch: dict) -> dict:
     """Each load of the AI scripts takes the patched aiscript.bin (the module's docstring); the returned record counts
-    the loads. A base other than the patch's stops the run (ai_asm.apply's AiError)."""
+    the loads. A load that left no aiscript.bin, or a base other than the patch's, stops the run (AiError)."""
     from scdata.analyze import ai_asm
     m = s.m
     st = {"loads": 0, "base": 0, "patched": 0}
 
+    def release():
+        if st["patched"]:
+            m.heap.release(st["patched"])
+            st["patched"] = 0
+
     def loaded():
         base = m.r32(AISCRIPT_BIN)
+        if base == 0:
+            raise ai_asm.AiError(f"{patch['name']}: LoadAiScriptBins 0x493800 left no aiscript.bin to patch")
         data = ai_asm.apply(m.read(base, patch["size"]), patch)
+        release()  # a copy no free took back: the load replaced its pointer
         p = m.alloc(len(data), zero=False)
         m.write(p, data)
         m.w32(AISCRIPT_BIN, p)
@@ -92,6 +100,7 @@ def install_ai_patch(s: Session, patch: dict) -> dict:
     def freeing():
         if st["patched"] and m.r32(AISCRIPT_BIN) == st["patched"]:
             m.w32(AISCRIPT_BIN, st["base"])
+            release()  # the emulator's copy: Storm frees the original buffer
 
     s.hook(LOAD_AI_BINS_RET, loaded)
     s.hook(FREE_AI_BINS, freeing)

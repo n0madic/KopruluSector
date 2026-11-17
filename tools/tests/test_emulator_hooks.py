@@ -5,21 +5,25 @@ the creep variant callback's and the start's music pick. Each address it names m
 StarCraft.exe, or the filter silently logs a draw Koprulu also makes (the frame-0 music pick once reached the oracle
 twice and shifted every later creep variant). The Play Custom driver's AI patch (custom.py) swaps aiscript.bin's
 buffer at LoadAiScriptBins' `ret` and back at FreeAiScriptBins' entry. The constants are read from the source text, so
-the test needs neither the emulator nor Unicorn.
+those tests need neither the emulator nor Unicorn; the patch's hooks themselves run over a stand-in machine, but
+custom.py imports the emulator's package, which needs unicorn (the research venv), so that test skips without.
 """
 from __future__ import annotations
 
+import importlib.util
 import os
 import re
 import struct
 import sys
 import unittest
+import zlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SCENARIO = ROOT / "tools" / "research" / "sc_emulator" / "scenario.py"
 CUSTOM = ROOT / "tools" / "research" / "sc_emulator" / "custom.py"
 ORIGINAL = os.environ.get("KOPRULU_ORIGINAL")
+HAS_UNICORN = importlib.util.find_spec("unicorn") is not None
 CALL_SIZE = 5  # e8 rel32
 CALL_OPCODE = 0xE8
 
@@ -75,6 +79,75 @@ class EmulatorHooksTest(unittest.TestCase):
         assert b"\xa3" + struct.pack("<I", c["AISCRIPT_BIN"]) in body  # mov [0x6a2e74], eax
         # FreeAiScriptBins starts with mov ecx, [0x6a2e74]: the buffer it frees is read after the hook put it back
         assert pe.read_va(c["FREE_AI_BINS"], 6) == b"\x8b\x0d" + struct.pack("<I", c["AISCRIPT_BIN"])
+
+    @unittest.skipUnless(HAS_UNICORN, "custom.py imports the emulator's package, which needs unicorn")
+    def test_ai_patch_hooks_swap_and_free_the_copy(self):
+        sys.path.insert(0, str(ROOT / "tools" / "research"))
+        from sc_emulator import custom
+        from scdata.analyze.ai import AiError
+
+        base = struct.pack("<I", 4) + bytes(12)  # an empty directory at 4: its zero id
+        patch = {"name": "t", "size": len(base), "crc32": zlib.crc32(base), "code": "aabb", "redirect": []}
+        m, s = _Machine(), _Session()
+        s.m = m
+        st = custom.install_ai_patch(s, patch)
+        with self.assertRaisesRegex(AiError, "left no aiscript.bin"):
+            s.hooks[custom.LOAD_AI_BINS_RET]()  # a load that failed: the buffer NULL
+        original = m.alloc(len(base))
+        m.write(original, base)
+        m.w32(custom.AISCRIPT_BIN, original)
+        s.hooks[custom.LOAD_AI_BINS_RET]()
+        first = m.r32(custom.AISCRIPT_BIN)
+        assert first != original and m.read(first, len(base) + 2) == base + b"\xaa\xbb" and st["loads"] == 1
+        m.w32(custom.AISCRIPT_BIN, original)  # loaded again without a free: the first copy is released
+        s.hooks[custom.LOAD_AI_BINS_RET]()
+        second = m.r32(custom.AISCRIPT_BIN)
+        assert m.released == [first] and st["loads"] == 2
+        s.hooks[custom.FREE_AI_BINS]()
+        assert m.r32(custom.AISCRIPT_BIN) == original and m.released == [first, second] and st["patched"] == 0
+
+
+class _Heap:
+    def __init__(self, released: list[int]):
+        self.released = released
+
+    def release(self, p: int) -> None:
+        self.released.append(p)
+
+
+class _Machine:
+    """What install_ai_patch's hooks use of the emulator's machine: a flat memory and a heap."""
+
+    def __init__(self):
+        self.mem: dict[int, int] = {}
+        self.top = 0x1000
+        self.released: list[int] = []
+        self.heap = _Heap(self.released)
+
+    def alloc(self, n: int, zero: bool = True) -> int:
+        p, self.top = self.top, self.top + n + 16
+        return p
+
+    def write(self, p: int, data: bytes) -> None:
+        for k, b in enumerate(data):
+            self.mem[p + k] = b
+
+    def read(self, p: int, n: int) -> bytes:
+        return bytes(self.mem.get(p + k, 0) for k in range(n))
+
+    def r32(self, p: int) -> int:
+        return int.from_bytes(self.read(p, 4), "little")
+
+    def w32(self, p: int, v: int) -> None:
+        self.write(p, v.to_bytes(4, "little"))
+
+
+class _Session:
+    def __init__(self):
+        self.hooks: dict[int, object] = {}
+
+    def hook(self, address: int, fn) -> None:
+        self.hooks[address] = fn
 
 
 if __name__ == "__main__":

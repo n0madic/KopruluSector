@@ -1218,28 +1218,37 @@ static void sha1_vectors(KpT *T)
 		"in two pieces");
 }
 
-/* A key of the test's own (two 1024-bit primes made with Python's pow, not Blizzard's) and its signature of
- * SIGNED_DATA for SIGNED_NAME: SHA-1 of the data and the upper-cased name over 0xbb bytes ending 0x0b, to the private
- * exponent, every number's bytes the least significant first. */
+/* A key of the test's own (two 1024-bit primes from Python's random and pow, not Blizzard's) and its signatures of
+ * SIGNED_DATA for SIGNED_NAME and for SIGNED_NAME_LATIN1's windows-1252 bytes ("(2)Caf\xe9.scm", the ANSI name the
+ * original hashes): SHA-1 of the data and the upper-cased name over 0xbb bytes ending 0x0b, to the private exponent,
+ * every number's bytes the least significant first. */
 #define SIGNED_DATA "Koprulu's test map: any bytes stand before the tag."
 #define SIGNED_NAME "(2)Test Map.scm"
+#define SIGNED_NAME_LATIN1 "(2)Caf\xc3\xa9.scm" /* UTF-8, as the file system gives it */
 static const char TEST_KEY[] =
-	"098f44172eb7628367645c5d4a5ad8961a25bd65e469df1e08d395c78a765768a5f9b5892190b90b105a38571309baab"
-	"498a8a647578e868744c8bf22b4f64f44aa6091240976f46e413b211e7152788b7527bc51c42ae992c49a50fe2cf48ba"
-	"8127aa11a1816d3bb211a8a511808eb2ea24bbe80d0b533ea596961cb8d3d22d7107ee56b8cc0ab3f64a03224ec47093"
-	"57e2714c6c21c78298747cec42fcdba9f177bce1d46e980a9b038d66ddbb80205bdd9f8a375520e9fe1b982e84332249"
-	"5843e52b9edea0ea42b18a0090c365005b24b5806991f7c3dc4336c70100c88b3a699b11c61426290cff9b75c0f93033"
-	"3fdeace7be7ec35f431b3fff1bbc5dab";
+	"51e1cbe3ed63037ce7efcf5f45d68c5c4ecfcf2c806b0c7fa5ea52946735aa79ec3f39c242847661aa72c6bd43cce7ea"
+	"96e05895d0a80a0c2931ce04d3700bd176d6d415f7fa5a285d7c72d6c4c523e2b948cd86f3818b26190221439ce99bb0"
+	"006a47376c4bad46aa394657e853d61be6fc44927cd104ce91755d53b27a51235c30cef0fee6fc6dba55264e747982d9"
+	"8f085bc64e38bb1d4eb86c4cb29c63b41a34bff764c83b406218a2bfec1858fac7c913aeb4769ef777b216539fee691a"
+	"63579e161a30e8eae8f87592a5f885bc106b9ad1a8d53a5d330e3b8dd24cb77a81007f8bcce36575b10302bdf421328f"
+	"e7f7f5c01c2218f020c44aa22df371cc";
 static const char TEST_SIGNATURE[] =
-	"99e92d47562460b362831db65c2d23ff6287883bbcce8ac06e7ea30d7680d416a476f406a23f546fb87de66178e0ce45"
-	"4e18fcb7097dc1e92be67e46d87c17eefad6bdab1a081090eff6af57a797f0725847b3aee5147df067fbd0e219c5d665"
-	"1cc931c56a256cadd340ed223fbfacd559f28a1268951ab267f40e0d2ac5f0d10984fb698e041368fa3af36e4d6ce9a4"
-	"6cfa5c6a12c03947a6de94ce6800a40af05a3bb985e90189fd5a3540f9945e21234e8c0f761ec4a90cc77b18d4c79dbb"
-	"67830933f350fd93c78479723f9c175202b4b5fb91039fab9edf43ea3ac30c70104c26b1aac37b8f65758858d6a5dc35"
-	"53f06a76d3900e17a1af7c3782a32600";
+	"59704b1b76a9686cc38bd038adf8436940088ae33be44adc763efe77d326c98d83fffeb0c557643840119c8b364d5ab9"
+	"3dba951d46419fec14edbcda37381a94a10b7e92de29e4a56816edf9b5f4ef50d6bd69440c526ab8523a787a7fbb6fce"
+	"8464db7424b349df0e4b8c3fd3b2104e18c1dc763b482a0cfac1c4266349a6975c8e3b166753d5f2a185142613af0e89"
+	"90de5da7f1bb9856138659b4593811be10c32acecc68dd68c86b8b1aa5b067c39baced184c91647ba6d21f92fdf3b59b"
+	"11684eb9d028c31158fc370beb438ade5734ab43b08efa6163c784844f83851a8e66e8d7ba4657f02eae60a58e4706a8"
+	"3486508aa0df75f8cde1e370da9f1029";
+static const char TEST_SIGNATURE_LATIN1[] =
+	"9ccf03c18ec6960a55528c58b3c367796855c573e41ad634140d4efe92047049779727fc1305a461bdb207a30c29a6b8"
+	"415ec83a810239bd16ee5fe2c6939228750767f0107db5425502ac1a3d7056c78abb9eadfec9602ac16dc9ffc0d9d10a"
+	"7a069dbb69dfc23fc0eb2973b2f27a53904b90460511ce7a4d9b21cbd6e0a40e20be2047f19bcd2f36e909c7558b8336"
+	"39883bf6cc3866813b91a477d0c0b754da88390a640d2171f600ff6a4f17b83e2e3bfdf4eb1794fe344b79721506aee6"
+	"2d111adb8749a6b7001282990533c5b12400d8d25f21ae5c5253c35bb084004794a8a4487ff23df5a2df0037dcc7011b"
+	"cbfe271dd94793bd2556d4ba4e2b868f";
 
-/* SIGNED_DATA, its tag and signature (malloc'd, freed at the end) and the test's key */
-static uint8_t *signed_map(KpT *T, size_t *size, uint8_t key[KP_MAP_KEY_SIZE])
+/* SIGNED_DATA, its tag and signature (hex; malloc'd, freed at the end) and the test's key */
+static uint8_t *signed_map_by(KpT *T, const char *signature, size_t *size, uint8_t key[KP_MAP_KEY_SIZE])
 {
 	size_t n = strlen(SIGNED_DATA);
 	uint8_t *b = (uint8_t *)malloc(n + 4 + KP_MAP_KEY_SIZE);
@@ -1247,10 +1256,15 @@ static uint8_t *signed_map(KpT *T, size_t *size, uint8_t key[KP_MAP_KEY_SIZE])
 	kp_t_defer(T, free, b);
 	memcpy(b, SIGNED_DATA, n);
 	memcpy(b + n, "NGIS", 4);
-	kp_t_eq(T, kp_hex_decode(TEST_SIGNATURE, b + n + 4, KP_MAP_KEY_SIZE), 0, "the signature");
+	kp_t_eq(T, kp_hex_decode(signature, b + n + 4, KP_MAP_KEY_SIZE), 0, "the signature");
 	kp_t_eq(T, kp_hex_decode(TEST_KEY, key, KP_MAP_KEY_SIZE), 0, "the key");
 	*size = n + 4 + KP_MAP_KEY_SIZE;
 	return b;
+}
+
+static uint8_t *signed_map(KpT *T, size_t *size, uint8_t key[KP_MAP_KEY_SIZE])
+{
+	return signed_map_by(T, TEST_SIGNATURE, size, key);
 }
 
 /* VerifyNgisSignature 0x49d460: the bytes before the tag and the file's name (its last component, any case) */
@@ -1277,6 +1291,20 @@ static void map_signature_checks_the_bytes_and_the_name(KpT *T)
 	even[0] &= 0xfe;
 	kp_t_ok(T, !kp_map_signature_valid(SIGNED_NAME, b, size, even), "no odd modulus, no check");
 	kp_t_ok(T, kp_map_signature_valid(SIGNED_NAME, b, size, key), "signed again");
+}
+
+/* HashDataAndName 0x49d370 hashes the ANSI name FindFirstFileA gave the original: a UTF-8 name's windows-1252 bytes,
+ * upper-cased in ASCII only (SStrUpper); a name already in those bytes as it is */
+static void map_signature_hashes_the_ansi_name(KpT *T)
+{
+	uint8_t key[KP_MAP_KEY_SIZE];
+	size_t size;
+	uint8_t *b = signed_map_by(T, TEST_SIGNATURE_LATIN1, &size, key);
+	kp_t_ok(T, kp_map_signature_valid(SIGNED_NAME_LATIN1, b, size, key), "the UTF-8 name's windows-1252 form");
+	kp_t_ok(T, kp_map_signature_valid("maps/(2)CAF\xc3\xa9.SCM", b, size, key), "upper-cased in ASCII only");
+	kp_t_ok(T, !kp_map_signature_valid("(2)CAF\xc3\x89.SCM", b, size, key), "not \xc3\x89 (its upper case outside ASCII)");
+	kp_t_ok(T, kp_map_signature_valid("(2)Caf\xe9.scm", b, size, key), "a name already in windows-1252 bytes");
+	kp_t_ok(T, !kp_map_signature_valid(SIGNED_NAME, b, size, key), "another name");
 }
 
 /* an archive of the given (empty) files written to path */
@@ -1346,6 +1374,14 @@ static void map_key_comes_from_the_executables_section(KpT *T)
 	kp_t_ok(T, !kp_map_key_from_executable(exe, at + 100, key), "a file cut short");
 	exe[table + 16 + 1] = 0x0c; /* the section ends before the key's end */
 	kp_t_ok(T, !kp_map_key_from_executable(exe, sizeof exe, key), "outside the section");
+	exe[table + 16 + 1] = RAW_SIZE >> 8;
+	exe[table + 20 + 3] = 0xff; /* raw bytes past 4 GB: no 32-bit size_t wraps the bounds (wasm32, armv7) */
+	kp_t_ok(T, !kp_map_key_from_executable(exe, sizeof exe, key), "a section's bytes past the file");
+	exe[table + 20 + 3] = 0;
+	kp_t_ok(T, kp_map_key_from_executable(exe, sizeof exe, key), "found again");
+	exe[PE + 24 + 28 + 2] = 0x50; /* an image base past KP_MAP_KEY_VA: no RVA */
+	kp_t_ok(T, !kp_map_key_from_executable(exe, sizeof exe, key), "an image base past the key");
+	exe[PE + 24 + 28 + 2] = BASE >> 16;
 	exe[0] = 'X';
 	kp_t_ok(T, !kp_map_key_from_executable(exe, sizeof exe, key), "no executable");
 }
@@ -1430,6 +1466,7 @@ static const KpTest TESTS[] = {
 	{ "res_reads_the_remastered_install", res_reads_the_remastered_install, 0 },
 	{ "sha1_vectors", sha1_vectors, 0 },
 	{ "map_signature_checks_the_bytes_and_the_name", map_signature_checks_the_bytes_and_the_name, 0 },
+	{ "map_signature_hashes_the_ansi_name", map_signature_hashes_the_ansi_name, 0 },
 	{ "map_certificate_takes_the_highest_kind", map_certificate_takes_the_highest_kind, 0 },
 	{ "map_key_comes_from_the_executables_section", map_key_comes_from_the_executables_section, 0 },
 	{ "res_executable_is_the_profiles", res_executable_is_the_profiles, 0 },

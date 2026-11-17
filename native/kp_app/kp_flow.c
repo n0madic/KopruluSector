@@ -981,10 +981,30 @@ static void load_entry(void *host, KpUi *ui, int index)
 	e->humans = h.humans;
 	memcpy(e->user_select, h.user_select, sizeof e->user_select);
 	e->first_human = h.first_human;
-	/* OpenMapArchive 0x469de0's class: a signed map's certificate (kp_map_class.h). Only templates no offline game
-	 * offers read it (ValidateGameTemplate 0x45b700's Ladder, Tournament and Server). */
-	e->map_class = kp_map_class(path, f->data->has_map_key ? f->data->map_key : NULL);
 	e->status = 0;
+}
+
+/* The maps' signature key, read from the 1.17 install's executable at its first need (kp_data_map_key; the reason
+ * there is none said once), NULL without one. */
+static const uint8_t *map_key(KpFlow *f)
+{
+	if (f->map_key_state == 0) {
+		char why[KP_ERROR_SIZE];
+		f->map_key_state = kp_data_map_key(f->data, f->map_key, why, sizeof why) ? 1 : -1;
+		if (f->map_key_state < 0 && why[0]) say(f, "maps' class: no signature key: %s", why);
+	}
+	return f->map_key_state > 0 ? f->map_key : NULL;
+}
+
+/* OpenMapArchive 0x469de0's class of map entry index (a signed map's certificate, kp_map_class.h), asked by the
+ * interface only for the templates that read it (ValidateGameTemplate 0x45b700's Ladder, Tournament and Server, none
+ * offered offline). */
+static uint32_t map_class(void *host, KpUi *ui, int index)
+{
+	KpFlow *f = (KpFlow *)host;
+	char path[ENTRY_PATH];
+	if (index < 0 || index >= ui->menus.entry_count || !entry_path(f, &ui->menus, index, path, sizeof path)) return 0;
+	return kp_map_class(path, map_key(f));
 }
 
 /* CreateGameFromEntry 0x45bfc0's reading of the map at Ok (its header again, the player in its first open slot), and
@@ -1451,6 +1471,7 @@ static void interface_host(KpFlow *f, KpUi *ui)
 {
 	ui->list_entries = list_entries;
 	ui->load_entry = load_entry;
+	ui->map_class = map_class;
 	ui->check_map = check_map;
 	ui->templates = &f->data->templates;
 	ui->check_replay = check_replay;
@@ -2216,6 +2237,7 @@ int kp_flow_show_seat(KpFlow *f, int seat, char *why, size_t why_size)
 	f->host.interface(f->host.ctx, ui);
 	kp_flow_video_to_ui(f, ui); /* the options as they are now (a hidden console's dialogs changed none) */
 	options_to_ui(f, ui);
+	kp_glue_saves(ui, f->profile); /* and the profile's saves, which another seat's saves changed (save_requests) */
 	kp_hud_shown(&f->hud);
 	layout(f);
 	if (f->host.world_build(f->host.ctx, why, why_size) != 0) return -1;

@@ -199,17 +199,12 @@ def custom_setup(d: Path) -> dict:
     return {k: v for k, v in setup.items() if k != "frame"}
 
 
-def custom_ai_patch(d: Path) -> dict | None:
-    """A custom game's own AI code over aiscript.bin (the run's ai_patch.json, `custom --ai-patch`), a custom golden's
-    "ai_patch" (kp_golden_run_start applies it); None for the install's scripts."""
+def custom_ai_patch(d: Path) -> Path | None:
+    """A custom game's own AI code over aiscript.bin (the run's ai_patch.json, `custom --ai-patch`): a custom golden's
+    "ai_patch" (kp_golden_run_start applies it) and kp_oracle's KP_AI_PATCH (kp_oracle_ai_patch_opts); None for the
+    install's scripts."""
     path = d / "ai_patch.json"
-    return json.loads(path.read_text()) if path.exists() else None
-
-
-def custom_ai_patch_env(d: Path) -> dict[str, str]:
-    """KP_AI_PATCH for kp_oracle (kp_oracle_ai_patch_opts) when the run has a patch."""
-    path = d / "ai_patch.json"
-    return {"KP_AI_PATCH": str(path)} if path.exists() else {}
+    return path if path.exists() else None
 
 
 def custom_lobby(d: Path) -> dict:
@@ -551,7 +546,9 @@ def check_mission(d: Path, index: dict, steps: list[int], write: bool, kind: str
             seed = state.header["initial_seed"]
         if kind == "custom":
             mission = custom_key(d)
-            env = {**(env or {}), "KP_SETUP": str(d / "setup.json"), **custom_ai_patch_env(d)}
+            env = {**(env or {}), "KP_SETUP": str(d / "setup.json")}
+            if (patch := custom_ai_patch(d)) is not None:
+                env["KP_AI_PATCH"] = str(patch)
         elif kind in PUBLIC_KINDS:
             mission = f"maps/{public_replay(d)}"
         else:
@@ -678,7 +675,7 @@ def check_runs(a: argparse.Namespace, ap: argparse.ArgumentParser, runs: list[tu
             turn = native_state.Decoder(State(d / "states" / "s00001.state")).u32(native_state.TURN_COUNTER)
             extra, env = {"turn": turn, "setup": custom_setup(d), "lobby": custom_lobby(d)}, chain_env(turn, None)
             if (patch := custom_ai_patch(d)) is not None:
-                extra["ai_patch"] = patch
+                extra["ai_patch"] = json.loads(patch.read_text())
         if a.kind == "chains" and (d / "states" / "s00001.state").exists():
             extra, env, error = chain_context(d, name, before, index, carry_dir)
             if error:

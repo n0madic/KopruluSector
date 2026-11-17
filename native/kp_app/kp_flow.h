@@ -264,6 +264,10 @@ typedef struct KpFlow {
 	char custom_path[KP_FLOW_MAP_PATH];
 	char custom_key[KP_SAVE_NAME];
 	char custom_next[2 * KP_NEXT_SCENARIO];
+	/* the maps' signature key (kp_data_map_key), read when a template first asks a map's class: 0 not yet, 1 read,
+	 * -1 none */
+	int map_key_state;
+	uint8_t map_key[KP_MAP_KEY_SIZE];
 	/* the gluCustm screen's list: each entry's folder among the listed folder's bases (entry_bases: the user's, then the
 	 * data folders') */
 	uint8_t entry_base[KP_UI_MAP_ENTRIES];

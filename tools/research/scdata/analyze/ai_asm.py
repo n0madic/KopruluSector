@@ -30,8 +30,20 @@ OFFSET_FIELD = 4  # a directory record's offset after its id
 STUB_TARGET = "start_town"
 
 
-def _parse_int(text: str) -> int:
-    return int(text, 0)
+def _int(text: str) -> int | None:
+    """An integer operand in Python's literal forms (12, 0x0c, 0b1100), None when it is not one."""
+    try:
+        return int(text, 0)
+    except ValueError:
+        return None
+
+
+def _latin1(text: str, what: str) -> bytes:
+    """A text operand's bytes (the binary's strings are one byte a character)."""
+    try:
+        return text.encode("latin-1")
+    except UnicodeEncodeError:
+        raise AiError(f"{what}: {text!r} has a character outside Latin-1") from None
 
 
 def _encode(width: int, value: int, what: str) -> bytes:
@@ -44,7 +56,11 @@ def _records(base: bytes) -> dict[bytes, int]:
     """Each id's first record position in aiscript.bin's directory (the resolver's first match, 0x494d20)."""
     first: dict[bytes, int] = {}
     pos = struct.unpack_from("<I", base, 0)[0]
-    for sid, _ in scripts.ai_directory(base, scripts.AI_RECORD):
+    try:
+        directory = scripts.ai_directory(base, scripts.AI_RECORD)  # every entry inside the file
+    except scripts.ScriptError as e:
+        raise AiError(f"aiscript.bin's directory: {e}") from None
+    for sid, _ in directory:
         first.setdefault(sid, pos)
         pos += scripts.AI_RECORD
     return first
@@ -61,7 +77,10 @@ def assemble(source: str, base: bytes, name: str, table: Table | None = None) ->
     labels: dict[str, int] = {}
     at = origin
     for number, line in enumerate(source.splitlines(), 1):
-        words = shlex.split(line, comments=True, posix=True)
+        try:
+            words = shlex.split(line, comments=True, posix=True)
+        except ValueError as e:  # an unclosed quote
+            raise AiError(f"line {number}: {e}") from None
         while words and words[0].endswith(":"):
             label = words.pop(0)[:-1]
             if not label or label in labels:
@@ -83,7 +102,7 @@ def assemble(source: str, base: bytes, name: str, table: Table | None = None) ->
                 raise AiError(f"line {number}: {mnemonic} takes {len(op.operands) + text} operand(s)")
             size = 1 + sum(w for _, w in op.operands)
             if text:
-                size += len(operands[-1].encode("latin-1")) + 1
+                size += len(_latin1(operands[-1], f"line {number}: debug")) + 1
         items.append((number, mnemonic, operands))
         at += size
     if at > ADDRESS_LIMIT:
@@ -92,17 +111,17 @@ def assemble(source: str, base: bytes, name: str, table: Table | None = None) ->
     def address(text: str, number: int) -> int:
         if text in labels:
             return labels[text]
-        try:
-            return _parse_int(text)
-        except ValueError:
-            raise AiError(f"line {number}: no label {text!r}") from None
+        value = _int(text)
+        if value is None:
+            raise AiError(f"line {number}: no label {text!r}")
+        return value
 
     code = bytearray()
     redirect: list[list] = []
     for number, mnemonic, operands in items:
         here = origin + len(code)
         if mnemonic == "stub":
-            sid = operands[0].encode("latin-1")
+            sid = _latin1(operands[0], f"line {number}: stub")
             if len(sid) != 4 or sid not in records:
                 raise AiError(f"line {number}: no script {operands[0]!r} in aiscript.bin's directory")
             entry = struct.unpack_from("<I", base, records[sid] + OFFSET_FIELD)[0]
@@ -116,10 +135,12 @@ def assemble(source: str, base: bytes, name: str, table: Table | None = None) ->
         op = by_name[mnemonic]
         code.append(op.code)
         for i, ((field, width), text) in enumerate(zip(op.operands, operands)):
-            value = address(text, number) if i in op.targets else _parse_int(text)
+            value = address(text, number) if i in op.targets else _int(text)
+            if value is None:
+                raise AiError(f"line {number}: {mnemonic} {field}: {text!r} is not an integer")
             code += _encode(width, value, f"line {number} {mnemonic} {field}")
         if mnemonic == "debug":
-            code += operands[-1].encode("latin-1") + b"\0"
+            code += _latin1(operands[-1], f"line {number}: debug") + b"\0"
     return {"name": name, "file": FILE, "size": len(base), "crc32": zlib.crc32(base), "code": code.hex(),
             "redirect": redirect}
 

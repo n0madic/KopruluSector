@@ -59,8 +59,8 @@ typedef struct {
 	KpCampaign campaign;
 	KpUiData ui;
 	KpTemplates templates;   /* the game templates (templates.lst and its .got files; ADR 0024) */
-	uint8_t map_key[KP_MAP_KEY_SIZE]; /* the maps' signature key, from a 1.17 install's executable (kp_map_class.h) */
-	int has_map_key;                  /* 0 without one (a repack, Remastered): every map's class 0 */
+	KpRes *res;              /* the sources it was built over (borrowed): what is read at its first need
+	                          * (kp_data_map_key) */
 	KpDataMission missions[KP_DATA_MISSIONS];
 	int mission_count;
 } KpData;
@@ -75,6 +75,10 @@ int kp_data_dir(const char *root, char *out, size_t size);
 int kp_data_build(KpData *d, KpRes *res, const KpUiFile *vector_fonts, int vector_font_count, const char *scenarios,
 	size_t scenarios_size, KpError *err);
 void kp_data_free(KpData *d);
+/* The maps' signature key (kp_map_class.h) from the 1.17 install's executable d was built over: 1, or 0 without one,
+ * with the reason in why ("" for a repack or Remastered alone, which hold no executable: their maps' class 0). Read
+ * at its first need, not at the build: only templates no offline game offers read a map's class. */
+int kp_data_map_key(const KpData *d, uint8_t key[KP_MAP_KEY_SIZE], char *why, size_t why_size);
 
 /* The catalog of d: the campaign's missions by mapdata index, then the scenarios of the index text (lines "name base
  * tileset width height packs", packs "a,b,c" or "-"), a scenario's index its base map's. */

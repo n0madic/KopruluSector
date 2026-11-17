@@ -8,6 +8,7 @@
 #include "../src/core/kp_gametype.h"
 #include "../src/core/kp_ids.h"
 #include "../src/core/kp_kpf.h"
+#include "../src/core/kp_sha256.h"
 
 /* --- goldens --- */
 
@@ -258,11 +259,7 @@ int kp_oracle_setup_from_json(const KpJson *v, KpGameSetup *s, KpError *err)
 	int k;
 	memset(s, 0, sizeof *s);
 	if (strlen(hex) != 2 * KP_TEMPLATE_SIZE) return kp_error_set(err, "setup: the template is not %d hex bytes", KP_TEMPLATE_SIZE);
-	for (k = 0; k < KP_TEMPLATE_SIZE; k++) {
-		unsigned byte;
-		if (sscanf(hex + 2 * k, "%2x", &byte) != 1) return kp_error_set(err, "setup: the template is not hex");
-		s->template_record[k] = (uint8_t)byte;
-	}
+	if (kp_hex_decode(hex, s->template_record, KP_TEMPLATE_SIZE) != 0) return kp_error_set(err, "setup: the template is not hex");
 	if (kp_json_len(players) != KP_SETUP_SLOTS) return kp_error_set(err, "setup: %d players, not %d", kp_json_len(players), KP_SETUP_SLOTS);
 	for (k = 0; k < KP_SETUP_SLOTS; k++) {
 		const KpJson *p = kp_json_at(players, k);
@@ -325,18 +322,13 @@ int kp_oracle_setup_opts(KpOracleOpts *opts, KpGameSetup *setup, KpError *err)
 #define AI_RECORD_OFFSET 4
 #define AI_ADDRESS_LIMIT 0x10000 /* the interpreter's addresses are WORDs (0x493310) */
 
-static uint32_t le32(const uint8_t *p)
-{
-	return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
-}
-
 /* The first directory record of id in aiscript.bin's bytes (the resolver's first match, 0x494d20), -1 none. */
 static int64_t ai_record(const uint8_t *bin, uint32_t size, uint32_t id)
 {
 	uint32_t at;
 	if (size < 8) return -1;
-	for (at = le32(bin); at <= size - 8; at += AI_RECORD) {
-		uint32_t rid = le32(bin + at);
+	for (at = kp_le_u32(bin); at <= size - 8; at += AI_RECORD) {
+		uint32_t rid = kp_le_u32(bin + at);
 		if (rid == 0) return -1;
 		if (rid == id) return at;
 	}
@@ -358,18 +350,14 @@ int kp_oracle_ai_patch(KpAiBins *out, const KpAiBins *base, const KpJson *patch,
 	if (!(blob = (uint8_t *)malloc((size_t)size + code + base->bin_size[1]))) kp_out_of_memory();
 	memcpy(blob, base->bin[0], size);
 	memcpy(blob + size + code, base->bin[1], base->bin_size[1]);
-	for (k = 0; k < code; k++) {
-		unsigned byte;
-		if (sscanf(hex + 2 * k, "%2x", &byte) != 1) {
-			free(blob);
-			return kp_error_set(err, "ai patch %s: its code is not hex", name);
-		}
-		blob[size + k] = (uint8_t)byte;
+	if (kp_hex_decode(hex, blob + size, code) != 0) {
+		free(blob);
+		return kp_error_set(err, "ai patch %s: its code is not hex", name);
 	}
 	for (k = 0; k < (uint32_t)kp_json_len(redirect); k++) {
 		const KpJson *r = kp_json_at(redirect, (int)k);
 		const char *id = kp_json_str(kp_json_at(r, 0), "");
-		int64_t offset = kp_json_int(kp_json_at(r, 1), -1), at = strlen(id) == 4 ? ai_record(blob, size, le32((const uint8_t *)id)) : -1;
+		int64_t offset = kp_json_int(kp_json_at(r, 1), -1), at = strlen(id) == 4 ? ai_record(blob, size, kp_le_u32((const uint8_t *)id)) : -1;
 		if (at < 0 || offset < (int64_t)size || offset >= (int64_t)size + code) {
 			free(blob);
 			return kp_error_set(err, "ai patch %s: cannot redirect %s to %lld", name, id, (long long)offset);

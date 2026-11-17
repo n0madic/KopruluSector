@@ -7,7 +7,7 @@
  * templates read the class (ValidateGameTemplate 0x45b700), and Battle.net's Create Game's map icons (0x44d190).
  *
  * The public key is Blizzard's: the 1.17 executable's 256 bytes at KP_MAP_KEY_VA, read from the player's install at
- * run time (kp_res_executable), never committed. Without it (a repack or Remastered alone: the web, the phones; TODO in
+ * run time when a template first asks a map's class (kp_data_map_key), never committed. Without it (a repack or Remastered alone: the web, the phones; TODO in
  * kp_data.c) every map's class is 0, an ordinary map's.
  */
 #ifndef KP_MAP_CLASS_H
@@ -30,11 +30,13 @@ struct KpMpq;
 /* SHA-1 (FIPS 180-1), the digest's bytes big-endian as the engine's 0x4beaa0 writes them */
 void kp_sha1(const void *data, size_t size, const void *more, size_t more_size, uint8_t digest[KP_SHA1_SIZE]);
 
-/* The modulus at KP_MAP_KEY_VA of a PE executable's bytes into key: 1, or 0 when no section holds it. */
+/* The modulus at KP_MAP_KEY_VA of a PE executable's bytes into key: 1, or 0 when no section holds it (any bytes: a
+ * field that points past the file or wraps refuses it). */
 int kp_map_key_from_executable(const uint8_t *exe, size_t size, uint8_t key[KP_MAP_KEY_SIZE]);
 
 /* VerifyNgisSignature 0x49d460: whether data (a map file's bytes) ends in a strong signature valid under key for the
- * file's name (its path's last component, upper-cased: SStrUpper's ASCII). */
+ * file's name: its path's last component (UTF-8) in the ANSI form the original hashes, windows-1252 when it has one,
+ * upper-cased by SStrUpper's ASCII. */
 int kp_map_signature_valid(const char *name, const uint8_t *data, size_t size, const uint8_t key[KP_MAP_KEY_SIZE]);
 
 /* ScanMapCertificates 0x4c1350 with ProbeConditionFile 0x469650: the kind of the first certificate the archive holds,
