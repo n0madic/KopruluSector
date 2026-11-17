@@ -131,6 +131,98 @@ static void custom_games_equal_the_original(KpT *T)
 	kp_t_ok(T, bad->size == 0, "custom games differ from the original: %s", kp_buf_text(bad));
 }
 
+/* Our own AI code over the data's aiscript.bin (kp_oracle_ai_patch, a custom golden's "ai_patch"; scdata/analyze/
+ * ai_asm.py assembles it): each Brood War melee script's record names a stub appended to the file (start_town, multirun
+ * the probe, goto the entry's next instruction). A probe that stops starts x-melee-2p's game; one that reaches
+ * fatal_error refuses it before its start (the melee scripts' check, kp_gametype_victory); a patch over another
+ * aiscript.bin or of a script the directory lacks is refused. */
+#define STUB_SIZE 7
+#define OP_STOP 0x24
+#define OP_FATAL_ERROR 0x28
+static const char *const MELEE_IDS[3] = { "TMCx", "ZMCx", "PMCx" };
+
+static uint32_t fourcc(const char *id)
+{
+	return (uint32_t)(uint8_t)id[0] | (uint32_t)(uint8_t)id[1] << 8 | (uint32_t)(uint8_t)id[2] << 16
+		| (uint32_t)(uint8_t)id[3] << 24;
+}
+
+/* The patch's JSON: the three stubs, then the probe's one opcode; the first record's id first_id. */
+static const KpJson *melee_patch(KpT *T, KpJsonDoc *doc, const KpAiBins *base, uint8_t probe, uint32_t crc,
+	const char *first_id)
+{
+	KpBuf *text = kp_t_buf(T);
+	uint32_t size = base->bin_size[0], probe_at = size + 3 * STUB_SIZE, k;
+	const KpJson *v;
+	char why[200];
+	kp_buf_printf(text, "{\"name\":\"test\",\"size\":%u,\"crc32\":%u,\"code\":\"", (unsigned)size, (unsigned)crc);
+	for (k = 0; k < 3; k++) {
+		int bin;
+		uint32_t next = kp_ai_bins_find(base, fourcc(MELEE_IDS[k]), &bin) + 1;
+		kp_buf_printf(text, "0348%02x%02x00%02x%02x", probe_at & 0xff, probe_at >> 8, next & 0xff, next >> 8);
+	}
+	kp_buf_printf(text, "%02x\",\"redirect\":[", probe);
+	for (k = 0; k < 3; k++)
+		kp_buf_printf(text, "%s[\"%s\",%u]", k ? "," : "", k ? MELEE_IDS[k] : first_id, (unsigned)(size + k * STUB_SIZE));
+	kp_buf_str(text, "]}");
+	kp_json_doc_init(doc);
+	if (!(v = kp_json_parse(doc, kp_buf_text(text), text->size, why, sizeof why))) kp_t_fail(T, "the patch: %s", why);
+	return v;
+}
+
+static void ai_patches_start_the_melee_scripts(KpT *T)
+{
+	const char *root = getenv("KP_TEST_ORIGINAL");
+	const KpData *d;
+	const KpAiBins *base;
+	const KpJson *g;
+	char maps[1024];
+	KpError err;
+	KpJsonDoc doc;
+	KpAiBins bins;
+	uint32_t crc;
+	int probe, rc;
+	if (!kp_t_ready(T, "test_scenarios", DATA_FILES)) return;
+	if (!root || !root[0]) kp_t_skip(T, "no KP_TEST_ORIGINAL (the custom games' maps)");
+	snprintf(maps, sizeof maps, "%s/maps", root);
+	g = golden(T, "custom", "x-melee-2p");
+	if (!(d = kp_oracle_data(".", &err))) kp_t_fail(T, "%s", err.msg);
+	base = &d->shared.data.ai;
+	crc = kp_crc32(base->bin[0], base->bin_size[0]);
+	for (probe = 0; probe < 2; probe++) {
+		KpGameSetup setup;
+		KpOracleOpts opts;
+		KpOracleGame og;
+		int bin, k;
+		rc = kp_oracle_ai_patch(&bins, base, melee_patch(T, &doc, base, probe ? OP_FATAL_ERROR : OP_STOP, crc, MELEE_IDS[0]),
+			&err);
+		kp_json_doc_free(&doc);
+		kp_t_eq(T, rc, 0, "the patch applies: %s", err.msg);
+		for (k = 0; k < 3; k++) {
+			kp_t_eq(T, kp_ai_bins_find(&bins, fourcc(MELEE_IDS[k]), &bin), base->bin_size[0] + k * STUB_SIZE, "%s's stub",
+				MELEE_IDS[k]);
+		}
+		kp_t_eq(T, bins.bin_size[1], base->bin_size[1], "bwscript.bin kept");
+		kp_oracle_opts(&opts);
+		opts.maps = maps;
+		if (kp_oracle_setup_from_json(kp_json_get(g, "setup"), &setup, &err) != 0) kp_t_fail(T, "%s", err.msg);
+		opts.host.setup = &setup;
+		opts.host.ai_bins = &bins;
+		rc = kp_oracle_game_start(&og, ".", kp_json_field_str(g, "mission", ""), (uint32_t)kp_json_field_int(g, "seed", 0),
+			(int)kp_json_field_int(g, "expansion", 0), &opts, &err);
+		if (rc == 0) kp_oracle_game_free(&og);
+		kp_ai_bins_free(&bins);
+		if (probe) kp_t_ok(T, rc != 0 && strstr(err.msg, "fatal_error"), "a probe of fatal_error: %s", rc ? err.msg : "started");
+		else kp_t_eq(T, rc, 0, "a probe that stops starts: %s", err.msg);
+	}
+	rc = kp_oracle_ai_patch(&bins, base, melee_patch(T, &doc, base, OP_STOP, crc + 1, MELEE_IDS[0]), &err);
+	kp_json_doc_free(&doc);
+	kp_t_ok(T, rc != 0 && strstr(err.msg, "assembled over"), "another aiscript.bin: %s", rc ? err.msg : "applied");
+	rc = kp_oracle_ai_patch(&bins, base, melee_patch(T, &doc, base, OP_STOP, crc, "Nope"), &err);
+	kp_json_doc_free(&doc);
+	kp_t_ok(T, rc != 0 && strstr(err.msg, "cannot redirect Nope"), "an unknown script: %s", rc ? err.msg : "applied");
+}
+
 /* The race of a race list's item (FillRaceList 0x456170's 0x503da4: Zerg, Terran, Protoss, Random). */
 static const int64_t RACE_ITEMS[4] = { 0, 1, 2, 6 };
 #define ID_LOCAL_RACE 28
@@ -396,6 +488,7 @@ static const KpTest TESTS[] = {
 	{ "campaign_chains_equal_the_original", campaign_chains_equal_the_original, 4 },
 	{ "replays_equal_the_original", replays_equal_the_original, 4 },
 	{ "custom_games_equal_the_original", custom_games_equal_the_original, 2 },
+	{ "ai_patches_start_the_melee_scripts", ai_patches_start_the_melee_scripts, 0 },
 	{ "lobby_records_are_the_originals", lobby_records_are_the_originals, 0 },
 	{ "escape_skips_running_triggers_only", escape_skips_running_triggers_only, 0 },
 };

@@ -629,6 +629,26 @@ static void flag_beacon(KpGame *g, int64_t p)
 	if (n != 0) kp_unit_complete_in_place(g, n);
 }
 
+/* The melee scripts the computers will start, checked before the game as kp_mission_check_ai checks a trigger's
+ * (ADR 0023): one whose code reaches fatal_error or reads outside its binary (a modded aiscript.bin, the oracle's patched
+ * one) refuses the game. Each race's script once. */
+static int check_melee_ai(KpGame *g, KpError *err)
+{
+	char why[KP_ERROR_SIZE];
+	int p, checked = 0;
+	if (!g->ai_bins) return 0;
+	for (p = 0; p < 8; p++) {
+		int64_t race = g->setup.race[p];
+		if (g->setup.type[p] != KP_CTRL_COMPUTER || race < 0 || race > 2 || (checked & 1 << race)) continue;
+		checked |= 1 << race;
+		if (kp_aiscript_check(g->ai_bins, MELEE_SCRIPTS[g->expansion != 0][race], why, sizeof why) != 0) {
+			snprintf(err->msg, sizeof err->msg, "start: %s", why);
+			return -1;
+		}
+	}
+	return 0;
+}
+
 /* The melee AI's start (StartCustomLevelAIScripts 0x4486a0): each computer slot of a race runs its race's script
  * from its start location. */
 static void start_melee_ai(KpGame *g)
@@ -668,7 +688,10 @@ int kp_gametype_victory(KpGame *g, const struct KpVictoryFiles *v, KpError *err)
 {
 	const KpGameSetup *s = &g->setup;
 	int file = victory_file(s), p;
-	if (kp_setup_melee_ai(s)) start_melee_ai(g);
+	if (kp_setup_melee_ai(s)) {
+		if (check_melee_ai(g, err) != 0) return -1;
+		start_melee_ai(g);
+	}
 	if (file == -1) return 0;
 	if (file == -2) {
 		snprintf(err->msg, sizeof err->msg, "start: victory %d of value %u has no trigger file (error 0x5d)",

@@ -1,0 +1,90 @@
+# The melee opcodes no stock script reaches (docs/phase-multiplayer.md, "The melee opcodes"): each computer's melee
+# script starts this probe beside its own code, so the original runs them in a custom game of the emulator
+# (sc_emulator custom --ai-patch) and Koprulu runs them in the same game (kp_oracle KP_AI_PATCH, a custom golden's
+# "ai_patch"). Assembled over the install's aiscript.bin by scdata/analyze/ai_asm.py; our own code, no Blizzard bytes.
+#
+# A branch's two ways lead to different instructions (a goto or a wait 1), so the AI trace shows which one ran. Once
+# the script's own attack has grouped, PrepareAttack ends eval_harass early (the target's region no longer gathers), so
+# the first eval_harass runs at frame 0 with a roster of its own. The
+# opcodes that wait for a condition run in threads of their own: one that never holds keeps only its thread. Waits
+# are frames (RunAiScripts 0x4938e0 runs every frame); the probe's last opcode runs near frame 4800, before an idle
+# player of the original game falls (o-long-4p's ended at frame 6093). fatal_error stays out: Koprulu refuses a game
+# whose scripts reach it before the start (kp_aiscript_check).
+
+stub TMCx probe
+stub ZMCx probe
+stub PMCx probe
+stub TMCu probe
+stub ZMCu probe
+stub PMCu probe
+
+probe:
+    multirun secure
+    multirun upgrades
+    debug shown "Koprulu: the melee opcodes probe"
+shown:
+    harass_factor 1                 # no attack target yet: nothing changes
+    attack_add 2 0                  # two Marines in the roster for eval_harass to weigh
+    eval_harass first_lost          # before the script's first attack: PrepareAttack picks a staging region, then the
+    goto first_won                  # roster's strengths against the enemies' near it
+first_lost:
+    wait 1
+first_won:
+    harass_factor 1                 # the target's enemy weighed: the roster up to three times
+    region_size 1 small_jumped      # 32 tiles: a start's regions hold more
+    goto small_done
+small_jumped:
+    wait 1
+small_done:
+    region_size 255 big_jumped      # 8160 tiles
+    goto big_done
+big_jumped:
+    wait 1
+big_done:
+    wait 1200
+    build_bunkers
+    multirun bunkers
+    build_turrets
+    multirun turrets
+    eval_harass harass_lost
+    goto harass_won
+harass_lost:
+    wait 1
+harass_won:
+    harass_factor 1
+    harass_factor 65535             # one copy: nothing appended
+    wait 1200
+    region_size 40 grown_jumped     # 1280 tiles, as the town has spread
+    goto grown_done
+grown_jumped:
+    wait 1
+grown_done:
+    eval_harass later_lost
+    goto later_won
+later_lost:
+    wait 1
+later_won:
+    harass_factor 2
+    wait 1200
+    implode
+    wait 1200
+    eval_harass last_lost
+    goto last_won
+last_lost:
+    wait 1
+last_won:
+    harass_factor 3
+    stop
+
+secure:
+    wait_secure
+    stop
+upgrades:
+    wait_upgrades
+    stop
+bunkers:
+    wait_bunkers
+    stop
+turrets:
+    wait_turrets
+    stop

@@ -283,30 +283,127 @@ int kp_oracle_setup_from_json(const KpJson *v, KpGameSetup *s, KpError *err)
 	return 0;
 }
 
+/* The JSON file at path parsed into doc (kp_json_doc_free it), or NULL with the error. */
+static const KpJson *json_file(KpJsonDoc *doc, const char *path, KpError *err)
+{
+	const KpJson *root;
+	char why[200];
+	size_t size;
+	uint8_t *text;
+	kp_json_doc_init(doc);
+	if (!(text = kp_read_file(path, &size))) {
+		kp_error_set(err, "oracle: cannot read %s", path);
+		return NULL;
+	}
+	root = kp_json_parse(doc, (const char *)text, size, why, sizeof why);
+	free(text);
+	if (!root) {
+		kp_json_doc_free(doc);
+		kp_error_set(err, "oracle: %s: %s", path, why);
+	}
+	return root;
+}
+
 int kp_oracle_setup_opts(KpOracleOpts *opts, KpGameSetup *setup, KpError *err)
 {
 	const char *path = getenv("KP_SETUP");
 	KpJsonDoc doc;
 	const KpJson *root, *start;
-	char why[200];
-	size_t size;
-	uint8_t *text;
 	int rc;
 	if (!path || !path[0]) return 0;
-	if (!(text = kp_read_file(path, &size))) return kp_error_set(err, "oracle: cannot read %s", path);
-	kp_json_doc_init(&doc);
-	root = kp_json_parse(&doc, (const char *)text, size, why, sizeof why);
-	free(text);
-	if (!root) {
-		kp_json_doc_free(&doc);
-		return kp_error_set(err, "setup: %s: %s", path, why);
-	}
+	if (!(root = json_file(&doc, path, err))) return -1;
 	start = kp_json_get(root, "start_game");
 	rc = kp_oracle_setup_from_json(start ? start : root, setup, err);
 	kp_json_doc_free(&doc);
 	if (rc != 0) return -1;
 	opts->host.setup = setup;
 	opts->host.local_storm = 0;
+	return 0;
+}
+
+#define AI_RECORD 16            /* aiscript.bin's directory records {id, offset, string, flags} */
+#define AI_RECORD_OFFSET 4
+#define AI_ADDRESS_LIMIT 0x10000 /* the interpreter's addresses are WORDs (0x493310) */
+
+static uint32_t le32(const uint8_t *p)
+{
+	return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
+}
+
+/* The first directory record of id in aiscript.bin's bytes (the resolver's first match, 0x494d20), -1 none. */
+static int64_t ai_record(const uint8_t *bin, uint32_t size, uint32_t id)
+{
+	uint32_t at;
+	if (size < 8) return -1;
+	for (at = le32(bin); at <= size - 8; at += AI_RECORD) {
+		uint32_t rid = le32(bin + at);
+		if (rid == 0) return -1;
+		if (rid == id) return at;
+	}
+	return -1;
+}
+
+int kp_oracle_ai_patch(KpAiBins *out, const KpAiBins *base, const KpJson *patch, KpError *err)
+{
+	const char *name = kp_json_field_str(patch, "name", "?"), *hex = kp_json_field_str(patch, "code", "");
+	const KpJson *redirect = kp_json_get(patch, "redirect");
+	uint32_t size = base->bin_size[0], code = (uint32_t)(strlen(hex) / 2), k;
+	uint8_t *blob;
+	memset(out, 0, sizeof *out);
+	if (kp_json_field_int(patch, "size", -1) != (int64_t)size
+		|| kp_json_field_int(patch, "crc32", -1) != (int64_t)kp_crc32(base->bin[0], size))
+		return kp_error_set(err, "ai patch %s: the data's aiscript.bin is not the one it was assembled over", name);
+	if (strlen(hex) % 2 != 0 || size + code > AI_ADDRESS_LIMIT)
+		return kp_error_set(err, "ai patch %s: its code is not hex bytes below the WORD addresses", name);
+	if (!(blob = (uint8_t *)malloc((size_t)size + code + base->bin_size[1]))) kp_out_of_memory();
+	memcpy(blob, base->bin[0], size);
+	memcpy(blob + size + code, base->bin[1], base->bin_size[1]);
+	for (k = 0; k < code; k++) {
+		unsigned byte;
+		if (sscanf(hex + 2 * k, "%2x", &byte) != 1) {
+			free(blob);
+			return kp_error_set(err, "ai patch %s: its code is not hex", name);
+		}
+		blob[size + k] = (uint8_t)byte;
+	}
+	for (k = 0; k < (uint32_t)kp_json_len(redirect); k++) {
+		const KpJson *r = kp_json_at(redirect, (int)k);
+		const char *id = kp_json_str(kp_json_at(r, 0), "");
+		int64_t offset = kp_json_int(kp_json_at(r, 1), -1), at = strlen(id) == 4 ? ai_record(blob, size, le32((const uint8_t *)id)) : -1;
+		if (at < 0 || offset < (int64_t)size || offset >= (int64_t)size + code) {
+			free(blob);
+			return kp_error_set(err, "ai patch %s: cannot redirect %s to %lld", name, id, (long long)offset);
+		}
+		blob[at + AI_RECORD_OFFSET] = (uint8_t)offset;
+		blob[at + AI_RECORD_OFFSET + 1] = (uint8_t)(offset >> 8);
+		blob[at + AI_RECORD_OFFSET + 2] = (uint8_t)(offset >> 16);
+		blob[at + AI_RECORD_OFFSET + 3] = (uint8_t)(offset >> 24);
+	}
+	out->blob = blob;
+	out->size = (size_t)size + code + base->bin_size[1];
+	out->bin[0] = blob;
+	out->bin_size[0] = size + code;
+	out->bin[1] = blob + size + code;
+	out->bin_size[1] = base->bin_size[1];
+	out->operands = base->operands;
+	out->operands_size = base->operands_size;
+	return 0;
+}
+
+int kp_oracle_ai_patch_opts(KpOracleOpts *opts, const char *root, KpAiBins *bins, KpError *err)
+{
+	const char *path = getenv("KP_AI_PATCH");
+	const KpData *d;
+	const KpJson *patch;
+	KpJsonDoc doc;
+	int rc;
+	memset(bins, 0, sizeof *bins);
+	if (!path || !path[0]) return 0;
+	if (!(d = kp_oracle_data(root, err)) || !(patch = json_file(&doc, path, err))) return -1;
+	rc = kp_oracle_ai_patch(bins, &d->shared.data.ai, patch, err);
+	kp_json_doc_free(&doc);
+	if (rc != 0) return -1;
+	opts->host.ai_bins = bins;
 	return 0;
 }
 
@@ -345,10 +442,19 @@ int kp_golden_run_start(KpGoldenRun *gr, const char *root, const KpJson *g, cons
 		o.host.setup = &gr->setup;
 		o.host.local_storm = 0;
 	}
-	if (kp_replay_from_golden(&gr->replay, root, g, err) != 0) return -1;
+	if (kp_json_get(g, "ai_patch")) { /* a custom game with our own AI code (state_check: the run's ai_patch.json) */
+		const KpData *d = kp_oracle_data(root, err);
+		if (!d || kp_oracle_ai_patch(&gr->ai_patch, &d->shared.data.ai, kp_json_get(g, "ai_patch"), err) != 0) return -1;
+		o.host.ai_bins = &gr->ai_patch;
+	}
+	if (kp_replay_from_golden(&gr->replay, root, g, err) != 0) {
+		kp_ai_bins_free(&gr->ai_patch);
+		return -1;
+	}
 	o.host.mission_index = gr->replay.mission_index;
 	if (kp_oracle_game_start(&gr->game, root, gr->replay.mission, gr->replay.seed, gr->replay.expansion, &o, err) != 0) {
 		kp_replay_free(&gr->replay);
+		kp_ai_bins_free(&gr->ai_patch);
 		return -1;
 	}
 	gr->tracing = o.host.trace;
@@ -361,6 +467,7 @@ int kp_golden_run_start(KpGoldenRun *gr, const char *root, const KpJson *g, cons
 void kp_golden_run_free(KpGoldenRun *gr)
 {
 	kp_oracle_game_free(&gr->game);
+	kp_ai_bins_free(&gr->ai_patch);
 	kp_replay_free(&gr->replay);
 	kp_buf_free(&gr->trace);
 	kp_buf_free(&gr->ai_trace);

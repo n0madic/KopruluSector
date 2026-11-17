@@ -73,6 +73,8 @@ def custom_rows() -> list[str]:
                 kinds.append(items[sel])
         steps = sorted(int(k) for k in g["steps"])
         traced = bool(g.get("ai_trace", {}).get("count"))
+        if "ai_patch" in g:
+            kinds.append("our own AI code")
         rows.append(f"| `{name}` | `{g['mission'].removeprefix('maps/')}` | {', '.join(kinds) or '?'} | "
                     f"{len(steps)} of {steps[0]}–{steps[-1]} | {'✓' if traced else '—'} |")
     return rows
@@ -133,7 +135,9 @@ def build(data: Path) -> str:
                   "its golden holds, with the computers' AI trace (`test_scenarios`); `test_seats` plays each again "
                   "with every other player as a seat. Their Play Custom screens at Ok equal the original's pixel for "
                   "pixel outside the cursor, and their lists and lobby records equal its records "
-                  "(`test_flow.play_custom_screens_are_the_originals`).", "",
+                  "(`test_flow.play_custom_screens_are_the_originals`). The games of our own AI code run a probe "
+                  "of the melee opcodes no stock script reaches beside each computer's melee script "
+                  "([phase M](phase-multiplayer.md#the-melee-opcodes-against-the-original-2026-11-17)).", "",
                   "| Game | Map | Game type | Steps equal | AI trace |", "|---|---|---|---|---|", *custom, ""]
     return "\n".join(lines)
 

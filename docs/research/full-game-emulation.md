@@ -1103,6 +1103,9 @@ python -m sc_emulator play terran_m06 terran-m06 --out-root koprulu-private/emu/
 python -m sc_emulator custom "../../koprulu-private/full/app/maps/(2)Challenger.scm" OUT --type Melee --race terran \
   --slots computer:zerg,closed --frames 2001 --state 1-101,121-2001/20 --shots 1,2000
                                             # phase M0: a custom game through Play Custom (custom.py)
+python -m sc_emulator custom "../../koprulu-private/full/app/maps/BroodWar/(4)Caldera.scm" OUT --expansion --type Melee \
+  --race protoss --slots computer:terran,computer:protoss,computer:zerg --ai-patch ../../tests/ai/melee-opcodes.aiasm
+                                            # the same with our own AI code appended to aiscript.bin (ai_asm.py)
 python -m sc_emulator replay FILE.rep OUT --cd expansion --expansion --frames 2001 --state 1-101,121-2001/20
                                             # a replay up to a frame, with the dumps of chosen steps
 ```
@@ -1141,6 +1144,8 @@ The offline screen's facts, from the runs:
 - **Player order.** The local person is not player 0: in a two-player melee the computer was player 0 and the person player 1.
 - **Races.** Melee races pass through the single-player custom races, flag 0x5264c3 and races 0x526546.. (ApplyCustomGameRaces 0x455020).
 - **Use Map Settings on a melee map.** Bottleneck offers no computer slot for Use Map Settings (the map panel's "Computer Slots: 0"); Ok then starts no game and the screen stays. The check is Play Custom's Ok (stage M4).
+
+**Our own AI code** (`--ai-patch SOURCE`, 2026-11-17). Twelve melee opcodes are in no stock script, and a map cannot carry an AI binary, so the original runs them only from a patched `aiscript.bin`. `scdata/analyze/ai_asm.py` assembles a source (labels, the opcodes of `defs/ai` with their operands, `debug`'s text, `stub ID label`) over the install's file. The code goes after the file's last byte, where its directory ends. Each `stub` puts `start_town`, `multirun label`, `goto <entry + 1>` in front of a script and points its directory record there. The result is a patch: our own bytes, the base's size and CRC-32, the records' new offsets. `custom.py` hooks `LoadAiScriptBins` `0x493800` at its `ret` (`0x493858`): it checks the loaded buffer `0x6a2e74` against the patch's base, writes the patched file into the emulator's memory and points `0x6a2e74` at it. At `FreeAiScriptBins` `0x493740` it puts the original buffer back, so Storm frees only its own. The run keeps the patch as `ai_patch.json`. `tests/ai/melee-opcodes.aiasm` starts a probe beside every melee script ([phase M](../phase-multiplayer.md#the-melee-opcodes-against-the-original-2026-11-17)).
 
 `replay.py` takes `--frames N` (stop once the game reached frame N) and `--state` (the steps to dump, as `custom`'s), for the public replays, which run tens of thousands of frames. The emulator plays about 5–7 frames a second.
 

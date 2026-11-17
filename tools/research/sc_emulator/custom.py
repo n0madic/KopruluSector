@@ -21,6 +21,12 @@ the player records 0x6726c8 at StartGame 0x443f40's entry and after the first fr
 result), `play_custom.cap` (the screen at Ok, uiscreen.capture_screen: the 640x480 indices with the cursor still
 drawn, its layer-0 rectangle in the header, the palette, the open dialogs), the oracle's logs (scenario.install_logs: commands.jsonl, ui.jsonl, triggers.jsonl, ai.jsonl, ...) and with
 `state_steps` the state dumps of those object steps (state.install) in states/.
+
+With `ai_patch` (scdata/analyze/ai_asm.py's patch: our own AI code and its stubs, `custom --ai-patch SOURCE`) the
+game's aiscript.bin is the patched one: when LoadAiScriptBins 0x493800 returns, its buffer 0x6a2e74 is checked against
+the patch's base and replaced by the emulator's copy of the patched file; when FreeAiScriptBins 0x493740 is entered,
+the original buffer is put back for Storm to free. The patch is written to `ai_patch.json` (state_check passes it to
+Koprulu as KP_AI_PATCH and keeps it in the golden).
 """
 from __future__ import annotations
 
@@ -48,6 +54,9 @@ LOCAL_RACE = 0x526546
 CTRL_GAME_TYPE, CTRL_SUBTYPE = 17, 18
 CTRL_SLOT_TYPE, CTRL_LOCAL_RACE, CTRL_SLOT_RACE = 21, 28, 29
 FLAG_VISIBLE, FLAG_DISABLED = 0x8, 0x2
+LOAD_AI_BINS_RET = 0x493858  # LoadAiScriptBins 0x493800's ret: both buffers loaded
+FREE_AI_BINS = 0x493740      # FreeAiScriptBins: SMemFree of both buffers
+AISCRIPT_BIN = 0x6A2E74      # aiscript.bin's buffer (bwscript.bin's 0x6a2e78)
 RACES = {"zerg": "Zerg", "terran": "Terran", "protoss": "Protoss", "random": "Random"}
 SLOT_TYPES = {"computer": "Computer", "closed": "Closed"}
 
@@ -61,6 +70,32 @@ class CustomSpec:
     subtype: str = ""                # the subtype list's item text; "" keeps the default
     race: str = ""                   # the player's own race (RACES); "" keeps Random
     slots: list[tuple[str, str]] = field(default_factory=list)  # opponents in slot order: (SLOT_TYPES, RACES)
+    ai_patch: dict | None = None     # aiscript.bin's patch (ai_asm.assemble), None: the install's file
+
+
+def install_ai_patch(s: Session, patch: dict) -> dict:
+    """Each load of the AI scripts takes the patched aiscript.bin (the module's docstring); the returned record counts
+    the loads. A base other than the patch's stops the run (ai_asm.apply's AiError)."""
+    from scdata.analyze import ai_asm
+    m = s.m
+    st = {"loads": 0, "base": 0, "patched": 0}
+
+    def loaded():
+        base = m.r32(AISCRIPT_BIN)
+        data = ai_asm.apply(m.read(base, patch["size"]), patch)
+        p = m.alloc(len(data), zero=False)
+        m.write(p, data)
+        m.w32(AISCRIPT_BIN, p)
+        st.update(loads=st["loads"] + 1, base=base, patched=p)
+        log.info("custom aiscript.bin patched by %s: %d bytes at %#x", patch["name"], len(data), p)
+
+    def freeing():
+        if st["patched"] and m.r32(AISCRIPT_BIN) == st["patched"]:
+            m.w32(AISCRIPT_BIN, st["base"])
+
+    s.hook(LOAD_AI_BINS_RET, loaded)
+    s.hook(FREE_AI_BINS, freeing)
+    return st
 
 
 def _slot_records(m) -> list[dict]:
@@ -169,6 +204,9 @@ def run_custom(out: Path, spec: CustomSpec, frames: int = 2000, max_wall: float 
         state.install(s, state_steps, out / "states")
     st = {"last_frame": -1}
     events: list[dict] = []
+    patched = install_ai_patch(s, spec.ai_patch) if spec.ai_patch else None
+    if spec.ai_patch:
+        write_json(out / "ai_patch.json", spec.ai_patch)
 
     def ev(kind, **kw):
         e = {"t": m.clock_us // 1000, "kind": kind, "frame": m.r32(game.FRAME_COUNTER), **kw}
@@ -295,6 +333,7 @@ def run_custom(out: Path, spec: CustomSpec, frames: int = 2000, max_wall: float 
     result = {"finished": finished or "wall-time limit", "wall_seconds": round(time.time() - t0, 1),
               "virtual_ms": m.clock_us // 1000, "visited": visited, "events": events, "last_frame": st["last_frame"],
               "map": spec.map_name, "expansion": spec.expansion, "game_type": spec.game_type, "subtype": spec.subtype,
-              "race": spec.race, "slots": spec.slots, "input_log": inp.log}
+              "race": spec.race, "slots": spec.slots, "input_log": inp.log,
+              "ai_patch": None if patched is None else {"name": spec.ai_patch["name"], "loads": patched["loads"]}}
     write_json(out / "custom.json", result)
     return result

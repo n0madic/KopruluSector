@@ -100,7 +100,7 @@ Scripted wins: 64 of 64 playable rows.
 
 ## Custom games (phase M)
 
-The games of the original's Play Custom screen against computers ([phase M](phase-multiplayer.md)), each started from its lobby's setup on the install's map and equal to the original's at every step its golden holds, with the computers' AI trace (`test_scenarios`); `test_seats` plays each again with every other player as a seat. Their Play Custom screens at Ok equal the original's pixel for pixel outside the cursor, and their lists and lobby records equal its records (`test_flow.play_custom_screens_are_the_originals`).
+The games of the original's Play Custom screen against computers ([phase M](phase-multiplayer.md)), each started from its lobby's setup on the install's map and equal to the original's at every step its golden holds, with the computers' AI trace (`test_scenarios`); `test_seats` plays each again with every other player as a seat. Their Play Custom screens at Ok equal the original's pixel for pixel outside the cursor, and their lists and lobby records equal its records (`test_flow.play_custom_screens_are_the_originals`). The games of our own AI code run a probe of the melee opcodes no stock script reaches beside each computer's melee script ([phase M](phase-multiplayer.md#the-melee-opcodes-against-the-original-2026-11-17)).
 
 | Game | Map | Game type | Steps equal | AI trace |
 |---|---|---|---|---|
@@ -108,6 +108,7 @@ The games of the original's Play Custom screen against computers ([phase M](phas
 | `o-long-4p` | `(4)Blood Bath.scm` | Melee | 61 of 1–6001 | ✓ |
 | `o-melee-2p` | `(2)Challenger.scm` | Melee | 196 of 1–2001 | ✓ |
 | `o-melee-4p` | `(4)Lost Civilization.scm` | Melee | 196 of 1–2001 | ✓ |
+| `o-melee-opcodes` | `(4)Blood Bath.scm` | Melee, our own AI code | 140 of 1–9901 | ✓ |
 | `o-melee-random` | `(2)Bottleneck.scm` | Melee | 196 of 1–2001 | ✓ |
 | `o-ums-zoo` | `scenario/(4)Zoo Keeper.scm` | Use Map Settings | 196 of 1–2001 | — |
 | `x-ffa-6p` | `BroodWar/(6)Sirocco.scx` | Free For All | 196 of 1–2001 | ✓ |
@@ -116,4 +117,5 @@ The games of the original's Play Custom screen against computers ([phase M](phas
 | `x-melee-4p` | `BroodWar/(4)Arctic Station.scx` | Melee | 196 of 1–2001 | ✓ |
 | `x-melee-8p` | `BroodWar/(8)Octopus.scx` | Melee | 196 of 1–2001 | ✓ |
 | `x-melee-closed` | `BroodWar/(4)Desolation.scx` | Melee | 196 of 1–2001 | ✓ |
+| `x-melee-opcodes` | `BroodWar/(4)Caldera.scm` | Melee, our own AI code | 140 of 1–9901 | ✓ |
 | `x-ums-twilight` | `scenario/(2)Twilight Struggle.scx` | Use Map Settings | 196 of 1–2001 | ✓ |

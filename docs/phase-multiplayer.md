@@ -90,7 +90,7 @@ Tests: `test_gametype` (the custom races, the music's rotation, Opponents, Modif
 - **The non-campaign paths:** StartTown's territory (`0x4979b0`: the regions within depth 5 of a first town, 2 of a later one, up to the defence anchors) and route cuts (`0x4b0be0`, also start_areatown's), the weakest region near the staging choices (`0x4aa350`), and the expansion attack plan at the region scheduler's player boundary (`0x4aa8f0` with `0x4ab1d0`, `0x496320`, `0x496780`).
 - **The melee start** (`StartCustomLevelAIScripts` `0x4486a0`, the campaign flag by the template) came with M2.
 
-**Which opcodes the games reach.** The static closure (`scdata/analyze/ai.py`) of the six melee scripts (ZMCu, TMCu, PMCu, ZMCx, TMCx, PMCx) reaches race_jump, get_oldpeons, groundmap_jump, guard_resources and rush; the scripts a map's Run AI Script names reach enter_transport (EnTr), exit_transport (ExTr), make_patrol (StPt) and get_oldpeons (the SUP scripts). No stock script reaches the other twelve: wait_secure, build_bunkers, wait_bunkers, debug, fatal_error, build_turrets, wait_turrets, harass_factor, region_size, eval_harass, wait_upgrades, implode. A map cannot carry its own AI binary, so the original never runs them in a game of its own data; they are fixture-verified (`test_aiscript.melee_opcodes_follow_the_interpreter`, `more_melee_opcodes_follow_the_interpreter`, and `every_opcode_reads_its_aiop_operands` for each opcode's operands). The recorded games reach groundmap_jump (every melee and Free For All computer) and race_jump (the Brood War ones) in 2001 frames. Two longer games with three computers each add rush: `o-long-4p` (Blood Bath, Zerg, Terran and Protoss computers against an idle Terran player, who is defeated at frame 6093) reaches rush from frame 2605, and `x-long-4p` (Caldera, Terran, Protoss and Zerg computers against an idle Protoss player, to frame 10,000) reaches race_jump at frame 6881. get_oldpeons and guard_resources are in the melee scripts' closure but on branches these games did not take; they and the map scripts' opcodes are covered by the fixture tests.
+**Which opcodes the games reach.** The static closure (`scdata/analyze/ai.py`) of the six melee scripts (ZMCu, TMCu, PMCu, ZMCx, TMCx, PMCx) reaches race_jump, get_oldpeons, groundmap_jump, guard_resources and rush; the scripts a map's Run AI Script names reach enter_transport (EnTr), exit_transport (ExTr), make_patrol (StPt) and get_oldpeons (the SUP scripts). No stock script reaches the other twelve: wait_secure, build_bunkers, wait_bunkers, debug, fatal_error, build_turrets, wait_turrets, harass_factor, region_size, eval_harass, wait_upgrades, implode. A map cannot carry its own AI binary, so the original never runs them in a game of its own data. They are fixture-verified (`test_aiscript.melee_opcodes_follow_the_interpreter`, `more_melee_opcodes_follow_the_interpreter`, and `every_opcode_reads_its_aiop_operands` for each opcode's operands). Since 2026-11-17, eleven of them also run against the original, in two games whose computers run our own AI code beside their melee scripts ([below](#the-melee-opcodes-against-the-original-2026-11-17)); fatal_error stays fixture-verified only. The recorded games reach groundmap_jump (every melee and Free For All computer) and race_jump (the Brood War ones) in 2001 frames. Two longer games with three computers each add rush: `o-long-4p` (Blood Bath, Zerg, Terran and Protoss computers against an idle Terran player, who is defeated at frame 6093) reaches rush from frame 2605, and `x-long-4p` (Caldera, Terran, Protoss and Zerg computers against an idle Protoss player, to frame 10,000) reaches race_jump at frame 6881. get_oldpeons and guard_resources are in the melee scripts' closure but on branches these games did not take; they and the map scripts' opcodes are covered by the fixture tests.
 
 **Comparisons:**
 - **Play Custom:** all 11 games equal the original at every step of 1–2001 with their AI traces; their goldens hold every compared step (`tests/golden/oracle/custom`).
@@ -256,11 +256,65 @@ Tests: `test_kp_ui` (`save_replay_is_a_custom_games`, `save_replay_dialog_names_
   - The web (the debug build in the browser pane, `--map` on the page's `/prefs/maps`): `seats_melee.kps` passes, 23 steps with both switches. With the canvas at the desktop's 1280 × 720, its end state equals the macOS run's byte for byte (`sim.crc` 1787478180). At another canvas size the script's clicks, made relative to the screen's centre, land elsewhere on the map, so the game differs, as it should.
   - The Fold7 (the debug APK on the inner display, logical 656 × 728; the map pushed to the app's files, `tools/native/android_app.sh launch --map … --seats 2 --script generated/scripts/seats_melee.kps`): 23 steps, 0 failures, so the seats' shared hashes stayed equal at every frame. Its start and the switch log what macOS logs (tick 10, units 5 and 9; tick 58 on seat 1); its end differs (`sim.crc` 3514085382), since the narrower screen puts its centre, and so the clicks, elsewhere: each seat's workers walk to targets moved by the same offset (seat 1's by +101 in x, seat 0's by −92, where the camera stops at the map's edge).
 
-**Open after phase M** (each a `TODO:` where the code has a place for it, or a note in its stage's section):
+### The melee opcodes against the original (2026-11-17)
+
+No stock script reaches twelve of the opcodes (M3), and a map cannot carry an AI binary of its own. So both games run our own AI code over the install's binary:
+- **The code:** `tests/ai/melee-opcodes.aiasm`, assembled by `tools/research/scdata/analyze/ai_asm.py` over the install's `scripts\aiscript.bin`.
+  - The code goes after the file's last byte (its directory ends it, at 62,050 bytes on 1.17). The interpreter reads its addresses as WORDs, so the code must end below `0x10000`.
+  - `stub ID label` puts a stub before script ID's own code: `start_town`, `multirun label`, `goto <ID's entry + 1>`. ID's directory record then names the stub. The probe's thread takes the town that multirun gives it, the parent's.
+  - The patch is JSON: the base's size and CRC-32, the code in hex and the records redirected. It holds only our own bytes.
+- **In the original:** `python -m sc_emulator custom --ai-patch SOURCE` (`custom.py`'s `install_ai_patch`).
+  - At the return of `LoadAiScriptBins` `0x493800` (`0x493858`), the patched copy replaces the buffer at `0x6a2e74`.
+  - At the entry of `FreeAiScriptBins` `0x493740`, the original's buffer goes back, so Storm frees only its own.
+  - The run keeps the patch in `ai_patch.json`. `tools/tests/test_emulator_hooks.py` checks the three addresses against the executable.
+- **In Koprulu:** `KpHostOpts.ai_bins` replaces the data's binaries for one game; the game's identity takes their CRC.
+  - `kp_oracle_ai_patch` builds the same file from the patch over the data's `aiscript.bin`. A base of another size or CRC is refused.
+  - `kp_oracle` takes the patch from `KP_AI_PATCH`, and a custom golden from its `ai_patch` field. `state_check.py --kind custom` passes the run's `ai_patch.json` and writes it into the golden.
+- **The check before the start:** a melee game's computer scripts are now checked before the start, as a trigger's Run AI Script is (`check_melee_ai`, `kp_gametype.c`, with `kp_aiscript_check`). A game whose scripts can reach fatal_error is refused before its start. So fatal_error stays out of the probe, and stays fixture-verified: the original would end the program mid-game.
+- **The probe:**
+  - Each computer's melee script starts it beside its own code.
+  - Two threads of its own run wait_secure and wait_upgrades.
+  - debug jumps over its text to the body.
+  - At frame 0, with two Marines added to the roster: harass_factor with no attack target yet, eval_harass, harass_factor, region_size 1 and 255.
+  - At frame 1201: build_bunkers and build_turrets, each with a waiting thread, eval_harass and harass_factor 1 and 65535.
+  - At frame 2402: region_size 40, eval_harass, harass_factor 2.
+  - At frame 3603: implode.
+  - At frame 4804: eval_harass and harass_factor 3.
+  - A branch's two ways lead to different instructions (a goto or a `wait 1`), so the AI trace shows which one ran.
+- **The games:**
+  - `x-melee-opcodes`: Caldera, Brood War. Terran, Protoss and Zerg computers against an idle Protoss player.
+  - `o-melee-opcodes`: Blood Bath, the original game. Zerg, Terran and Protoss computers against an idle Terran player.
+  - Both run to frame 10,000, with dumps at steps 1–41 and every 100th step to 9901.
+- **Result:** both games equal the original at each of their 140 dumps, with the computers' AI traces to step 9901 (3041 opcodes in Brood War, 2899 in the original game). Their goldens (`tests/golden/oracle/custom/x-melee-opcodes.json`, `o-melee-opcodes.json`) keep the patch; `test_scenarios.custom_games_equal_the_original`, `test_seats.custom_games_share_the_state` and `test_flow.play_custom_screens_are_the_originals` check them. The original game's idle player still stands at frame 10,000, where `o-long-4p`'s fell at 6093.
+- **Which ways ran** (the AI traces of both games):
+  - wait_secure and wait_upgrades wait and then go on, by frame 94.
+  - debug jumps over its text to its target.
+  - harass_factor runs before the first attack target and after it, with the divisors 1, 2, 3 and 65535.
+  - eval_harass weighs the roster against the enemies near the staging region and goes on (frames 0, 1201, 2402 and 4804). It jumps when `PrepareAttack` finds no staging region: the original game's Zerg computer at frame 4804, with no attack target yet.
+  - An earlier version of the probe, without the frame-0 roster, ran eval_harass only after the script's attack had grouped. There `PrepareAttack` ends it early, as the target's region no longer gathers, and it jumps. That version's two games also equal the original at every dump to 9901 (kept privately, without goldens).
+  - region_size goes on at 1, 40 and 255.
+  - build_bunkers and build_turrets make their requests.
+  - wait_bunkers waits, and goes on for the Terran computer of each game once its builders have placed a Bunker for every region that asked for one (frame 2876 in Brood War, 3496 in the original game). wait_turrets waits to the game's end.
+  - implode runs for every computer.
+- **Ways no game reached:**
+  - region_size's jump. The walk counts a region each time it is reached, until the circular queue of 625 wraps, so a start's ground regions sum past any limit a byte gives (255 × 32 = 8160 tiles). The jump needs a town whose region has no ground neighbour.
+  - eval_harass's loss by strength: no enemy stood near the staging regions.
+  - wait_turrets going on: no computer placed the Missile Turrets asked for, so the regions' requests stay.
+  - These, and fatal_error, stay fixture-verified (`test_aiscript.melee_opcodes_follow_the_interpreter`, `more_melee_opcodes_follow_the_interpreter`).
+
+Tests:
+- `scdata/tests/test_scripts.py`: `test_ai_patch` (the assembler and the patch over a synthetic base) and `test_melee_opcodes_probe` (the probe over the install's binary, with `KOPRULU_ORIGINAL`).
+- `tools/tests/test_emulator_hooks.py` `test_ai_patch_hooks`.
+- `test_scenarios.ai_patches_start_the_melee_scripts`: a stub's probe starts, a fatal_error probe is refused before the start, and a patch over another base or naming a script the binary lacks is refused.
+- `test_scenarios.custom_games_equal_the_original`.
+
+### Open after phase M
+
+Each item is a `TODO:` where the code has a place for it, or a note in its stage's section:
 - The network itself: a transport behind the turn hub, a seat's leave and drop, chat, the lobby's load of a network game's save (M5, M6).
 - The live team-game leave (`HandlePlayerLeftGame`'s team branch), the score screen's team roster and `NextSelectedUnit`'s clearing of dashed circles (M5); team games and every network branch are fixture-verified only (the emulator runs no network game).
 - A map's class without a 1.17 install: a repack or Remastered alone has no key, so the web and the phones give class 0 (`TODO:` in `kp_data.c`); only templates no offline game offers read it.
 - The IME on in gluPEdit (a deviation, above), and the native desktops' hotkeys from real keystrokes, not driven (the web's are).
 - The emulator does not play the public replay SSCAIT Ro8 M1G1 (Storm's thread spins after Load Replay's Ok), so it has no golden (M3).
-- The twelve melee opcodes no stock script reaches are fixture-verified only (M3).
+- Of the twelve melee opcodes no stock script reaches, fatal_error and three ways of the others are fixture-verified only: region_size's jump, eval_harass's loss by strength and wait_turrets going on ([above](#the-melee-opcodes-against-the-original-2026-11-17)).
 - The original's own desync risks the shared hash keeps: a cloak begun on an image of drawing method 16, a Psi field made while the pool is exhausted (M6).

@@ -88,3 +88,50 @@ class ScriptsTest(unittest.TestCase):
         assert len(launched) == 177
         for sid in launched:
             assert scripts.resolve_ai(ai, bw, sid.encode("latin1")), sid
+
+    def test_ai_patch(self):
+        from scdata.analyze import ai_asm
+        from scdata.analyze.ai import AiError
+
+        code = bytearray(ai_bin([(b"Mele", 4), (b"Othr", 8)], scripts.AI_RECORD, code_size=8))
+        code[4] = 0x03  # Mele's entry starts with start_town
+        base, bw, n = bytes(code), ai_bin([], scripts.BW_RECORD), len(code)
+        source = 'stub Mele probe\nprobe:\n    debug shown "hi"  # the text inline\nshown:\n    region_size 2 shown\n    stop\n'
+        patch = ai_asm.assemble(source, base, "t")
+        out = ai_asm.apply(base, patch)
+        assert patch["redirect"] == [["Mele", n]] and len(out) == n + len(patch["code"]) // 2
+        probe, shown = n + 7, n + 7 + 6
+        # the stub: start_town, multirun probe, goto the entry's next instruction
+        assert out[n:probe] == bytes([0x03, 0x48]) + probe.to_bytes(2, "little") + bytes([0x00]) + (5).to_bytes(2, "little")
+        assert out[probe:shown] == bytes([0x27]) + shown.to_bytes(2, "little") + b"hi\0"
+        assert out[shown:] == bytes([0x3A, 2]) + shown.to_bytes(2, "little") + bytes([0x24])
+        assert scripts.resolve_ai(out, bw, b"Mele") == (n, 0)
+        assert scripts.resolve_ai(out, bw, b"Othr") == (8, 0)
+        with self.assertRaisesRegex(AiError, "not the aiscript.bin"):
+            ai_asm.apply(base[:-1] + b"\1", patch)
+        for bad, why in (("stub Othr x\nx:\n stop", "does not start with start_town"),
+                         ("stub Nope x\nx:\n stop", "no script"), ("goto nowhere", "no label"),
+                         ("jump 1", "no opcode"), ("wait", "takes 1 operand"), ("x:\nx:\n stop", "defined twice"),
+                         ("region_size 256 0", "does not fit")):
+            with self.assertRaisesRegex(AiError, why):
+                ai_asm.assemble(bad, base, "bad")
+
+    @unittest.skipIf(not ORIGINAL, "KOPRULU_ORIGINAL not set")
+    def test_melee_opcodes_probe(self):
+        """tests/ai/melee-opcodes.aiasm over the install's aiscript.bin: every melee script starts the probe, whose
+        closure holds the eleven opcodes no stock script reaches and no fatal_error."""
+        from scdata.analyze import ai, ai_asm
+        from scdata.mpq.profile import Resolver
+
+        with Resolver(ORIGINAL) as r:
+            base, bw = r.read(kpd.AISCRIPT_FILE)[1], r.read(kpd.BWSCRIPT_FILE)[1]
+        patch = ai_asm.assemble((ROOT / "tests/ai/melee-opcodes.aiasm").read_text(), base, "melee-opcodes")
+        out = ai_asm.apply(base, patch)
+        assert len(out) <= ai_asm.ADDRESS_LIMIT
+        ids = [sid for sid, _ in patch["redirect"]]
+        assert sorted(ids) == sorted(f"{r}MC{v}" for r in "TZP" for v in "xu")
+        table = ai.Table.load()
+        names = ai.closure(table, (out, bw), [ai.resolve(out, bw, sid.encode()) for sid in ids]).opcode_names()
+        probed = {"wait_secure", "build_bunkers", "wait_bunkers", "debug", "build_turrets", "wait_turrets",
+                  "harass_factor", "region_size", "eval_harass", "wait_upgrades", "implode"}
+        assert probed <= names and "fatal_error" not in names, probed - names

@@ -207,9 +207,11 @@ int kp_host_game_start(KpHostGame *hg, uint32_t seed, int expansion, const KpHos
 	tileset_crc = kp_crc32_update(kp_crc32(hg->cv5, hg->cv5_size), hg->vf4, hg->vf4_size);
 	snprintf(hg->identity, sizeof hg->identity, "%08x-%08x-%08x-%08x-%08x-%08x", (unsigned)hg->dat_crc,
 		(unsigned)hg->shared->grp_crc, (unsigned)hg->shared->script_crc, (unsigned)tileset_crc,
-		(unsigned)kp_crc32(d->mission.blob, d->mission.size), (unsigned)hg->shared->ai_crc);
+		(unsigned)kp_crc32(d->mission.blob, d->mission.size),
+		(unsigned)(opts->ai_bins ? kp_crc32(opts->ai_bins->blob, opts->ai_bins->size) : hg->shared->ai_crc));
 	kp_game_seed(&hg->rng, &hg->crt, seed);
 	kp_game_start_input(&in, &hg->data, &hg->rng, &hg->crt, expansion);
+	if (opts->ai_bins) in.ai_bins = opts->ai_bins;
 	in.cv5 = hg->cv5;
 	in.cv5_size = hg->cv5_size;
 	in.vf4 = hg->vf4;

@@ -80,8 +80,16 @@ def cmd_custom(a):
     for item in filter(None, a.slots.split(",")):
         kind, _, race = item.partition(":")
         slots.append((kind, race or "random"))
+    patch = None
+    if a.ai_patch:  # assembled over the install's own aiscript.bin
+        from scdata.analyze import ai_asm
+        from scdata.mpq.profile import Resolver
+        source = Path(a.ai_patch)
+        with Resolver(process.DEFAULT_GAME_DIR) as r:
+            base = r.read(ai_asm.FILE)[1]
+        patch = ai_asm.assemble(source.read_text(), base, source.stem)
     spec = CustomSpec(path.read_bytes(), path.name, expansion=a.expansion, game_type=a.type, subtype=a.subtype,
-                      race=a.race, slots=slots)
+                      race=a.race, slots=slots, ai_patch=patch)
     r = run_custom(Path(a.out), spec, frames=a.frames, max_wall=a.max_wall,
                    state_steps=parse_steps(a.state) if a.state else (),
                    shots=tuple(int(x) for x in a.shots.split(",") if x))
@@ -333,6 +341,8 @@ def main(argv=None):
     cu.add_argument("--state", default="", help="object step numbers or ranges A-B[/K] to dump the state at")
     cu.add_argument("--shots", default="", help="frames whose screen to save, as 60,200")
     cu.add_argument("--max-wall", type=float, default=7200)
+    cu.add_argument("--ai-patch", default="", help="our own AI code to append to aiscript.bin (an ai_asm source, "
+                    "e.g. tests/ai/melee-opcodes.aiasm)")
     sc = sub.add_parser("scenario")
     sc.add_argument("spec", help="tests/scenarios/<name>.json")
     sc.add_argument("--out-root", default="", help="output root instead of emu/scenarios")

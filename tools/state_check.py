@@ -199,6 +199,19 @@ def custom_setup(d: Path) -> dict:
     return {k: v for k, v in setup.items() if k != "frame"}
 
 
+def custom_ai_patch(d: Path) -> dict | None:
+    """A custom game's own AI code over aiscript.bin (the run's ai_patch.json, `custom --ai-patch`), a custom golden's
+    "ai_patch" (kp_golden_run_start applies it); None for the install's scripts."""
+    path = d / "ai_patch.json"
+    return json.loads(path.read_text()) if path.exists() else None
+
+
+def custom_ai_patch_env(d: Path) -> dict[str, str]:
+    """KP_AI_PATCH for kp_oracle (kp_oracle_ai_patch_opts) when the run has a patch."""
+    path = d / "ai_patch.json"
+    return {"KP_AI_PATCH": str(path)} if path.exists() else {}
+
+
 def custom_lobby(d: Path) -> dict:
     """The Play Custom screen of a custom game (setup.json's "combos", the driver's choices in order, "screen", each
     combo box's items, selection and usability at Ok, and "capture", the CRCs of the screen at Ok), a custom golden's
@@ -538,7 +551,7 @@ def check_mission(d: Path, index: dict, steps: list[int], write: bool, kind: str
             seed = state.header["initial_seed"]
         if kind == "custom":
             mission = custom_key(d)
-            env = {**(env or {}), "KP_SETUP": str(d / "setup.json")}
+            env = {**(env or {}), "KP_SETUP": str(d / "setup.json"), **custom_ai_patch_env(d)}
         elif kind in PUBLIC_KINDS:
             mission = f"maps/{public_replay(d)}"
         else:
@@ -664,6 +677,8 @@ def check_runs(a: argparse.Namespace, ap: argparse.ArgumentParser, runs: list[tu
             # the turn counter the menus left (a Use Map Settings game's briefing turns it), as a chain's game takes it
             turn = native_state.Decoder(State(d / "states" / "s00001.state")).u32(native_state.TURN_COUNTER)
             extra, env = {"turn": turn, "setup": custom_setup(d), "lobby": custom_lobby(d)}, chain_env(turn, None)
+            if (patch := custom_ai_patch(d)) is not None:
+                extra["ai_patch"] = patch
         if a.kind == "chains" and (d / "states" / "s00001.state").exists():
             extra, env, error = chain_context(d, name, before, index, carry_dir)
             if error:

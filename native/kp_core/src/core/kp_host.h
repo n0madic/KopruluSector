@@ -29,6 +29,9 @@ typedef struct {
 	int replay;            /* a replay's playback (KpStartInput.replay) */
 	const KpGameSetup *setup; /* a custom game's setup (KpStartInput.setup); NULL: the campaign's from the map */
 	int64_t local_storm;   /* the local Storm ID a lobby's setup finds the local player by (0 a single player's) */
+	/* the AI script binaries instead of the shared data's (the oracle's patched ones: kp_oracle_ai_patch); NULL: the
+	 * shared. They must outlive the game; the saves' data identity takes their CRC-32. */
+	const KpAiBins *ai_bins;
 } KpHostOpts;
 
 void kp_host_opts(KpHostOpts *o);

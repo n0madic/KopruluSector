@@ -86,6 +86,15 @@ int kp_oracle_setup_opts(KpOracleOpts *opts, KpGameSetup *setup, KpError *err);
 /* The lobby's records of a setup object (the emulator's setup.json "start_game", a custom golden's "setup": the
  * template's hex, the 12 players, the custom races applied as kp_setup_custom_races does). 0, or -1 with err. */
 int kp_oracle_setup_from_json(const KpJson *v, KpGameSetup *s, KpError *err);
+/* Our own AI code over the data's AI script binaries (scdata/analyze/ai_asm.py's patch: the emulator's ai_patch.json, a
+ * custom golden's "ai_patch") into out: aiscript.bin checked against the patch's size and CRC-32, its code appended,
+ * the stubs' directory records redirected; bwscript.bin and the opcode table base's. 0, or -1 with err (out empty).
+ * kp_ai_bins_free releases it. */
+int kp_oracle_ai_patch(KpAiBins *out, const KpAiBins *base, const KpJson *patch, KpError *err);
+/* The environment's KP_AI_PATCH (tools/state_check.py --kind custom: a run's ai_patch.json) over the root's data into
+ * *bins; opts->host.ai_bins then points at it (it must outlive the game). 0 without KP_AI_PATCH (bins empty), -1 with
+ * the error. */
+int kp_oracle_ai_patch_opts(KpOracleOpts *opts, const char *root, KpAiBins *bins, KpError *err);
 
 /* --- golden runs --- */
 
@@ -95,6 +104,7 @@ typedef struct {
 	KpReplay replay;
 	KpOracleGame game;
 	KpGameSetup setup; /* a custom game's (the golden's "setup") */
+	KpAiBins ai_patch; /* a custom game's patched AI scripts (the golden's "ai_patch"), else empty */
 	KpRunner run;
 	int tracing;
 	KpBuf trace, ai_trace; /* the trace lines joined by "\n" */
@@ -107,7 +117,7 @@ typedef struct {
 
 /* Starts golden g's run (opts as kp_oracle_game_start's; trace: collect the traces); -1 with the error. A custom game's
  * golden (tools/state_check.py --kind custom: mission "maps/<path under opts->maps>") starts from its "setup", the
- * lobby's records as KP_SETUP's "start_game" holds them. */
+ * lobby's records as KP_SETUP's "start_game" holds them, and with its "ai_patch" over the AI scripts. */
 int kp_golden_run_start(KpGoldenRun *gr, const char *root, const KpJson *g, const KpOracleOpts *opts, int trace,
 	KpError *err);
 void kp_golden_run_free(KpGoldenRun *gr);

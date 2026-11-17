@@ -95,8 +95,9 @@ void kp_gametype_start_units(KpGame *g);
 #define KP_SUPPLY_MAX 400
 void kp_gametype_supply_max(KpGame *g, int64_t max[3][KP_PLAYERS]);
 /* SetupVictoryConditions 0x448530's victory files: the template's .trg in place of the trigger lists (and Capture the
- * Flag's beacons first). 0, or -1 with err as the original's error 0x5d (an unknown Greed or Slaughter value, a
- * missing file). */
+ * Flag's beacons first), after the melee AI's start (its scripts checked first: kp_aiscript_check). 0, or -1 with err
+ * as the original's error 0x5d (an unknown Greed or Slaughter value, a missing file) or a melee script that would stop
+ * the game. */
 int kp_gametype_victory(KpGame *g, const struct KpVictoryFiles *v, KpError *err);
 
 #ifdef __cplusplus

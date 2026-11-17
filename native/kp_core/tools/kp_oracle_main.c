@@ -16,7 +16,8 @@
  *   kp_oracle hud_check | input_check | menus_replay | room_replay | result_replay | score_replay ...
  *       the interface's oracles (kp_oracle_cli_ui.c)
  * A campaign chain's game takes the environment's KP_CARRY and KP_TURN (start_state, traces, play --mission); a custom
- * map's game (MISSION maps/<path>) its setup from KP_SETUP (kp_oracle_setup_opts).
+ * map's game (MISSION maps/<path>) its setup from KP_SETUP (kp_oracle_setup_opts) and our own AI code over the AI
+ * scripts from KP_AI_PATCH (kp_oracle_ai_patch_opts).
  */
 #include <stdarg.h>
 #include <stdio.h>
@@ -56,6 +57,7 @@ typedef struct {
 	KpReplay replay;
 	KpCarry carry;
 	KpGameSetup setup; /* a custom map's (KP_SETUP) */
+	KpAiBins ai_patch; /* its patched AI scripts (KP_AI_PATCH), else empty */
 	KpRunner run;
 } Run;
 
@@ -67,7 +69,8 @@ static int start_run(Run *r, const char *path, uint32_t seed, int expansion, int
 	kp_oracle_opts(&o);
 	o.host.trace = trace;
 	kp_replay_init(&r->replay);
-	if (kp_oracle_chain_opts(&o, &r->carry, &err) != 0 || kp_oracle_setup_opts(&o, &r->setup, &err) != 0)
+	if (kp_oracle_chain_opts(&o, &r->carry, &err) != 0 || kp_oracle_setup_opts(&o, &r->setup, &err) != 0
+		|| kp_oracle_ai_patch_opts(&o, ".", &r->ai_patch, &err) != 0)
 		return kp_cli_fail("%s", err.msg);
 	if (commands) {
 		size_t size;
@@ -91,6 +94,7 @@ static int start_run(Run *r, const char *path, uint32_t seed, int expansion, int
 static void free_run(Run *r)
 {
 	kp_oracle_game_free(&r->game);
+	kp_ai_bins_free(&r->ai_patch);
 	kp_replay_free(&r->replay);
 }
 
