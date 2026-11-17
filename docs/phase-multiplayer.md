@@ -313,7 +313,7 @@ Tests:
 ### Open after phase M
 
 Each item is a `TODO:` where the code has a place for it, or a note in its stage's section:
-- The network itself: a transport behind the turn hub, a seat's leave and drop, chat, the lobby's load of a network game's save (M5, M6).
+- The network itself: a transport behind the turn hub, a seat's leave and drop, chat, the lobby's load of a network game's save (M5, M6). Phase N takes these on ([phase N](phase-network.md), [ADR 0026](adr/0026-network-compatible-with-1-17.md)).
 - The live team-game leave (`HandlePlayerLeftGame`'s team branch), the score screen's team roster and `NextSelectedUnit`'s clearing of dashed circles (M5); team games and every network branch are fixture-verified only (the emulator runs no network game).
 - A map's class without a 1.17 install: a repack or Remastered alone has no key, so the web and the phones give class 0 (`TODO:` in `kp_data.c`); only templates no offline game offers read it.
 - The IME on in gluPEdit (a deviation, above), and the native desktops' hotkeys from real keystrokes, not driven (the web's are).

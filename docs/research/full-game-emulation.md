@@ -382,6 +382,36 @@ Units are the active-list counts at frames 1 and 3000; RNG is the game RNG state
 | xzerg-m63 | `xzerg9b` | Untitled Scenario | 166 → 161 | 0x77d13d7b | 35 | 413 |
 | xzerg-m64 | `xzerg10` | Omega | 673 → 704 | 0x0a436fbd | 17 | 452 |
 
+### Network game results (stage N1)
+
+Two or more emulated originals in one game over the virtual LAN ([How to run](#network-games-phase-n-stage-n1)). Every game below uses 1.17's "Local Area Network (UDP/IP)" provider of `standard.snp`, the original game's mode (bw-1v1 Brood War's), the LAN's defaults (2 ms delay, 1 ms jitter, no loss) and the players' own inputs; the records are in `koprulu-private/emu/net/<game>/`. Wall times are with two to four games' processes running together under `nice`.
+
+| Game | Map, players | Frames | Result |
+|---|---|---|---|
+| melee-1v1 (acceptance) | (2)Challenger, 2 | 2,001 | Both players reached frame 2,001 with equal frame digests at every frame. The 9 state dumps (frames 1, 251, …, 2001) are equal in the shared simulation (`net.shared_model`) and differ only in each player's viewer data (below). Each player sent 2,002 sync commands `0x37`, one per turn; 4,196 datagrams, none lost; 69,413 coordinator rounds; 799 s wall. |
+| bw-1v1 | (2)Challenger, 2 | 150 | Brood War mode (gluGameMode's Expansion), Melee: equal digests; 85 s wall. |
+| ffa4 | (4)Lost Civilization, 4 | 400 | Free For All, four emulated players: equal digests on all four at every frame. 5,547 datagrams sent, 5,633 delivered (the game list broadcasts reach three hosts); 221 s wall. |
+| team-melee | (4)Blood Bath, 4 | 400 | Team Melee, subtype "2" (teams): Alpha and Delta in force 1, Beta and Gamma in force 2, equal digests on all four; 177 s wall. |
+| top-vs-bottom | (2)Challenger, 2 | 400 | Top vs Bottom, "1 vs 1": the players in forces 1 and 2, equal digests; 174 s wall. |
+| ums-ready-room | scenario (4)Zoo Keeper, 2 | 300 | Use Map Settings: both players pass the ready room (glue state 7) with S, equal digests; 156 s wall. |
+| ctf | (2)Challenger, 2 | 300 | Capture The Flag (gluCreat's item 5), equal digests; 119 s wall. |
+| map-transfer | (2)Challenger, 2 | 100 | The joiner has no map: the host sends it, the joiner writes `maps\download\!(2)Challenger.scm` (55,557 bytes, as the host's), equal digests; 1,237 datagrams; 73 s wall. |
+| chat | (2)Challenger, 2 | 150 | The lobby's text `0x4C` to everyone ("hello from Beta") and whisper `0x4D` to one player ("/w Beta welcome"), the game's chat to everyone ("gl hf") and whisper ("/w Alpha psst") reach exactly their recipients; equal digests; 90 s wall. |
+| kick | (2)Challenger, 2 | lobby | The host's row menu item Open asks "Performing this action will boot" (`ConfirmLobbySlotAction` `0x451640`); after its OK the host sends `'N'` 0 three times and `SNetDropPlayer`(1, 3); the joiner shows "You have been booted!" and is back on gluJoin. |
+| ban | (2)Challenger, 2 | lobby | As the kick with Ban Player!: `'N'` 1, `SNetDropPlayer`(1, 3); the joiner calls `SNetLeaveGame`(`0x40000001`), shows "You have been banned!" and is back on gluJoin. |
+| latency | (2)Challenger, 2 | 300 | F10, Options, Network, Extra High, OK at frame 100: the turn command `55 02` is sent and executed by both players at frame 144; equal digests. |
+| save | (2)Challenger, 2 | 250 | F10, Save, "netsave", Enter at frame 100: the turn command `0x06` with the name; each player writes its own `maps\save\netsave.mlt` (136,768 and 136,451 bytes: each save is that player's), equal digests. |
+| load | (2)Challenger, 2 | 137–350 | The host selects the save game's `netsave.mlt` in gluCreat's list (row 51, scrolled to by the arrow keys); each player has its own copy in the maps folder (with the host's copy the joiner's request names the host's record and is rejected with reason 2, "The game creator closed all available slots!", `OnLobbyJoinRequest` `0x470af0`). The game resumes at frame 137 (saved at 136) and runs to 350 with equal digests on both players (214 frames). The resumed game is not the saved game's continuation frame for frame: its frame 137 already has another RNG state (2,162,965,136 against 2,523,398,112) and digest. |
+| leave | (2)Challenger, 2 | 300 | The joiner's F10, End Mission, Quit Mission (abort menu control 2), quit2mnu's −2 at frame 150: it leaves at frame 172 (exit code 7, `SNetLeaveGame`(`0x40000001`), no turn command); the host plays on alone to frame 300; the 172 common frames' digests are equal. |
+| drop | (2)Challenger, 2 | 600 | Beta's cable is cut at 55 s of virtual time (1,922 datagrams dropped by the cut). At frame 247 both players open the timeout dialog (`0x675010`, 45 s); when its countdown ends each presses Drop Players (control 2), which runs `ResolveDesync` `0x47a630` (Storm status words: the own `0x70000`, the cut player's `0x10000`) and `SNetDropPlayer`(the other, `0x40000006`). Each then plays on alone to frame 600; the digests are equal to frame 247 and differ from 248, each game having dropped the other player. 2,159 s wall: the 45 s of the stalled dialog take most of it (Limitations, Speed). |
+| desync | (2)Challenger, 2 | 500 | At frame 200 one player's first active unit (a mineral field) gets 1 hit point by a memory write (`*665AE0+8`). The digests differ from frame 201, the sync commands' hash WORD from the turn of frame 203, and at frame 205 both players run `ResolveDesync` `0x47a630` (no timeout dialog) and `SNetDropPlayer`(the other, `0x40000006`). Each plays on alone to frame 500 and gets the victory dialog (`wmission.bin`) at frame 280; 202 s wall. |
+
+**What differs between two players' dumps.** Only what each instance keeps for its own viewer, as specified in the atlas: the megatiles displayed through the viewer's fog and their creep edges (`0x54323c`, `RefreshRememberedTerrainOffscreen` `0x40af30`), the tile flag `0x40000000` that marks a displayed creep tile (184 tiles at frame 251), and the world x/y `+0x1c` of the neutral geysers' smoke overlays (images 431 and 432), which the draw recomputes (`RecomputeAllSpriteBounds` `0x415700` → `UpdateImageBounds` `0x40ee70`). The first dump also has what each player's menus left: the turn counter `0x672658` (53 and 40) and the speed byte `0x6D3130` (3 and 4). Units, sprites, orders, AI, triggers, counters, the RNG and the tiles' visibility and exploration bits are equal at every dump.
+
+**The sync command `0x37`.** Its 7 bytes are `{0x37, (turn << 4) | schedule, WORD hash, rec+3, low byte of rec+8, rec+5}`. In the 1v1, the second to fourth bytes are equal on both players at every turn. The last three are constant per player from the fourth turn on: `98 6c 12` for the host and `00 00 0e` for the joiner, at every one of the 1,998 turns. They are that player's own values and not a shared hash, so a byte-exact `0x37` needs each player's own.
+
+**Reproducibility.** Two runs of the same seeded game (seed 1, 1.5 ms jitter, 2 % loss, 100 frames; 9 of 353 datagrams lost) gave byte-identical `lan.pcap`, `lan.jsonl`, both players' `trace.jsonl`, `turns.jsonl` and `snet.jsonl`.
+
 ### Coverage compared with the atlas
 
 The aggregation was rerun on 2026-10-11 after the H07 no-cheat runs, against the atlas as it was then. It covers the boot, the 64 three-thousand-frame missions, the campaign chains and single-mission endings, the defeat run, the input demonstration, the 20,000-frame runs, and the H03–H07 scenarios. Together they executed **3475** of the 6081 function entries known to the atlas index:
@@ -421,12 +451,14 @@ Executed storm.dll code is recorded too (block maps). The atlas covers only Stor
 | `pe.py` | Maps PE images at their preferred base, applies base relocations, binds imports. |
 | `machine.py` | The process: Unicorn CPU, memory layout, GDT/TEB/PEB, handles, cooperative threads, the HLE stub dispatcher, guest calls by continuation, deterministic slicing. |
 | `seh.py` | Structured exception dispatch for `RaiseException` (and, on request, CPU faults); `RtlUnwind`. |
-| `hle/` | Windows API implementations (`kernel32`, `user32`, `gdi32`, `misc` for ADVAPI32/VERSION/SHELL32/IMM32/WINMM/WINTRUST/CRYPT32/PSAPI/TAPI32, `ddraw`, `dsound`). |
+| `hle/` | Windows API implementations (`kernel32`, `user32`, `gdi32`, `misc` for ADVAPI32/VERSION/SHELL32/IMM32/WINMM/WINTRUST/CRYPT32/PSAPI/TAPI32, `ddraw`, `dsound`, `ws2_32` and `wsock32` for the UDP provider's Winsock). |
 | `vfs.py` | Guest file system: read-only game directory plus an in-memory write overlay. |
 | `coverage.py`, `native/coverage.c` | Native (C) Unicorn block hook: coverage maps and deterministic time slices. |
 | `process.py` | Builds the process (configuration, images, PEB, main thread, storm.dll `DllMain`). |
 | `session.py`, `mission.py`, `campaigns.py`, `batch.py`, `aggregate.py` | Boot run, one-mission driver, campaign enumeration, parallel batch, evidence aggregation. |
 | `game.py`, `render.py`, `debug.py` | Game addresses and the frame digest, PNG capture, call tracing. |
+| `lan.py` | The virtual LAN of network games (no Unicorn): each host's UDP stack, the seeded switch (delay, jitter, loss, cuts), the pcap and JSON records, the coordinator's conservative rounds, the loopback bridge to real UDP. |
+| `net.py` | Network games of several emulated originals, one process each: the players' screens by input, the SNet and turn logs, the comparison of their frame digests and state dumps, the suite of stage N1. |
 
 ### What is native
 
@@ -434,7 +466,7 @@ All of the following run as original x86 code. HLE never implements StarCraft or
 
 - StarCraft.exe, including its statically linked Visual C++ 12 runtime (CRT start-up, heap wrappers, `rand`, locale tables).
 - storm.dll at `0x15000000`: SFile/MPQ (archive opening, hash lookup, decryption, PKWARE/Huffman/ADPCM decompression, its background I/O thread), SMem, SStr, SBmp, SDraw (8-bit back buffer converted to the 32-bit primary surface), SCode (runtime-generated blitters, executed from guest heap), SDlg, SVid, SNet with the hidden local provider id 0 from `standard.snp`, SReg and SErr.
-- Dynamically loaded game DLLs, loaded from the game directory by `LoadLibraryA`: `local.dll` (localization resources), `standard.snp` (network providers; single player uses its null transport) and `smackw32.dll` (Smacker decoder for glue animations, portraits and videos). Each is relocated if needed, its imports are bound, and its `DllMain` runs.
+- Dynamically loaded game DLLs, loaded from the game directory by `LoadLibraryA`: `local.dll` (localization resources), `standard.snp` (network providers; single player uses its null transport, network games its "Local Area Network (UDP/IP)" provider over the Winsock HLE) and `smackw32.dll` (Smacker decoder for glue animations, portraits and videos). Each is relocated if needed, its imports are bound, and its `DllMain` runs.
 
 Imports of StarCraft.exe from Storm (143 by ordinal, 2 by mangled C++ name) resolve to storm.dll exports. Imports from Windows DLLs, and `GetProcAddress` lookups in them, resolve to 16-byte stubs in the HLE stub region. Each stub is `jmp $`, so an accidental execution is harmless. A code hook limited to that region runs the Python implementation, pops the stdcall arguments and returns to the caller.
 
@@ -463,7 +495,8 @@ Imports of StarCraft.exe from Storm (143 by ordinal, 2 by mangled C++ name) reso
 - Threads seen in a mission:
   - the game's crash-watchdog thread (`0x404870`, waits forever);
   - Storm's SFile I/O thread (`0x15017970`), which serves the asynchronous MPQ reads of every archive opened with flag 2;
-  - Storm's SNet pump thread (`0x15022780`), created by each `SNetInitializeProvider`. It waits with no timeout because there are no remote players;
+  - Storm's SNet pump thread (`0x15022780`), created by each `SNetInitializeProvider`. Offline it waits with no timeout because there are no remote players; in a network game it carries the provider's packets;
+  - in a network game (net.py), the three receive threads of standard.snp's UDP provider (`0x1d009cd8`), blocked in `recvfrom` on ports 6111 and 6112;
   - the game's sound loader thread (`0x49e090` through the CRT wrapper `0x4d376f`, when a sound device exists).
 
   Thread attach/detach notifications are not sent to DLLs.
@@ -478,6 +511,9 @@ Imports of StarCraft.exe from Storm (143 by ordinal, 2 by mangled C++ name) reso
   - Unicorn's wall-clock timeout was abandoned. A timeout that lands while a stub hook rewrites EIP can resume at the stub and run the API twice. In practice this re-ran `ReadFile` on Storm's I/O thread and corrupted decompression.
   - Python code hooks that stop the run are not refired on resume (`Machine.add_hook`).
 - Two runs of the same mission produce byte-identical traces and sound logs: checked on 300-frame and 3,000-frame Wasteland runs.
+- Network games add two things to the schedule, both off in every other run (`Machine.preempt_us` and `Machine.clock_limit` are `None` there):
+  - **Preemption.** The game's main loop never blocks (it polls messages and turns), so the threads that wait for datagrams would never run. Every millisecond of virtual time (`net.PREEMPT_US`) the running thread is stopped at its next API return, timed-out waits expire and the next ready thread in creation order runs, until it blocks. This is a second core for Storm's and the provider's threads, at points fixed by the guest's own calls.
+  - **The LAN's horizon.** Each machine may run only until its clock reaches the horizon the coordinator granted (`lan.Coordinator`). There, or when every thread is idle before it, `on_limit` hands the datagrams sent since the last round to the coordinator and takes the arrived ones and the next horizon. A thread waiting without a timeout is then no deadlock: a datagram may wake it. The idle clock also jumps to the next datagram's arrival (`NetStack.next_due_us`).
 
 ### Structured exceptions
 
@@ -1074,6 +1110,65 @@ The table is generated from the implementations' docstrings (`python -m sc_emula
 |---|---:|---|
 | `WinVerifyTrust` | 3 | TRUST_E_NOSIGNATURE: signatures are never verified (only the System Survey launcher asks). |
 
+#### WS2_32.DLL
+
+| Function | Args | Semantics |
+|---|---:|---|
+| `bind` | 3 | Binds to INADDR_ANY, the host's address or the loopback; port 0 takes an ephemeral port from 49152. A port in use: WSAEADDRINUSE; a bound socket: WSAEINVAL; another address: WSAEADDRNOTAVAIL. |
+| `closesocket` | 1 | Closes the socket: its queued datagrams are discarded and a thread blocked in recvfrom on it wakes with WSAEINTR. |
+| `gethostbyname` | 1 | The host's own name (or "localhost") resolves to its virtual address (or the loopback); a dotted address to itself; other names fail (WSAHOST_NOT_FOUND 11001). The HOSTENT is a static buffer. |
+| `gethostname` | 2 | The host's name (lan.NetStack.hostname); a short buffer: WSAEFAULT. |
+| `getsockname` | 3 | The bound address (INADDR_ANY stays 0.0.0.0, as on Windows); unbound: WSAEINVAL. |
+| `getsockopt` | 5 | The value setsockopt stored (SO_BROADCAST as a DWORD; others as given, zero DWORD if never set). |
+| `htonl` | 1 | 32-bit byte swap. |
+| `htons` | 1 | Byte swap of the low 16 bits. |
+| `inet_addr` | 1 | Dotted decimal to a network-order address (in memory order); anything else INADDR_NONE. |
+| `inet_ntoa` | 1 | The address (an in_addr passed by value, memory order) as dotted decimal in a static buffer. |
+| `ioctlsocket` | 3 | FIONBIO sets or clears non-blocking mode; FIONREAD gives the size of the first arrived datagram (0 if none). |
+| `ntohl` | 1 | 32-bit byte swap. |
+| `ntohs` | 1 | Byte swap of the low 16 bits. |
+| `recv` | 4 | recvfrom without the sender's address. |
+| `recvfrom` | 6 | The first datagram whose arrival time has come (by arrival, then delivery order), with its sender's address. A blocking socket waits cooperatively (other threads and, idle, the clock run on); a non-blocking one returns WSAEWOULDBLOCK. A longer datagram fills the buffer and fails with WSAEMSGSIZE (it is consumed). A close while waiting: WSAEINTR. An address buffer without room for a sockaddr_in: WSAEFAULT, nothing consumed. |
+| `select` | 5 | Readable: a datagram has arrived (or the socket was closed); writable: always (UDP); exceptions: never. A null timeout waits until one is ready, a zero one polls; the wait is cooperative on the virtual clock. Returns the number of ready handles and leaves only them in the sets. |
+| `send` | 4 | The datagram sockets are never connected (there is no connect): WSAENOTCONN. |
+| `sendto` | 6 | Sends one datagram at the machine's virtual time (lan.NetStack.send: copies for this host are delivered at once, the rest leaves at the next synchronization); returns the length. A broadcast needs SO_BROADCAST (WSAEACCES); an unbound socket gets an ephemeral port. |
+| `setsockopt` | 5 | SOL_SOCKET SO_BROADCAST sets the broadcast permission (sendto to 255.255.255.255 needs it); any other option is kept as given and has no effect. |
+| `socket` | 3 | AF_INET datagram sockets (protocol 0 or IPPROTO_UDP) only: other families WSAEAFNOSUPPORT (so IPX finds no IPX), other types WSAESOCKTNOSUPPORT. The handle comes from the machine's handle space. |
+| `WSACleanup` | 0 | Undoes one WSAStartup; the last one closes every socket (their blocked receivers get WSAEINTR). |
+| `WSAGetLastError` | 0 | The calling thread's last error (Winsock shares it with GetLastError). |
+| `WSAIoctl` | 9 | SIO_UDP_CONNRESET (standard.snp turns ICMP port-unreachable resets off on both sockets): accepted, no effect, 0 bytes returned. Other codes: WSAEOPNOTSUPP. |
+| `WSASetLastError` | 1 | Sets the calling thread's last error. |
+| `WSAStartup` | 2 | Version 1.1 to 2.2 (the word's low byte major): fills the 400-byte WSADATA (wVersion = the requested version up to 2.2, wHighVersion 2.2, "WinSock 2.0", "Running", 0 sockets limit, 65467-byte datagrams) and counts the start-up. No virtual LAN on this machine: WSASYSNOTREADY. |
+
+#### WSOCK32.DLL
+
+| Function | Args | Semantics |
+|---|---:|---|
+| `bind` | 3 | As WS2_32's bind (WinSock 1.1 ordinal 2). |
+| `closesocket` | 1 | As WS2_32's closesocket (WinSock 1.1 ordinal 3). |
+| `gethostbyname` | 1 | As WS2_32's gethostbyname (WinSock 1.1 ordinal 52). |
+| `gethostname` | 2 | As WS2_32's gethostname (WinSock 1.1 ordinal 57). |
+| `getsockname` | 3 | As WS2_32's getsockname (WinSock 1.1 ordinal 6). |
+| `getsockopt` | 5 | As WS2_32's getsockopt (WinSock 1.1 ordinal 7). |
+| `htonl` | 1 | As WS2_32's htonl (WinSock 1.1 ordinal 8). |
+| `htons` | 1 | As WS2_32's htons (WinSock 1.1 ordinal 9). |
+| `inet_addr` | 1 | As WS2_32's inet_addr (WinSock 1.1 ordinal 10). |
+| `inet_ntoa` | 1 | As WS2_32's inet_ntoa (WinSock 1.1 ordinal 11). |
+| `ioctlsocket` | 3 | As WS2_32's ioctlsocket (WinSock 1.1 ordinal 12). |
+| `ntohl` | 1 | As WS2_32's ntohl (WinSock 1.1 ordinal 14). |
+| `ntohs` | 1 | As WS2_32's ntohs (WinSock 1.1 ordinal 15). |
+| `recv` | 4 | As WS2_32's recv (WinSock 1.1 ordinal 16). |
+| `recvfrom` | 6 | As WS2_32's recvfrom (WinSock 1.1 ordinal 17). |
+| `select` | 5 | As WS2_32's select (WinSock 1.1 ordinal 18). |
+| `send` | 4 | As WS2_32's send (WinSock 1.1 ordinal 19). |
+| `sendto` | 6 | As WS2_32's sendto (WinSock 1.1 ordinal 20). |
+| `setsockopt` | 5 | As WS2_32's setsockopt (WinSock 1.1 ordinal 21). |
+| `socket` | 3 | As WS2_32's socket (WinSock 1.1 ordinal 23). |
+| `WSACleanup` | 0 | As WS2_32's WSACleanup (WinSock 1.1 ordinal 116). |
+| `WSAGetLastError` | 0 | As WS2_32's WSAGetLastError (WinSock 1.1 ordinal 111). |
+| `WSASetLastError` | 1 | As WS2_32's WSASetLastError (WinSock 1.1 ordinal 112). |
+| `WSAStartup` | 2 | As WS2_32's WSAStartup (WinSock 1.1 ordinal 115). |
+
 ## How to run
 
 From `tools/research`, with `koprulu-private/venv/bin/python` (Unicorn 2.1.4, pefile, capstone, a C compiler for the 40-line coverage hook):
@@ -1151,6 +1246,21 @@ The offline screen's facts, from the runs:
 
 The public replays' maps exhausted the VirtualAlloc region (`memory.py`'s `RegionAllocator`): the game frees and asks map-sized blocks of many sizes, and exact-size reuse with a bump pointer runs past the region's end. Past the end the allocator now takes the first freed range that holds the block, adjacent freed blocks merged and a freed tail returned to the top. Only what used to fail takes that path, so every earlier run keeps its addresses and its digests.
 
+### Network games (phase N, stage N1)
+
+```sh
+cd tools/research
+nice -n 10 ../../koprulu-private/venv/bin/python -m sc_emulator net "../../koprulu-private/full/app/maps/(2)Challenger.scm" melee-1v1 \
+    --type Melee --frames 2001 --state 1-2001/250
+nice -n 10 ../../koprulu-private/venv/bin/python -m sc_emulator net --suite ffa4,chat,desync
+```
+
+Every player is a whole emulated original in a process of its own (`multiprocessing` spawn: the native block hook keeps its counters in C statics, one machine per process). Each has a virtual IPv4 address (`--players NAME@IP[:host|join],...`, default `Alpha@10.0.0.1:host,Beta@10.0.0.2`), its own profile name and its own inputs, and goes through the original's screens as a person does: Multiplayer, the game mode, gluConn's row "Local Area Network (UDP/IP)" and Ok, a new ID and the login, gluJoin. The host presses Create Game, sets the type and subtype on gluCreat (the map is the preselected `!` file, as in Play Custom) and Ok; the others wait until the host's game is in gluJoin's list, select it and press Ok. In the chat room the host presses Start once every player is in; a Use Map Settings game's ready room is started with S by every player. `--actions PLAYER:AT:KIND[:VALUE];...` adds scripted input in the lobby or at a frame: chat (also whispers, `/w NAME text`), keys (the game menu's paths, e.g. `F10 O N E O` for extra high latency), text, slot (the host's row drop-down: `remote:Open` kicks, `remote:Ban Player!` bans, each confirmed by the "will boot" popup's OK), click (`[DIALOG:]ID`, a control of the topmost dialog, waited for with that dialog's BIN name on top: `gluPOkCancel:1` for a popup's OK, `abrtmenu:2` and `quit2mnu:-2` to leave a game), race, wait, stop, poke (a memory write, `*665AE0+8:00010000` through a pointer), cut (the player's cable at a virtual time). `--no-map NAME` leaves the map out of that player's folder, so the host sends it. `net.suite()` names the games of the stage.
+
+The coordinator in the parent process (`lan.Coordinator`) keeps the clocks together by conservative rounds: each player may run until the smallest clock of the others plus the LAN's minimum delay (`--delay-us`, 2 ms), since nothing sent in the round can arrive earlier. It then routes the sent datagrams in a fixed order through the seeded switch (`--seed`, `--jitter-us`, `--loss`), so a game is reproducible from its seed. A player's own datagrams (to itself, the loopback or a broadcast, which Windows loops back) are delivered at once inside it. `--bridge PORT` maps each emulated host's ports 6111 and 6112 to real UDP sockets on 127.0.0.1 (PORT + 2·host + 0 or 1), for live checks of Koprulu against the original. A real program that sends to them becomes a virtual host of its own (10.0.1.n): the sending port is its socket for the virtual port it sent to, and the adjacent port its other one (6112's socket next above 6111's, as a peer that binds both, like the original, has them), so a list request from its 6111 socket and a connect from its 6112 socket come from one address, and the emulated players answer each socket. Bridged traffic is not deterministic, and `--realtime` holds the virtual clocks to the wall clock for it. A cut (`cut` action) is given to the switch before the game starts and holds from its exact virtual time: no datagram sent at or after it reaches or leaves the player.
+
+Written to `koprulu-private/emu/net/<game>/`: `lan.pcap` (every datagram as IPv4/UDP, LINKTYPE_IPV4, stamped with the virtual send time from 2000-01-01; Wireshark reads it), `lan.jsonl` (each datagram's deliveries, delays, losses and cuts), `net.json` (each player's result, the rounds, the comparison: frame digests frame by frame and the state dumps by the decoder's categories, `tools/native_state.py`; `net.shared_model` leaves out what each instance keeps for its own viewer, which differs by design: the megatiles displayed through its fog and their creep edges `0x54323c`, tile flag `0x40000000`, the images' world x/y `+0x1c` that the draw recomputes, and in the first dump the menus' turn counter `0x672658` and speed byte `0x6D3130`; `viewer_only` lists the dumps that differ only there) and per player `trace.jsonl`, `snet.jsonl` (the executable's calls of Storm's SNet exports with arguments, results and outputs: hooks at the exports filtered by a return address inside StarCraft.exe, and at every return site of a call of an SNet import; polled calls only when they succeed and their record changed), `turns.jsonl` (the turns sent and received, split into keep-alive `0x05`, sync `0x37` and other commands), `screens/` (each glue screen 1.5 s after it settled and `lobby-*.cap` at the driver's moments), `states/`, the oracle's logs (`commands`, `ui`, `input`, `triggers`, `ai`), `setup.json` and `player.json`.
+
 ### Interface input log and screen captures (phase 9)
 
 Every run that writes the oracle logs (`scenario.install_logs`: scenarios, `mission --state`, `play`, `chain --oracle`) also writes `input.jsonl` (`sc_emulator/uilog.py`), what the original's interface takes from outside the game, in order:
@@ -1219,6 +1329,7 @@ The UI path also works and was used while developing: main menu → Single Playe
 
 - **Speed.**
   - About 0.1 s wall per frame for one process, and about 0.15–0.18 s with 8–11 in parallel. A 20,000-frame mission took 42–55 minutes with 11 processes running.
+  - A network game takes about 0.4 s wall per frame for two players (the conservative rounds; 2,001 frames in 799 s) and about 0.5 s for four. A stalled game (the timeout dialog of a cut player) is far slower, about 40 s wall per virtual second: the waiting loop repaints the dialog many times per virtual millisecond, since a poll costs only 1 ms of virtual time, and Unicorn's stores into the screen bitmap dominate.
   - Emulation runs at about 10 million translation blocks per second.
   - Each process keeps about 1.2 GB resident, mostly Unicorn's translation cache.
 - **Time model.** Virtual time advances by fixed charges (1 ms per empty message poll, 50 µs per clock query), not by executed instructions.
@@ -1237,7 +1348,7 @@ The UI path also works and was used while developing: main menu → Single Playe
     - A recipe can need changes for each map: the P1 recipe had to power the rescued Gateway, and Ctrl+click selection keeps Fenix out of waves.
   - Every single-player input path has now been exercised at least once (H03, H03b, H04, H05, H06).
   - Ctrl+F2…F4 have no accelerator binding, so there is nothing to exercise. Ctrl+S was first run without a sound device, so `ToggleSfxMute` returned at its device test. H06b repeated it with a device: the effects volume went 50 → 0 → 50 and `StopAllSounds` ran, as specified.
-  - Multiplayer-only inputs stay out of scope because the offline single-player game cannot reach them:
+  - Multiplayer-only inputs are out of reach of the offline single-player game; the network games of `net.py` reach them (chat and whispers in the lobby and in the game, the lobby's slot drop-downs, the Network dialog's latency):
     - `ToggleTextbox` (P39 `0x4b3bd0`) sets message mode 1 offline and sends text with `SendTextboxChat` `0x4b3d60` only when the multiplayer byte `0x672664` ≠ 0. That function is specified since the atlas's network second pass (2026-11-14) but never runs offline, so chat targets and recipient modes never apply.
     - The alliance and team helpers (P39) require the same byte; the Single Player path keeps it 0 (shared facts).
   - The 3,000- and 20,000-frame runs give no input after Start.
@@ -1252,11 +1363,17 @@ The UI path also works and was used while developing: main menu → Single Playe
   - No audio is mixed; the log records requests and buffer events, not audible output.
   - Cursor advance uses `nAvgBytesPerSec` with no hardware latency or granularity.
 - **Windows behaviour not modelled.**
-  - Preemptive scheduling: threads switch only at blocking calls. A spin-wait on another thread's memory without a Windows call would hang; none was observed.
+  - Preemptive scheduling: threads switch only at blocking calls, and in network games also every virtual millisecond at an API return (`Machine.preempt_us`). A spin-wait on another thread's memory without a Windows call would hang; none was observed.
   - DLL thread attach/detach notifications.
   - Real GDI rasterisation: GDI is headless and the game draws nothing through it in these paths.
   - Win32 dialog templates: `DialogBoxParamA` returns IDCANCEL and is logged. It occurs only on fatal start-up errors and never happened.
   - CPU-fault dispatch to SEH: faults stop the run and are reported. None occurred.
+- **Network games (stage N1).**
+  - Only standard.snp's "Local Area Network (UDP/IP)" provider runs. gluConn lists Battle.net, IPX, Modem and Direct Cable Connection too, but they are not selected, and their transports (IPX, TAPI, the serial port, Battle.net's servers) are not emulated.
+  - The LAN delivers datagrams in a fixed, seeded order and is reproducible. The loopback bridge (`--bridge`) carries real UDP and is not; it is checked by a unit test with real sockets only, not yet against another program.
+  - The SNet log sees calls from StarCraft.exe only: hooks at the exports filtered by a return address in the executable, and at the pre-scanned return sites of `call [import]` and of calls through import thunks. A call through another register would be missed; none was found. Storm's own calls (standard.snp's provider interface) are not logged, but the datagrams are, in `lan.pcap`.
+  - The players' state dumps leave out each player's viewer data (`net.shared_model`). Everything else in the decoder's categories is compared.
+  - Brood War was run once (bw-1v1, 150 frames); the suite's other games use the original game's mode, and a Brood War save (`.mlx`) was not made.
 - **Coverage.** It covers block starts in StarCraft.exe and storm.dll only; `local.dll`, `standard.snp`, `smackw32.dll` and Storm's run-time SCode blitters are executed but not mapped.
   - "Function executed" means a translation block started at the entry, so a function entered only by fall-through would be missed.
   - The outside-body analysis depends on Ghidra's function sizes and is heuristic.

@@ -129,16 +129,28 @@ class Controls:
     def __init__(self, m):
         self.m = m
 
-    def find(self, ident: int) -> int:
-        root = self.m.r32(DIALOG_LIST)
+    def find(self, ident: int, dialog: int = 0) -> int:
+        """A control of the dialog by its ID; the dialog is the topmost one unless given."""
+        root = dialog or self.m.r32(DIALOG_LIST)
         c = self.m.r32(root + 0x42) if root else 0
         while c:
-            if self.m.r16(c + 0x20) == ident:
+            if self.m.r16(c + 0x20) == ident & 0xFFFF:  # IDs are signed WORDs: -2 is a menu's default button
                 return c
             c = self.m.r32(c)
         return 0
 
-    def rect(self, c: int) -> tuple[int, int, int, int]:
+    def rect(self, c: int, dialog: int = 0) -> tuple[int, int, int, int]:
+        """The control's rectangle on the screen: a control's own is relative to its dialog (the cursor is made
+        dialog-relative, atlas P43), which glue screens put at (0, 0) and popups and game menus elsewhere. The
+        dialog is the topmost one unless given."""
+        left, top, right, bottom = self._rect(c)
+        root = dialog or self.m.r32(DIALOG_LIST)
+        if root and c != root:
+            dx, dy = self._rect(root)[:2]
+            left, top, right, bottom = left + dx, top + dy, right + dx, bottom + dy
+        return left, top, right, bottom
+
+    def _rect(self, c: int) -> tuple[int, int, int, int]:
         return tuple(int.from_bytes(self.m.read(c + 4 + 2 * k, 2), "little", signed=True) for k in range(4))
 
     def usable(self, c: int) -> bool:

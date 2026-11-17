@@ -96,6 +96,36 @@ def cmd_custom(a):
     print(r["finished"], "last", r["last_frame"], r["wall_seconds"])
 
 
+def cmd_net(a):
+    from .net import OUT_ROOT, Action, GameSpec, Player, run_game, suite
+    if a.suite:
+        for name in a.suite.split(","):  # suite() again for each: "load" takes the file an earlier "save" wrote
+            r = run_game(suite()[name], (Path(a.out_root) if a.out_root else OUT_ROOT) / name)
+            print(name, r["reason"], {n: (x or {}).get("finished") for n, x in r["players"].items()}, r["compare"],
+                  flush=True)
+        return
+    if a.spec:
+        spec = GameSpec.from_json(json.loads(Path(a.spec).read_text()))
+    else:
+        players = []
+        for k, item in enumerate(filter(None, a.players.split(","))):
+            name, _, rest = item.partition("@")
+            ip, _, role = rest.partition(":")
+            players.append(Player(name, ip or f"10.0.0.{k + 1}", role or ("host" if k == 0 else "join")))
+        for item in filter(None, a.actions.split(";")):  # PLAYER:AT:KIND[:VALUE]
+            who, at, kind, *value = item.split(":", 3)
+            next(p for p in players if p.name == who).actions.append(
+                Action(int(at) if at.isdigit() else at, kind, value[0] if value else ""))
+        for name in filter(None, a.no_map.split(",")):
+            next(p for p in players if p.name == name).has_map = False
+        spec = GameSpec(a.name, a.map, players, expansion=a.expansion, game_type=a.type, subtype=a.subtype,
+                        frames=a.frames, state_steps=parse_steps(a.state) if a.state else (), seed=a.seed,
+                        delay_us=a.delay_us, jitter_us=a.jitter_us, loss=a.loss, wall_limit_s=a.max_wall,
+                        bridge_base=a.bridge, realtime=a.realtime)
+    r = run_game(spec, Path(a.out_root) / spec.name if a.out_root else OUT_ROOT / spec.name)
+    print(r["reason"], {n: (x or {}).get("finished") for n, x in r["players"].items()}, r["compare"])
+
+
 def cmd_mission(a):
     from .mission import MissionSpec, run_mission
     spec = MissionSpec(a.name, a.warp, a.cd)
@@ -343,6 +373,30 @@ def main(argv=None):
     cu.add_argument("--max-wall", type=float, default=7200)
     cu.add_argument("--ai-patch", default="", help="our own AI code to append to aiscript.bin (an ai_asm source, "
                     "e.g. tests/ai/melee-opcodes.aiasm)")
+    ne = sub.add_parser("net", help="a network game of emulated originals on the virtual LAN (net.py)")
+    ne.add_argument("map", nargs="?", default="", help="a .scm or .scx file")
+    ne.add_argument("name", nargs="?", default="", help="the game's directory under koprulu-private/emu/net")
+    ne.add_argument("--spec", default="", help="a GameSpec JSON (net.py) instead of the arguments")
+    ne.add_argument("--suite", default="", help="comma-separated games of net.suite() instead of the arguments")
+    ne.add_argument("--players", default="Alpha@10.0.0.1:host,Beta@10.0.0.2",
+                    help="NAME@IP[:host|join],...: the first is the host unless a role says otherwise")
+    ne.add_argument("--actions", default="", help="PLAYER:AT:KIND[:VALUE];... with AT lobby or a frame and KIND "
+                    "one of net.Action's: chat, keys, text, slot, race, click, wait, stop, poke (ADDR:HEX) or cut "
+                    "(virtual microseconds)")
+    ne.add_argument("--no-map", default="", help="players without the map in their maps folder (the host sends it)")
+    ne.add_argument("--expansion", action="store_true")
+    ne.add_argument("--type", default="", help="gluCreat's game type item, e.g. Melee")
+    ne.add_argument("--subtype", default="")
+    ne.add_argument("--frames", type=int, default=2001)
+    ne.add_argument("--state", default="", help="object step numbers or ranges A-B[/K] to dump every player's state at")
+    ne.add_argument("--seed", type=int, default=1)
+    ne.add_argument("--delay-us", type=int, default=2000, help="a datagram's minimum delay (the rounds' lookahead)")
+    ne.add_argument("--jitter-us", type=int, default=1000)
+    ne.add_argument("--loss", type=float, default=0.0)
+    ne.add_argument("--bridge", type=int, default=0, help="real loopback UDP from this port (lan.LoopbackBridge)")
+    ne.add_argument("--realtime", action="store_true", help="hold the virtual clocks to the wall clock (live peers)")
+    ne.add_argument("--max-wall", type=float, default=4 * 3600)
+    ne.add_argument("--out-root", default="")
     sc = sub.add_parser("scenario")
     sc.add_argument("spec", help="tests/scenarios/<name>.json")
     sc.add_argument("--out-root", default="", help="output root instead of emu/scenarios")
@@ -374,7 +428,7 @@ def main(argv=None):
     ca.add_argument("--out-root", default="", help="output root instead of the missions directory")
     a = ap.parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if a.verbose else logging.INFO, format="%(levelname)s %(name)s: %(message)s")
-    {"boot": cmd_boot, "boot2": cmd_boot2, "mission": cmd_mission, "campaigns": cmd_campaigns, "apis": cmd_apis, "aggregate": cmd_aggregate, "chain": cmd_chain, "menus": cmd_menus, "replay": cmd_replay, "custom": cmd_custom, "scenario": cmd_scenario, "play": cmd_play}[a.cmd](a)
+    {"boot": cmd_boot, "boot2": cmd_boot2, "mission": cmd_mission, "campaigns": cmd_campaigns, "apis": cmd_apis, "aggregate": cmd_aggregate, "chain": cmd_chain, "menus": cmd_menus, "replay": cmd_replay, "custom": cmd_custom, "net": cmd_net, "scenario": cmd_scenario, "play": cmd_play}[a.cmd](a)
 
 
 if __name__ == "__main__":

@@ -41,7 +41,8 @@ def alias(dll: str, name: str, target: str, target_dll: str | None = None):
 
 
 def load_all():
-    from . import kernel32, user32, gdi32, misc, ddraw, dsound  # noqa: F401
+    from . import kernel32, user32, gdi32, misc, ddraw, dsound, ws2_32  # noqa: F401
+    from . import wsock32  # noqa: F401  (after ws2_32: it reuses its implementations)
 
 
 load_all()

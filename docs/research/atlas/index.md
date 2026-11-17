@@ -52,6 +52,8 @@ Package scope summaries:
 | [P44](p44.md) | Scroll bars and sliders, blend tables, screen layers and refresh, fatal errors, palette fades |
 | [P45](p45.md) | Bitmap-font text engine, exit list, registry options, DirectDraw start-up |
 | [S01](s01.md) | Storm.dll imports: MPQ, memory, strings, PCX, SDraw, SDlg, SCode blitter compiler, SVid, registry, SNet local provider |
+| [S02](s02.md) | Storm.dll network layer (SNet internals): providers, packets and checksum, reliability, turns, join handshake, leaves, drops and host migration, pump thread |
+| [U01](u01.md) | `standard.snp`'s UDP provider (`'UDPN'`): `SnpQuery`/`SnpBind`, Winsock sockets on ports 6111 and 6112, game advertisements and list requests, receive threads, the provider's game list and timers |
 | [C01](c01.md) | Visual C++ runtime as used by the game (sorting, rounding, `rand`) |
 | [A01](a01.md) | Functions found by a late pass over code reached only through pointers |
 | [E01](e01.md) | Functions that had no entry of their own: those the emulation oracle executed (spell-target callbacks, transport and nuke orders, region-state handlers, UI procedures) and, from the final pass, status-panel rows, spell callbacks and exit callbacks such as the registry saver `0x4be880` |

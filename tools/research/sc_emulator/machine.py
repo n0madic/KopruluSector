@@ -404,6 +404,8 @@ class Machine:
             if spec is None:
                 raise GuestFault(f"execution in stub region at {address:#x}")
             self._enter_api(spec)
+            if self.preempt_us is not None or self.clock_limit is not None:
+                self._check_clock()
         except BaseException as e:  # never let an exception escape into Unicorn
             self.pending_exception = e
             uc.emu_stop()
@@ -613,19 +615,31 @@ class Machine:
         deadlines = [t.wait_deadline for t in self.threads if t.state == "blocked" and t.wait_deadline is not None]
         hook = self.services.get("idle")
         timer_due = hook.next_due_us() if hook else None
-        cands = [d for d in deadlines + ([timer_due] if timer_due is not None else []) if d is not None]
+        net = self.services.get("net")
+        net_due = net.next_due_us(self.clock_us) if net is not None else None
+        cands = [d for d in deadlines + [timer_due, net_due] if d is not None]
+        if self.clock_limit is not None and self.on_limit is not None and (not cands or min(cands) > self.clock_limit):
+            # idle up to the LAN's horizon, then the other instances run: a datagram may wake a thread before the
+            # next deadline (a wait without one is no deadlock on a network)
+            self.clock_us = max(self.clock_us, self.clock_limit)
+            self.on_limit(self)
+            return True
         if not cands:
             return False
         target = min(cands)
         if target > self.clock_us:
             self.clock_us = target
+        self._expire_waits()
+        return True
+
+    def _expire_waits(self):
+        """Blocked threads whose wait timed out on the clock become ready with WAIT_TIMEOUT."""
         for t in self.threads:
             if t.state == "blocked" and t.wait_deadline is not None and t.wait_deadline <= self.clock_us:
                 if not self._wait_ready(t, t.wait):
                     t.state = "ready"
                     t.pending_resume = WAIT_TIMEOUT
                     t.wait = None
-        return True
 
     def _activate(self, t: Thread):
         """Make ``t`` the running thread and deliver a pending wait result to it."""
@@ -642,11 +656,32 @@ class Machine:
             self._advance(t.frames[-1], value)
 
     stop_requested = False
+    # Network mode (net.py; both None in every other run, whose schedule stays as it was):
+    # - preempt_us: a second core for the background threads (Storm's network thread, standard.snp's receive
+    #   threads), which the never-blocking game loop would otherwise starve: every preempt_us of virtual time the
+    #   running thread is preempted at its next API return, timed-out waits expire, and the ready threads take their
+    #   turns in creation order until they block;
+    # - clock_limit / on_limit: the LAN coordinator's horizon (lan.Coordinator): once the clock reaches it, run()
+    #   calls on_limit(machine), which synchronizes with the other instances and sets the next horizon (or requests
+    #   the stop).
+    preempt_us: int | None = None
+    clock_limit: int | None = None
+    on_limit: Callable | None = None
+    _next_preempt = 0
+    _preempt_due = False
     slice_us = 2_000_000       # wall-clock slice (only without a native block counter)
     slice_blocks = 4_000_000   # deterministic slice: executed translation blocks
     native = None              # coverage.Coverage: native block counter / coverage maps
     _skip_hook_pc = None
     _last_hook = (None, -1)
+
+    def _check_clock(self):
+        """After an API call in network mode: stop the slice for a preemption or at the LAN's horizon."""
+        if self.preempt_us is not None and self.clock_us >= self._next_preempt:
+            self._preempt_due = True
+            self.uc.emu_stop()
+        if self.clock_limit is not None and self.clock_us >= self.clock_limit:
+            self.uc.emu_stop()
 
     def request_stop(self):
         """Stop the run loop at the current instruction (call from a hook)."""
@@ -698,6 +733,17 @@ class Machine:
         stop, or ``stop()`` (checked at thread switches and every host-time slice) is true."""
         while not self.halted:
             cur = self.current
+            if self._preempt_due:
+                self._preempt_due = False
+                self._next_preempt = self.clock_us + self.preempt_us
+                self._expire_waits()
+                if cur is not None and cur.state == "ready":
+                    self.need_switch = True
+            if self.clock_limit is not None and self.on_limit is not None and self.clock_us >= self.clock_limit:
+                self.on_limit(self)
+                if self.stop_requested:
+                    self.stop_requested = False
+                    return None
             if self.need_switch or cur is None or cur.state != "ready":
                 self.need_switch = False
                 if cur is not None and cur.state != "done":
@@ -709,6 +755,9 @@ class Machine:
                     if not self._advance_clock_to_next_deadline():
                         raise GuestFault("deadlock: every guest thread is blocked without a timeout: " +
                                          ", ".join(f"{x.tid:#x}:{x.state}" for x in self.threads))
+                    if self.stop_requested:  # the LAN asked for the stop while every thread was idle
+                        self.stop_requested = False
+                        return None
                     nxt = self._pick()
                 self._activate(nxt)
                 if self.need_switch:  # the resumed generator blocked again immediately
