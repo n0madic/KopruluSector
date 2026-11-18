@@ -41,6 +41,12 @@
 #define CHAT_LOCAL_COLOUR 7    /* the local player's */
 #define CHAT_OBSERVER_STRING 27 /* the tag of an observer's line (KP_CTRL_OBSERVER) */
 
+const uint8_t *kp_ui_force_name(KpUi *ui, int64_t force)
+{
+	const uint8_t *t = kp_ui_tbl(ui, KP_UI_NETWORK, (uint32_t)(FORCE_NAME_STRING + (force & 0xff)));
+	return t != NULL ? t : (const uint8_t *)"";
+}
+
 static KpUiText *select_font(KpUi *ui)
 {
 	(void)kp_ui_text_select_font(&ui->text, ui->fonts[FONT_SLOT_10], ui->font_sizes[FONT_SLOT_10]);
@@ -263,8 +269,8 @@ static void chat_message(KpUi *ui, const char *text, int64_t sender, int from_re
 			? chat_colour(ui->minimap.player_colours[kp_ui_player_row(ui, sender) & 0xf]) : c;
 		copy_printable(name, sizeof name, kp_ui_record_name(ui, sender), 1);
 		if (g->setup.type[sender] == KP_CTRL_OBSERVER || kp_setup_team_game(&g->setup)) {
-			const uint8_t *tag = kp_ui_tbl(ui, KP_UI_NETWORK, g->setup.type[sender] == KP_CTRL_OBSERVER ? CHAT_OBSERVER_STRING
-				: (uint32_t)(FORCE_NAME_STRING + (g->players.force[sender] & 0xff)));
+			const uint8_t *tag = g->setup.type[sender] == KP_CTRL_OBSERVER ? kp_ui_tbl(ui, KP_UI_NETWORK, CHAT_OBSERVER_STRING)
+				: kp_ui_force_name(ui, g->players.force[sender]);
 			snprintf(line, sizeof line, "[%s]%s:%c %s", tag != NULL ? (const char *)tag : "", name, (char)c, text);
 		} else {
 			snprintf(line, sizeof line, "%s:%c %s", name, (char)c, text);
@@ -291,9 +297,8 @@ void kp_ui_game_event(KpUi *ui, int64_t kind, int64_t a, int64_t b, int64_t c, c
 	case KP_EVENT_FORCE_MESSAGE: { /* the string with the force's name */
 		char line[FORMAT_SIZE];
 		const uint8_t *format = kp_ui_tbl(ui, KP_UI_NETWORK, (uint32_t)a);
-		const uint8_t *name = kp_ui_tbl(ui, KP_UI_NETWORK, (uint32_t)(FORCE_NAME_STRING + (b & 0xff)));
 		if (format == NULL) break;
-		kp_ui_format_name_xy(line, sizeof line, format, name != NULL ? name : (const uint8_t *)"", 0, 0);
+		kp_ui_format_name_xy(line, sizeof line, format, kp_ui_force_name(ui, b), 0, 0);
 		kp_ui_timed_message(ui, (const uint8_t *)line, 0);
 		break;
 	}

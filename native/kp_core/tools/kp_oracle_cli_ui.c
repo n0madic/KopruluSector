@@ -978,27 +978,55 @@ static void koprulu_masks(KpUi *ui, int32_t screen, Bitmap *b)
 	}
 }
 
+/* The original's screen as the glue's layers blit it (kp_ui_screen_layer: the chat room's map preview over the room),
+ * each at its place, index 0 of a transparent dialog (0x2000) leaving what lies under it. */
+static void screen_compose(const KpUi *ui, uint8_t *out)
+{
+	int32_t d, i, j;
+	memset(out, 0, (size_t)KP_UI_SCREEN_W * KP_UI_SCREEN_H);
+	for (d = kp_ui_screen_layer(ui, -1); d >= 0; d = kp_ui_screen_layer(ui, d)) {
+		const KpUiControl *c = &ui->controls[d];
+		const KpUiSurface *s = &c->bitmap;
+		if (s->pixels == NULL) continue;
+		for (j = 0; j < s->h; j++) {
+			int32_t y = c->top + j;
+			if (y < 0 || y >= KP_UI_SCREEN_H) continue;
+			for (i = 0; i < s->w; i++) {
+				int32_t x = c->left + i;
+				uint8_t v = s->pixels[(size_t)j * (size_t)s->w + (size_t)i];
+				if (x < 0 || x >= KP_UI_SCREEN_W || (v == 0 && (c->flags & KP_UI_TRANSPARENT))) continue;
+				out[(size_t)y * KP_UI_SCREEN_W + (size_t)x] = v;
+			}
+		}
+	}
+}
+
 static void menus_captures(Menus *m, int64_t before)
 {
+	static uint8_t screen_pixels[KP_UI_SCREEN_W * KP_UI_SCREEN_H];
 	Glue *g = &m->g;
 	KpUi *ui = g->u.ui;
 	while (g->next_cap < g->cap_count && g->caps[g->next_cap].tick < before) {
 		const KpTraceCapture *cap = &g->caps[g->next_cap++];
-		int32_t d, bottom = -1;
-		for (d = ui->open; d >= 0; d = ui->controls[d].next) bottom = d; /* the glue screen the popups are composited into */
-		if (bottom >= 0) {
-			const KpUiSurface *s = &ui->controls[bottom].bitmap;
+		int32_t screen = kp_ui_glue_screen(ui); /* the glue screen the popups are composited into */
+		if (screen >= 0) {
+			const KpUiSurface *s = &ui->controls[screen].bitmap;
 			kp_ui_add_dirty_rect(ui, 0, 0, KP_UI_SCREEN_W - 1, KP_UI_SCREEN_H - 1);
 			kp_ui_present(ui);
-			if (s->pixels && s->w == 640 && s->h == 480) {
+			if (s->pixels && s->w == KP_UI_SCREEN_W && s->h == KP_UI_SCREEN_H) {
+				KpUiSurface all;
 				Bitmap b;
-				bitmap_init(&b, s);
-				koprulu_masks(ui, bottom, &b);
-				if (kp_trace_compare_pixels(cap, bitmap_pixel, &b, 0, 0, s->w - 1, s->h - 1, getenv("ROOM_DUMP")) > 0) {
+				all.w = KP_UI_SCREEN_W;
+				all.h = KP_UI_SCREEN_H;
+				all.pixels = screen_pixels;
+				screen_compose(ui, screen_pixels);
+				bitmap_init(&b, &all);
+				koprulu_masks(ui, screen, &b);
+				if (kp_trace_compare_pixels(cap, bitmap_pixel, &b, 0, 0, all.w - 1, all.h - 1, getenv("ROOM_DUMP")) > 0) {
 					g->pixel_differences++;
 				}
 			}
-			if (bottom == ui->title.dialog && palette_differences(cap, ui) > 0) { /* title.pcx's, set by InitTitleScreen */
+			if (screen == ui->title.dialog && palette_differences(cap, ui) > 0) { /* title.pcx's, set by InitTitleScreen */
 				fprintf(stderr, "%s: the title's palette differs\n", cap->name);
 				g->pixel_differences++;
 			}

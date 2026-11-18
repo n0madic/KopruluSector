@@ -843,7 +843,7 @@ void kp_ui_ready_room_end(KpUi *ui)
 static void net_poll(KpUi *ui)
 {
 	KpUiBriefing *b = br(ui);
-	/* TODO: result 100 when PollBriefingTurn answers the glue's exit (state 25): stage N4's fatal network errors set it */
+	/* TODO: result 100 when PollBriefingTurn answers the glue's exit (state 25), which a fatal network error sets */
 	if (ui->net->briefing_poll == NULL || !ui->net->briefing_poll(ui->net->host)) return;
 	b->polling = 0;
 	ui->result = RESULT_START;

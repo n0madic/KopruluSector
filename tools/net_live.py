@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""The mixed lobby (phase N, stage N3.5): Koprulu and the emulated 1.17 in one lobby over the network oracle's loopback
-bridge, to the same start.
+"""The mixed game (phase N, stages N3.5 and N4): Koprulu and the emulated 1.17 in one lobby over the network oracle's
+loopback bridge, to the same start, then the game played together.
 
 Each run starts the emulator (tools/research/sc_emulator net --bridge BASE --realtime) and Koprulu's live test
 (kp_test test_net_live, tests/c/test_net_live.c) at once:
@@ -21,10 +21,17 @@ setup.json, taken at StartGame 0x443f40):
   zlib's without the final inversion) and each emulated download (net.py keeps a player's written maps in files/)
   against the map file.
 
-Koprulu leaves Storm's game after the start (its network game is stage N4's), so the emulated players play on alone to
-GAME_FRAMES. The recordings stay in koprulu-private/emu/net-live/ (never committed).
+Then (stage N4) every seat plays the game to GAME_FRAMES (KOPRULU_NET_LIVE_FRAMES for Koprulu's test) and its sync
+commands are compared: in each emulated player's commands.jsonl (the turns ExecuteTurnCommands 0x475d30 ran) every
+turn's 0x37 of every player, Koprulu's among them, must have the same shared part (the ring index and kind, the hash
+of the shared state), on every turn that all the room's players sent; its last three bytes are the sender's view,
+which the original checks against its own ring (CheckSyncCommand 0x47a510), so no SNetDropPlayer of ResolveDesync
+0x47a630 may show in its snet.jsonl. Koprulu's test checks its own side (no sender out of sync, nobody dropped) and
+writes its replay (koprulu.rep), copied to koprulu-private/replays-koprulu-net/live-<run>.rep, where the emulator's
+playback and `tools/state_check.py --kind koprulu-net` take it. --frames 0 leaves Koprulu's game at the start, as before N4. The recordings stay in
+koprulu-private/emu/net-live/ (never committed).
 
-    python3 tools/net_live.py [--map MAP] [--base PORT] [join] [host]
+    python3 tools/net_live.py [--map MAP] [--base PORT] [--frames N] [join] [host]
 """
 from __future__ import annotations
 
@@ -32,6 +39,7 @@ import argparse
 import json
 import logging
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -46,7 +54,11 @@ DEFAULT_PYTHON = ROOT / "koprulu-private" / "venv" / "bin" / "python"
 DEFAULT_KP_TEST = ROOT / "build" / "cmake" / "kp_test"
 DEFAULT_BASE = 41000
 GAME_TYPE = "Melee"
-GAME_FRAMES = 24              # the emulated players' game after the start: its first frames
+GAME_FRAMES = 480             # every seat's game after the start: its first frames (20 s at the fastest speed)
+SYNC_COMMAND = "37"            # the sync command 0x37 (7 bytes)
+SYNC_SHARED_HEX = 8           # its shared part's hex digits: the ID, the ring index and kind, the hash
+DROP_CALL = "SNetDropPlayer"  # ResolveDesync 0x47a630's drop in an emulated player's snet.jsonl
+REPLAYS = ROOT / "koprulu-private" / "replays-koprulu-net"  # Koprulu's replays the emulator plays
 JOIN_HOST_WAIT_MS = 15000     # the emulated host's wait in the full room before its Start (the map's transfer)
 LOBBY_TIMEOUT_S = 600         # a lobby step of the emulator's driver, in virtual seconds
 MAX_WALL_S = 1800
@@ -129,6 +141,50 @@ def emulated_starts(game_dir: Path, map_name: str) -> tuple[dict, dict, dict, li
     return starts, roles, downloads, missing
 
 
+def sync_turns(commands: Path, room: int) -> tuple[int, list[str]]:
+    """The sync commands of an emulated player's turns (commands.jsonl: frame, turn, player, bytes): the number of turns
+    on which all `room` players sent one, and the turns whose players' shared parts differ (the ring index and kind
+    and the 16-bit hash of the shared state; the last three bytes are the sender's own view, which each receiver checks
+    against its ring, CheckSyncVisibilityHash 0x47a570)."""
+    turns: dict[int, dict[int, str]] = {}
+    for line in commands.read_text().splitlines():
+        r = json.loads(line)
+        if r["bytes"].startswith(SYNC_COMMAND):
+            turns.setdefault(r["turn"], {})[r["player"]] = r["bytes"][:SYNC_SHARED_HEX]
+    full = [values for values in turns.values() if len(values) == room]
+    bad = [f"turn {t}: {values}" for t, values in sorted(turns.items()) if len(set(values.values())) > 1]
+    return len(full), bad
+
+
+def drops(snet: Path) -> int:
+    """The SNetDropPlayer calls in an emulated player's snet.jsonl: ResolveDesync 0x47a630's (a sender out of sync,
+    the whole command checked against the player's own ring) or Drop Players'."""
+    if not snet.exists():
+        return 0
+    return sum(1 for line in snet.read_text().splitlines() if json.loads(line).get("fn") == DROP_CALL)
+
+
+def compare_game(game_dir: Path, players: list[str], room: int) -> list[str]:
+    """Every emulated player's turns: the room's sync commands' shared parts equal on each turn, and nobody dropped
+    (the original's own check of every sender's whole command found none out of sync)."""
+    out = []
+    for p in players:
+        commands = game_dir / p / "commands.jsonl"
+        if not commands.exists():
+            out.append(f"{p} has no commands.jsonl")
+            continue
+        full, bad = sync_turns(commands, room)
+        if full == 0:
+            out.append(f"{p}: no turn with every player's sync command")
+        out += [f"{p}: out of sync at {b}" for b in bad[:5]]
+        dropped = drops(game_dir / p / "snet.jsonl")
+        if dropped:
+            out.append(f"{p}: {dropped} {DROP_CALL} calls")
+        if not bad and not dropped:
+            log.info("%s: %d turns with all %d players' sync commands equal, nobody dropped", p, full, room)
+    return out
+
+
 def run(name: str, a) -> list[str]:
     """One run: the emulator and Koprulu's test at once, then the comparison; the differences ([] none)."""
     r = RUNS[name]
@@ -136,17 +192,18 @@ def run(name: str, a) -> list[str]:
     game_dir = Path(a.out_root) / game
     koprulu_out = game_dir / "koprulu.json"
     game_dir.mkdir(parents=True, exist_ok=True)
-    for stale in (game_dir / "spec.json", koprulu_out):
+    for stale in (game_dir / "spec.json", koprulu_out, game_dir / "koprulu.rep"):
         stale.unlink(missing_ok=True)
     cmd = [str(a.python), "-m", "sc_emulator", "net", str(Path(a.map).resolve()), game, "--players", r["players"],
-           "--type", GAME_TYPE, "--bridge", str(a.base), "--realtime", "--frames", str(GAME_FRAMES),
+           "--type", GAME_TYPE, "--bridge", str(a.base), "--realtime", "--frames", str(a.frames or GAME_FRAMES),
            "--max-wall", str(MAX_WALL_S), "--lobby-timeout", str(LOBBY_TIMEOUT_S), "--out-root", str(a.out_root)]
     if r["actions"]:
         cmd += ["--actions", r["actions"]]
     if r["no_map"]:
         cmd += ["--no-map", r["no_map"]]
     env = dict(os.environ, KOPRULU_NET_BRIDGE=f"{a.base}:{r['hosts']}", KOPRULU_NET_LIVE_MAP=str(Path(a.map).resolve()),
-               KOPRULU_NET_LIVE_OUT=str(koprulu_out), KOPRULU_NET_LIVE_PLAYERS=str(r["room"]))
+               KOPRULU_NET_LIVE_OUT=str(koprulu_out), KOPRULU_NET_LIVE_PLAYERS=str(r["room"]),
+               KOPRULU_NET_LIVE_FRAMES=str(a.frames))
     with open(game_dir / "emulator.log", "w") as emu_log, open(game_dir / "koprulu.log", "w") as kp_log:
         log.info("%s: the emulator (%s)", name, r["players"])
         emu = subprocess.Popen(["nice", "-n", "10", *cmd], cwd=EMULATOR_CWD, stdout=emu_log, stderr=subprocess.STDOUT)
@@ -181,6 +238,15 @@ def run(name: str, a) -> list[str]:
     if not out:
         log.info("%s: the same start for Koprulu and %s: seed %#x, %d slot records", name, ", ".join(starts),
                  koprulu["seed"], SLOTS)
+    if a.frames > 0:
+        out += [f"{name}: {d}" for d in compare_game(game_dir, list(starts), r["room"])]
+        replay = game_dir / "koprulu.rep"
+        if replay.exists():
+            REPLAYS.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(replay, REPLAYS / f"live-{name}.rep")
+            log.info("%s: Koprulu's replay copied to %s", name, REPLAYS / f"live-{name}.rep")
+        else:
+            out.append(f"{name}: Koprulu wrote no replay")
     return out
 
 
@@ -192,6 +258,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--out-root", default=str(DEFAULT_OUT))
     ap.add_argument("--python", default=str(DEFAULT_PYTHON), help="the emulator's Python")
     ap.add_argument("--kp-test", default=str(DEFAULT_KP_TEST))
+    ap.add_argument("--frames", type=int, default=GAME_FRAMES,
+                    help="the game's frames every seat plays after the start (0: Koprulu leaves at the start)")
     a = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     failures = []

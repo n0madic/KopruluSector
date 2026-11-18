@@ -348,8 +348,9 @@ int kp_fuzz_transfer_run(const uint8_t *d, size_t size, char *why, size_t why_si
  *   L_TRANSIT  the next SNetGetTurnsInTransit's count {u8 turns}; 0xff: the call fails
  *   L_FAIL     the next call of each kind of the mask fails {u8 mask: F_*}
  *   L_ACTION   the screens' action of bits 4-7 (A_*) and its arguments
- *   L_SAVE     the seat's saved game, a save file {u16 n, n bytes} probed and read (kp_netsave.h; bit 4: in Brood War);
- *              read, it is the game the next create resumes and the save a join's lobby finds, else the seat has none
+ *   L_SAVE     the seat's saved game, a save file {u16 n, n bytes} probed and read (kp_netsave.h: the original's, or
+ *              Koprulu's container with NETG; bit 4: in Brood War); read, it is the game the next create resumes and
+ *              the save a join's lobby finds, else the seat has none
  * flags: bit 0 the seat hosts, bits 1-3 the Storm ID SNet gives it, bit 4 the Use Map Settings template, bit 5 the map
  * is in its maps folder. Answers wait in queues, each in the order given; an answer past a queue's room is dropped. A
  * mode's or a count's queue run dry answers its last again. */
@@ -946,9 +947,14 @@ static int l_op(Lobby *x, Reader *r)
 		break;
 	case L_SAVE:
 		if (!get16(r, &n) || !get(r, n, &p)) return 0;
-		x->seat.save = kp_netsave_probe(p, n, L_SAVE_FILE, NULL, NULL) == KP_NETSAVE_VALID &&
-				kp_netsave_read(p, n, (op & L_SAVE_EXPANSION) != 0, &x->save)
-			? &x->save : NULL;
+		if (kp_netsave_koprulu(p, n)) /* Koprulu's own network save: its container and NETG (the product's) */
+			x->seat.save = kp_netsave_koprulu_read(p, n, L_SAVE_FILE, (op & L_SAVE_EXPANSION) != 0, &x->save, NULL)
+					== KP_NETSAVE_VALID
+				? &x->save : NULL;
+		else
+			x->seat.save = kp_netsave_probe(p, n, L_SAVE_FILE, NULL, NULL) == KP_NETSAVE_VALID &&
+					kp_netsave_read(p, n, (op & L_SAVE_EXPANSION) != 0, &x->save)
+				? &x->save : NULL;
 		break;
 	case L_ACTION:
 		if ((op >> 4) == A_LIST) {

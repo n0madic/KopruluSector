@@ -4,6 +4,8 @@
  * game made added first), takes a name and sends the save command 0x06, with the overwrite and delete confirmations;
  * rez\loadgame.bin sends the load command 0x07. The files are the host's: the game's commands reach it as KP_EVENT_SAVE_GAME / KP_EVENT_LOAD_GAME, a
  * delete as a call (ui->delete_save). */
+#include "kp_game.h"
+#include "kp_gametype.h"
 #include "kp_text.h"
 #include "kp_ui.h"
 
@@ -38,6 +40,7 @@
 #define SAVE_NAME_LIMIT 28           /* IsInvalidFileName 0x408300's limit in SaveDialogConfirm */
 #define NET_FORBIDDEN 0x11
 #define NET_SAVING 0x6d
+#define SAVE_COOLDOWN 120000u        /* IsSaveCooldownOver 0x49add0: ms after the last save command */
 #define VK_BACK 8
 #define GLUE_THEME 0                 /* RunOkBox's InitGlueDialog theme (a nested dialog keeps the screen's) */
 
@@ -242,6 +245,8 @@ static void send_save(KpUi *ui, const char *name)
 	cmd[4] = (uint8_t)(t >> 24);
 	snprintf((char *)cmd + 5, CMD_NAME, "%s", name);
 	kp_ui_queue_command(ui, cmd, 5 + strlen((const char *)cmd + 5) + 1);
+	ui->save.sent_tick = ui->now; /* 0x6a5ea0 = GetTickCount() */
+	ui->save.sent = 1;
 }
 
 static void reopen_save(KpUi *ui, int32_t result)
@@ -539,10 +544,26 @@ void kp_ui_load_failed(KpUi *ui)
 	message_box(ui, (const char *)kp_ui_tbl(ui, KP_UI_GLUALL, KP_UI_GLUALL_SAVE_DAMAGED), NULL, "rez\\ok.bin");
 }
 
+int kp_ui_lowest_active(const KpUi *ui)
+{
+	const KpGame *g = ui->game;
+	if (!ui->menus.multiplayer || g == NULL) return 1;
+	return g->local_record >= 0 && g->local_record < KP_SETUP_SLOTS &&
+		kp_lowest_active_storm(g) == g->setup.storm[g->local_record];
+}
+
+int kp_ui_save_cooled(const KpUi *ui)
+{
+	return !ui->menus.multiplayer || !ui->save.sent || (uint32_t)(ui->now - ui->save.sent_tick) > SAVE_COOLDOWN;
+}
+
 void kp_ui_save_dialog(KpUi *ui, int load)
 {
-	/* OpenSaveGameDialog 0x49b0b0 / OpenLoadGameDialog 0x49af50 (a single player's) */
-	if (ui->menus.multiplayer) return;
+	/* OpenSaveGameDialog 0x49b0b0 (the lowest active player, no tournament, a network game's cooldown, no replay) and
+	 * OpenLoadGameDialog 0x49af50 (a single player's outside a replay) */
+	if (load ? ui->menus.multiplayer || ui->game->w->replay
+	         : !kp_ui_lowest_active(ui) || kp_setup_tournament(&ui->game->setup) || !kp_ui_save_cooled(ui) ||
+	           ui->game->w->replay) return;
 	ui->save.index = 0;
 	ui->save.name[0] = 0;
 	if (load) (void)kp_ui_open_modeless(ui, "rez\\loadgame.bin", load_proc);

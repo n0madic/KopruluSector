@@ -13,10 +13,10 @@ Phase M ([phase-multiplayer.md](phase-multiplayer.md)) left several seats of one
 
 The remake keeps the original's split: `StarCraft.exe` → `storm.dll` (SNet) → a `.snp` provider → sockets.
 
-1. `kp_core`: the simulation and its network branches; new, the sync command `0x37`'s inputs byte for byte (`ComputeSyncValue` `0x47a360`, the sprite visibility checksum `0x417540`–`0x417610`, taken inside the step after the first frame past a turn boundary) and the network players' state (`0x673818`, the drop flags `0x529042`).
+1. `kp_core`: the simulation and its network branches; new, the sync command `0x37`'s inputs byte for byte (`ComputeSyncValue` `0x47a360`, the sprite visibility checksum `0x417540`–`0x417610`, taken inside the step after the first frame past a turn boundary) and the network players' state (`0x673818`; the drop flags `0x529042` stay with the game's network code, `KpNetGame`).
 2. `kp_core/src/ui`: the screens of [P17](research/atlas/p17.md)–[P20](research/atlas/p20.md), [P24](research/atlas/p24.md) and [P27](research/atlas/p27.md), reading the network's state through host hooks.
 3. `kp_app`: the game's network code of P24–P27 (turn manager, `0x05`/`0x37`, the lobby protocol, map transfer, chat, leaves).
-4. `kp_app` (network): `kp_snet` (Storm's SNet, the API the executable calls) over the UDP provider `kp_snp_udp`, both pure state machines (datagrams and time in, datagrams and events out), over a transport: the system's sockets (`kp_net_sock`), the relay (stage N5) or, in the tests, an in-process LAN (`kp_net_lan`; [N2](#n2-kp_snet-and-the-udp-provider)). The game's network code runs them on a network thread on the natives and from the main loop on the web.
+4. `kp_app` (network): `kp_snet` (Storm's SNet, the API the executable calls) over the UDP provider `kp_snp_udp`, both pure state machines (datagrams and time in, datagrams and events out), over a transport: the system's sockets (`kp_net_sock`), the relay (stage N5) or, in the tests, an in-process LAN (`kp_net_lan`; [N2](#n2-kp_snet-and-the-udp-provider)). The game's network code runs them from the main loop (the plan's network thread on the natives, for long loads, is still a `TODO:` in `kp_netplay.h`).
 5. `tools/relay`: `koprulu-relay`.
 
 ## Stages
@@ -27,7 +27,7 @@ The remake keeps the original's split: `StarCraft.exe` → `storm.dll` (SNet) �
 | N1 | the network oracle in the emulator: Winsock HLE, virtual LAN, the Multiplayer menus' driver, recordings | done 2026-11-17 |
 | N2 | `kp_snet` and the UDP provider, the socket drivers and the in-process LAN | done 2026-11-17 |
 | N3 | the lobby: screens, protocol, map transfer, network saves, the mixed lobby | done 2026-11-18 |
-| N4 | the game over the network: `0x05`/`0x37`, `ResolveDesync`, leaves and drops, chat, the network menus | |
+| N4 | the game over the network: `0x05`/`0x37`, `ResolveDesync`, leaves and drops, chat, the network menus | done 2026-11-18 |
 | N5 | `koprulu-relay`, the web, the phones | |
 | N6 | acceptance | |
 
@@ -175,11 +175,11 @@ Storm's network layer and `standard.snp`'s UDP provider, ported from the atlas's
   - The host rebuilds its slots from the save. A melee game uses `RebuildLobbySlotsFromSave` `0x479840`: the saved humans' slots open first, then the computers (as lobby computers), rescuables and neutrals, each holding its saved record. A team or Use Map Settings game uses `RebuildSlotsFromSaveSummary` `0x479ce0`: the saved lobby's slots in the template's teams or the saved forces, the defeated players' slots closed.
   - A join request carries the joiner's saved slot, record and RNG state. The host refuses another RNG state (reason 5) and places the joiner: in melee in the first open slot, in a team or Use Map Settings game in its saved slot. The joiner claims its saved record there (`AssignSavedSlot` `0x471a40`; a taken record refuses the join), and the records reach every seat in the start information `0x48`.
   - The Create Game screen in multiplayer lists the saves, which `LoadSaveEntryInfo` `0x45d5e0` describes (the map's title, the save's name, the players, the size and the tileset; gluAll 64–67 for an unreadable one). Ok creates the game from the save's header (`CreateGameFromEntry` `0x45bfc0`'s kind 1: no map read, no template check). `kp_flow_find_save` searches the user's maps folder as the original does: its files in NTFS's order, then its subfolders; a namesake found earlier wins.
-  - The original's saves are listed only for the oracle (`KpAppFlags.original_saves`). The product resumes its own network saves with the network game (N4); a mixed save answers "Save Game File Not Found", as planned. `RestoreMultiplayerSaveSlots` `0x4790b0` runs at the game's start, so it is N4's too.
-- **The product does not play the network game yet.** The chat room's start leaves the game (`AbortNetworkGame` `0x474e60`) and the join screen shows again; playing it is N4's (`TODO:` in `kp_flow.c`).
+  - The original's saves are listed only for the oracle (`KpAppFlags.original_saves`). The product resumes its own network saves with the network game ([N4](#n4-the-game-over-the-network-done-2026-11-18)); a mixed save answers "Save Game File Not Found", as planned. `RestoreMultiplayerSaveSlots` `0x4790b0` runs at the game's start, so it is N4's too.
+- **The product does not play the network game yet** (N3; N4 plays it). The chat room's start leaves the game (`AbortNetworkGame` `0x474e60`) and the join screen shows again.
 - **Against the original** (the recordings of `koprulu-private/emu/net-n2`; `tools/net_check.py`'s goldens, version 7, add each player's map, lobby actions and preloaded files):
   - `test_lobby_trace` replays each player's lobby over an SNet that answers from its recording. Every SNet call the lobby makes must be the original's next one, with its arguments and data byte for byte; the events are dispatched inside the calls the original's were. All 40 players replay with no difference; the load's two find their saves among their preloaded files.
-  - The screens: `tools/menus_check.py --player DIR` (`kp_oracle menus_replay`) takes each network player through gluMain, gluConn, gluLogin, gluJoin or gluCreat and gluChat with the original's input, with Koprulu's lobby behind the screens over the player's recorded SNet calls, gated by the run's clock (`kp_oracle_net.h`). The captures, the popups and the timers equal the original's for all 40 players. The replay runs the chat room's idle callback at the tick the room opened, as `RunModalDialog` `0x4c35c0`'s first pass does before it waits: the load's host locks its rows there (`LockLobbySlotControls` `0x451ad0`).
+  - The screens: `tools/menus_check.py --player DIR` (`kp_oracle menus_replay`) takes each network player through gluMain, gluConn, gluLogin, gluJoin or gluCreat and gluChat with the original's input, with Koprulu's lobby behind the screens over the player's recorded SNet calls, gated by the run's clock (`kp_oracle_net.h`). The popups and the timers equal the original's for all 40 players. The captures were checked only for the screens before the chat room: the chat room's capture, whose dialogs the glue composed wrong, was skipped by the 640 × 480 check (found in N4). Since N4's composition 38 of 40 equal; the two hosts that kick or ban (`kick` and `ban`'s Alpha) differ in 15 pixels, the glow of the popup's Ok (its "k" at x 237..241, y 307..312): not the cursor, not a torn capture, the timers equal; open. The replay runs the chat room's idle callback at the tick the room opened, as `RunModalDialog` `0x4c35c0`'s first pass does before it waits: the load's host locks its rows there (`LockLobbySlotControls` `0x451ad0`).
   - The offline glue is unchanged: `room_check.py`'s rooms, results and scores 57 of 57, the campaign's menus equal.
 - **Koprulu with Koprulu:** `test_netgame` plays lobbies of whole stacks on the in-process LAN (`tests/c/kp_net_lobby.h`): four seats reach one start, also with 10 % loss; chat, whispers, races, a downloaded map, kick and ban, the Use Map Settings ready room. Every seat that starts has the host's seed, start information, slots and template, the same game setup, and plays its own map or the one it downloaded. Resumed saves of the test's own (melee, Use Map Settings, team): the host's rebuilt slots, the joiners in their places, the refusals (another RNG state, no save, a taken record, a closed slot), the saved records in every seat's start information.
 - **The mixed lobby (N3.5):** Koprulu and the emulated 1.17 in one lobby over the network oracle's loopback bridge, to the same start. `tools/net_live.py` runs the emulator (`sc_emulator net --bridge BASE --realtime`) and Koprulu's live suite `test_net_live` together, on 1.17's "(4)Lost Civilization.scm":
@@ -192,8 +192,109 @@ Storm's network layer and `standard.snp`'s UDP provider, ported from the atlas's
 - **Fuzzing:** the targets `lobby` (one seat's lobby with the screens' pass over an SNet that answers from the input, and a save file the lobby resumes) and `transfer` (the transfer alone), with seeds from Koprulu's own lobbies (`tests/fuzz/seeds/lobby`, a resumed save among them; `transfer`). The first runs found an upload request for a receiver past Storm ID 7; it is refused now, and the two inputs are kept in `tests/fuzz/regress`.
 - **CI** (2026-11-18): `tools/ci.sh` with `KOPRULU_FULL=1` and the product passed in 2192 s after the stage's code review (`PYTHON` the private venv's, `KOPRULU_ORIGINAL` the full install with its `maps` folder, `KOPRULU_SCR` Remastered's): 754 C tests on the host, under ASan, LSan and UBSan and in wasm; 296 Python tests; the nine fuzz targets 60 s each with no finding (`lobby` 599,186 inputs, `transfer` 802,459); the product's scripts. The wasm build found two faults the host's clang had not: `strnlen` is POSIX, not C99 (`kp_net_text_len` in `kp_net.h` now), and the product's network helpers are unused on the web, which has no provider until N5. GCC 15.2 in the Linux image (243 tests of the network, flow, HUD, fuzz and session suites) found a narrowing assignment chain in `test_netgame.c` and, in its C++11 check, a ternary mixing an enumeration with an `int` in `kp_netgame.c`; after the review's fixes its sanitizer build found one more ternary, `kp_transfer_progress`'s `uint8_t` against `0`, and now builds everything with no warning (the network suites pass under it). mingw-w64 GCC 16.2 under Wine passes the same suites (`test_net_live` skips without a bridge) after two fixes: `%zu` in the checks' formats (mingw's printf has none) and the transfer's folder test, which hid its folder by a leading dot, a hidden name only off Windows (`kp_t_hide` sets the attribute there).
 - **Where Koprulu differs from the original:** only for inputs the original mishandles; `kp_netgame.h` and `kp_transfer.h` list each case. One more: the join request of a new game carries the RNG state of the last save this lobby read; the original's carries that of the last save header any screen probed (`0x6a5e40`), which the host of a new game never checks.
+- **The map transfer's trust:** the protocol is the original's and Koprulu keeps it byte for byte, so a download is vouched for by the offer's CRC-32 alone and its data packets by no sender (the receiver is not told which seat the origin redirected to upload). A seat of the same game can therefore inject a file of the offered size and CRC-32 (a CRC-32 is easy to match). What bounds it: the size, name and folder checks (`kp_transfer.h`), the map loader's bounds (the `chk` fuzz target), and the host's kick. Koprulu ignores what the original does not check and no legitimate packet carries: a chunk acknowledgement or a stop from a seat other than the upload's receiver (`test_netgame.transfer_upload_obeys_only_its_receiver`).
 - **Open:**
-  - with N4's game: `RestoreMultiplayerSaveSlots` `0x4790b0` at a resumed game's start, the product's own network saves on the Create Game screen;
+  - with N4's game: `RestoreMultiplayerSaveSlots` `0x4790b0` at a resumed game's start, the product's own network saves on the Create Game screen (done in N4);
   - the map preview's minimap image (no preview world yet, `TODO:` in `kp_ui_lobby.c`), the live slot's type when a slot opens, Storm's error popups (`ShowNetErrorMessage` `0x474a70`);
-  - the race ready room's result 100 for the glue's exit (glue state 25) comes with N4's fatal network errors.
+  - the race ready room's result 100 for the glue's exit (glue state 25), with a fatal network error (still open after N4).
 
+
+## N4: the game over the network (done 2026-11-18)
+
+`StarCraft.exe`'s side of the network game after the start, ported from the atlas's P24–P27 (the turn manager, the sync ring, the leaves, timeout.bin), P05 and P09 (the sync command's inputs), P14 and P20 (the in-game dialogs) entries. A Koprulu seat plays the game with Koprulu and with 1.17: its turns, sync commands, leaves and drops are the original's byte for byte.
+
+- **The sync command `0x37`** (`kp_core/src/core/kp_sync.{h,c}`, `KpSync`): the ring of 16 records (`0x673f28`) a seat fills at its turn boundaries and the 7 bytes it sends after each of its turns. A record holds:
+  - by the schedule {1, 2}, a hash of the units (`HashUnitState` `0x427520`) or of the resources with the random sequence and the frame, mixed each time with one row of the tile flags and the seat's vision (`ComputeSyncValue` `0x47a360`);
+  - the minimap's statistics (`DrawMinimapUnits` `0x46d510`);
+  - the sprites' visibility parities per row and the seat's checksum byte of the 14 rows from its view's top (`ComputeSpriteVisibilityChecksum` `0x417540`).
+
+  The original takes the sprites' checksum in the draw after the turn's first frame. Koprulu takes it inside the step, with the view's first row from the interface (`KP_SCREEN_Y`), so a seat that draws late, twice or never still sends what the original would. Each sender's command is checked against the ring (`CheckSyncCommand` `0x47a510`, `CheckSyncVisibilityHash` `0x47a570`): the last three bytes are the sender's own view, which each receiver checks against its parities. `KpSync` is the seat's network state (`KpNetGame`'s), neither saved nor hashed.
+- **The network players in the game** (`kp_game.h`, `kp_network.c`, `kp_commands.c`):
+  - the network's player table `0x673818` by Storm ID (`net_state`: active, left), set at the start and marked at a leave;
+  - `HandlePlayerLeftGame` `0x477a60` (`kp_network_player_left`): "%s has left the game.", or "%s was dropped from the game." for `ResolveDesync`'s reason `0x40000006`; then the player's defeat or drop, in a team game only when no human of its force is still active (`CountActiveHumansInForce` `0x4b2b50`);
+  - the save command's lowest active Storm ID (`GetLowestActiveStormId` `0x4771e0`, `kp_lowest_active_storm`; phase M's `TODO:` there is closed).
+
+  The table is the host's (neither saved nor hashed: a resumed game's comes from its lobby). The setup's Storm IDs of slots 8..11 are the seat's: a host has −1 from its map, a joiner its zeroed lobby slots, as in the original's `0x57eee0`. So they are out of the shared hash: `KP_SHARED_HASH_VERSION` 2, `KP_SAVE_VERSION` 6.
+- **The turns** (`kp_netgame.{h,c}`; `KP_TURNS_NET`, the fourth kind of `KpTurns`; `kp_session.c`):
+  - `kp_netgame_game_begin`, `RunGame` `0x445310`'s step 7: the Storm IDs' records and players of the started game, the drop vote cleared unless a save resumes (`ClearDropVote` `0x4775f0`), the sync ring reset with its first `0x37` queued (`SetGameLoopActive` `0x476e00`), the first turns sent (`SendTurns` `0x476500`). `kp_netgame_game_caps` asks the provider's turns per second again (`ComputeFramesPerTurn` `0x445470`).
+  - `kp_netgame_game_turn`, `TurnManagerStep` `0x476c00`: the turns received (their leaves handled, `ProcessLeaveReasons` `0x477da0`); the overdue ones waited for (`WaitForLaggingPlayers` `0x47a810`, a state here, not a modal loop); the turns in transit topped up, each sent turn with its `0x37` and an empty one with the keep-alive `0x05`. Then the turn's commands as `ExecuteGameTurn` `0x4768a0` runs them: the Storm IDs from 7 down to 0, the leavers' `0x57` first (recorded for the replay, which plays it; a live `0x57` changes nothing), each sender's `0x37` checked and its keep-alive and sync commands counted.
+  - `kp_netgame_game_turn_end`: `ResolveDesync` `0x47a630` when a sender was out of sync (in a game of two each side drops the other, as 1.17 does), the turn counter and `AdvanceSyncRing` `0x47a490`; at a poll, the minimap's statistics captured and the sprites' checksum requested (`PollTurn` `0x444cc0`).
+  - The session (`kp_session_net_begin`, `kp_session_step`): the first turn is polled until it runs, then a turn runs every frames per turn, the frames between run without one, and none run while the turns are overdue. The turn, the sync ring and the frame are one guarded step. Local commands go into the outgoing turn (`QueueTurnCommand` `0x476c80`, `kp_netgame_command`).
+  - Chat (`ReceiveMessages` `0x476b80`, `HandleChatMessage` `0x475b40`, `SendInGameChat` `0x473be0`): the lines come beside the turns (`SNetSendMessage`) and each is recorded as the chat command `0x5c`. A whisper is the in-game message of type 1; the slash commands are the lobby's.
+  - The results (`ComputeGameResults` `0x477270`, without Battle.net): each Storm ID's win, loss, draw or disconnect, then the drops and the last human standing's win. The end: `EndGame` `0x443db0`'s `LeaveStormGame` `0x477e50` with `0x40000001`.
+- **The screens in the game** (`kp_core/src/ui`):
+  - the network game menu (`InitNetworkGameMenu` `0x47b4c0`, `GameMenuHandler` `0x47b5d0`):
+    - Load is hidden;
+    - Save shows only for the lowest active Storm ID outside a tournament or a replay, disabled during the save's cooldown;
+    - Pause (`0x10`) shows for a human with pauses left, Resume (`0x11`) while the game is paused (neither in a replay);
+    - Quit's label follows `InitAbortMenu` `0x47b140` and `RefreshQuitLabel` `0x47b270`;
+  - the textbox's chat (`ToggleTextbox` `0x4b3bd0`, `SendTextboxChat` `0x4b3d60`): to everyone, to the allies (`BuildAllyRecipientMask` `0x442070`) or to the message dialog's choice, with the whisper's label (`FormatWhisperLabel` `0x4b3eb0`);
+  - `msgfltr.bin` (`OpenMessageDialog` `0x441be0`): the chat's target `0x529040` (a slot or a team game's force, everyone, the allies);
+  - `allyfltr.bin` and `teamfltr.bin` (`OpenAllianceDialog` `0x441b70`): the stances (`0x0e`) and the shared vision (`0x0d`);
+  - `netdlg.bin` from the options (`OpenNetworkDialog` `0x46f990`): the latency command `0x55` (Low, High, Extra High latency);
+  - `timeout.bin` (`kp_ui_timeout.c`; `InitTimeoutDialog` `0x47a960`, `TickTimeoutCountdown` `0x47ab00`, `RefreshLaggingPlayerList` `0x47aba0`):
+    - the players without a turn, shuffled with the game's seed (`ShuffleDwordsWithGameSeed` `0x47a8d0`);
+    - a countdown of 45 seconds, or 2 less than the last one had left when it closed less than 2 minutes before;
+    - at the end, Drop Players, which runs `ResolveDesync`;
+  - the score screen of a network game (`CaptureScoreRoster` `0x461e00`): every Storm player with its result, the computers, a team game's teams by their leaders.
+- **The product** (`kp_flow.c`):
+  - the chat room's start plays the network game with the host's seed and speed on the map the lobby plays, a Use Map Settings game after its ready room;
+  - timeout.bin shows over a late turn, the first one too (the lobby's messages and the wait run before the game's first turn);
+  - the result dialog and the score screen come from `ComputeGameResults`;
+  - the game's end leaves Storm's game, and the provider's game list shows again. So does a start that fails (`AbortNetworkGame` `0x474e60`: Storm's game is left, not only the scene).
+
+  Two processes on one machine, `koprulu --lan-map 42000:2:0` (and `:1`) `--headless` with scripts, play it (2026-11-18, the scripts not committed: the product's network scripts are N5's and N6's). One process hosts and the other joins through the screens. Each seat's worker is sent at tick 40, and at tick 400 both seats' `sim.shared` (new: the shared hash, `kp_shared_hash`) are equal.
+- **Network saves** (N3's open item; `kp_netsave.h`, `kp_flow.c`):
+  - **Where the saves go.** Every seat writes its own save to the original's place and name, `<user>maps/save/<name>.mlt` (`.mlx` with Brood War; `BuildSaveFilePath` `0x499f70`). Its ID is the save command's DWORD (the sender's clock). Every seat writes it at the end of the step that ran the command, as `ExecSaveGame` `0x472f50` saves within the turn: the session stops its steps there until the host has written it, so no seat's save is a frame later than another's. A save that comes after the game has ended is refused, never written as the profile's.
+  - **The format.** The file is Koprulu's save (the KPF container of kind SAVE with the custom map's MAPC) with one more section, NETG: what the lobby needs, as `ReadSaveHeaderAndGameBlock` `0x499c50` gives it from the original's file. That is the game header (`WriteSaveTagAndHeader` `0x49a8e0`'s), the RNG state, the player table, the slot summary, the forces and the local record. `kp_netsave.h` has its layout (schema 1, 777 bytes, little-endian).
+  - **The name is untrusted.** It is another seat's input, so it must name a file in `maps/save` and nothing else: `.` and `..` are refused, and the rest by the original's `IsInvalidFileName` `0x408300` (`ExecSaveGame`'s and `SaveGame` `0x498d20`'s check, `kp_transfer_name_valid`): control bytes, network.tbl's reserved characters and the DOS devices' names.
+  - **Listing and finding.** Create Game in multiplayer lists the saves. The lobby finds each seat's own copy by its ID. The in-game save dialog lists them newest first.
+  - **Resuming.** The lobby's open save is closed once the game has started (`CloseSaveFile` `0x498a50` from `RunGameSession` `0x467ba0`). The game's start rebuilds the map's setup from MAPC, runs `RestoreMultiplayerSaveSlots` `0x4790b0` (the lobby's slots back in the saved records; in a team game, a force's leader that lost its human handed to the force's lowest Storm ID, `GetForceLeaderSlot` `0x4b2930`) and loads the saved state before the first turn. The slots are restored again on the loaded game.
+  - **The original's saves.** The product lists the original's `.mlt` as unreadable (gluAll 66), and the original reads Koprulu's so too; the original's are read only for the oracle (`KpAppFlags.original_saves`).
+- **The glue's composition** (found by the product's chat room, which showed black): the glue drew only the open list's last dialog as the screen. The chat room's map preview (`minimappreview.bin`) is that last dialog. Now every visible dialog that is not nested is composed at its own place, bottom to top, as `PaintDialogLayer` `0x4c4d90` and `BlitDialogToScreen` `0x4c5630` do (`kp_ui_glue_screen` names the screen). The oracle's `menus_captures` composes the same layers, and the script's `ui` dump names a dialog's role (`screen`, `layer`, `popup`). `RunModalDialog` `0x4c35c0`'s flag `0x80000000` (`KP_UI_CONSUMED`) now marks a modal popup, so the pointer's moves stop at it.
+- **Against the original:**
+  - `test_lobby_trace` replays each recorded player's game after its lobby over the recorded SNet: the game's caps, then a `KpSession` over `KP_TURNS_NET`. Every `SNetSendTurn` must be the original's byte for byte, its `0x37` among them, and so it is in every recording:
+    - melee, Brood War, Free For All of four, team, Top vs Bottom, Capture the Flag, the Use Map Settings ready room;
+    - a lossy LAN, the map transfer, chat, the latency command, a save;
+    - a desync (net.py's memory poke: `ResolveDesync`), a drop (timeout.bin's Drop Players), a leave.
+
+    The resumed games stop at their start: their world is the original's save, which Koprulu does not load (a mixed resume is out of scope). `RestoreMultiplayerSaveSlots` is checked on Koprulu's saves (`test_netgame.restored_slots_follow_the_original`).
+  - **The emulator plays Koprulu's network replays** (`state_check.py --kind koprulu-net`, [golden-oracle.md](golden-oracle.md)), each to its end and equal at every step:
+    - `test_netplay`'s lockstep games (`KP_NETPLAY_REPLAYS=DIR`): 402, 402 and 405 steps;
+    - the mixed games' replays (below): 482 steps each.
+  - **The mixed game** (`tools/net_live.py`, `test_net_live`'s game phase; `--frames`, default 480): after the same start (N3.5) every seat plays the game together. Koprulu's commands are a worker's move and a chat line. Each emulated player's turns are compared:
+    - on every turn that all the room's players sent, the shared part of every player's `0x37` (the ring index and kind, the hash) is the same;
+    - no `SNetDropPlayer` shows in its `snet.jsonl`: the original's own check of every sender's whole command found none out of sync.
+
+    Koprulu checks its side: no sender out of sync, nobody dropped. It writes its replay, which the emulator then plays to its end, equal to Koprulu's playback at every step. Both runs pass (2026-11-18):
+    - `join`, the emulated host Alpha with Gamma, Koprulu as Beta: seed `0x386d43b6`, 479 full turns of three players in each emulated log;
+    - `host`, Koprulu hosting and the emulated Alpha joining: seed `0x5f3759df`, 239 full turns of two players.
+
+    The emulated seats' own dumps are not compared with Koprulu's directly: the oracle's dump stands before an object step, not at a frame's end, which is where the session's are. Koprulu's dumps are compared through its replay instead.
+- **Koprulu with Koprulu:** `test_netplay` plays melee games of whole stacks on the in-process LAN, a frame every 42 ms of the LAN's clock:
+  - two seats with commands of each and a chat line: the shared hash is equal at every frame, also on a lossy LAN, and each seat's replay plays back equal to its game;
+  - three seats, one quitting: every other seat sees the leave at one turn and plays on;
+  - a seat whose state is poked: `ResolveDesync` drops it, and in a game of two each side drops the other;
+  - a seat whose cable is cut: the other waits (timeout.bin), its countdown runs out, and Drop Players drops the silent seat.
+- **Unit tests:**
+  - `test_netgame`: `koprulu_save_reads_back` (NETG and the container, every malformed form refused), `network_save_keeps_the_lobby_part`, `restored_slots_follow_the_original`, `game_results_follow_the_original`;
+  - `test_flow.koprulu_network_saves_list_and_resume`;
+  - `test_hud`: `message_dialog_chooses_the_chat_target`, `alliance_dialog_queues_stances_and_vision`;
+  - `test_kp_ui`: `network_menu_follows_the_lowest_storm_id`, `network_chat_goes_to_its_recipients`, `timeout_dialog_counts_down_and_drops`, `network_options_queue_the_latency`, `network_score_lists_the_storm_players`;
+  - `tools/tests/test_net_live.py`: the mixed game's comparison.
+- **The languages:** `allyfltr.bin`, `teamfltr.bin` and `netdlg.bin` open now, so `test_locale` measures them. They had 13 cuts in deDE, frFR and ruRU, fixed in `defs/l10n/locales.json` ([phase-l10n.md](phase-l10n.md)).
+- **Open:**
+  - the race ready room's result 100 for the glue's exit (glue state 25) on a fatal network error (`TODO:` in `kp_ui_briefing.c`);
+  - Storm's pump on a thread of its own while a mission loads (`TODO:` in `kp_netplay.h`);
+  - `PollTurn`'s pacing after a wait (the original's timing adjustment), not ported;
+  - after a network game's score screen, the next glue of `RunScoreScreen` (`SetGlueStateFromProvider` `0x457e50`) is not ported;
+  - a team game's slots 8..11 forces in a replay's header (`TODO:` in `kp_session.c`);
+  - a ladder template's type (`TODO:` in `kp_netgame.c`);
+  - the IME in the textbox (`TODO:` in `kp_ui_hud.c`);
+  - `ComputeGameResults`' Battle.net draw of a game under 120 seconds (out of scope with Battle.net);
+  - a loaded save's chat target and recipients start at 0, as the original's process does after its start;
+  - `SNetGetNumPlayers` is approximated by the count of active players;
+  - the in-game save list shows the files' names, not the header's `+0x99` names;
+  - the resume of a network game is unit-tested but has not been played between two seats;
+  - the frFR texts of the new dialogs have not been read by a native speaker;
+  - `--seats` stays on the turn hub (`kp_hub.h`), so its seats have no leave, drop or chat. The plan moved the hub onto the network's turn manager; that is not done (`TODO:` in `kp_hub.h`: the seats as network games on the in-process LAN).

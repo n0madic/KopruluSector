@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "kp_kpf.h"
 #include "kp_net.h"
 #include "kp_rep.h"
 
@@ -114,4 +115,121 @@ int kp_netsave_read(const uint8_t *data, size_t size, int expansion, KpNetGameSa
 done:
 	free(core);
 	return ok;
+}
+
+/* --- Koprulu's network saves: NETG --- */
+
+#define NETG_NAME 5
+#define NETG_HEADER (NETG_NAME + KP_NETSAVE_NAME)
+#define NETG_RNG (NETG_HEADER + KP_NETGAME_HEADER)
+#define NETG_PLAYERS (NETG_RNG + 4)
+#define NETG_LOCAL_SLOT (NETG_PLAYERS + KP_NETGAME_SLOTS * PLAYER_RECORD)
+#define NETG_TYPES (NETG_LOCAL_SLOT + 1)
+#define NETG_RACES (NETG_TYPES + KP_NETGAME_SLOTS)
+#define NETG_FORCES (NETG_RACES + KP_NETGAME_SLOTS)
+#define NETG_FORCE_NAMES (NETG_FORCES + KP_NETGAME_SLOTS)
+#define NETG_MAP (NETG_FORCE_NAMES + KP_NETGAME_FORCES * KP_NETGAME_FORCE_NAME)
+#define NETG_LOCAL_PLAYER (NETG_MAP + 6)
+#define NETG_END (NETG_LOCAL_PLAYER + 4)
+typedef char netg_size_check[NETG_END == KP_NETSAVE_NETG_SIZE ? 1 : -1];
+
+/* A string field: its bytes up to size - 1, NUL padded */
+static void put_string(uint8_t *dst, size_t size, const char *src)
+{
+	size_t n = strlen(src);
+	if (n > size - 1) n = size - 1;
+	memset(dst, 0, size);
+	memcpy(dst, src, n);
+}
+
+void kp_netsave_netg_write(const KpNetGameSave *s, int expansion, const char *name, uint8_t *out)
+{
+	int k;
+	memset(out, 0, KP_NETSAVE_NETG_SIZE);
+	kp_net_put32(out, KP_NETSAVE_NETG_VERSION);
+	out[4] = expansion ? 1 : 0;
+	put_string(out + NETG_NAME, KP_NETSAVE_NAME, name);
+	kp_netgame_header_write(&s->header, out + NETG_HEADER);
+	kp_net_put32(out + NETG_RNG, s->rng_state);
+	for (k = 0; k < KP_NETGAME_SLOTS; k++) {
+		uint8_t *r = out + NETG_PLAYERS + k * PLAYER_RECORD;
+		const KpNetSlot *p = &s->players[k];
+		kp_net_put32(r, (uint32_t)p->slot);
+		kp_net_put32(r + 4, (uint32_t)p->storm);
+		r[8] = p->type;
+		r[9] = p->race;
+		r[0xa] = p->force;
+		put_string(r + 0xb, KP_NETGAME_NAME, p->name);
+	}
+	out[NETG_LOCAL_SLOT] = s->local_slot;
+	memcpy(out + NETG_TYPES, s->types, KP_NETGAME_SLOTS);
+	memcpy(out + NETG_RACES, s->races, KP_NETGAME_SLOTS);
+	memcpy(out + NETG_FORCES, s->forces, KP_NETGAME_SLOTS);
+	for (k = 0; k < KP_NETGAME_FORCES; k++)
+		put_string(out + NETG_FORCE_NAMES + k * KP_NETGAME_FORCE_NAME, KP_NETGAME_FORCE_NAME, s->force_names[k]);
+	kp_net_put16(out + NETG_MAP, s->tileset);
+	kp_net_put16(out + NETG_MAP + 2, s->width);
+	kp_net_put16(out + NETG_MAP + 4, s->height);
+	kp_net_put32(out + NETG_LOCAL_PLAYER, s->local_player);
+}
+
+int kp_netsave_netg_read(const uint8_t *p, size_t size, KpNetGameSave *out, int *expansion, char *name)
+{
+	int k;
+	if (size < 4) return KP_NETSAVE_UNREADABLE;
+	if (kp_net_get32(p) != KP_NETSAVE_NETG_VERSION) return KP_NETSAVE_OTHER_VERSION;
+	if (size != KP_NETSAVE_NETG_SIZE) return KP_NETSAVE_UNREADABLE;
+	memset(out, 0, sizeof *out);
+	if (expansion) *expansion = p[4] != 0;
+	if (name) core_string(name, p + NETG_NAME, KP_NETSAVE_NAME);
+	kp_netgame_header_read(p + NETG_HEADER, &out->header);
+	out->rng_state = kp_net_get32(p + NETG_RNG);
+	for (k = 0; k < KP_NETGAME_SLOTS; k++) {
+		const uint8_t *r = p + NETG_PLAYERS + k * PLAYER_RECORD;
+		KpNetSlot *s = &out->players[k];
+		s->slot = (int32_t)kp_net_get32(r);
+		s->storm = (int32_t)kp_net_get32(r + 4);
+		s->type = r[8];
+		s->race = r[9];
+		s->force = r[0xa];
+		core_string(s->name, r + 0xb, sizeof s->name);
+	}
+	out->local_slot = p[NETG_LOCAL_SLOT];
+	memcpy(out->types, p + NETG_TYPES, KP_NETGAME_SLOTS);
+	memcpy(out->races, p + NETG_RACES, KP_NETGAME_SLOTS);
+	memcpy(out->forces, p + NETG_FORCES, KP_NETGAME_SLOTS);
+	for (k = 0; k < KP_NETGAME_FORCES; k++)
+		core_string(out->force_names[k], p + NETG_FORCE_NAMES + k * KP_NETGAME_FORCE_NAME, KP_NETGAME_FORCE_NAME);
+	out->tileset = (uint16_t)kp_net_get16(p + NETG_MAP);
+	out->width = (uint16_t)kp_net_get16(p + NETG_MAP + 2);
+	out->height = (uint16_t)kp_net_get16(p + NETG_MAP + 4);
+	out->local_player = kp_net_get32(p + NETG_LOCAL_PLAYER);
+	return KP_NETSAVE_VALID;
+}
+
+int kp_netsave_koprulu(const uint8_t *data, size_t size)
+{
+	return size >= 4 && memcmp(data, KP_KPF_MAGIC, 4) == 0;
+}
+
+int kp_netsave_koprulu_read(const uint8_t *data, size_t size, const char *file, int expansion, KpNetGameSave *out,
+	char *name)
+{
+	KpKpf c;
+	KpError err;
+	const KpKpfSection *s;
+	KpNetGameSave save;
+	char shown[KP_NETSAVE_NAME];
+	int rc, saved_expansion = 0;
+	if (!kp_netsave_koprulu(data, size) || kp_kpf_parse(&c, data, size, "network save", 1, &err) != 0)
+		return KP_NETSAVE_UNREADABLE;
+	s = kp_kpf_find(&c, KP_NETSAVE_NETG);
+	rc = s ? kp_netsave_netg_read(s->data, s->size, &save, &saved_expansion, NULL) : KP_NETSAVE_UNREADABLE;
+	kp_kpf_free(&c);
+	if (rc != KP_NETSAVE_VALID) return rc;
+	if (!display_name(file, shown)) return KP_NETSAVE_UNREADABLE;
+	if (expansion >= 0 && saved_expansion != (expansion ? 1 : 0)) return KP_NETSAVE_UNREADABLE;
+	if (out) *out = save;
+	if (name) memcpy(name, shown, sizeof shown);
+	return KP_NETSAVE_VALID;
 }

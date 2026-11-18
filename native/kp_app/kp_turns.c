@@ -37,6 +37,23 @@ void kp_turns_seats(KpTurns *t, KpTurnHub *hub, int seat)
 	t->seat = seat;
 }
 
+void kp_turns_net(KpTurns *t, KpNetGame *net)
+{
+	t->kind = KP_TURNS_NET;
+	t->net = net;
+}
+
+void kp_turns_net_begin(KpTurns *t, int64_t speed)
+{
+	int id;
+	for (id = 0; id < KP_NETGAME_PLAYERS; id++) {
+		int r = t->net->storm_index[id];
+		if (r < KP_TURNS_SLOTS) t->storm[r] = id;
+	}
+	t->frames_per_turn = kp_hub_frames_per_turn((int)speed, (int)t->net->turns_per_second);
+	t->countdown = 0;
+}
+
 void kp_turns_begin(KpTurns *t, int64_t local_player)
 {
 	int p;
@@ -75,6 +92,7 @@ int kp_turns_submit(KpTurns *t, const uint8_t *bytes, size_t size, int64_t playe
 {
 	KpQueuedCommand *c;
 	if (t->kind == KP_TURNS_SEATS) return kp_hub_submit(t->hub, t->seat, bytes, size);
+	if (t->kind == KP_TURNS_NET) return kp_netgame_command(t->net, bytes, size);
 	if (t->pending_count >= KP_TURNS_PENDING || size == 0 || size > KP_TURNS_COMMAND_BYTES) return -1;
 	if (player < 0 || player >= KP_TURNS_SLOTS) return -1; /* the dispatcher's players: a seat's, 0..7 */
 	if (t->kind == KP_TURNS_REPLAY && !live_in_replay(bytes[0])) return -1;

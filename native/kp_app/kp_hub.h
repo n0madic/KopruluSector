@@ -15,9 +15,9 @@
  *     the lowest Storm ID's of a turn last): the network's state, never saved.
  *
  * Not carried: the keep-alive 0x05 of an empty turn (an empty turn runs nothing), the sync command 0x37 and its check
- * ResolveDesync 0x47a630 (the seats' shared hash instead, kp_shared_hash), a seat's drop or leave (TODO: SNetLeaveGame
- * and the other seats' HandlePlayerLeftGame 0x477da0 after their receive). A network transport implements the same
- * calls later (one seat here, the others' turns from the network).
+ * ResolveDesync 0x47a630 (the seats' shared hash instead, kp_shared_hash), a seat's drop or leave and the chat. The
+ * network game (phase N, stage N4) has them all: KpNetGame's turns (KP_TURNS_NET, kp_netgame.h) over Storm. TODO: the
+ * seats as network games on the in-process LAN (kp_net_lan, as test_netplay plays them), which would retire the hub.
  */
 #ifndef KP_HUB_H
 #define KP_HUB_H

@@ -262,6 +262,14 @@ Each break was a temporary patch, reverted afterwards (`git diff` of the product
 - **Failures:** the plan had none for a live run. A failure ends a file's run, but a live run goes on, since its next line is the agent's choice.
 - **Not done:** Windows (no POSIX FIFO), the phones and the web (`TODO:` in `kp_app_script.c`).
 
+## After phase N (2026-11-18)
+
+The network's stages added to `kp_script_flow.c`:
+
+- **`sim.shared`** (phase N, stage N4): the game's shared hash (`kp_shared_hash`, ADR 0025), the part of the state every seat of one network game holds alike. The seats' interfaces, views and selections are left out, so two processes of one network game compare it where `sim.crc` would differ. The log shows its low 63 bits, as the log's values are signed.
+- **The dialogs' names:** gluChat, gluConn, gluCreat and gluJoin (stage N3); msgfltr, netdlg, teamfltr and timeout (stage N4).
+- **The glue's layers** (stage N4): a screen can have more than one dialog that is not a popup (the chat room and its map preview). `dialog [NAME]`, `screen NAME` and the points of a control count the popups apart from the screen's layers (`kp_ui_screen_layer`, `kp_ui_glue_screen`). The `ui` dump names a dialog's role: `screen`, `layer` or `popup`.
+
 ## Open
 
 - The Fold7 (2026-11-11, inner screen, debug APK, the `KOPRULU_ANDROID` step's commands): `play_1`–`play_5` and `touch` at 0 failures, from the APK's assets into the app's external files, each with terrain, fog and palette at 0 mismatches. The first run found play_2's camera too far from its clicks for the 656-wide view (fixed above). Windows (`exit(code)`) is not run yet; Linux ran `determinism.kps` in Docker (phase D, D8b); a window closed during a run (exit code 1) is not tried.

@@ -10,6 +10,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+#ifdef _WIN32
+#include <sys/utime.h>
+#else
+#include <utime.h>
+#endif
 
 #include "kp_flow.h"
 #include "kp_gametype.h"
@@ -1458,9 +1464,10 @@ static const KpUiMapEntry *listed_entry(const KpUi *ui, const char *file)
 	return NULL;
 }
 
-/* Create Game's saved network games (the oracle's original_saves; stage N4 lists Koprulu's own). The list adds the
- * game's saves (.mlt; .mlx with Brood War) as save entries; LoadSaveEntryInfo 0x45d5e0 reads one (the map's title, the
- * display name, players, size, tileset) or refuses it (66 unreadable, 67 another version). A lobby resumes a save by
+/* Create Game's saved network games of the original (the oracle's original_saves; the product's are Koprulu's own,
+ * koprulu_network_saves_list_and_resume). The list adds the game's saves (.mlt; .mlx with Brood War) as save entries in
+ * multiplayer; LoadSaveEntryInfo 0x45d5e0 reads one (the map's title, the display name, players, size, tileset) or
+ * refuses it (66 unreadable, 67 another version): without original_saves an original's file is unreadable. A lobby resumes a save by
  * its ID (kp_flow_find_save): FindMultiplayerSaveById 0x4995e0 searches the user's maps folder (its files in NTFS's
  * order, then its subfolders) for the ID, LoadSavedGameByName 0x498bd0 then opens the first file of that display name
  * and extension without case: a namesake found earlier wins, as the original's does. */
@@ -1491,7 +1498,10 @@ static void network_saves_list_and_resume_by_id(KpT *T)
 	m->expansion = 0;
 	m->multiplayer = 1;
 	kp_t_ok(T, ui->list_entries(ui->host, ui) > 0, "the list");
-	kp_t_ok(T, listed_entry(ui, "Old.mlt") == NULL, "no saves listed without the oracle's original saves");
+	e = listed_entry(ui, "Old.mlt");
+	kp_t_ok(T, e && e->kind == KP_UI_ENTRY_SAVE, "the original's save listed without the oracle's original saves");
+	if (e) ui->load_entry(ui->host, ui, (int)(e - m->entries));
+	kp_t_ok(T, e && e->status == 1 && e->description == 66, "but unreadable");
 	kp_t_ok(T, !kp_flow_find_save(&H->f, 0x1234u, &out), "no save found without them");
 	H->flags.original_saves = 1;
 	m->multiplayer = 0;
@@ -2037,6 +2047,127 @@ static void custom_saves_find_their_maps_folder(KpT *T)
 	kp_t_eq_str(T, H->f.custom_path, path, "in the same folder");
 	free(chk);
 	kp_t_eq(T, H->quits, 0, NULL);
+}
+
+/* A file's access and modification times set to t: 0, or -1 */
+static int set_file_time(const char *path, time_t t)
+{
+#ifdef _WIN32
+	struct _utimbuf u;
+	u.actime = u.modtime = t;
+	return _utime(path, &u);
+#else
+	struct utimbuf u;
+	u.actime = u.modtime = t;
+	return utime(path, &u);
+#endif
+}
+
+static int file_exists(const char *path)
+{
+	FILE *in = fopen(path, "rb");
+	if (in) fclose(in);
+	return in != NULL;
+}
+
+/* Koprulu's own network saves (kp_netsave.h): a game's save with NETG in maps/save, as every seat writes one. Create
+ * Game lists it in multiplayer and reads its header from NETG (the map's title, the display name from the file's name);
+ * a lobby resuming its ID finds it (kp_flow_find_save, the file kept for the game's load) in the game it was saved in,
+ * not in the other (Brood War); a save of other data is another version (67). In a network game the in-game save
+ * dialogs list maps/save's saves of Koprulu newest first, and their delete removes the file there. */
+static void koprulu_network_saves_list_and_resume(KpT *T)
+{
+	Host *H = logged_in_host(T, "Fenix");
+	const KpDataMission *mission = mission_entry(H, PROTOSS01);
+	KpUi *ui = H->f.ui;
+	KpUiMenus *m = &ui->menus;
+	const KpUiMapEntry *e;
+	KpNetGameSave rec, out;
+	KpSaveIdentity other;
+	uint8_t netg[KP_NETSAVE_NETG_SIZE], *chk, *bytes;
+	char path[512], why[256];
+	size_t size = 0, n = 0;
+	KpError err;
+	int k;
+	snprintf(path, sizeof path, "%s\\staredit\\scenario.chk", mission->directory);
+	kp_t_ok(T, (chk = kp_files_need(&H->data->files, path, &size, &err)) != NULL, "%s", err.msg);
+	snprintf(path, sizeof path, "%smaps", H->pref);
+	kp_t_ok(T, kp_t_mkdir(path) == 0, "%s", path);
+	snprintf(path, sizeof path, "%smaps/save", H->pref);
+	kp_t_ok(T, kp_t_mkdir(path) == 0, "%s", path);
+	write_custom_map(H, NEXT_FIRST, chk, size);
+	free(chk);
+	snprintf(path, sizeof path, "%smaps/" NEXT_FIRST, H->pref);
+	kp_t_eq(T, kp_flow_play_map(&H->f, path, TYPE_UMS_TEXT, why, sizeof why), 0, "%s", why);
+	for (k = 0; k < END_FRAMES && !H->f.hud_on; k++) frame(H);
+	memset(&rec, 0, sizeof rec);
+	rec.header.save_id = 0x5151u;
+	snprintf(rec.header.name, sizeof rec.header.name, "Koprulu Game");
+	snprintf(rec.header.title, sizeof rec.header.title, "Saved Map");
+	rec.header.players = 2;
+	rec.header.max_players = 2;
+	rec.header.width = rec.header.height = 64;
+	rec.header.tileset = 1;
+	rec.rng_state = 0x99u;
+	rec.local_player = 1;
+	kp_netsave_netg_write(&rec, 0, "Resume", netg);
+	kp_t_eq(T, kp_save_encode_with(H->f.session, H->f.identity, NULL, NULL, KP_NETSAVE_NETG, netg, sizeof netg, &bytes,
+		&n, &err), 0, "%s", err.msg);
+	snprintf(path, sizeof path, "%smaps/save/Resume.mlt", H->pref);
+	write_bytes(T, path, bytes, n);
+	snprintf(path, sizeof path, "%smaps/save/Older.mlt", H->pref);
+	write_bytes(T, path, bytes, n);
+	free(bytes);
+	kp_t_ok(T, set_file_time(path, 1000000000) == 0, "%s's time", path);
+	snprintf(path, sizeof path, "%smaps/save/Original.mlt", H->pref);
+	write_net_save(T, path, 0x5151u, 0x222u, KP_NETSAVE_VERSION, 0);
+	/* Create Game's list */
+	m->state = KP_GLUE_PLAY_CUSTOM;
+	m->expansion = 0;
+	m->multiplayer = 1;
+	snprintf(m->map_dir, sizeof m->map_dir, "save");
+	kp_t_ok(T, ui->list_entries(ui->host, ui) > 0, "the save folder's list");
+	e = listed_entry(ui, "Resume.mlt");
+	kp_t_ok(T, e && e->kind == KP_UI_ENTRY_SAVE, "Koprulu's save listed");
+	if (e) ui->load_entry(ui->host, ui, (int)(e - m->entries));
+	kp_t_ok(T, e && e->status == 0, "and read (status %d, description %d)", e ? e->status : -1, e ? e->description : -1);
+	if (e) {
+		kp_t_eq_str(T, e->map, "Saved Map", "the save's map title");
+		kp_t_eq_str(T, e->text, "Resume", "the display name");
+		kp_t_ok(T, e->game_players == 2 && e->width == 64 && e->tileset == 1, "its players, size and tileset");
+	}
+	e = listed_entry(ui, "Original.mlt");
+	if (e) ui->load_entry(ui->host, ui, (int)(e - m->entries));
+	kp_t_ok(T, e && e->status == 1 && e->description == 66, "the original's save unreadable in the product");
+	/* the lobby's resume by ID: the first file of the ID in the folder's order (Older's name comes first) */
+	kp_t_ok(T, kp_flow_find_save(&H->f, 0x5151u, &out), "the save found by its ID (%s)", H->last_log);
+	kp_t_ok(T, out.rng_state == 0x99u && out.local_player == 1, "its NETG");
+	snprintf(path, sizeof path, "%smaps/save/Older.mlt", H->pref);
+	kp_t_eq_str(T, H->f.net_load, path, "the file the game loads");
+	kp_t_ok(T, !kp_flow_find_save(&H->f, 0x4444u, &out), "no save of another ID");
+	kp_t_eq_str(T, H->f.net_load, "", "and no file to load");
+	m->expansion = 1;
+	kp_t_ok(T, !kp_flow_find_save(&H->f, 0x5151u, &out), "the original game's save is not Brood War's");
+	m->expansion = 0;
+	other = *H->f.identity;
+	other.source_hash[0] ^= 1;
+	H->f.identity = &other;
+	e = listed_entry(ui, "Resume.mlt");
+	if (e) ui->load_entry(ui->host, ui, (int)(e - m->entries));
+	kp_t_ok(T, e && e->status == 1 && e->description == 67, "a save of other data: another version");
+	H->f.identity = &H->identity;
+	/* the in-game save dialogs of a network game */
+	H->f.net_game = 1;
+	kp_t_ok(T, ui->delete_save(ui->host, "Missing"), "a missing file is deleted");
+	kp_t_eq(T, m->save_count, 2, "maps/save's saves of Koprulu");
+	kp_t_ok(T, m->save_count == 2 && strcmp(m->saves[0], "Resume") == 0 && strcmp(m->saves[1], "Older") == 0,
+		"newest first");
+	kp_t_ok(T, !ui->delete_save(ui->host, "../Resume"), "no file outside maps/save");
+	kp_t_ok(T, ui->delete_save(ui->host, "Resume"), "the delete");
+	snprintf(path, sizeof path, "%smaps/save/Resume.mlt", H->pref);
+	kp_t_ok(T, !file_exists(path), "removes the file");
+	kp_t_ok(T, m->save_count == 1 && strcmp(m->saves[0], "Older") == 0, "and the name");
+	H->f.net_game = 0;
 }
 
 /* Play Custom's Import (kp_flow_import_map): Import asks the host's picker for a map; the picked map is copied into
@@ -4398,6 +4529,7 @@ static const KpTest TESTS[] = {
 	{ "save_replay_lists_in_the_file_systems_order", save_replay_lists_in_the_file_systems_order, 0 },
 	{ "map_transfer_finds_and_saves_the_users_maps", map_transfer_finds_and_saves_the_users_maps, 0 },
 	{ "network_saves_list_and_resume_by_id", network_saves_list_and_resume_by_id, 0 },
+	{ "koprulu_network_saves_list_and_resume", koprulu_network_saves_list_and_resume, 0 },
 	{ "play_custom_screens_are_the_originals", play_custom_screens_are_the_originals, 0 },
 	{ "custom_games_end_in_the_next_scenario_or_the_campaign_menu", custom_games_end_in_the_next_scenario_or_the_campaign_menu, 0 },
 	{ "custom_saves_find_their_maps_folder", custom_saves_find_their_maps_folder, 0 },

@@ -17,7 +17,7 @@ enum {
 	V_CREEP_TILES, V_CREEP_RECEDING, V_TRIGGER_WAITING, V_PORTRAIT_MS, V_TARGETING, V_PLACING, V_GROUPS_HELD, V_PAD_OPEN,
 	V_PAD_COUNT, V_PAD_SHOWN, V_GAMMA, V_PORTRAITS, V_VIDEO_GRAPHICS, V_VIDEO_FOG, V_VIDEO_WATER, V_VIDEO_FONT,
 	V_VIDEO_LIGHTING, V_VIDEO_SERIAL, V_VIDEO_COMMITS, V_TEXT_VECTOR, V_SELECTION_HAS, V_SELECTION_FIRST, V_MOVED,
-	V_GROUP_HELD, V_REPLAY_ENDED, V_REPLAY_FRAMES, V_SIM_CRC, V_LIST_TOP, V_LIST_SELECTED, V_LIST_COUNT, V_SEAT,
+	V_GROUP_HELD, V_REPLAY_ENDED, V_REPLAY_FRAMES, V_SIM_CRC, V_SIM_SHARED, V_LIST_TOP, V_LIST_SELECTED, V_LIST_COUNT, V_SEAT,
 	V_LOCAL_PLAYER, V_COUNT
 };
 enum { NEED_UI, NEED_WORLD, NEED_GAME, NEED_CONSOLE }; /* what a value is read from */
@@ -62,6 +62,7 @@ static const struct {
 	{ "replay.ended", KP_SCRIPT_ARG_NONE, NEED_GAME },     /* a replay's playback passed its record */
 	{ "replay.frames", KP_SCRIPT_ARG_NONE, NEED_GAME },    /* the replay's frames (its header's), 0 outside one */
 	{ "sim.crc", KP_SCRIPT_ARG_NONE, NEED_GAME },          /* the state's CRCs folded, the local interface's aside */
+	{ "sim.shared", KP_SCRIPT_ARG_NONE, NEED_GAME },       /* the shared hash (kp_shared_hash): every seat's the same */
 	{ "list.top", KP_SCRIPT_ARG_NONE, NEED_UI },           /* the top dialog's list (top_list): its first row shown */
 	{ "list.selected", KP_SCRIPT_ARG_NONE, NEED_UI },      /* its selected row, 255 none */
 	{ "list.count", KP_SCRIPT_ARG_NONE, NEED_UI },         /* its rows */
@@ -121,10 +122,12 @@ static const char *const UNITS[UNIT_COUNT] = { "worker", "main", "group" };
 /* The dialogs by their BIN's name without its directory and .bin (any case): the glue's screens and popups, the game's
  * menus, ours (koprulu\); then, their indices from CONSOLE_FIRST, the console's own, which are no dialog to a script's
  * dialog, nodialog and screen (their controls are DIALOG.ID's, `ui` lists them). */
-static const char *const DIALOGS[] = { "abrtmenu", "allyfltr", "credits", "gamemenu", "gluCmpgn", "gluCustm", "gluExpCmpgn", "gluGameMode",
-	"gluHist", "gluLoad", "gluLogin", "gluMain", "gluPEdit", "gluPOk", "gluPOkCancel", "gluScore", "glurdyp", "glurdyt",
-	"glurdyz", "help", "helpmenu", "language", "lmission", "loadgame", "objctdlg", "ok", "okcancel", "options", "quit",
-	"quit2mnu", "quitrepl", "restart", "savegame", "snd_dlg", "spd_dlg", "tips_dlg", "titledlg", "video", "wait", "wmission" };
+static const char *const DIALOGS[] = { "abrtmenu", "allyfltr", "credits", "gamemenu", "gluChat", "gluCmpgn", "gluConn",
+	"gluCreat", "gluCustm", "gluExpCmpgn", "gluGameMode", "gluHist", "gluJoin", "gluLoad", "gluLogin", "gluMain", "gluPEdit",
+	"gluPOk", "gluPOkCancel", "gluScore", "glurdyp", "glurdyt",
+	"glurdyz", "help", "helpmenu", "language", "lmission", "loadgame", "msgfltr", "netdlg", "objctdlg", "ok", "okcancel",
+	"options", "quit", "quit2mnu", "quitrepl", "restart", "savegame", "snd_dlg", "spd_dlg", "teamfltr", "timeout",
+	"tips_dlg", "titledlg", "video", "wait", "wmission" };
 static const char *const CONSOLE_DIALOGS[] = { "minimap", "ptextbox", "ttextbox", "ztextbox", "stat_f10", "statbtnn",
 	"statbtnp", "statbtnt", "statbtnz", "statdata", "statlb", "statport", "statres" };
 #define CONSOLE_FIRST ((int)(sizeof DIALOGS / sizeof DIALOGS[0]))
@@ -343,21 +346,15 @@ static int candidates(const KpUi *ui, int32_t *out, int cap)
 
 #define CANDIDATES 32
 
-/* The open list's dialogs (the glue's screen and the popups over it). */
-static int open_count(const KpUi *ui)
+/* The glue's popups: its open dialogs other than the screen's layers (kp_ui_screen_layer: the screen and the chat
+ * room's map preview). */
+static int popup_count(const KpUi *ui)
 {
 	int32_t d;
 	int n = 0;
 	for (d = ui->open; d >= 0; d = ui->controls[d].next) n++;
+	for (d = kp_ui_screen_layer(ui, -1); d >= 0; d = kp_ui_screen_layer(ui, d)) n--;
 	return n;
-}
-
-/* The glue's screen: the open list's last (the popups come before it), -1 none. */
-static int32_t glue_screen(const KpUi *ui)
-{
-	int32_t d, screen = -1;
-	for (d = ui->open; d >= 0; d = ui->controls[d].next) screen = d;
-	return screen;
 }
 
 void kp_script_flow_dialogs(const KpFlow *f, char *out, size_t size)
@@ -407,7 +404,7 @@ static int dialog_open(const KpFlow *f, int dialog)
 	int32_t list[CANDIDATES];
 	int n, k;
 	if (!f->ui) return 0;
-	if (dialog == ANY_DIALOG) return kp_flow_glue_active(f) ? open_count(f->ui) > 1 : f->ui->modeless >= 0;
+	if (dialog == ANY_DIALOG) return kp_flow_glue_active(f) ? popup_count(f->ui) > 0 : f->ui->modeless >= 0;
 	n = candidates(f->ui, list, CANDIDATES);
 	for (k = 0; k < n; k++) {
 		if (is_dialog(f->ui, list[k], dialog)) return 1;
@@ -431,8 +428,8 @@ static void glue_why(const KpFlow *f, char *why, size_t size)
 /* The glue's screen standing still with no popup over it, and the dialog's when dialog is one. */
 static int screen_up(const KpFlow *f, int dialog)
 {
-	return kp_flow_glue_active(f) && f->ui && kp_script_flow_still(f->ui) && open_count(f->ui) == 1
-		&& is_dialog(f->ui, glue_screen(f->ui), dialog);
+	return kp_flow_glue_active(f) && f->ui && kp_script_flow_still(f->ui) && popup_count(f->ui) == 0
+		&& is_dialog(f->ui, kp_ui_glue_screen(f->ui), dialog);
 }
 
 /* The view's size: the game view above the console in a game, else the logical screen. */
@@ -493,6 +490,7 @@ static void fold_crc(void *ud, const char *category, uint32_t crc)
 	}
 	*folded = *folded * 31u + crc;
 }
+
 
 /* The shown list box of the topmost shown dialog that has one, -1 none. */
 static int32_t top_list(const KpUi *ui)
@@ -607,6 +605,15 @@ int kp_script_flow_value(const KpFlow *f, const KpScriptRun *run, const KpScript
 		*out = folded;
 		break;
 	}
+	case V_SIM_SHARED: {
+		uint64_t hash;
+		if (kp_shared_hash(g, NULL, NULL, &hash) != 0) {
+			snprintf(why, size, "no shared hash: out of memory");
+			return -1;
+		}
+		*out = (int64_t)(hash & 0x7fffffffffffffffull); /* the log's values are signed */
+		break;
+	}
 	default:
 		snprintf(why, size, "no value %d", (int)ref->id);
 		return -1;
@@ -656,7 +663,7 @@ int kp_script_flow_cond(const KpFlow *f, const KpScriptRef *ref, char *why, size
 			&& (ref->id == C_ROOM ? f->glue.screen == KP_GLUE_ROOM
 				: ref->id == C_BRIEFING ? f->glue.screen == KP_GLUE_ROOM && f->glue.room_opened
 				: ref->id == C_SCORE ? f->glue.screen == KP_GLUE_SCORE
-				: f->glue.screen == KP_GLUE_ROOM || open_count(f->ui) > 1);
+				: f->glue.screen == KP_GLUE_ROOM || popup_count(f->ui) > 0);
 		if (!holds) glue_why(f, why, size);
 		return holds;
 	case C_REPLAY:
@@ -675,14 +682,14 @@ int kp_script_flow_cond(const KpFlow *f, const KpScriptRef *ref, char *why, size
 	}
 }
 
-/* The dialog's place on the screen: on its canvas, or a glue popup composited into its screen at its place within it;
- * 0 when it is not on the screen. */
+/* The dialog's place on the screen: on its canvas, or a glue popup composited into the screen at its place on the
+ * original's screen; 0 when it is not on the screen. */
 static int dialog_place(const KpFlow *f, int32_t d, int32_t *x, int32_t *y)
 {
 	const KpUi *ui = f->ui;
 	int glue = kp_flow_glue_active(f);
 	const KpCanvas *canvas = glue ? &f->glue.canvas : f->hud.canvas;
-	int32_t screen = glue_screen(ui);
+	int32_t screen = kp_ui_glue_screen(ui);
 	if (!canvas) return 0;
 	if (kp_canvas_place(canvas, d, x, y)) return 1;
 	if (!glue || screen < 0 || !kp_canvas_place(canvas, screen, x, y)) return 0;
@@ -1162,7 +1169,8 @@ static void ui_dialog(const KpFlow *f, int32_t d, KpDumpLine emit, void *ud)
 	int32_t px = 0, py = 0, c;
 	int placed = dialog_place(f, d, &px, &py);
 	const char *role = d == ui->modeless ? "modeless" : is_console(ui, d) ? "console"
-		: kp_flow_glue_active(f) ? d == glue_screen(ui) ? "screen" : "popup" : "open";
+		: kp_flow_glue_active(f) ? d == kp_ui_glue_screen(ui) ? "screen"
+			: (dc->flags & KP_UI_NESTED) ? "popup" : "layer" : "open";
 	Line l;
 	l.n = 0;
 	put(&l, "dialog %.*s", (int)len, len ? name : "?");

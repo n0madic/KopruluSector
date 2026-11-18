@@ -54,6 +54,13 @@ static void g_line(void *ud, int kind, const char *text)
 }
 
 static void g_leave(void *ud, int reason) { kp_ui_lobby_leave(nu(ud)->ui, reason); }
+
+static void g_timed(void *ud, const char *text)
+{
+	char line[KP_UI_CHAT_TEXT];
+	utf8(line, sizeof line, text);
+	kp_ui_timed_message(nu(ud)->ui, (const uint8_t *)line, 0);
+}
 static void g_download(void *ud, int storm, int pct) { kp_ui_lobby_download(nu(ud)->ui, storm, pct); }
 static void g_countdown(void *ud, int seconds) { kp_ui_lobby_countdown(nu(ud)->ui, seconds); }
 static void g_swap(void *ud, int a, int b) { kp_ui_lobby_swap(nu(ud)->ui, a, b); }
@@ -94,6 +101,7 @@ KpNetGameHooks kp_netui_game_hooks(KpNetUi *n)
 	h.error = g_error;
 	h.key_draws = g_key_draws;
 	h.find_save = g_find_save;
+	h.timed = g_timed;
 	h.ud = n;
 	return h;
 }
@@ -193,6 +201,12 @@ static uint32_t u_create_game(void *host, KpUi *ui, int index, uint8_t speed)
 	/* TODO: stage N4 hosts a replay's game (CreateGameFromEntry's kind 0x80: the replay's header, the lobby that plays
 	 * it) */
 	return create(ng, &h);
+}
+
+static void u_player_name(void *host, const char *name)
+{
+	KpNetGame *ng = nu(host)->game;
+	if (ng) (void)kp_text_to_legacy(name, ng->config.player_name, sizeof ng->config.player_name);
 }
 
 static int u_lobby_enter(void *host)
@@ -297,6 +311,29 @@ static void u_lobby_chat(void *host, const char *text)
 	kp_netgame_chat(nu(host)->game, legacy);
 }
 
+static void u_game_chat(void *host, const char *text, uint16_t recipients)
+{
+	char legacy[KP_NETGAME_LINE];
+	if (!nu(host)->game) return;
+	(void)kp_text_to_legacy(text, legacy, sizeof legacy);
+	kp_netgame_game_chat(nu(host)->game, legacy, recipients);
+}
+
+static int u_game_latency(void *host) { return nu(host)->game ? (int)nu(host)->game->extra_latency : 0; }
+
+static int u_game_lagging(void *host, int slots[8], uint32_t *seconds)
+{
+	KpNetGame *ng = nu(host)->game;
+	if (!ng || !ng->lagging) return -1;
+	*seconds = ng->timeout_seconds;
+	return kp_netgame_lagging_slots(ng, slots);
+}
+
+static void u_game_drop(void *host)
+{
+	if (nu(host)->game) (void)kp_netgame_timeout_drop(nu(host)->game);
+}
+
 /* The slot menus' actions as the game's (KP_SLOT_*), -1 for the others */
 static int slot_kind(int action)
 {
@@ -385,6 +422,7 @@ static int u_briefing_poll(void *host) { return nu(host)->game ? kp_netgame_brie
 
 void kp_netui_hooks(KpNetUi *n, KpUiNet *net)
 {
+	net->player_name = u_player_name;
 	net->games = u_games;
 	net->join = u_join;
 	net->clear_games = u_clear_games;
@@ -398,6 +436,10 @@ void kp_netui_hooks(KpNetUi *n, KpUiNet *net)
 	net->lobby_start_check = u_lobby_start_check;
 	net->lobby_start = u_lobby_start;
 	net->lobby_chat = u_lobby_chat;
+	net->game_chat = u_game_chat;
+	net->game_latency = u_game_latency;
+	net->game_lagging = u_game_lagging;
+	net->game_drop = u_game_drop;
 	net->lobby_slot = u_lobby_slot;
 	net->lobby_slot_check = u_lobby_slot_check;
 	net->lobby_race = u_lobby_race;

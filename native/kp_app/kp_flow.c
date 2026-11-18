@@ -25,10 +25,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #define EXIT_PROGRAM 2
 #define EXIT_QUIT_MISSION 4
 #define EXIT_RESTART 5
+#define EXIT_VICTORY 6
+#define EXIT_DEFEAT 7
+#define RESULT_DEFEAT 2 /* KP_EVENT_GAME_RESULT's */
+#define RESULT_VICTORY 3
 #define VIEW_ROWS_ORIGINAL 400 /* the original's game view: 640 x 400 */
 #define LOG_LINE 512
 
@@ -337,9 +342,12 @@ static void save_last_replay(KpFlow *f)
 
 static void free_seat_views(KpFlow *f);
 
+static void net_game_end(KpFlow *f);
+
 static void destroy_scene(KpFlow *f)
 {
 	save_last_replay(f);
+	if (f->session) net_game_end(f); /* a network game that ends without the console's exit (a failure) */
 	if (f->hud_on && f->session && f->session->g) end_console(f);
 	end_hud(f);
 	/* only a world that stands (a build that fails frees its own): a flow freed before its host was set has none */
@@ -356,6 +364,10 @@ static void destroy_scene(KpFlow *f)
 	if (f->ui) f->ui->game = NULL; /* a ready room's game too */
 	f->result = 0;
 }
+
+static int net_save_name_ok(const char *name);
+static void net_save_path(const KpFlow *f, const char *name, char *out, size_t size);
+static void game_saves(KpFlow *f, KpUi *ui);
 
 /* The file of owner's save name deleted: 0 when it stays (no right to it, held open elsewhere; logged), a missing one
  * counted as deleted. */
@@ -374,6 +386,17 @@ static int remove_save_file(KpFlow *f, const char *owner, const char *name)
 static int delete_save(void *host, const char *name)
 {
 	KpFlow *f = (KpFlow *)host;
+	if (f->net_game) { /* a network game's: its file in maps/save */
+		char path[KP_FLOW_MAP_PATH];
+		if (!net_save_name_ok(name)) return 0;
+		net_save_path(f, name, path, sizeof path);
+		if (remove(path) != 0 && errno != ENOENT) {
+			say(f, "save %s: cannot delete %s: %s", name, path, strerror(errno));
+			return 0;
+		}
+		game_saves(f, f->ui);
+		return 1;
+	}
 	if (!remove_save_file(f, kp_profile_save_owner(f->profile), name)) return 0;
 	kp_profile_remove_save(f->profile, name);
 	f->host.save_profile(f->host.ctx);
@@ -431,6 +454,7 @@ static int rename_old_save(void *host, const char *from, const char *to)
 #define KP_REP_LIST_PLAYERS 8  /* its entry's +0x479 */
 #define MAP_ORIGINAL_VERSION 59 /* LoadMapEntryInfo 0x45d870: a header that fails with a later VER is the expansion's */
 #define MAP_DIR "maps"         /* the user's maps folder (the original's user base maps\), a data folder's Maps */
+#define NET_SAVE_DIR MAP_DIR "/save" /* the network saves' folder (BuildSaveDirectory 0x499e80 in multiplayer) */
 #define CUSTOM_REPLAYS "replays" /* Play Custom's root folder of the replays (the original's maps\replays) */
 #define CUSTOM_BASES (1 + KP_APP_RES_DIRS)
 #define ENTRY_PATH KP_FLOW_MAP_PATH
@@ -449,10 +473,34 @@ static int has_replay_ext(const char *name) { return has_ext(name, REPLAY_EXT); 
 /* The saved network games' extension (0x4995a0): .mlx with Brood War, else .mlt */
 static const char *save_ext(const KpUiMenus *m) { return m->expansion ? KP_NETSAVE_EXT_BW : KP_NETSAVE_EXT; }
 
-/* Whether Create Game lists saved network games and a resumed game finds them: in multiplayer, the original's files
- * (KpAppFlags.original_saves: the network oracle's runs). TODO: stage N4 lists and finds Koprulu's own network saves
- * here; until then the product has none, and a lobby that resumes a save tells "Save Game File Not Found." */
-static int listed_saves(const KpFlow *f, const KpUiMenus *m) { return m->multiplayer && f->flags && f->flags->original_saves; }
+/* Whether Create Game lists saved network games and a resumed game finds them: in multiplayer. The files are Koprulu's
+ * own (kp_netsave.h), and the original's in the network oracle's runs (KpAppFlags.original_saves) only: the product
+ * resumes no game of the original's, whose file it reads as unreadable (the plan leaves a mixed resume out). */
+static int listed_saves(const KpUiMenus *m) { return m->multiplayer; }
+
+/* ValidateSaveFile 0x499750 (out NULL; h and name as kp_netsave_probe's) or ReadSaveHeaderAndGameBlock 0x499c50 (out,
+ * the game's expansion byte) over a saved network game's bytes and file name: Koprulu's after its build and data
+ * (kp_save_check: another build's or other data's is another version), the original's with original_saves. */
+static int read_net_save(const KpFlow *f, const uint8_t *bytes, size_t size, const char *file, KpNetGameHeader *h,
+	char *name, KpNetGameSave *out)
+{
+	int expansion = f->ui && f->ui->menus.expansion, rc;
+	if (kp_netsave_koprulu(bytes, size)) {
+		KpNetGameSave s;
+		KpError e;
+		if (!f->identity) return KP_NETSAVE_UNREADABLE;
+		rc = kp_save_check(bytes, size, f->identity, &e);
+		if (rc != KP_SAVE_LOADABLE) return rc == KP_SAVE_OTHER_BUILD ? KP_NETSAVE_OTHER_VERSION : KP_NETSAVE_UNREADABLE;
+		rc = kp_netsave_koprulu_read(bytes, size, file, out ? expansion : -1, &s, name);
+		if (rc == KP_NETSAVE_VALID && h) *h = s.header;
+		if (rc == KP_NETSAVE_VALID && out) *out = s;
+		return rc;
+	}
+	if (!f->flags || !f->flags->original_saves) return KP_NETSAVE_UNREADABLE;
+	rc = kp_netsave_probe(bytes, size, file, h, name);
+	if (rc == KP_NETSAVE_VALID && out && !kp_netsave_read(bytes, size, expansion, out)) rc = KP_NETSAVE_UNREADABLE;
+	return rc;
+}
 
 /* Whether s begins with prefix, the ASCII letters folded. */
 static int prefix_nocase(const char *s, const char *prefix)
@@ -986,7 +1034,7 @@ static int list_entries(void *host, KpUi *ui)
 	KpFlow *f = (KpFlow *)host;
 	KpUiMenus *m = &ui->menus;
 	int custom = m->state == KP_GLUE_PLAY_CUSTOM, nb, nl = 0, nf = 0, nn = 0, b, k, x, exts = 0;
-	int saves = custom && listed_saves(f, m);
+	int saves = custom && listed_saves(m);
 	const char *ext[4];
 	char bases[CUSTOM_BASES][ENTRY_PATH], root[ENTRY_PATH], path[ENTRY_PATH];
 	char **lists[CUSTOM_BASES * 5];
@@ -1110,7 +1158,7 @@ static uint8_t *read_save_file(const char *path, size_t *size)
 /* LoadSaveEntryInfo 0x45d5e0 of the saved game entry e at path (NULL: its path too long): its status, title and the
  * gluAll text of an unreadable one (66 missing or unreadable, 65 its name too long, 67 another version), else the
  * header's information */
-static void load_save_entry(KpUiMapEntry *e, const char *path)
+static void load_save_entry(const KpFlow *f, KpUiMapEntry *e, const char *path)
 {
 	KpNetGameHeader h;
 	char name[KP_NETSAVE_NAME], file[KP_UI_MAP_FILE];
@@ -1129,7 +1177,8 @@ static void load_save_entry(KpUiMapEntry *e, const char *path)
 		return;
 	}
 	legacy_file(path, file, sizeof file);
-	rc = (bytes = read_save_file(path, &size)) != NULL ? kp_netsave_probe(bytes, size, file, &h, name) : KP_NETSAVE_UNREADABLE;
+	rc = (bytes = read_save_file(path, &size)) != NULL ? read_net_save(f, bytes, size, file, &h, name, NULL)
+		: KP_NETSAVE_UNREADABLE;
 	free(bytes);
 	if (rc != KP_NETSAVE_VALID) {
 		e->description = rc == KP_NETSAVE_OTHER_VERSION ? STR_SAVE_VERSION : STR_MISSING;
@@ -1157,7 +1206,7 @@ static void load_entry(void *host, KpUi *ui, int index)
 	char path[ENTRY_PATH], why[KP_ERROR_SIZE], title[KP_UI_MAP_NAME];
 	FILE *probe;
 	if (index >= 0 && index < m->entry_count && m->entries[index].kind == KP_UI_ENTRY_SAVE) {
-		load_save_entry(&m->entries[index], entry_path(f, m, index, path, sizeof path) ? path : NULL);
+		load_save_entry(f, &m->entries[index], entry_path(f, m, index, path, sizeof path) ? path : NULL);
 		return;
 	}
 	if (index < 0 || index >= m->entry_count || m->entries[index].kind != KP_UI_ENTRY_MAP) return;
@@ -1220,12 +1269,13 @@ int kp_flow_entry_save(KpFlow *f, int index, KpNetGameHeader *h)
 	if (index < 0 || index >= m->entry_count || m->entries[index].kind != KP_UI_ENTRY_SAVE) return 0;
 	if (!entry_path(f, m, index, path, sizeof path) || !(bytes = read_save_file(path, &size))) return 0;
 	legacy_file(path, file, sizeof file);
-	rc = kp_netsave_probe(bytes, size, file, h, NULL);
+	rc = read_net_save(f, bytes, size, file, h, NULL, NULL);
 	free(bytes);
 	return rc == KP_NETSAVE_VALID;
 }
 
 typedef struct {
+	const KpFlow *f;
 	const char *ext;
 	uint32_t id;
 	char name[KP_NETSAVE_NAME]; /* the display name of the save found */
@@ -1242,7 +1292,7 @@ static int save_id_match(void *ctx, const char *path, const char *name)
 	int rc;
 	if (!has_ext(name, s->ext) || !(bytes = read_save_file(path, &size))) return 0;
 	legacy_file(path, file, sizeof file);
-	rc = kp_netsave_probe(bytes, size, file, &h, s->name);
+	rc = read_net_save(s->f, bytes, size, file, &h, s->name, NULL);
 	free(bytes);
 	return rc == KP_NETSAVE_VALID && h.save_id == s->id;
 }
@@ -1265,8 +1315,10 @@ int kp_flow_find_save(KpFlow *f, uint32_t id, KpNetGameSave *out)
 	uint8_t *bytes;
 	size_t size = 0;
 	int ok;
-	if (!listed_saves(f, m)) return 0;
+	f->net_load[0] = 0;
+	if (!listed_saves(m)) return 0;
 	memset(&match, 0, sizeof match);
+	match.f = f;
 	match.ext = save_ext(m);
 	match.id = id;
 	pref_path(f, MAP_DIR, dir, sizeof dir);
@@ -1281,9 +1333,11 @@ int kp_flow_find_save(KpFlow *f, uint32_t id, KpNetGameSave *out)
 		say(f, "network: the saved game %s does not open", target);
 		return 0;
 	}
-	ok = kp_netsave_read(bytes, size, m->expansion, out);
+	legacy_file(path, target, sizeof target);
+	ok = read_net_save(f, bytes, size, target, NULL, NULL, out) == KP_NETSAVE_VALID;
 	free(bytes);
 	if (!ok) say(f, "network: the saved game %s does not read", path);
+	else snprintf(f->net_load, sizeof f->net_load, "%s", path); /* the file the game loads (0x6a5e34 kept open) */
 	return ok;
 }
 
@@ -1870,7 +1924,7 @@ static int console_init(KpFlow *f, KpHud *hud, KpUi *ui, KpCanvas *shared, KpGam
 		kp_hud_free(hud); /* its own canvas */
 		return -1;
 	}
-	kp_glue_saves(ui, f->profile);
+	game_saves(f, ui);
 	return 0;
 }
 
@@ -2143,10 +2197,18 @@ static int build_scene(KpFlow *f, char *err, size_t err_size)
 		/* the player's speed starts each game (0x4bb360 passes 0x6d3130) */
 		if (!keeps_originals(f)) st.speed = (int)f->profile->settings.game_speed + 1;
 		st.record = 1; /* every game's commands for its LastReplay */
-		if (custom) { /* a custom map's game: row 0, the lobby's setup */
+		if (custom) { /* a custom map's game: row 0, the lobby's setup, the glue's expansion byte (0x457510) */
 			st.mission_index = 0;
+			st.expansion = f->ui && f->ui->menus.expansion;
 			st.has_setup = f->has_custom_setup;
 			if (st.has_setup) st.setup = f->custom_setup;
+		}
+		if (custom && f->net_game) { /* the chat room's game: the host's seed (0x48) and speed, its turns the network's */
+			KpNetGame *ng = &f->netplay->game;
+			st.seed = ng->seed;
+			st.speed = ng->header.speed + 1;
+			st.local_storm = ng->local_storm;
+			st.net = ng;
 		}
 		if (continued) {
 			st.has_carry = 1;
@@ -2177,8 +2239,8 @@ static int build_scene(KpFlow *f, char *err, size_t err_size)
 	f->world = 1;
 	f->loads = f->session->loads;
 	f->cam_x = f->cam_y = 0;
-	if (f->load_on_start[0]) { /* a saved game: the console at once, the save loaded next */
-		snprintf(f->pending_load, sizeof f->pending_load, "%s", f->load_on_start);
+	if (f->load_on_start[0] || f->net_resume) { /* a saved game: the console at once, the save loaded next */
+		if (f->load_on_start[0]) snprintf(f->pending_load, sizeof f->pending_load, "%s", f->load_on_start);
 		f->load_on_start[0] = 0;
 		if (start_hud(f, 1, err, err_size) != 0) return -1;
 	} else if (f->playing_replay) { /* a replay starts at once (RunCreateGameScreen 0x455550: 0x6662b8 = 1) */
@@ -2207,6 +2269,7 @@ static int start_current(KpFlow *f, int ready, char *err, size_t err_size)
 	f->playing = 0;
 	f->playing_replay = 0; /* the next game is the player's unless another replay is chosen */
 	f->load_on_start[0] = 0;
+	f->net_resume = 0;
 	return -1;
 }
 
@@ -2248,19 +2311,21 @@ static void mission_wait(KpFlow *f)
 
 /* --- the saves --- */
 
-static int save_game(KpFlow *f, const char *file, char *why, size_t why_size)
+/* The game's save at path (the campaign's run with campaign, one more section fourcc of extra_size bytes when not
+ * NULL): 0, or -1 with why. */
+static int save_game_to(KpFlow *f, const char *path, int campaign, const char *fourcc, const uint8_t *extra,
+	size_t extra_size, char *why, size_t why_size)
 {
 	KpSaveCampaign camp;
 	KpSavePresentation pres;
 	uint8_t *bytes;
 	size_t size;
-	char path[1100];
 	KpError err;
 	uint32_t portrait_ms;
 	int camera, k;
 	memset(&camp, 0, sizeof camp);
 	memset(&pres, 0, sizeof pres);
-	if (f->has_run) {
+	if (campaign && f->has_run) {
 		camp.present = 1;
 		camp.run = f->run;
 		kp_profile_words(kp_profile_progress(f->profile), camp.progress);
@@ -2273,11 +2338,11 @@ static int save_game(KpFlow *f, const char *file, char *why, size_t why_size)
 		if (kp_ui_pending_releases(f->ui, &portrait_ms, &camera)) kp_save_pres_set(&pres, "portrait_ms", portrait_ms);
 		if (camera) kp_save_pres_set(&pres, "camera_ms", 0);
 	}
-	if (kp_save_encode(f->session, f->identity, f->has_run ? &camp : NULL, &pres, &bytes, &size, &err) != 0) {
+	if (kp_save_encode_with(f->session, f->identity, camp.present ? &camp : NULL, &pres, fourcc, extra, extra_size,
+			&bytes, &size, &err) != 0) {
 		snprintf(why, why_size, "%s", err.msg);
 		return -1;
 	}
-	pref_path(f, file, path, sizeof path);
 	k = kp_write_file_atomic(path, bytes, size, &err);
 	free(bytes);
 	f->host.sync_files(f->host.ctx);
@@ -2285,28 +2350,121 @@ static int save_game(KpFlow *f, const char *file, char *why, size_t why_size)
 	return k;
 }
 
-static int load_game(KpFlow *f, const char *file, char *why, size_t why_size)
+static int save_game(KpFlow *f, const char *file, char *why, size_t why_size)
+{
+	char path[1100];
+	pref_path(f, file, path, sizeof path);
+	return save_game_to(f, path, 1, NULL, NULL, 0, why, why_size);
+}
+
+/* Whether the game in play is a network game still in Storm's game: its saves are the network's (kp_netsave.h). */
+static int net_saves(const KpFlow *f) { return f->net_game && !f->net_left && f->netplay && f->netplay->game_on; }
+
+/* Whether a network save's name (the save command's: another seat's input) names a file in maps/save and nothing else:
+ * in the original's encoding shorter than the header's name field and a name IsInvalidFileName 0x408300 takes
+ * (ExecSaveGame 0x472f50 and SaveGame 0x498d20 ask it: no separator, no character of network.tbl's set, no control
+ * character, no DOS device name; kp_transfer_name_valid), and not "." or "..". */
+static int net_save_name_ok(const char *name)
+{
+	char legacy[KP_NETSAVE_NAME + 8];
+	if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) return 0;
+	return kp_text_to_legacy(name, legacy, sizeof legacy) < KP_NETSAVE_NAME && kp_transfer_name_valid(legacy, KP_NETSAVE_NAME);
+}
+
+/* A network save's file: <pref>maps/save/<name>.mlt (.mlx with Brood War; BuildSaveFilePath 0x499f70 in multiplayer:
+ * maps\save\ whoever is logged in). */
+static void net_save_path(const KpFlow *f, const char *name, char *out, size_t size)
+{
+	char rel[ENTRY_PATH];
+	snprintf(rel, sizeof rel, NET_SAVE_DIR "/%s%s", name, save_ext(&f->ui->menus));
+	pref_path(f, rel, out, size);
+}
+
+/* SaveGame 0x498d20 in a network game: every seat writes its own file (net_save_path), the game's save with NETG
+ * (kp_netsave.h: the save command's DWORD as the save's ID, kp_netgame_save_record). 0, or -1 with why. */
+static int save_net_game(KpFlow *f, const char *name, uint32_t id, char *why, size_t why_size)
+{
+	KpNetGameSave rec;
+	uint8_t netg[KP_NETSAVE_NETG_SIZE];
+	char dir[ENTRY_PATH], path[ENTRY_PATH];
+	if (!net_save_name_ok(name)) {
+		snprintf(why, why_size, "no file can be named %s", name);
+		return -1;
+	}
+	pref_path(f, MAP_DIR, dir, sizeof dir);
+	(void)make_dir(dir);
+	pref_path(f, NET_SAVE_DIR, dir, sizeof dir);
+	if (make_dir(dir) != 0) {
+		snprintf(why, why_size, "cannot make %s: %s", dir, strerror(errno));
+		return -1;
+	}
+	kp_netgame_save_record(&f->netplay->game, f->session->g, id, &rec);
+	kp_netsave_netg_write(&rec, f->ui->menus.expansion, name, netg);
+	net_save_path(f, name, path, sizeof path);
+	return save_game_to(f, path, 0, KP_NETSAVE_NETG, netg, sizeof netg, why, why_size);
+}
+
+typedef struct {
+	char name[KP_PROFILE_SAVE_NAME];
+	time_t time;
+} NetSaveName;
+
+static int newer_save_first(const void *a, const void *b)
+{
+	const NetSaveName *x = (const NetSaveName *)a, *y = (const NetSaveName *)b;
+	if (x->time != y->time) return x->time > y->time ? -1 : 1;
+	return kp_compare_nocase(x->name, y->name);
+}
+
+/* The in-game save dialogs' names (EnumerateSavedGames 0x4991b0, newest first): a network game's are its saves in
+ * maps/save (Koprulu's files of the game's extension, by their names), another game's the profile's. */
+static void game_saves(KpFlow *f, KpUi *ui)
+{
+	char dir[ENTRY_PATH], path[ENTRY_PATH];
+	const char *ext = save_ext(&ui->menus);
+	NetSaveName found[KP_UI_SAVES];
+	char **files;
+	int count = 0, n = 0, k;
+	if (!f->net_game) {
+		kp_glue_saves(ui, f->profile);
+		return;
+	}
+	pref_path(f, NET_SAVE_DIR, dir, sizeof dir);
+	files = kp_list_files(dir, ext, &count);
+	for (k = 0; k < count && n < KP_UI_SAVES; k++) {
+		struct stat st;
+		uint8_t head[4];
+		size_t len = strlen(files[k]) - strlen(ext);
+		FILE *in;
+		snprintf(path, sizeof path, "%s/%s", dir, files[k]);
+		if (stat(path, &st) != 0 || len >= sizeof found[n].name || !(in = fopen(path, "rb"))) continue;
+		len = fread(head, 1, sizeof head, in) == sizeof head && kp_netsave_koprulu(head, sizeof head) ? len : 0;
+		fclose(in);
+		if (len == 0) continue;
+		memcpy(found[n].name, files[k], len);
+		found[n].name[len] = 0;
+		found[n++].time = st.st_mtime;
+	}
+	kp_list_files_free(files, count);
+	if (n > 1) qsort(found, (size_t)n, sizeof *found, newer_save_first);
+	for (k = 0; k < n; k++) snprintf(ui->menus.saves[k], sizeof ui->menus.saves[k], "%s", found[k].name);
+	ui->menus.save_count = n;
+}
+
+/* A save's bytes loaded into the game (its campaign part with campaign; free'd here): 0, or -1 with why. */
+static int load_game_bytes(KpFlow *f, uint8_t *bytes, size_t size, int campaign, char *why, size_t why_size)
 {
 	KpSaveCampaign camp;
 	KpSavePresentation pres;
-	uint8_t *bytes;
-	size_t size;
-	char path[1100];
 	KpError err;
-	int k;
-	pref_path(f, file, path, sizeof path);
-	if (!(bytes = kp_read_file(path, &size))) {
-		snprintf(why, why_size, "no save");
-		return -1;
-	}
-	k = kp_save_load(f->session, bytes, size, f->identity, &camp, &pres, &err);
+	int k = kp_save_load(f->session, bytes, size, f->identity, &camp, &pres, &err);
 	free(bytes);
 	if (k != 0) {
 		snprintf(why, why_size, "%s", err.msg);
 		return -1;
 	}
 	/* the save's run replaces the current one; its profile only raises the profile's progress */
-	if (camp.present) {
+	if (campaign && camp.present) {
 		KpCampaignProfile p;
 		kp_profile_from_words(&p, camp.progress);
 		f->has_run = 1;
@@ -2329,6 +2487,35 @@ static int load_game(KpFlow *f, const char *file, char *why, size_t why_size)
 			f->cam_y = y;
 		}
 	}
+	return 0;
+}
+
+static int load_game(KpFlow *f, const char *file, char *why, size_t why_size)
+{
+	uint8_t *bytes;
+	size_t size;
+	char path[1100];
+	pref_path(f, file, path, sizeof path);
+	if (!(bytes = kp_read_file(path, &size))) {
+		snprintf(why, why_size, "no save");
+		return -1;
+	}
+	return load_game_bytes(f, bytes, size, 1, why, why_size);
+}
+
+/* LoadGameFromSave 0x499890 of a resumed network game (the file the lobby found, f->net_load): the save's state over
+ * the game its start made, then the lobby's players back in their records (RestoreMultiplayerSaveSlots 0x4790b0: the
+ * load brought back the saved ones). 0, or -1 with why. */
+static int load_net_game(KpFlow *f, char *why, size_t why_size)
+{
+	uint8_t *bytes;
+	size_t size;
+	if (!f->netplay || !f->netplay->game_on || !(bytes = read_save_file(f->net_load, &size))) {
+		snprintf(why, why_size, "no save");
+		return -1;
+	}
+	if (load_game_bytes(f, bytes, size, 0, why, why_size) != 0) return -1;
+	kp_netgame_restore_slots(&f->netplay->game, &f->session->g->setup);
 	return 0;
 }
 
@@ -2448,6 +2635,108 @@ static int start_custom_game(KpFlow *f, int index, int *back, char *why, size_t 
 	return kp_flow_start_custom(f, why, why_size);
 }
 
+#define GLUE_CHAT_STATE 3 /* the chat room's glue state: a network game that starts at once (no race ready room) */
+
+/* EndGame 0x443db0's network side, once: Storm's game left (LeaveStormGame 0x477e50 with 0x40000001) */
+static void net_game_end(KpFlow *f)
+{
+	if (!f->net_game || f->net_left) return;
+	f->net_left = 1;
+	f->net_running = 0;
+	if (f->netplay && f->netplay->game_on) kp_netgame_game_end(&f->netplay->game);
+}
+
+/* A resumed network game's map and setup (StartGame 0x443f40 with a save open): the scenario and the started records of
+ * the file the lobby found (its MAPC, custom_from_save), the lobby's players in their saved records
+ * (kp_netgame_restore_slots), its state loaded before the first turn (net_resume). 0, or -1 with why. */
+static int resumed_game(KpFlow *f, const KpNetGame *ng, char *why, size_t why_size)
+{
+	char mission[256];
+	uint8_t *bytes;
+	size_t size;
+	KpError err;
+	KpSaveMap map;
+	int rc;
+	if (!f->net_load[0] || !(bytes = read_save_file(f->net_load, &size))) {
+		snprintf(why, why_size, "the saved game's file does not read");
+		return -1;
+	}
+	rc = kp_save_mission(bytes, size, f->identity, mission, sizeof mission, NULL, &err);
+	if (rc == 0) rc = kp_save_map(bytes, size, f->identity, &map, &err);
+	free(bytes);
+	if (rc != 1) {
+		if (rc == 0) free(map.chk);
+		snprintf(why, why_size, "%s", rc < 0 ? err.msg : "the saved game is no custom map's");
+		return -1;
+	}
+	if (custom_from_save(f, mission, &map, why, why_size) != 0) return -1;
+	kp_netgame_restore_slots(ng, &map.setup);
+	f->custom_setup = map.setup;
+	f->net_resume = 1;
+	return 0;
+}
+
+/* The chat room's start (PollLobby 0x474f00, StartGame 0x443f40): the map the lobby plays (the host's own, a joiner's
+ * copy or the one it received) with the lobby's records (kp_netgame_game_setup), the provider's turns per second asked
+ * again (ComputeFramesPerTurn 0x445470), then the game: at once (state 3), or after the race ready room (7..9) of a
+ * Use Map Settings game, whose briefing's handshake runs before RunGame. 0, or -1 with why. */
+static int start_network_game(KpFlow *f, int state, char *why, size_t why_size)
+{
+	KpNetGame *ng;
+	const char *path;
+	if (!f->netplay || !f->netplay->game_on) {
+		snprintf(why, why_size, "no network");
+		return -1;
+	}
+	ng = &f->netplay->game;
+	path = kp_netgame_map_path(ng);
+	f->net_game = 1;
+	f->net_left = 0;
+	f->net_running = 0;
+	f->net_resume = 0;
+	if (kp_netgame_resumes(ng)) {
+		if (resumed_game(f, ng, why, why_size) != 0) return -1;
+		path = f->net_load;
+	} else {
+		if (!path[0]) {
+			snprintf(why, why_size, "no map");
+			return -1;
+		}
+		if (custom_from_file(f, path, last_part(path), custom_load_of(ng->header.template_record), why, why_size) != 0)
+			return -1;
+		kp_netgame_game_setup(ng, &f->custom_setup);
+	}
+	f->has_custom_setup = 1;
+	if (kp_netgame_game_caps(ng) != 0) {
+		snprintf(why, why_size, "the provider's caps");
+		return -1;
+	}
+	f->glue_room = state == GLUE_CHAT_STATE ? 0 : state;
+	say(f, "network %s: %s (Storm ID %d, seed %08x)", last_part(path), f->glue_room ? "the ready room" : "at once",
+		ng->local_storm, (unsigned)ng->seed);
+	return kp_flow_start_custom(f, why, why_size);
+}
+
+/* A network game's part of a frame before its steps: RunGame 0x445310's first turn polled until it ran (the clock runs
+ * from then), the messages (GameLoop 0x4451f0's step 5) and timeout.bin while a turn is overdue, the first's too (its
+ * TurnManagerStep waits as any other). Whether the steps run. */
+static int net_frame(KpFlow *f, KpSession *s)
+{
+	int ran = 1;
+	if (!f->net_running) {
+		int r = kp_session_net_begin(s);
+		if (r < 0) return 0; /* failed (the session's error) */
+		if (r == 1) {
+			f->net_running = 1;
+			kp_clock_reset(&s->clock);
+		}
+		ran = r;
+	}
+	kp_session_net_messages(s);
+	if (f->ui) kp_ui_net_wait(f->ui);
+	return ran && !s->failed;
+}
+
 int kp_flow_play_map(KpFlow *f, const char *path, const char *template_name, char *err, size_t err_size)
 {
 	const char *name = template_name && template_name[0] ? template_name : MAP_TEMPLATE;
@@ -2547,21 +2836,50 @@ static int run_campaign(const KpFlow *f)
 	return f->run.expansion != 0 ? KP_GLUE_EXPANSION_CAMPAIGN : KP_GLUE_CAMPAIGN;
 }
 
+/* The menu a game the glue started goes back to: a network game's the provider's game list (the score screen's and the
+ * ready room's leave in multiplayer), else its campaign's. */
+static int after_game_menu(const KpFlow *f)
+{
+	return f->net_game ? kp_ui_menus_provider_state(f->ui) : run_campaign(f);
+}
+
 static void save_requests(KpFlow *f)
 {
 	char why[256];
 	if (f->pending_save[0]) {
 		char file[KP_SAVE_FILE_NAME], name[KP_PROFILE_SAVE_NAME];
+		int rc;
 		snprintf(name, sizeof name, "%s", f->pending_save);
 		f->pending_save[0] = 0;
-		save_file(f, name, file, sizeof file);
-		if (save_game(f, file, why, sizeof why) == 0) {
-			kp_profile_add_save(f->profile, name);
-			f->host.save_profile(f->host.ctx);
-			kp_glue_saves(f->ui, f->profile);
+		if (net_saves(f)) {
+			rc = save_net_game(f, name, f->pending_save_id, why, sizeof why);
+		} else if (f->net_game) { /* the network game ended before its save was written: never the profile's */
+			snprintf(why, sizeof why, "the network game has ended");
+			rc = -1;
+		} else {
+			save_file(f, name, file, sizeof file);
+			if ((rc = save_game(f, file, why, sizeof why)) == 0) {
+				kp_profile_add_save(f->profile, name);
+				f->host.save_profile(f->host.ctx);
+			}
+		}
+		if (rc == 0) {
+			game_saves(f, f->ui);
 			say(f, "saved %s", name);
 		} else {
 			say(f, "save failed: %s", why);
+		}
+	}
+	/* a resumed network game's save, before its first turn (kp_netgame_game_begin reads the restored records) */
+	if (f->net_resume && f->playing && f->session && f->session->g) {
+		f->net_resume = 0;
+		if (load_net_game(f, why, sizeof why) != 0) {
+			say(f, "network: the saved game %s does not load: %s", f->net_load, why);
+			f->session->failed = 1;
+			snprintf(f->session->error, sizeof f->session->error, "the saved game does not load: %s", why);
+			stop(f, f->session->error);
+		} else {
+			say(f, "network: resumed %s", f->net_load);
 		}
 	}
 	/* a save of another mission starts its game, which asks for the save again: loaded at once too */
@@ -2670,6 +2988,7 @@ static void leave_game(KpFlow *f)
 	custom_close(f);
 	f->playing = 0;
 	f->playing_replay = 0;
+	f->net_game = 0;
 }
 
 static void leave_glue_game(KpFlow *f, int state)
@@ -2730,7 +3049,9 @@ static void custom_next(KpFlow *f)
 
 static void score_next(KpFlow *f)
 {
-	if (custom_mode(f)) {
+	if (f->net_game) {
+		leave_glue_game(f, after_game_menu(f));
+	} else if (custom_mode(f)) {
 		custom_next(f);
 	} else if (f->has_next) {
 		int state = f->next_glue ? f->next_glue : f->glue_room;
@@ -2846,7 +3167,7 @@ static void glue_after_game(KpFlow *f)
 		f->continue_cheats = f->after_cheats;
 		start_glue_game(f, f->run.mission, f->glue_room);
 	} else {
-		leave_glue_game(f, run_campaign(f));
+		leave_glue_game(f, after_game_menu(f));
 	}
 }
 
@@ -2857,7 +3178,10 @@ static void game_events(KpFlow *f)
 	KpEvent e;
 	while (kp_event_take(f->session->g, &e)) {
 		if (f->hud_on) kp_hud_event(&f->hud, &e);
-		if (e.kind == KP_EVENT_SAVE_GAME && e.text) snprintf(f->pending_save, sizeof f->pending_save, "%s", e.text);
+		if (e.kind == KP_EVENT_SAVE_GAME && e.text) {
+			snprintf(f->pending_save, sizeof f->pending_save, "%s", e.text);
+			f->pending_save_id = (uint32_t)e.a;
+		}
 		else if (e.kind == KP_EVENT_LOAD_GAME && e.text) snprintf(f->pending_load, sizeof f->pending_load, "%s", e.text);
 		else if (e.kind == KP_EVENT_GAME_RESULT) f->result = (int)e.a;
 	}
@@ -3100,25 +3424,35 @@ static void glue_frame(KpFlow *f)
 		}
 		break;
 	}
-	case KP_GLUE_NETWORK:
-		/* TODO: stage N4 plays the network's game (KP_TURNS_NET): until then the game is left (AbortNetworkGame
-		 * 0x474e60) and the provider's game list shows again */
-		say(f, "glue: the network's game (ready room state %d) is stage N4's: left", ev.state);
-		if (f->netplay) kp_netplay_leave(f->netplay);
-		kp_glue_menus(&f->glue, kp_ui_menus_provider_state(f->ui));
+	case KP_GLUE_NETWORK: {
+		char why[256];
+		if (start_network_game(f, ev.state, why, sizeof why) != 0) {
+			/* the game is left (AbortNetworkGame 0x474e60: the lobby's transfers, messages, countdown, slots and save
+			 * with Storm's game) and the provider's game list shows again */
+			say(f, "glue: the network's game: %s", why);
+			if (f->netplay) kp_netplay_leave(f->netplay);
+			f->net_left = 1;
+			destroy_scene(f);
+			custom_close(f);
+			f->playing = 0;
+			f->net_game = 0;
+			kp_glue_menus(&f->glue, kp_ui_menus_provider_state(f->ui));
+		}
 		break;
+	}
 	case KP_GLUE_ROOM_START: { /* the game with the same interface's console */
 		char err[256];
 		if (start_hud(f, 0, err, sizeof err) != 0) {
 			say(f, "%s", err);
-			leave_glue_game(f, run_campaign(f));
+			leave_glue_game(f, after_game_menu(f));
 			break;
 		}
 		kp_session_resume(f->session);
 		break;
 	}
 	case KP_GLUE_ROOM_CANCEL:
-		leave_glue_game(f, run_campaign(f));
+		if (f->net_game) f->net_left = 1; /* the room's cancel left Storm's game (SendBriefingStart 0x475cc0) */
+		leave_glue_game(f, after_game_menu(f));
 		break;
 	case KP_GLUE_SCORE_DONE: { /* the cinematic rows between the missions play before the next step (mode 10) */
 		int n = f->step_cinematic_count;
@@ -3154,6 +3488,7 @@ static void hud_frame(KpFlow *f, int ticks)
 	if (exit == EXIT_PROGRAM || exit == EXIT_QUIT_MISSION || exit == EXIT_RESTART) {
 		/* the in-game menus' Exit Program, Quit Mission, Restart (no result) */
 		kp_ui_end_game(ui);
+		net_game_end(f);
 		save_last_replay(f);
 		sounds(f);
 		say(f, "play %s: exit %d", current_name(f), exit);
@@ -3167,10 +3502,16 @@ static void hud_frame(KpFlow *f, int ticks)
 			kp_carry_take(f->session->g, &f->after_carry);
 			f->after_cheats = kp_cheats(f->session->g);
 		}
-	} else if (exit != 0 && f->result) {
-		/* the result dialog's answer (RequestGameExit 0x444e00: 6 victory, 7 defeat) ends the game */
-		int result = f->result;
+	} else if (exit != 0 && (f->result || (f->net_game && (exit == EXIT_VICTORY || exit == EXIT_DEFEAT)))) {
+		/* the result dialog's answer (RequestGameExit 0x444e00: 6 victory, 7 defeat) ends the game; a network game's
+		 * Quit Mission too (QuitMissionMenuHandler 0x47bff0: 6 after a victory, else 7, the result the exit's) */
+		int result = f->result ? f->result : exit == EXIT_VICTORY ? RESULT_VICTORY : RESULT_DEFEAT;
+		/* ComputeGameResults 0x477270 while Storm's game still runs (0x4bd220, before EndGame's leave) */
+		uint8_t storm_results[KP_NETGAME_PLAYERS];
+		int network = f->net_game && !f->net_left && f->netplay && f->netplay->game_on, local = 0;
+		if (network) local = kp_netgame_game_results(&f->netplay->game, f->session->g, storm_results);
 		kp_ui_end_game(ui);
+		net_game_end(f);
 		save_last_replay(f);
 		sounds(f);
 		campaign_after_game(f, result);
@@ -3178,7 +3519,7 @@ static void hud_frame(KpFlow *f, int ticks)
 		end_hud(f);
 		if (f->glue_on) {
 			kp_glue_score(&f->glue, f->session->g, result, (uint32_t)(now(f) - f->game_started_at),
-				f->session->loads > 0);
+				f->session->loads > 0, network ? storm_results : NULL, local);
 		}
 		f->result = 0;
 	}
@@ -3200,7 +3541,8 @@ static void game_frame(KpFlow *f)
 		stop(f, s->error);
 		return;
 	}
-	if (!kp_flow_glue_active(f) && !s->failed && !f->flags->autotest) { /* the autotest steps the game itself */
+	if (!kp_flow_glue_active(f) && !s->failed && !f->flags->autotest /* the autotest steps the game itself */
+		&& (!f->net_game || net_frame(f, s))) {
 		ticks = kp_session_advance(s, now(f), &fraction, f->host.clock_ms);
 		if (f->seats.count) seats_frame(f);
 		/* a loaded save: its state at once, without motion from the state before */

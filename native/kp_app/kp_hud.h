@@ -204,7 +204,8 @@ typedef struct {
 	int room_opened;
 	uint32_t title_until; /* KP_GLUE_TITLE: the clock the title closes at (title_timed: set by its first frame) */
 	int title_timed;
-	int32_t composed_w, composed_h, composed_bottom; /* the screen composed: its size, its bottom dialog */
+	int32_t composed_w, composed_h;     /* the screen composed: its size, */
+	uint32_t composed_layers;            /* its dialogs, their flags and places (a hash) */
 	uint32_t composed_serial;                        /* and the palette's serial (the margins) */
 	int has_composed;
 	uint32_t palette_serial;
@@ -230,8 +231,10 @@ void kp_glue_epilog(KpGlue *g, int expansion);
 /* The ready room of the started game (its glue state's race); the game waits for the room's Start. */
 int kp_glue_room(KpGlue *g, KpGame *game, int state);
 /* The score screen of the finished game (result: 2 defeat, 3 victory), the game's seconds and whether a save was
- * loaded into it (0x66b410: Save Replay stays off). */
-void kp_glue_score(KpGlue *g, KpGame *game, int result, uint32_t elapsed, int from_save);
+ * loaded into it (0x66b410: Save Replay stays off); a network game's results by Storm ID and the local one's
+ * (ComputeGameResults 0x477270: 1 win, 2 loss, 3 draw, 4 left; storm_results NULL offline). */
+void kp_glue_score(KpGlue *g, KpGame *game, int result, uint32_t elapsed, int from_save, const uint8_t *storm_results,
+	int local_result);
 /* Each frame while a glue screen shows: what it ended with, whether the canvas changed (*changed) and the glue's
  * palette when it changed (rgb, *palette). */
 KpGlueEvent kp_glue_frame(KpGlue *g, int32_t w, int32_t h, uint32_t now_ms, int *changed, uint8_t rgb[768],

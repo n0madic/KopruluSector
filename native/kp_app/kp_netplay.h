@@ -6,8 +6,8 @@
  *
  * Nothing runs a thread: the flow pumps the sockets and Storm's timers each frame (kp_netplay_pump), and a join waits
  * inside SNetJoinGame as the original's glue does (the sockets read meanwhile). The web has no UDP sockets: no
- * provider there until the relay of stage N5. TODO: stage N4 pumps Storm on a thread of its own while a mission
- * loads (the plan's native network thread), so a long load does not miss Storm's timeouts.
+ * provider there until the relay of stage N5. TODO: pump Storm on a thread of its own while a mission loads (the
+ * plan's native network thread), so a long load does not miss Storm's timeouts.
  */
 #ifndef KP_NETPLAY_H
 #define KP_NETPLAY_H

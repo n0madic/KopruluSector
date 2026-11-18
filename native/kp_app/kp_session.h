@@ -97,6 +97,9 @@ typedef struct {
 	KpTurnHub *hub;
 	int seat;
 	int64_t local_storm;
+	/* a network game's seat over SNet (phase N, stage N4): its turns the network game's (not owned; NULL none), which
+	 * kp_session_net_begin begins (kp_netgame_game_begin) and polls the first turn of */
+	KpNetGame *net;
 } KpSessionStart;
 
 typedef struct {
@@ -108,6 +111,7 @@ typedef struct {
 	int64_t loads; /* saves loaded: the presentation restarts its motion when this changes */
 	double step_ms, step_max_ms;
 	int64_t start_frame, start_turn;
+	int net_begun; /* a network game's RunGame step 7 ran (kp_session_net_begin) */
 	int failed;
 	char error[KP_ERROR_SIZE];
 	/* The record of a recorded game (owned, NULL none), which watches the executed commands (kp_turns_record) */
@@ -148,6 +152,15 @@ int kp_session_step(KpSession *s, double (*clock_ms)(void));
 /* A network game's seat, once every seat started and the hub began (kp_hub_begin): RunGame 0x445310's first turn, the
  * hub's (the seats' first turns). -1 with the session's error. */
 int kp_session_seat_begin(KpSession *s);
+/* A network game's start (RunGame 0x445310's step 7 at the first call: kp_netgame_game_begin, after the ready room of a
+ * Use Map Settings game) and its first turn (its TurnManagerStep before the loop), polled until it runs: 1 it ran, 0
+ * it waits for the turns, -1 failed. Its frames then run by kp_session_step: a turn every frames per turn (the sync
+ * ring advanced, the minimap's statistics after it, the sprites' checksum after its first frame), the frames between
+ * without one, none while the turns are overdue. */
+int kp_session_net_begin(KpSession *s);
+/* A network game's ReceiveMessages 0x476b80 (GameLoop 0x4451f0's step 5, each pass of the loop, before its frames; the
+ * wait for overdue turns runs it too): the chat lines shown, each recorded as its chat command 0x5c at the frame. */
+void kp_session_net_messages(KpSession *s);
 /* Advances the wall clock to now (seconds) and runs the steps it is due: their number, *alpha the presentation's
  * interpolation (1 once the game has stopped). */
 int kp_session_advance(KpSession *s, double now, double *alpha, double (*clock_ms)(void));
@@ -218,6 +231,11 @@ void kp_save_identity(KpSaveIdentity *id, const KpFiles *files, const KpDat *dat
  * presentation's state (NULL none); *out malloc'd. A stopped game has no save. */
 int kp_save_encode(KpSession *s, const KpSaveIdentity *id, const KpSaveCampaign *camp, const KpSavePresentation *pres,
 	uint8_t **out, size_t *size, KpError *err);
+/* kp_save_encode with one more section of schema 1 (fourcc, extra_size bytes of extra): a network game's NETG
+ * (kp_netsave.h). */
+int kp_save_encode_with(KpSession *s, const KpSaveIdentity *id, const KpSaveCampaign *camp,
+	const KpSavePresentation *pres, const char *fourcc, const uint8_t *extra, size_t extra_size, uint8_t **out,
+	size_t *size, KpError *err);
 /* The mission a save belongs to (its native save's name) and its campaign part; -1 for a damaged save or one of other
  * data. */
 int kp_save_mission(const uint8_t *save, size_t size, const KpSaveIdentity *id, char *mission, size_t mission_size,

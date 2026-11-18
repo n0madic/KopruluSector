@@ -18,7 +18,15 @@
  *   - a local copy whose size is not the offer's fails the transfer: an offer from this seat's own Storm ID naming
  *     one of its offered files with another size (the original copies the whole file into a buffer of the offer's);
  *   - an upload request whose receiver is past Storm ID 7 is refused (the original sends the chunks to that ID, which
- *     Storm refuses: no StarCraft game has a player there).
+ *     Storm refuses: no StarCraft game has a player there);
+ *   - a chunk acknowledgement or a stop from a seat other than the upload's receiver is ignored (the original asks only
+ *     for the transfer, so any seat could make this one send chunks or end its upload).
+ *
+ * What the protocol cannot give, and Koprulu keeps for the sake of 1.17: a download is vouched for by the offer's
+ * CRC-32 alone, and its data packets by no sender (the receiver is not told which seat the origin redirected to
+ * upload), so a seat of the same game can inject a file of the offered size and CRC-32 (a CRC-32 is easy to match).
+ * What bounds it: the size, the name and the folder checks above, and the map's own loader, which reads untrusted
+ * files within bounds (the `chk` fuzz target); the host can kick the seat.
  */
 #ifndef KP_TRANSFER_H
 #define KP_TRANSFER_H

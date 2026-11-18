@@ -1,8 +1,13 @@
 /* The interface helpers of the C suites (kp_test_ui.h). */
 #include "kp_test_ui.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#include "kp_game.h"
+#include "kp_ids.h"
+#include "kp_start.h"
 
 static void free_ui(void *p)
 {
@@ -138,4 +143,58 @@ const char *kp_t_ui_bin(const KpUi *ui, int32_t d, char *out, size_t size)
 {
 	kp_oracle_ui_bin_name(ui, ui->controls[d].bin, 1, out, size);
 	return out;
+}
+
+static KpTNetHost *net_host(void *h) { return (KpTNetHost *)h; }
+
+static void host_chat(void *h, const char *text, uint16_t recipients)
+{
+	snprintf(net_host(h)->chat, sizeof net_host(h)->chat, "%s", text);
+	net_host(h)->recipients = recipients;
+	net_host(h)->chats++;
+}
+
+static int host_latency(void *h) { return net_host(h)->latency; }
+
+static int host_lagging(void *h, int slots[8], uint32_t *seconds)
+{
+	KpTNetHost *n = net_host(h);
+	if (n->lagging < 0) return -1;
+	memcpy(slots, n->slots, sizeof n->slots);
+	*seconds = n->seconds;
+	return n->lagging;
+}
+
+static void host_drop(void *h) { net_host(h)->drops++; }
+
+void kp_t_net_host(KpUi *ui, KpTNetHost *h)
+{
+	memset(h, 0, sizeof *h);
+	h->lagging = -1;
+	h->net.game_chat = host_chat;
+	h->net.game_latency = host_latency;
+	h->net.game_lagging = host_lagging;
+	h->net.game_drop = host_drop;
+	h->net.host = h;
+	ui->net = &h->net;
+	ui->menus.multiplayer = 1;
+}
+
+#define NET_PAUSES 3
+
+void kp_t_net_game(KpT *T, KpGame *g, int64_t alpha, int64_t beta, int64_t alpha_storm)
+{
+	int k;
+	kp_t_eq(T, g->local_record, alpha, "the seat is Alpha's");
+	g->setup.multiplayer = 1;
+	g->setup.template_record[KP_TEMPLATE_ALLIES] = 1;
+	for (k = 0; k < KP_SETUP_SLOTS; k++) g->setup.storm[k] = -1;
+	g->setup.type[alpha] = g->setup.type[beta] = KP_CTRL_HUMAN;
+	g->players.controller[alpha] = g->players.controller[beta] = KP_CTRL_HUMAN;
+	g->setup.storm[alpha] = alpha_storm;
+	g->setup.storm[beta] = 1 - alpha_storm;
+	snprintf(g->setup.name[alpha], sizeof g->setup.name[alpha], "Alpha");
+	snprintf(g->setup.name[beta], sizeof g->setup.name[beta], "Beta");
+	g->pauses[alpha] = g->pauses[beta] = NET_PAUSES;
+	kp_set_alliance(g, alpha, beta, 0);
 }

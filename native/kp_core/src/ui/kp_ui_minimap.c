@@ -10,6 +10,7 @@
 
 #include "kp_fog_view.h"
 #include "kp_game.h"
+#include "kp_gametype.h"
 #include "kp_ids.h"
 #include "kp_images.h"
 #include "kp_int.h"
@@ -22,6 +23,7 @@
 #define TIMER_BLINK 3
 #define TIMER_PINGS 6
 #define REDRAW_PERIOD 1000
+#define REDRAW_PERIOD_NETWORK 2000
 #define VIEW_PERIOD 200
 #define BLINK_PERIOD 200
 #define PINGS_PERIOD 100
@@ -54,6 +56,23 @@
 #define ALLY_SQUARE 12
 #define ALLY_TEXT_FORMAT 0x11
 #define ALLY_TILED 0x20000000u
+#define ALLY_MEMBER_FIRST (-30)       /* teamfltr.bin's member names -30.. */
+#define ALLY_CHECK_FRAME 0xb          /* the boxes' wUser */
+#define ALLY_VICTORY_UNCHECKED 1      /* 0x6662a0: 1 an ally, 2 an ally for the allied victory */
+#define ALLY_VICTORY_CHECKED 2
+#define CMD_VISION 0x0d               /* SendVisionCommand 0x474330: {0x0d, WORD} */
+#define CMD_ALLIANCE 0x0e             /* SendAllianceCommand 0x474310: {0x0e, DWORD} */
+/* msgfltr.bin (atlas P14 0x441be0, 0x441ec0..0x442af0) */
+#define MSG_RADIO_PLAYER 1            /* the recipients' option buttons, the player (a team game's force) list */
+#define MSG_RADIO_ALL 2
+#define MSG_RADIO_ALLIES 3
+#define MSG_LIST 4
+#define MSG_LIST_FLAG 0x2000u
+#define BUTTON_MESSAGE 3
+#define S_DIPLOMACY 0x32c
+#define S_MESSAGING 0x32d
+#define TIMER_BUTTONS 5               /* MinimapButtonTimer 0x46d240 */
+#define BUTTONS_PERIOD 500
 #define GLU_REPLAY_PLAYERS 0xb6
 #define GLU_REVEAL_MAP 0xb7
 #define KP_UI_CHECKBOX_TYPE 4
@@ -686,10 +705,10 @@ static int image_interact(KpUi *ui, KpUiControl *c, KpUiEvent *e)
 	}
 }
 
-/* --- a replay's vision dialog (OpenAllianceDialog 0x441b70 and the alliance dialog of a replay, atlas P14) --- */
+/* --- the alliance dialog (OpenAllianceDialog 0x441b70: a network game's diplomacy, a replay's vision; atlas P14) and
+ * the message dialog (OpenMessageDialog 0x441be0) --- */
 
-/* DrawPlayerColorListItem 0x441c00: the player's minimap colour in a 12 x 12 square, then the name. */
-static void ally_name_draw(KpUi *ui, KpUiControl *c, int32_t x, int32_t y, const int16_t clip[4])
+void kp_ui_player_item_draw(KpUi *ui, KpUiControl *c, int32_t x, int32_t y, const int16_t clip[4])
 {
 	int32_t h = c->bottom - c->top;
 	(void)x;
@@ -699,6 +718,28 @@ static void ally_name_draw(KpUi *ui, KpUiControl *c, int32_t x, int32_t y, const
 	if (c->text != NULL) kp_ui_draw_control_text(ui, c, h + 9, 0, NULL, ALLY_TEXT_FORMAT);
 }
 
+static int checkbox_default(KpUi *ui, KpUiControl *c, KpUiEvent *e)
+{
+	return kp_ui_type_interact(KP_UI_CHECKBOX_TYPE)(ui, c, e);
+}
+
+/* AllianceCheckboxInteract 0x441a60: the row's alliance byte; checking makes it the local player's own (1, or 2 for
+ * the allied victory). */
+static int ally_box(KpUi *ui, KpUiControl *c, KpUiEvent *e)
+{
+	int32_t self = (int32_t)(c - ui->controls);
+	unsigned p = c->user % 12;
+	if (e->type == KP_UI_USER && e->code == KP_UI_CREATE && (c->flags & KP_UI_VISIBLE)) {
+		(void)kp_ui_send_user(ui, self, KP_UI_VALUE_CHANGED, ui->ally.stances[p] != 0);
+	} else if (e->type == KP_UI_USER && e->code == KP_UI_CLOSE) {
+		int64_t local = ui->game->local_player;
+		(void)checkbox_default(ui, c, e);
+		ui->ally.stances[p] = ui->ally.stances[p] != 0 ? 0 : local >= 0 && local < 12 ? ui->ally.stances[local] : 0;
+		return 1;
+	}
+	return checkbox_default(ui, c, e);
+}
+
 /* VisionCheckboxInteract 0x4426d0: the bit of the row's player in the mask being edited. */
 static int ally_vision_box(KpUi *ui, KpUiControl *c, KpUiEvent *e)
 {
@@ -706,23 +747,39 @@ static int ally_vision_box(KpUi *ui, KpUiControl *c, KpUiEvent *e)
 	if (e->type == KP_UI_USER && e->code == KP_UI_CREATE && (c->flags & KP_UI_VISIBLE)) {
 		(void)kp_ui_send_user(ui, self, KP_UI_VALUE_CHANGED, (ui->ally.vision >> (c->user & 0xf)) & 1);
 	} else if (e->type == KP_UI_USER && e->code == KP_UI_CLOSE) {
-		(void)kp_ui_type_interact(KP_UI_CHECKBOX_TYPE)(ui, c, e);
+		(void)checkbox_default(ui, c, e);
 		ui->ally.vision ^= (uint16_t)(1u << (c->user & 0xf));
 		return 1;
 	}
-	return kp_ui_type_interact(KP_UI_CHECKBOX_TYPE)(ui, c, e);
+	return checkbox_default(ui, c, e);
 }
 
-/* AlliedVictoryCheckboxInteract 0x441980 of a replay: "Reveal Entire Map" (gluAll 0xb7), checked by 0x67cc88. */
-static int ally_reveal_box(KpUi *ui, KpUiControl *c, KpUiEvent *e)
+/* AlliedVictoryCheckboxInteract 0x441980: a network game's Allied Victory (checked unless the local player's own byte
+ * is 1, disabled when the game allows no alliances; a toggle makes every ally's byte 2 or 1), a replay's "Reveal Entire
+ * Map" (gluAll 0xb7, checked by 0x67cc88). */
+static int ally_victory_box(KpUi *ui, KpUiControl *c, KpUiEvent *e)
 {
 	int32_t self = (int32_t)(c - ui->controls);
+	KpGame *g = ui->game;
+	int replay = g->w->replay != 0;
 	if (e->type == KP_UI_USER && e->code == KP_UI_CREATE) {
-		(void)kp_ui_send_user(ui, self, KP_UI_VALUE_CHANGED, ui->ally.reveal != 0);
-	} else if (e->type == KP_UI_USER && e->code == KP_UI_POST_LOAD) {
+		int64_t local = g->local_player;
+		int own = local >= 0 && local < 12 ? ui->ally.stances[local] : 0;
+		(void)kp_ui_send_user(ui, self, KP_UI_VALUE_CHANGED, replay ? ui->ally.reveal != 0 : own != ALLY_VICTORY_UNCHECKED);
+		if (!replay && !kp_setup_alliances_allowed(&g->setup)) kp_ui_set_enabled(ui, self, 0);
+	} else if (e->type == KP_UI_USER && e->code == KP_UI_CLOSE && !replay) {
+		int k;
+		(void)checkbox_default(ui, c, e);
+		for (k = 0; k < 12; k++) {
+			if (ui->ally.stances[k] != 0) {
+				ui->ally.stances[k] = (c->words36[0] & 0xff) != 0 ? ALLY_VICTORY_CHECKED : ALLY_VICTORY_UNCHECKED;
+			}
+		}
+		return 1;
+	} else if (e->type == KP_UI_USER && e->code == KP_UI_POST_LOAD && replay) {
 		kp_ui_set_control_text(ui, self, kp_ui_tbl(ui, KP_UI_GLUALL, GLU_REVEAL_MAP));
 	}
-	return kp_ui_type_interact(KP_UI_CHECKBOX_TYPE)(ui, c, e);
+	return checkbox_default(ui, c, e);
 }
 
 /* ShuffledPlayerSlots 0x441ae0: the slots of the active players in an order the game's seed shuffles (srand reseeds
@@ -742,33 +799,124 @@ static int ally_slots(KpUi *ui, int64_t out[8])
 	return n;
 }
 
-/* FillAllianceRowsFreeForAll 0x442320 of a replay: per slot, from the shuffle's last, its name and vision box; the
- * alliance boxes hidden. The rows left over are hidden. */
+static void show_row(KpUi *ui, int32_t c, uint32_t user)
+{
+	if (c < 0) return;
+	ui->controls[c].user = user;
+	ui->controls[c].wuser = ALLY_CHECK_FRAME;
+	kp_ui_show_control(ui, c);
+}
+
+/* A network game's alliance and vision boxes of a row: the alliance box disabled when the game allows no alliances or
+ * for a computer, the vision box for a computer or a player the local one may not share with. */
+static void row_boxes(KpUi *ui, int32_t d, int row, int64_t s)
+{
+	KpGame *g = ui->game;
+	int32_t ally = kp_ui_find_control(ui, d, (int16_t)(ALLY_BOX_FIRST + row));
+	int32_t vision = kp_ui_find_control(ui, d, (int16_t)(ALLY_VISION_FIRST + row));
+	int computer = g->setup.type[s] == KP_CTRL_COMPUTER;
+	show_row(ui, ally, (uint32_t)s);
+	if (ally >= 0 && (!kp_setup_alliances_allowed(&g->setup) || computer)) kp_ui_set_enabled(ui, ally, 0);
+	show_row(ui, vision, (uint32_t)s);
+	if (vision >= 0 && (computer || !kp_can_share_vision(g, g->local_player, s))) kp_ui_set_enabled(ui, vision, 0);
+}
+
+static void name_row(KpUi *ui, int32_t d, int row, int64_t s, const uint8_t *text)
+{
+	int32_t name = kp_ui_find_control(ui, d, (int16_t)(ALLY_NAME_FIRST - row));
+	if (name < 0) return;
+	ui->controls[name].user = (uint32_t)s;
+	ui->controls[name].draw = kp_ui_player_item_draw;
+	kp_ui_set_control_text(ui, name, text);
+	kp_ui_show_control(ui, name);
+}
+
+/* FillAllianceRowsFreeForAll 0x442320: per slot, from the shuffle's last, its name, alliance box and vision box; a
+ * network game leaves out the local player and (outside Top vs Bottom) the computers, a replay lists every player with
+ * its vision box only. The rows left over are hidden. */
 static void ally_rows(KpUi *ui, int32_t d)
 {
+	KpGame *g = ui->game;
 	int64_t slots[8];
-	int n = ally_slots(ui, slots), row;
-	for (row = 0; row < ALLY_ROWS; row++) {
-		int32_t name = kp_ui_find_control(ui, d, (int16_t)(ALLY_NAME_FIRST - row));
-		int32_t ally = kp_ui_find_control(ui, d, (int16_t)(ALLY_BOX_FIRST + row));
-		int32_t vision = kp_ui_find_control(ui, d, (int16_t)(ALLY_VISION_FIRST + row));
-		if (ally >= 0) kp_ui_hide_control(ui, ally);
-		if (row >= n) {
-			if (name >= 0) kp_ui_hide_control(ui, name);
-			if (vision >= 0) kp_ui_hide_control(ui, vision);
+	int n = ally_slots(ui, slots), row = 0, k;
+	int replay = g->w->replay != 0;
+	for (k = n - 1; k >= 0 && row < ALLY_ROWS; k--) {
+		int64_t s = slots[k];
+		if (!replay && (s == g->local_player || (!kp_setup_top_vs_bottom(&g->setup) && g->setup.type[s] == KP_CTRL_COMPUTER))) {
 			continue;
 		}
-		if (name >= 0) {
-			ui->controls[name].user = (uint32_t)slots[n - 1 - row];
-			ui->controls[name].draw = ally_name_draw;
-			kp_ui_set_control_text(ui, name, ui->slot_names[slots[n - 1 - row]]);
-			kp_ui_show_control(ui, name);
+		name_row(ui, d, row, s, replay ? ui->slot_names[s] : kp_ui_record_name(ui, s));
+		if (replay) {
+			int32_t ally = kp_ui_find_control(ui, d, (int16_t)(ALLY_BOX_FIRST + row));
+			if (ally >= 0) kp_ui_hide_control(ui, ally);
+			show_row(ui, kp_ui_find_control(ui, d, (int16_t)(ALLY_VISION_FIRST + row)), (uint32_t)s);
+		} else {
+			row_boxes(ui, d, row, s);
 		}
-		if (vision >= 0) {
-			ui->controls[vision].user = (uint32_t)slots[n - 1 - row];
-			kp_ui_show_control(ui, vision);
+		row++;
+	}
+	for (; row < ALLY_ROWS; row++) {
+		int16_t ids[3] = { (int16_t)(ALLY_NAME_FIRST - row), (int16_t)(ALLY_BOX_FIRST + row), (int16_t)(ALLY_VISION_FIRST + row) };
+		for (k = 0; k < 3; k++) {
+			int32_t c = kp_ui_find_control(ui, d, ids[k]);
+			if (c >= 0) kp_ui_hide_control(ui, c);
 		}
 	}
+}
+
+/* ForceHasComputer 0x4b2cf0: a slot 7..0 of the force is a computer (or a lobby's computer). */
+static int force_has_computer(const KpGame *g, int64_t force)
+{
+	int k;
+	for (k = 7; k >= 0; k--) {
+		if (g->setup.force[k] == force && (g->setup.type[k] == KP_CTRL_COMPUTER || g->setup.type[k] == KP_CTRL_LOBBY_COMPUTER)) {
+			return 1;
+		}
+	}
+	return 0;
+}
+
+/* FillAllianceRowsTeams 0x442490 (teamfltr.bin): per team, from the shuffle's last, a row with the force's name and,
+ * for another force than the local one, its boxes; the force's live humans' names from that row down; an empty row
+ * after. A force with a computer is left out. */
+static void team_rows(KpUi *ui, int32_t d)
+{
+	KpGame *g = ui->game;
+	int64_t slots[8], m;
+	int n = ally_slots(ui, slots), row = 0, k;
+	for (k = n - 1; k >= 0; k--) {
+		int64_t s = slots[k], force = g->setup.force[s];
+		if (force_has_computer(g, force)) continue;
+		name_row(ui, d, row, s, kp_ui_force_name(ui, force));
+		if (force != g->setup.force[g->local_player]) row_boxes(ui, d, row, s);
+		for (m = 0; m < 8; m++) {
+			int32_t member;
+			if (g->setup.force[m] != force || kp_player_finished(g, m) || !kp_storm_active(g, g->setup.storm[m])) continue;
+			if ((member = kp_ui_find_control(ui, d, (int16_t)(ALLY_MEMBER_FIRST - row))) >= 0) {
+				kp_ui_show_control(ui, member);
+				kp_ui_set_control_text(ui, member, kp_ui_record_name(ui, m));
+			}
+			row++;
+		}
+		row++;
+	}
+}
+
+static void queue_alliance(KpUi *ui)
+{
+	/* ApplyAllianceDialog 0x441cb0 of a network game: the bytes 2 bits each (SendAllianceCommand 0x474310), then the
+	 * vision mask (SendVisionCommand 0x474330) */
+	uint32_t stances = 0;
+	uint8_t a[5], v[3];
+	int k;
+	for (k = 0; k < 12; k++) stances |= (uint32_t)(ui->ally.stances[k] & 3) << (2 * k);
+	a[0] = CMD_ALLIANCE;
+	for (k = 0; k < 4; k++) a[1 + k] = (uint8_t)(stances >> (8 * k));
+	kp_ui_queue_command(ui, a, sizeof a);
+	v[0] = CMD_VISION;
+	v[1] = (uint8_t)ui->ally.vision;
+	v[2] = (uint8_t)(ui->ally.vision >> 8);
+	kp_ui_queue_command(ui, v, sizeof v);
 }
 
 /* AllianceDialogInteract 0x441dd0. */
@@ -777,14 +925,16 @@ static int ally_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 	int32_t self = (int32_t)(d - ui->controls);
 	if (e->type == KP_UI_USER) {
 		switch (e->code) {
-		case KP_UI_POST_LOAD: { /* CreateAllianceDialog 0x441e60: the procedures, "Replay Players", no "Allies" */
+		case KP_UI_POST_LOAD: { /* CreateAllianceDialog 0x441e60: the procedures; a replay's "Replay Players", no
+		                         * "Allies" */
 			KpUiInteract procs[ALLY_REVEAL];
 			int32_t c;
 			int k;
-			memset(procs, 0, sizeof procs);
+			for (k = ALLY_BOX_FIRST; k < ALLY_VISION_FIRST; k++) procs[k - 1] = ally_box;
 			for (k = ALLY_VISION_FIRST; k < ALLY_VISION_FIRST + 12; k++) procs[k - 1] = ally_vision_box;
-			procs[ALLY_REVEAL - 1] = ally_reveal_box;
+			procs[ALLY_REVEAL - 1] = ally_victory_box;
 			kp_ui_bind_interacts(ui, self, procs, ALLY_REVEAL);
+			if (!ui->game->w->replay) break;
 			if ((c = kp_ui_find_control(ui, self, ALLY_TITLE)) >= 0) {
 				kp_ui_set_control_text(ui, c, kp_ui_tbl(ui, KP_UI_GLUALL, GLU_REPLAY_PLAYERS));
 			}
@@ -795,16 +945,19 @@ static int ally_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 			int32_t c;
 			kp_ui_tile_frame(ui, self);
 			kp_ui_border_colour(ui, self);
-			ally_rows(ui, self);
+			if (kp_setup_team_game(&ui->game->setup)) team_rows(ui, self);
+			else ally_rows(ui, self);
 			if ((c = kp_ui_find_control(ui, self, ALLY_OK)) >= 0) kp_ui_set_user_word(&ui->controls[c], 3, ALLY_TILED);
 			if ((c = kp_ui_find_control(ui, self, ALLY_CANCEL)) >= 0) kp_ui_set_user_word(&ui->controls[c], 5, ALLY_TILED);
 			break;
 		}
 		case KP_UI_CLOSE: { /* ApplyAllianceDialog 0x441cb0 on OK, then the dialog ends */
 			int32_t c = kp_ui_find_control(ui, self, ALLY_REVEAL);
-			if (ui->result == ALLY_OK && ui->game != NULL) {
+			if (ui->result == ALLY_OK && ui->game != NULL && ui->game->w->replay) {
 				kp_replay_set_vision(ui->game, ui->ally.vision, c >= 0 && (ui->controls[c].words36[0] & 0xff) != 0);
 				redraw(ui, 0);
+			} else if (ui->result == ALLY_OK && ui->game != NULL) {
+				queue_alliance(ui);
 			}
 			kp_ui_destroy_dialog(ui, self);
 			ui->abort = 1;
@@ -821,23 +974,201 @@ static int ally_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 	return kp_ui_modeless_default(ui, d, e);
 }
 
-static void open_vision_dialog(KpUi *ui)
+static void open_alliance_dialog(KpUi *ui)
 {
-	/* OpenAllianceDialog 0x441b70 of a replay: the vision mask 0x67cc84, allyfltr.bin offline */
-	ui->ally.vision = (uint16_t)(ui->game->w->local_vision & 0xff);
-	ui->ally.reveal = ui->game->w->replay_reveal != 0;
-	ui->ally.dialog = kp_ui_open_modeless(ui, "rez\\allyfltr.bin", ally_proc);
+	/* OpenAllianceDialog 0x441b70: the local player's alliance bytes (0x534914) and vision mask (a replay's 0x67cc84,
+	 * else 0x5264cc); teamfltr.bin in a team game */
+	KpGame *g = ui->game;
+	int k;
+	memset(ui->ally.stances, 0, sizeof ui->ally.stances);
+	if (g->w->replay) {
+		ui->ally.vision = (uint16_t)(g->w->local_vision & 0xff);
+		ui->ally.reveal = g->w->replay_reveal != 0;
+	} else {
+		for (k = 0; k < 12; k++) ui->ally.stances[k] = (uint8_t)kp_alliance(g, g->local_player, k);
+		ui->ally.vision = (uint16_t)g->players.shared_vision[g->local_player];
+		ui->ally.reveal = 0;
+	}
+	ui->ally.dialog = kp_ui_open_modeless(ui, kp_setup_team_game(&g->setup) ? "rez\\teamfltr.bin" : "rez\\allyfltr.bin",
+		ally_proc);
 }
+
+/* AddForceToRecipientMask 0x442740: the Storm IDs of a force's humans. */
+static uint16_t force_recipients(const KpGame *g, int64_t force)
+{
+	uint16_t mask = 0;
+	int k;
+	for (k = 0; k < 8; k++) {
+		if (g->setup.type[k] == KP_CTRL_HUMAN && g->setup.force[k] == force) mask |= (uint16_t)(1u << (g->setup.storm[k] & 15));
+	}
+	return mask;
+}
+
+static int32_t message_list(KpUi *ui, int32_t dialog) { return kp_ui_find_control(ui, dialog, MSG_LIST); }
+
+/* The list's chosen player (a team game's force); 0 none. */
+static uint8_t listed_choice(KpUi *ui, int32_t list)
+{
+	int at = list >= 0 ? kp_ui_list_selection(ui, list) : KP_UI_LIST_NONE;
+	return at == KP_UI_LIST_NONE ? 0 : (uint8_t)kp_ui_list_data(ui, list, at);
+}
+
+/* MessageRadioInteract 0x442960: MessageRadioInit 0x4428b0 (the button of the choice selected, "Allies" disabled when
+ * the game allows no alliances) and MessageRadioSelect 0x442910 (the choice: the list's player, everyone, the allies). */
+static int message_radio(KpUi *ui, KpUiControl *c, KpUiEvent *e)
+{
+	int32_t self = (int32_t)(c - ui->controls);
+	KpUiInteract stock = kp_ui_type_interact(c->type);
+	if (e->type == KP_UI_USER && e->code == KP_UI_CREATE) {
+		uint8_t choice = ui->hud.message_choice;
+		if ((c->id == MSG_RADIO_PLAYER && choice < 8) || (c->id == MSG_RADIO_ALL && choice == KP_UI_CHAT_EVERYONE)
+			|| (c->id == MSG_RADIO_ALLIES && choice == KP_UI_CHAT_ALLIES)) {
+			(void)kp_ui_send_user(ui, self, KP_UI_VALUE_CHANGED, 1);
+		}
+		if (c->id == MSG_RADIO_ALLIES && !kp_setup_alliances_allowed(&ui->game->setup)) kp_ui_set_enabled(ui, self, 0);
+	} else if (e->type == KP_UI_USER && e->code == KP_UI_CLOSE) {
+		(void)stock(ui, c, e);
+		if (c->id == MSG_RADIO_PLAYER) ui->hud.message_choice = listed_choice(ui, message_list(ui, c->parent));
+		else if (c->id == MSG_RADIO_ALL) ui->hud.message_choice = KP_UI_CHAT_EVERYONE;
+		else if (c->id == MSG_RADIO_ALLIES) ui->hud.message_choice = KP_UI_CHAT_ALLIES;
+		return 1;
+	}
+	return stock(ui, c, e);
+}
+
+/* MessageListInteract 0x442af0 with FillMessagePlayerList 0x4429a0: the shuffle's humans from its last (a team
+ * game's forces' names, the force the item's value; else the players' names but the local one's), the choice's item
+ * selected (the first when it is not listed) or the remembered row; "Player" disabled when the list is empty. */
+static int message_list_proc(KpUi *ui, KpUiControl *c, KpUiEvent *e)
+{
+	int32_t self = (int32_t)(c - ui->controls);
+	if (e->type == KP_UI_USER && e->code == KP_UI_CREATE) {
+		KpGame *g = ui->game;
+		int64_t slots[8];
+		int n = ally_slots(ui, slots), k, count, at;
+		int team = kp_setup_team_game(&g->setup);
+		c->flags |= MSG_LIST_FLAG;
+		kp_ui_list_redraw(ui, self, 0);
+		kp_ui_list_clear(ui, self);
+		for (k = n - 1; k >= 0; k--) {
+			int64_t s = slots[k];
+			if (g->setup.type[s] == KP_CTRL_COMPUTER || (!team && s == g->local_player)) continue;
+			at = kp_ui_list_add(ui, self, team ? kp_ui_force_name(ui, g->setup.force[s]) : kp_ui_record_name(ui, s), 0);
+			if (at >= 0) kp_ui_list_set_data(ui, self, at, (uint32_t)(team ? g->setup.force[s] : s));
+		}
+		kp_ui_list_redraw(ui, self, 1);
+		count = kp_ui_list_count(ui, self);
+		if (ui->hud.message_choice < 8) {
+			for (at = 0; at < count && kp_ui_list_data(ui, self, at) != ui->hud.message_choice; at++) {}
+			kp_ui_list_select(ui, self, at < count ? at : 0);
+		} else if (count > 0) {
+			kp_ui_list_select(ui, self, ui->hud.message_index < count ? ui->hud.message_index : count - 1);
+		}
+		if (count == 0) {
+			int32_t radio = kp_ui_find_control(ui, c->parent, MSG_RADIO_PLAYER);
+			if (radio >= 0) kp_ui_set_enabled(ui, radio, 0);
+		}
+	}
+	return kp_ui_combo_proc(ui, c, e);
+}
+
+/* ApplyMessageDialog 0x441f00 on OK: the choice (the list's item for a player) as the chat's target, its recipients:
+ * everyone, the allies, both forces (a team game), or the chosen player and the sender. */
+static void apply_message(KpUi *ui, int32_t dialog)
+{
+	KpGame *g = ui->game;
+	int32_t list = message_list(ui, dialog);
+	int at = list >= 0 ? kp_ui_list_selection(ui, list) : KP_UI_LIST_NONE;
+	uint8_t choice;
+	ui->hud.message_index = (uint8_t)at;
+	if (ui->hud.message_choice < 8) ui->hud.message_choice = listed_choice(ui, list);
+	choice = ui->hud.message_choice;
+	ui->hud.chat_recipients = 0;
+	if (choice == KP_UI_CHAT_EVERYONE) {
+		ui->hud.chat_recipients = 0xffff;
+		ui->hud.chat_target = KP_UI_CHAT_EVERYONE;
+		return;
+	}
+	ui->hud.chat_target = choice;
+	if (choice == KP_UI_CHAT_ALLIES) {
+		ui->hud.chat_recipients = kp_ui_ally_recipients(ui);
+	} else if (kp_setup_team_game(&g->setup)) {
+		ui->hud.chat_recipients = (uint16_t)(force_recipients(g, g->setup.force[g->local_player]) | force_recipients(g, choice));
+	} else {
+		ui->hud.chat_recipients = (uint16_t)((1u << (g->setup.storm[g->local_record] & 31)) | (1u << (g->setup.storm[choice & 7] & 31)));
+	}
+}
+
+/* MessageDialogInteract 0x441fd0. */
+static int message_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
+{
+	int32_t self = (int32_t)(d - ui->controls);
+	if (e->type == KP_UI_USER) {
+		switch (e->code) {
+		case KP_UI_POST_LOAD: { /* the procedures of the buttons and the list (table 0x50333c) */
+			static const KpUiInteract PROCS[MSG_LIST] = { message_radio, message_radio, message_radio, message_list_proc };
+			kp_ui_bind_interacts(ui, self, PROCS, MSG_LIST);
+			break;
+		}
+		case KP_UI_CREATE: { /* InitMessageDialog 0x441ec0 */
+			int32_t c;
+			kp_ui_tile_frame(ui, self);
+			kp_ui_border_colour(ui, self);
+			if ((c = kp_ui_find_control(ui, self, ALLY_OK)) >= 0) kp_ui_set_user_word(&ui->controls[c], 3, ALLY_TILED);
+			if ((c = kp_ui_find_control(ui, self, ALLY_CANCEL)) >= 0) kp_ui_set_user_word(&ui->controls[c], 5, ALLY_TILED);
+			break;
+		}
+		case KP_UI_CLOSE:
+			if (ui->result == ALLY_OK && ui->game != NULL) apply_message(ui, self);
+			kp_ui_destroy_dialog(ui, self);
+			ui->abort = 1;
+			return 1;
+		case KP_UI_DESTROY:
+			kp_ui_close_modeless(ui, 0);
+			(void)kp_ui_modeless_default(ui, d, e);
+			return 1;
+		default: break;
+		}
+	}
+	return kp_ui_modeless_default(ui, d, e);
+}
+
+static void open_message_dialog(KpUi *ui)
+{
+	/* OpenMessageDialog 0x441be0 */
+	ui->hud.message_choice = ui->hud.chat_target;
+	(void)kp_ui_open_modeless(ui, "rez\\msgfltr.bin", message_proc);
+}
+
+/* The Storm game's players (UpdatePlayerCount 0x477220's SNetGetNumPlayers: the network's active ones, the seats'
+ * humans). */
+static int net_players(const KpGame *g)
+{
+	int k, n = 0;
+	for (k = 0; k < 8; k++) n += kp_storm_active(g, k);
+	return n;
+}
+
+/* MinimapButtonInit 0x46d130's flags: the diplomacy button (a network game of more than one player or Top vs Bottom, a
+ * replay) and the messaging button (a network game of more than one player). */
+static int diplomacy_shown(KpUi *ui)
+{
+	KpGame *g = ui->game;
+	return g->w->replay || (ui->menus.multiplayer && (net_players(g) > 1 || kp_setup_top_vs_bottom(&g->setup)));
+}
+
+static int messaging_shown(KpUi *ui) { return ui->menus.multiplayer && net_players(ui->game) > 1; }
 
 /* MinimapButtonProc 0x46d0e0 with MinimapButtonInit 0x46d130 (a campaign: only the terrain button; a replay: only
  * View Players). */
 /* ShowMinimapButtonTooltip 0x46e1e0 (with ShowTerrainButtonTooltip 0x46e880's terrain text): at the button's right
- * top. TODO: the multiplayer buttons' texts (messaging 0x32d, diplomacy 0x32c) */
+ * top. */
 static void button_tooltip(KpUi *ui, const KpUiControl *c)
 {
 	const KpUiControl *d = &ui->controls[c->parent];
-	if (c->id == BUTTON_PLAYERS && ui->game->w->replay) {
-		kp_ui_tooltip_text(ui, d->left + c->right, d->top + c->top, kp_ui_tbl(ui, KP_UI_STAT_TXT, S_VIEW_PLAYERS));
+	if (c->id == BUTTON_PLAYERS || c->id == BUTTON_MESSAGE) {
+		uint32_t id = c->id == BUTTON_MESSAGE ? S_MESSAGING : ui->game->w->replay ? S_VIEW_PLAYERS : S_DIPLOMACY;
+		kp_ui_tooltip_text(ui, d->left + c->right, d->top + c->top, kp_ui_tbl(ui, KP_UI_STAT_TXT, id));
 		return;
 	}
 	if (c->id != BUTTON_TERRAIN) {
@@ -866,21 +1197,25 @@ static int button_interact(KpUi *ui, KpUiControl *c, KpUiEvent *e)
 			mm(ui)->hovered = -1;
 			redraw(ui, 0);
 			button_tooltip(ui, c);
-		} else if (c->id == BUTTON_PLAYERS && ui->game->w->replay) {
+		} else if (c->id == BUTTON_PLAYERS) {
 			kp_ui_tooltip_hide(ui);
-			open_vision_dialog(ui);
-		} else {
-			kp_ui_tooltip_hide(ui); /* TODO: the message and alliance dialogs of a multiplayer game (0x441be0, 0x441b70) */
+			open_alliance_dialog(ui);
+		} else if (c->id == BUTTON_MESSAGE) {
+			kp_ui_tooltip_hide(ui);
+			open_message_dialog(ui);
 		}
 		return 1;
 	}
 	if (e->type == KP_UI_USER && e->code == KP_UI_CREATE) {
-		static const uint16_t FRAMES[3] = { 0x0003, 0x0053, 0x008c }; /* SetControlUserWord's table 0x508ba0[0, 1, 7] */
+		/* SetControlUserWord's table 0x508ba0[0, 6, 1, 7] */
+		static const uint16_t FRAMES[4] = { 0x0003, 0x0082, 0x0053, 0x008c };
 		int replay = ui->game != NULL && ui->game->w->replay;
-		if (c->id == 2) c->wuser = FRAMES[0];
-		else if (c->id == 4) c->wuser = replay ? FRAMES[2] : FRAMES[1];
-		/* TODO: multiplayer (messaging, diplomacy) */
-		kp_ui_set_visible(ui, self, replay ? c->id == BUTTON_PLAYERS : c->id == BUTTON_TERRAIN);
+		int diplo = diplomacy_shown(ui);
+		if (c->id == BUTTON_TERRAIN) c->wuser = FRAMES[0];
+		else if (c->id == BUTTON_MESSAGE) c->wuser = FRAMES[1];
+		else if (c->id == BUTTON_PLAYERS) c->wuser = replay ? FRAMES[3] : FRAMES[2];
+		kp_ui_set_visible(ui, self, c->id == BUTTON_TERRAIN ? !diplo : c->id == BUTTON_MESSAGE ? messaging_shown(ui)
+			: c->id == BUTTON_PLAYERS && diplo);
 	}
 	return kp_ui_type_interact(c->type)(ui, c, e);
 }
@@ -966,6 +1301,18 @@ static void layout(KpUi *ui)
 	m->clip[3] = (int16_t)(m->h + CONSOLE_Y - 1 + c->top);
 }
 
+/* MinimapButtonTimer 0x46d240: the buttons' visibility again as players leave; gone once there is no diplomacy. */
+static void timer_buttons(KpUi *ui, int32_t dialog)
+{
+	int diplo = diplomacy_shown(ui);
+	int32_t terrain = kp_ui_find_control(ui, dialog, BUTTON_TERRAIN), players = kp_ui_find_control(ui, dialog, BUTTON_PLAYERS);
+	int32_t message = kp_ui_find_control(ui, dialog, BUTTON_MESSAGE);
+	if (terrain >= 0) kp_ui_set_visible(ui, terrain, !diplo);
+	if (players >= 0) kp_ui_set_visible(ui, players, diplo);
+	if (message >= 0) kp_ui_set_visible(ui, message, messaging_shown(ui));
+	if (!diplo) kp_ui_delete_timer(&ui->timers, dialog, TIMER_BUTTONS);
+}
+
 /* MinimapDialogInit 0x46db30. */
 static void init_dialog(KpUi *ui, int32_t dialog)
 {
@@ -978,10 +1325,14 @@ static void init_dialog(KpUi *ui, int32_t dialog)
 	m->control = kp_ui_find_control(ui, dialog, C_IMAGE);
 	if (m->control < 0) return;
 	layout(ui);
-	(void)kp_ui_set_timer(&ui->timers, dialog, TIMER_REDRAW, REDRAW_PERIOD, kp_ui_callback(ui, timer_redraw), ui->now);
+	(void)kp_ui_set_timer(&ui->timers, dialog, TIMER_REDRAW, ui->menus.multiplayer ? REDRAW_PERIOD_NETWORK : REDRAW_PERIOD,
+		kp_ui_callback(ui, timer_redraw), ui->now);
 	(void)kp_ui_set_timer(&ui->timers, dialog, TIMER_VIEW, VIEW_PERIOD, kp_ui_callback(ui, timer_view), ui->now);
 	(void)kp_ui_set_timer(&ui->timers, dialog, TIMER_BLINK, BLINK_PERIOD, kp_ui_callback(ui, timer_blink), ui->now);
 	(void)kp_ui_set_timer(&ui->timers, dialog, TIMER_PINGS, PINGS_PERIOD, kp_ui_callback(ui, timer_pings), ui->now);
+	if (diplomacy_shown(ui)) {
+		(void)kp_ui_set_timer(&ui->timers, dialog, TIMER_BUTTONS, BUTTONS_PERIOD, kp_ui_callback(ui, timer_buttons), ui->now);
+	}
 	kp_ui_show_control(ui, m->control);
 	kp_ui_mark_dirty(ui, m->control);
 }

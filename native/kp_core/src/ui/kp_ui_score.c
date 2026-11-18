@@ -9,6 +9,7 @@
 #include <string.h>
 
 #include "kp_game.h"
+#include "kp_gametype.h"
 #include "kp_ids.h"
 #include "kp_text.h"
 
@@ -55,6 +56,7 @@
 #define ORIGINAL_NAMES 0x1d   /* network.tbl: the computers' names, terran, zerg, protoss by colour */
 #define EXPANSION_NAMES 0x91
 #define NO_STORM_PLAYER 0xffffffffu
+#define COMPUTER_STRING 0xb          /* network.tbl "Computer": a network game's computers in the roster */
 
 /* 0x508454, 0x50846c, 0x508484: the directories, glue states and music of race * 2 + victory (a replay: 1) */
 static const char *const DIRS[DIRECTORIES] = { "glue\\scoreZd\\", "glue\\scoreZv\\", "glue\\scoreTd\\", "glue\\scoreTv\\",
@@ -190,10 +192,12 @@ static int32_t sort_key(const KpUiScore *s, int i, int j)
 	if (!r->valid) return INVALID_KEY;
 	key = (uint32_t)r->value[TOTAL] * 8u + 8u - (uint32_t)j;
 	e = &s->data.roster[r->roster];
-	if (!is_computer(e->type) && e->storm == s->data.local_storm) {
-		/* TODO: the other Storm players' results (multiplayer) */
-		if (s->data.result == RESULT_VICTORY) key += WIN_BONUS;
-		else if (s->data.result == 2) key -= WIN_BONUS;
+	if (!is_computer(e->type)) {
+		/* the Storm player's result (a network game's), the local one's (offline: the only Storm player) */
+		int result = e->storm == s->data.local_storm ? s->data.result
+			: s->data.network && e->storm < 8 ? s->data.storm_results[e->storm] : 0;
+		if (result == RESULT_VICTORY) key += WIN_BONUS;
+		else if (result == 2) key -= WIN_BONUS;
 	}
 	return (int32_t)key;
 }
@@ -743,16 +747,19 @@ const uint8_t *kp_ui_record_name(KpUi *ui, int64_t p)
 void kp_ui_score_data(KpUi *ui, struct KpGame *g, int result, const char *player_name, uint32_t elapsed,
 	KpUiScoreData *out)
 {
-	/* CaptureScoreRoster 0x461e00 offline (the names of AssignDefaultComputerPlayerNames 0x4074a0; the forces' of the
-	 * map, Use Map Settings) and the arrays the screen reads. TODO: the team games' force names and score
-	 * indexes */
-	int p, a;
+	/* CaptureScoreRoster 0x461e00 (offline the names of AssignDefaultComputerPlayerNames 0x4074a0; a network game's
+	 * computers "Computer", its humans' lobby names and Storm IDs, a team game's "Team n" and its leader's scores; the
+	 * map's force names in Use Map Settings) and the arrays the screen reads */
+	int p, a, network = ui->menus.multiplayer && !g->w->replay, team = network && kp_setup_team_game(&g->setup);
+	const uint8_t *computer = kp_ui_tbl(ui, KP_UI_NETWORK, COMPUTER_STRING);
 	static const int PSTATS[KP_UI_SCORE_ARRAYS] = { -1, -1, -1, -1, 0x529124, 0x529154, 0x529184, 0x5291b4, 0x5291e4,
 		0x529274, 0x5292a4, 0x5292d4, 0x529304, 0x529334 };
 	memset(out, 0, sizeof *out);
 	out->result = result == 3 ? 1 : result == 2 ? 2 : result == 5 ? 3 : 0; /* KP_EVENT_GAME_RESULT's a */
 	out->race = (int)g->players.race[g->local_player];
-	out->local_storm = 0; /* offline: the human is Storm player 0, the computers have none */
+	/* offline: the human is Storm player 0, the computers have none */
+	out->local_storm = network && g->local_record >= 0 && g->local_record < 8 ? (uint32_t)g->setup.storm[g->local_record] : 0;
+	out->network = network;
 	out->replay = g->w->replay != 0; /* 0x66b414 */
 	out->mission = kp_scalar(g, KP_MISSION_INDEX); /* 0x526524; a loaded save (0x66b410) is the host's */
 	/* GetElapsedSeconds 0x47a780: the clock's seconds less those UnpauseGame 0x47cc10 took off (0x47a620); a replay's
@@ -765,8 +772,11 @@ void kp_ui_score_data(KpUi *ui, struct KpGame *g, int result, const char *player
 		out->player_colours[p] = (uint8_t)kp_ui_map_colour(ui, p); /* MapPlayerColor 0x41d560 */
 		/* the slot's type as it stands, a player RetirePlayer 0x4bd7a0 defeated (10, 11) listed beside the others */
 		if (is_human(c)) {
-			const char *name = out->replay && ui->slot_names[p][0] ? (const char *)ui->slot_names[p] : player_name; /* the header's */
+			const char *name = network ? (const char *)kp_ui_record_name(ui, p)
+				: out->replay && ui->slot_names[p][0] ? (const char *)ui->slot_names[p] : player_name; /* the header's */
 			(void)kp_text_copy_chars(e->name, sizeof e->name, name != NULL ? name : "", ROSTER_NAME_CHARS);
+		} else if (is_computer(c) && network) {
+			(void)kp_text_copy_chars(e->name, sizeof e->name, computer != NULL ? (const char *)computer : "", ROSTER_NAME_CHARS);
 		} else if (is_computer(c)) {
 			const char *name = computer_name(ui, (int)g->expansion, kp_ui_map_colour(ui, p), (int)g->players.race[p]);
 			(void)kp_text_copy_chars(e->name, sizeof e->name, name != NULL ? name : "", ROSTER_NAME_CHARS);
@@ -777,8 +787,12 @@ void kp_ui_score_data(KpUi *ui, struct KpGame *g, int result, const char *player
 		e->type = c;
 		e->race = (uint8_t)g->players.race[p];
 		e->index = (uint32_t)p;
-		e->storm = is_human(c) ? 0 : NO_STORM_PLAYER;
-		if (g->players.force[p] >= 1 && g->players.force[p] <= 4) {
+		e->storm = !is_human(c) ? NO_STORM_PLAYER : network ? (uint32_t)g->setup.storm[p] : 0;
+		if (team && g->setup.force[p] >= 1 && g->setup.force[p] <= 4) {
+			e->index = (uint32_t)g->setup.leader[g->setup.force[p]]; /* 0x5264ab: the team's scores */
+			(void)kp_text_copy_chars(e->force, sizeof e->force, (const char *)kp_ui_force_name(ui, g->setup.force[p]),
+				ROSTER_FORCE_CHARS);
+		} else if (g->players.force[p] >= 1 && g->players.force[p] <= 4) {
 			const char *force = kp_map_string(g, g->players.force_name[g->players.force[p] - 1]);
 			if (force != NULL) (void)kp_text_copy_chars(e->force, sizeof e->force, force, ROSTER_FORCE_CHARS);
 		}

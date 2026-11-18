@@ -1062,18 +1062,6 @@ static void on_cut(void *ctx, KpUi *ui, int32_t control, const uint8_t *text, si
 	kp_text_copy(k->text, sizeof k->text, (const char *)text);
 }
 
-/* The multiplayer's dialogs, which the product never opens (no engine path loads them): their texts are not measured. */
-static const char *const UNOPENED[] = { "rez\\allyfltr.bin", "rez\\teamfltr.bin", "rez\\netdlg.bin", NULL };
-
-static int unopened(const char *name)
-{
-	int k;
-	for (k = 0; UNOPENED[k] != NULL; k++) {
-		if (strcmp(UNOPENED[k], name) == 0) return 1;
-	}
-	return 0;
-}
-
 /* The glue's dialogs draw with the glue's font set, the others with the game's (kp_ui_font_set). */
 static int glue_dialog(const char *name)
 {
@@ -1165,7 +1153,6 @@ static void cut_texts(KpT *T, KpUi *ui, Cuts *cuts)
 		char name[64];
 		int32_t d, c;
 		snprintf(name, sizeof name, "%.*s", (int)ui->bins[b].name_len, ui->bins[b].name);
-		if (unopened(name)) continue;
 		cuts->dialog = name;
 		kp_ui_font_set(ui, !glue_dialog(name));
 		d = kp_ui_load_dialog(ui, name);

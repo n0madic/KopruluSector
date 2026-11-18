@@ -26,13 +26,15 @@ scripted wins of the campaign rows (tests/golden/oracle/plays), `replays` the or
 (tests/golden/oracle/replays, run in a replay's mode), `custom` the custom games of the emulator's Play Custom screen
 (tests/golden/oracle/custom: a map of the install with the lobby's setup), `public` the original playing the public
 replays (tests/golden/oracle/public: each replay's own map and header, run in a replay's mode), `public-full` the
-six of the multiplayer game types played to their end (tests/golden/oracle/public-full, a dump every 500th step);
---root defaults to the kind's emulator output.
+six of the multiplayer game types played to their end (tests/golden/oracle/public-full, a dump every 500th step),
+`koprulu-net` the original playing Koprulu's own network games' replays (tests/golden/oracle/koprulu-net, as the
+public replays); --root defaults to the kind's emulator output.
 --speech LOC: plays the emulator ran with a language's speech (emu/plays-LOC, tests/golden/oracle/plays-LOC), Koprulu
 takes the TIME of the language's maps in --speech-data (a StarCraft: Remastered install or a repack with the language's
 group; default KOPRULU_SCR).
 
-Usage: python3 tools/state_check.py [--kind initial|scenarios|runs|chains|plays|replays|custom|public|public-full]
+Usage: python3 tools/state_check.py [--kind initial|scenarios|runs|chains|plays|replays|custom|public|public-full|
+       koprulu-net]
        [--root STATES]
        [--only terran-m02,...] [--step N|A-B|A-B/K|all|all/K] [--write-golden] [--speech LOC [--speech-data DIR]]
 """
@@ -103,7 +105,15 @@ PUBLIC_REPLAYS = EMU_ROOT.parent / "replays-public"
 # a dump every 500th step.
 PUBLIC_FULL_ROOT = EMU_ROOT / "replays-public-full"
 PUBLIC_FULL_GOLDEN = ROOT / "tests" / "golden" / "oracle" / "public-full"
-PUBLIC_KINDS = ("public", "public-full")
+# Koprulu's own network games' replays (test_netplay with KP_NETPLAY_REPLAYS, phase N stage N4: each seat's record
+# of a game of Koprulu seats over the network), played by the original's Load Replay to their end with a dump at every
+# step (`python -m sc_emulator replay FILE OUT --state 1-N`); compared as the public replays are.
+KOPRULU_NET_ROOT = EMU_ROOT / "replays-koprulu-net"
+KOPRULU_NET_GOLDEN = ROOT / "tests" / "golden" / "oracle" / "koprulu-net"
+KOPRULU_NET_REPLAYS = EMU_ROOT.parent / "replays-koprulu-net"
+PUBLIC_KINDS = ("public", "public-full", "koprulu-net")
+# the .rep files of each kind of replay runs
+REPLAY_FILES = {"public": PUBLIC_REPLAYS, "public-full": PUBLIC_REPLAYS, "koprulu-net": KOPRULU_NET_REPLAYS}
 FINGERPRINT, FINGERPRINT_LATER = "fingerprint", "fingerprint_later"
 # The categories the fingerprint covers: those of the oracle's first version (kp_oracle.c FINGERPRINT_CATEGORIES, the
 # same list). The plays' raw dumps are gone, so a category added later stays out of it and their goldens stand; the
@@ -127,6 +137,7 @@ KINDS = {
     "custom": (CUSTOM_ROOT, CUSTOM_GOLDEN),
     "public": (PUBLIC_ROOT, PUBLIC_GOLDEN),
     "public-full": (PUBLIC_FULL_ROOT, PUBLIC_FULL_GOLDEN),
+    "koprulu-net": (KOPRULU_NET_ROOT, KOPRULU_NET_GOLDEN),
 }
 # A language's speech (`play ... --speech LOC:MISSION`, sc_emulator/speech.py, localization's stage L5): the plays the
 # emulator ran with the language's TIME go to EMU_ROOT/plays-<loc>, their goldens to tests/golden/oracle/plays-<loc>,
@@ -246,13 +257,13 @@ def screen_crcs(path: Path) -> dict:
     return out
 
 
-def public_replay(d: Path) -> Path:
-    """A public replay's run's .rep file: the run is named after its path under PUBLIC_REPLAYS as run.sh names it
+def public_replay(d: Path, files: Path = PUBLIC_REPLAYS) -> Path:
+    """A public replay's run's .rep file: the run is named after its path under files as run.sh names it
     (no suffix, SSCAIT-replays/ dropped, '/', '+' and ' ' as '-')."""
-    for f in sorted(PUBLIC_REPLAYS.rglob("*")):
+    for f in sorted(files.rglob("*")):
         if f.suffix.lower() != ".rep":
             continue
-        rel = str(f.relative_to(PUBLIC_REPLAYS).with_suffix("")).replace("SSCAIT-replays/", "")
+        rel = str(f.relative_to(files).with_suffix("")).replace("SSCAIT-replays/", "")
         if re.sub(r"[/+ ]", "-", rel) == d.name:
             return f
     raise FileNotFoundError(f"no public replay for {d.name}")
@@ -550,7 +561,7 @@ def check_mission(d: Path, index: dict, steps: list[int], write: bool, kind: str
             if (patch := custom_ai_patch(d)) is not None:
                 env["KP_AI_PATCH"] = str(patch)
         elif kind in PUBLIC_KINDS:
-            mission = f"maps/{public_replay(d)}"
+            mission = f"maps/{public_replay(d, REPLAY_FILES[kind])}"
         else:
             mission = f"scenarios/{name}" if kind == "scenarios" else index[state.header["mission"]]
         expansion = state.read(native_state.EXPANSION, 1)[0]
@@ -664,7 +675,7 @@ def check_runs(a: argparse.Namespace, ap: argparse.ArgumentParser, runs: list[tu
         extra, env = None, None
         if a.kind in PUBLIC_KINDS:
             try:
-                public_replay(d)
+                public_replay(d, REPLAY_FILES[a.kind])
             except FileNotFoundError:
                 log.info("%-14s not a public replay's run: skipped", name)  # a probe left in the runs' folder
                 continue

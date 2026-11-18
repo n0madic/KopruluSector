@@ -685,6 +685,7 @@ static const struct {
 	{ 3, 0x009a8709ec54eb16ULL }, /* VIEW: the units' view state out of UNIT (ADR 0023) */
 	{ 4, 0x0b8d118c10f9c685ULL }, /* SETP: the game's setup (ADR 0024) */
 	{ 5, 0x65b4b52f5940175dULL }, /* the network game's pauses left, a team game's lobby races and leaders (ADR 0025) */
+	{ 6, 0x9437b019adb3182cULL }, /* the setup's Storm IDs of slots 8..11, the seat's (phase N, stage N4) */
 };
 
 static void save_schema_matches_its_version(KpT *T)

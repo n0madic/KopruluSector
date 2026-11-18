@@ -510,15 +510,16 @@ static int on_data(KpTransfer *t, const uint8_t *p, size_t size, int sender)
 	return 1;
 }
 
-/* HandleChunkAckPacket 0x441520 */
-static int on_ack(KpTransfer *t, const uint8_t *p, size_t size)
+/* HandleChunkAckPacket 0x441520. The acknowledgement of a seat that is not the upload's receiver is ignored (the
+ * original asks only for the transfer): another seat could make this one send chunks nobody wants. */
+static int on_ack(KpTransfer *t, const uint8_t *p, size_t size, int sender)
 {
 	KpTransferActive *a;
 	int k;
 	if (size != 7) return 0;
 	if ((k = find_active(t, p[1], p[2])) < 0) return 0;
 	a = t->active[k];
-	if (!(a->state & KP_TRANSFER_UPLOADING)) return 0;
+	if (!(a->state & KP_TRANSFER_UPLOADING) || a->target != (uint8_t)sender) return 0;
 	if (kp_net_get32(p + 3) < a->size) {
 		a->next += send_chunk(t, a, t->ack_chunk);
 		return 1;
@@ -528,14 +529,15 @@ static int on_ack(KpTransfer *t, const uint8_t *p, size_t size)
 	return 1;
 }
 
-/* HandleSendStopPacket 0x4415a0 */
-static int on_stop(KpTransfer *t, const uint8_t *p, size_t size)
+/* HandleSendStopPacket 0x4415a0. Only the upload's receiver stops it (the original asks only for the transfer). */
+static int on_stop(KpTransfer *t, const uint8_t *p, size_t size, int sender)
 {
 	KpTransferActive *a;
 	int k;
 	if (size != 3) return 0;
 	if ((k = find_active(t, p[1], p[2])) < 0) return 0;
 	a = t->active[k];
+	if (a->target != (uint8_t)sender) return 0;
 	a->state &= (uint8_t)~KP_TRANSFER_UPLOADING;
 	send_status(t, a);
 	return 1;
@@ -550,8 +552,8 @@ int kp_transfer_dispatch(KpTransfer *t, const uint8_t *packet, size_t size, int 
 	case KP_TRANSFER_UPLOAD: return on_upload(t, packet, size, sender);
 	case KP_TRANSFER_CANCEL: return on_cancel(t, packet, size, sender);
 	case KP_TRANSFER_DATA: return on_data(t, packet, size, sender);
-	case KP_TRANSFER_ACK: return on_ack(t, packet, size);
-	case KP_TRANSFER_STOP: return on_stop(t, packet, size);
+	case KP_TRANSFER_ACK: return on_ack(t, packet, size, sender);
+	case KP_TRANSFER_STOP: return on_stop(t, packet, size, sender);
 	default: return 0;
 	}
 }

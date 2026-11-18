@@ -1069,8 +1069,9 @@ int kp_canvas_hud_panels(KpUi *ui, KpPanel *out, int max);
 /* Composes a frame for a w x h logical screen; returns 1 when something changed (c->dirty),
  * -1 out of memory. */
 int kp_canvas_compose(KpCanvas *c, KpUi *ui, int32_t w, int32_t h, const KpPanel *panels, int count, int layout);
-/* A fixed screen's frame: its dialog at (x, y) with the margins, or index 0 without a dialog (dialog -1). */
-int kp_canvas_compose_screen(KpCanvas *c, KpUi *ui, int32_t w, int32_t h, int32_t dialog, int32_t x, int32_t y);
+/* A fixed screen's frame with the original's 640 x 480 screen at (x, y): the screen's layers (kp_ui_screen_layers),
+ * each at its place on it, the glue's screen (kp_ui_glue_screen) with the margins; index 0 without a dialog. */
+int kp_canvas_compose_screen(KpCanvas *c, KpUi *ui, int32_t w, int32_t h, int32_t x, int32_t y);
 /* The place of a dialog in the last arrangement, or 0. */
 int kp_canvas_place(const KpCanvas *c, int32_t dialog, int32_t *x, int32_t *y);
 /* The canvas's index and opacity at a logical point (0, 0 outside). */

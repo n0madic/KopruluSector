@@ -42,6 +42,38 @@ int kp_netsave_probe(const uint8_t *data, size_t size, const char *file, KpNetGa
  * byte (0x536720) is not `expansion` (0 or 1). The header's version is not checked here (the probe's). */
 int kp_netsave_read(const uint8_t *data, size_t size, int expansion, KpNetGameSave *out);
 
+/*
+ * Koprulu's own network saves (phase N, stage N4): every seat writes the game's save (kp_session.h: the KPF container
+ * of kind SAVE, its native save and the custom map's MAPC) to the original's place and name, maps/save/<name>.mlt
+ * (.mlx with Brood War), with one more section, NETG: what ReadSaveHeaderAndGameBlock 0x499c50 gives the lobby of the
+ * original's file (KpNetGameSave), the expansion byte and the save's name (the header's +0x99). The lobby that resumes
+ * the game reads NETG only; the game's start reads the rest (kp_save_map, kp_save_load). The original reads such a file
+ * as unreadable, as Koprulu does the original's in the product (the plan leaves a mixed resume out).
+ *
+ * NETG, schema KP_NETSAVE_NETG_VERSION, KP_NETSAVE_NETG_SIZE bytes, little-endian: u32 version, u8 expansion, the name
+ * (KP_NETSAVE_NAME bytes, NUL padded), the game header (KP_NETGAME_HEADER bytes, kp_netgame_header_write), u32 the RNG
+ * state, the 12 player records of 0x6726c8 (36 bytes each: i32 slot, i32 Storm ID, u8 type, race, force, the name of
+ * KP_NETGAME_NAME bytes), u8 the local slot, the 12 types, races and forces, the 4 force names (KP_NETGAME_FORCE_NAME
+ * bytes each), u16 tileset, width, height, u32 the local player.
+ */
+#define KP_NETSAVE_NETG "NETG"
+#define KP_NETSAVE_NETG_VERSION 1
+#define KP_NETSAVE_NETG_SIZE 777
+/* NETG of a save: out holds KP_NETSAVE_NETG_SIZE bytes; name is the save's (cut to KP_NETSAVE_NAME - 1 bytes). */
+void kp_netsave_netg_write(const KpNetGameSave *s, int expansion, const char *name, uint8_t *out);
+/* NETG's payload read into out (name NULL or KP_NETSAVE_NAME bytes: the save's name): KP_NETSAVE_VALID,
+ * KP_NETSAVE_OTHER_VERSION (another schema), KP_NETSAVE_UNREADABLE (another size). */
+int kp_netsave_netg_read(const uint8_t *p, size_t size, KpNetGameSave *out, int *expansion, char *name);
+/* Whether a file's bytes are Koprulu's container (KPF), not the original's save. */
+int kp_netsave_koprulu(const uint8_t *data, size_t size);
+/* ValidateSaveFile 0x499750 and ReadSaveHeaderAndGameBlock 0x499c50 over Koprulu's network save: its container (CRCs
+ * checked) and NETG read; the display name from the file's name as kp_netsave_probe makes it (name NULL: not asked).
+ * KP_NETSAVE_VALID with out (NULL: not asked), else the probe's refusals; with expansion 0 or 1 a save of the other
+ * game is KP_NETSAVE_UNREADABLE (-1: not checked, the probe's). The save's own build and data are the caller's check
+ * (kp_save_check). */
+int kp_netsave_koprulu_read(const uint8_t *data, size_t size, const char *file, int expansion, KpNetGameSave *out,
+	char *name);
+
 #ifdef __cplusplus
 }
 #endif

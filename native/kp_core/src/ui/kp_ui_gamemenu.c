@@ -9,6 +9,8 @@
 #include <string.h>
 
 #include "kp_game.h"
+#include "kp_gametype.h"
+#include "kp_ids.h"
 
 #define ID_OK (-2)
 #define ID_CANCEL (-3)
@@ -18,6 +20,12 @@
 #define ID_NETWORK 4                 /* options.bin's Network button (multiplayer only) */
 #define ID_SAVE 1                    /* gamemenu.bin's Save Game and Load Game */
 #define ID_LOAD 2
+#define ID_PAUSE 7                   /* gamemenu.bin's Pause Game and Resume Game (a network game's) */
+#define ID_RESUME 8
+#define TIMER_NETWORK_MENU 1         /* NetworkGameMenuTimer 0x47b680 */
+#define NETWORK_MENU_PERIOD 200
+#define CMD_PAUSE 0x10               /* SendPauseCommand 0x473ff0, SendResumeCommand 0x473fc0 */
+#define CMD_RESUME 0x11
 #define ID_RESTART 1                 /* abrtmenu.bin's Restart Mission and Quit Mission */
 #define ID_QUIT 2
 #define ID_EXIT_REPLAY_TEXT (-13)    /* abrtmenu.bin's hidden "Exit Replay" label */
@@ -29,6 +37,11 @@
 #define CMD_RESTART 0x08             /* SendRestartCommand 0x474060 */
 #define EXIT_PROGRAM 2               /* RequestGameExit 0x444e00's codes */
 #define EXIT_QUIT_MISSION 4
+#define EXIT_VICTORY 6
+#define EXIT_DEFEAT 7
+#define RESULT_VICTORY 3             /* the committed results 0x5349e0 */
+#define ID_QUIT_TEXT (-10)           /* abrtmenu.bin's hidden quit labels: Quit Mission, End Mission (victory) */
+#define ID_END_TEXT (-11)
 #define GLUE_CAMPAIGN 6              /* 0x66a274 after a quit mission: the campaign menu (Brood War 0x16) */
 #define GLUE_EXPANSION_CAMPAIGN 22
 
@@ -110,8 +123,57 @@ static void hide(KpUi *ui, int32_t dialog, int16_t id)
 
 static void game_menu_handler(KpUi *ui, int32_t dialog);
 static void abort_menu_handler(KpUi *ui, int32_t dialog);
+
+/* The network game menu's Pause and Resume (InitNetworkGameMenu 0x47b4c0 outside a replay: Resume for a human seat;
+ * its timer NetworkGameMenuTimer 0x47b680: Resume whenever paused) and Save's cooldown (the timer recomputes it even
+ * when Save is hidden). */
+static void network_menu_buttons(KpUi *ui, int32_t dialog, int human_test)
+{
+	KpGame *g = ui->game;
+	int paused = kp_scalar(g, KP_PAUSED) != 0;
+	int32_t save = kp_ui_find_control(ui, dialog, ID_SAVE), pause = kp_ui_find_control(ui, dialog, ID_PAUSE);
+	int32_t resume = kp_ui_find_control(ui, dialog, ID_RESUME);
+	if (!human_test && save >= 0) kp_ui_set_enabled(ui, save, kp_ui_save_cooled(ui));
+	if (pause >= 0) kp_ui_set_visible(ui, pause, !g->w->replay && kp_can_pause(g, g->local_record) && !paused);
+	if (resume >= 0) {
+		kp_ui_set_visible(ui, resume, !g->w->replay && paused &&
+			(!human_test || kp_controller(g, g->local_record) == KP_CTRL_HUMAN));
+	}
+}
+
+static void network_menu_timer(KpUi *ui, int32_t dialog) { network_menu_buttons(ui, dialog, 0); }
+
+/* InitNetworkGameMenu 0x47b4c0 (a network game or a replay): Load hidden; Save for the lowest active player outside a
+ * tournament and a replay, disabled during the cooldown; Pause and Resume; the 200 ms timer outside a replay. */
+static void network_game_menu(KpUi *ui, int32_t dialog)
+{
+	KpGame *g = ui->game;
+	int32_t save = kp_ui_find_control(ui, dialog, ID_SAVE);
+	hide(ui, dialog, ID_LOAD);
+	if (save >= 0) {
+		if (!kp_ui_lowest_active(ui) || kp_setup_tournament(&g->setup) || g->w->replay) kp_ui_hide_control(ui, save);
+		else kp_ui_set_enabled(ui, save, kp_ui_save_cooled(ui));
+	}
+	network_menu_buttons(ui, dialog, 1);
+	if (!g->w->replay) {
+		(void)kp_ui_set_timer(&ui->timers, dialog, TIMER_NETWORK_MENU, NETWORK_MENU_PERIOD,
+			kp_ui_callback(ui, network_menu_timer), ui->now);
+	}
+}
 static void quit_mission_handler(KpUi *ui, int32_t dialog);
 static void options_menu_handler(KpUi *ui, int32_t dialog);
+
+/* RefreshQuitLabel 0x47b270 (no Battle.net): Quit's text from the hidden label of a replay, of a victory, or the
+ * plain one. */
+static void quit_label(KpUi *ui, int32_t dialog)
+{
+	KpGame *g = ui->game;
+	int16_t id = g->w->replay ? ID_EXIT_REPLAY_TEXT
+		: g->local_player >= 0 && g->local_player < 8 && g->results[g->local_player] == RESULT_VICTORY ? ID_END_TEXT
+		: ID_QUIT_TEXT;
+	int32_t label = kp_ui_find_control(ui, dialog, id), quit = kp_ui_find_control(ui, dialog, ID_QUIT);
+	if (label >= 0 && quit >= 0) kp_ui_set_control_text(ui, quit, ui->controls[label].text);
+}
 
 static void init_menu(KpUi *ui, int32_t dialog)
 {
@@ -123,16 +185,12 @@ static void init_menu(KpUi *ui, int32_t dialog)
 	kp_ui_bind_interacts(ui, dialog, buttons, MENU_BUTTONS);
 	tiled_child(ui, dialog, ID_OK);
 	tiled_child(ui, dialog, ID_CANCEL);
-	/* InitAbortMenu 0x47b140 and InitNetworkGameMenu 0x47b4c0 of a replay (TODO: (outside V1) a multiplayer game's) */
-	if (ui->game->w->replay && handler_of(ui) == abort_menu_handler) {
-		int32_t label = kp_ui_find_control(ui, dialog, ID_EXIT_REPLAY_TEXT), quit = kp_ui_find_control(ui, dialog, ID_QUIT);
+	/* InitAbortMenu 0x47b140 and InitNetworkGameMenu 0x47b4c0 of a network game or a replay (no Battle.net) */
+	if ((ui->game->w->replay || ui->menus.multiplayer) && handler_of(ui) == abort_menu_handler) {
 		hide(ui, dialog, ID_RESTART);
-		if (label >= 0 && quit >= 0) kp_ui_set_control_text(ui, quit, ui->controls[label].text); /* 0x47b270 */
+		quit_label(ui, dialog);
 	}
-	if (ui->game->w->replay && handler_of(ui) == game_menu_handler) {
-		hide(ui, dialog, ID_LOAD);
-		hide(ui, dialog, ID_SAVE); /* Pause and Resume stay hidden in a replay */
-	}
+	if ((ui->game->w->replay || ui->menus.multiplayer) && handler_of(ui) == game_menu_handler) network_game_menu(ui, dialog);
 	if (handler_of(ui) == quit_mission_handler) hide(ui, dialog, ID_OBSERVER);
 	if (handler_of(ui) == options_menu_handler && !ui->menus.multiplayer) hide(ui, dialog, ID_NETWORK);
 	ui->menu_depth++;
@@ -261,7 +319,13 @@ static void game_menu_handler(KpUi *ui, int32_t dialog)
 	case 4: open_help_menu(ui); break;
 	case 5: (void)kp_ui_open_modeless(ui, "rez\\objctdlg.bin", objectives_proc); break;
 	case 6: open_abort_menu(ui); break;
-	default: break; /* 7, 8: the multiplayer's pause and resume commands */
+	case ID_PAUSE: case ID_RESUME: { /* SendPauseCommand 0x473ff0 unpaused, SendResumeCommand 0x473fc0 paused */
+		uint8_t cmd = ui->result == ID_PAUSE ? CMD_PAUSE : CMD_RESUME;
+		set_handler(ui, game_menu_handler);
+		if ((kp_scalar(ui->game, KP_PAUSED) != 0) == (ui->result == ID_RESUME)) kp_ui_queue_command(ui, &cmd, 1);
+		break;
+	}
+	default: break;
 	}
 }
 
@@ -295,7 +359,12 @@ static void quit_mission_handler(KpUi *ui, int32_t dialog)
 	/* QuitMissionMenuHandler 0x47bff0 (rez\quit2mnu.bin) with its single player's tail: the exit code 4 and the
 	 * campaign menu next */
 	set_handler(ui, NULL);
-	if (ui->result == ID_OK) {
+	if (ui->result == ID_OK && ui->menus.multiplayer) { /* a network game's: the result's exit (victory kept) */
+		KpGame *g = ui->game;
+		ui->game_exit = g->local_player >= 0 && g->local_player < 8 && g->results[g->local_player] == RESULT_VICTORY
+			? EXIT_VICTORY : EXIT_DEFEAT;
+		end_dialog(ui, dialog);
+	} else if (ui->result == ID_OK) {
 		ui->game_exit = EXIT_QUIT_MISSION;
 		ui->menus.state = ui->menus.expansion ? GLUE_EXPANSION_CAMPAIGN : GLUE_CAMPAIGN;
 		end_dialog(ui, dialog);
@@ -357,13 +426,14 @@ static void open_help_menu(KpUi *ui) { open_menu(ui, "rez\\helpmenu.bin", help_m
 
 static void options_menu_handler(KpUi *ui, int32_t dialog)
 {
-	/* OptionsMenuHandler 0x47be40 (4: the multiplayer's network dialog) */
+	/* OptionsMenuHandler 0x47be40 (4: a network game's latency dialog, OpenNetworkDialog 0x46f990) */
 	set_handler(ui, NULL);
 	switch (ui->result) {
 	case ID_CANCEL: back_to(ui, dialog, open_game_menu); break;
 	case 1: kp_ui_options_dialog(ui, KP_UI_OPTIONS_SPEED); break;
 	case 2: kp_ui_options_dialog(ui, KP_UI_OPTIONS_SOUND); break;
 	case 3: kp_ui_options_dialog(ui, KP_UI_OPTIONS_VIDEO); break;
+	case ID_NETWORK: kp_ui_options_dialog(ui, KP_UI_OPTIONS_NETWORK); break;
 	default: break;
 	}
 }

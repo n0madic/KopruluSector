@@ -26,8 +26,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "kp_game.h"
 #include "kp_mission.h"
 #include "kp_snet.h"
+#include "kp_sync.h"
 #include "kp_template.h"
 #include "kp_transfer.h"
 
@@ -228,6 +230,8 @@ typedef struct {
 	 * seat's copy of the saved game `id` read into out; 1, or 0 when none is found or it does not read (NULL: this
 	 * seat has no saves, as a seat without the file) */
 	int (*find_save)(void *ud, uint32_t id, KpNetGameSave *out);
+	/* DisplayTimedMessage 0x46ac90 in game: a line shown for 7 seconds (an in-game message of type 1) */
+	void (*timed)(void *ud, const char *text);
 	void *ud;
 } KpNetGameHooks;
 
@@ -251,6 +255,7 @@ typedef struct {
 	/* the provider (InitNetworkProvider 0x4757e0) */
 	uint32_t max_message; /* 0x67265c: min(caps.maxmsg, 0x200) */
 	uint32_t transit;     /* 0x672660: the turns-in-transit target L */
+	uint32_t turns_per_second; /* the caps' +0x1c, the game's frames per turn (SetSpeedTable 0x445110) */
 
 	/* the session (net_glue) */
 	int host;             /* 0x672970: this seat created the game */
@@ -318,6 +323,19 @@ typedef struct {
 	const uint8_t *turn_data[KP_NETGAME_PLAYERS]; /* 0x672994 */
 	uint32_t turn_size[KP_NETGAME_PLAYERS];       /* 0x6729b4 */
 	uint32_t extra_latency; /* 0x672990 (stage N4) */
+
+	/* the game's turns (stage N4) */
+	KpSync sync;          /* the sync ring 0x673f20..0x675008 */
+	uint8_t desync;       /* 0x672bd8: a sender of this turn was out of sync */
+	uint8_t drop_flags[KP_NETGAME_PLAYERS]; /* 0x529042: the Storm IDs dropped as out of sync */
+	int lagging;          /* WaitForLaggingPlayers 0x47a810 runs: the turns are overdue, timeout.bin shows */
+	uint32_t lag_clock;   /* its last one-second tick */
+	uint32_t timeout_seconds; /* 0x675020: the countdown before Drop Players is enabled */
+	uint32_t timeout_closed;  /* 0x67502c: the last close of timeout.bin */
+	int timeout_shown;        /* timeout.bin opened before in this game (0x67502c was start - 120000 before) */
+	KpCommand *list;      /* the turn's commands (owned) */
+	int list_cap, list_count, list_failed;
+	uint8_t leave_cmd[KP_NETGAME_PLAYERS][2]; /* the leavers' 0x57 of the turn's list */
 
 	/* the map transfer */
 	KpTransfer transfer;
@@ -403,6 +421,24 @@ int kp_netgame_ready_room(const KpNetGame *ng);
  * the multiplayer byte, the header's player slots and the player records 0x6726c8 (Storm ID, type, race, force, name)
  * with the User Select slots; the start resolves the random races and slots from the 0x48 seed. */
 void kp_netgame_game_setup(const KpNetGame *ng, KpGameSetup *s);
+/* Whether the lobby resumes a saved game (its header's save ID; InitJoinedLobby 0x474c60 found and read this seat's
+ * copy): the game starts from that save, not from a map. */
+int kp_netgame_resumes(const KpNetGame *ng);
+/* What a network game's save keeps for the lobby that resumes it (SaveGame 0x498d20 in multiplayer, its items 3..6):
+ * WriteSaveTagAndHeader 0x49a8e0 updates the live header (its ID 0, the save's ID, the players and their maximum
+ * UpdatePlayerCount 0x477220 gives, the computers of slots 0..7 at +0x33) and keeps it with the game RNG's state
+ * (GetRngState 0x4781d0); the player table 0x6726c8 (the started game's records), the slot summary RecordSlotSummary
+ * 0x47e290 made at the start (the lobby's local slot, its slot types, the races after the random ones), the forces
+ * and their names, the map's tileset and size, and the seat's own record 0x508d54. */
+void kp_netgame_save_record(KpNetGame *ng, const KpGame *g, uint32_t save_id, KpNetGameSave *out);
+/* RestoreMultiplayerSaveSlots 0x4790b0 over a resumed game's started setup: the lobby's slots (lobby computers as
+ * computers, open and closed slots empty) back in the saved records the host's table 0x672608 names (every seat has
+ * it from 0x48), the Storm IDs of all but the humans -1, then in a team game each force whose saved leader slot lost
+ * its human and has no computer gets its human with the lowest Storm ID there (GetForceLeaderSlot 0x4b2930). The Storm
+ * maps, the local slot and the players the seats command (steps 5, 8..10) follow from the records
+ * (kp_setup_storm_slot, kp_setup_record_player). Runs on the save's MAPC setup before the start and on the loaded
+ * game's after its load, which brings back the saved records. */
+void kp_netgame_restore_slots(const KpNetGame *ng, KpGameSetup *s);
 /* GetCurrentMapPath 0x46b0b0: the map the game plays, the host's own or the copy a joiner found or received
  * (SetCurrentMapPath 0x46b8d0 from the transfer), "" none yet. */
 const char *kp_netgame_map_path(const KpNetGame *ng);
@@ -414,6 +450,72 @@ const char *kp_netgame_map_path(const KpNetGame *ng);
 void kp_netgame_briefing_arm(KpNetGame *ng);
 void kp_netgame_briefing_start(KpNetGame *ng, int abort);
 int kp_netgame_briefing_poll(KpNetGame *ng);
+
+/* The game's turns (stage N4; net_mgr.cpp P26, the sync ring P27), over the started game g:
+ *
+ *   - kp_netgame_game_begin: RunGame 0x445310's step 7 once the game primed: the Storm IDs' records and players of the
+ *     started game (StartGame 0x443f40's steps 8 and 11: 0x672898, 0x672878), the drop vote cleared unless a save
+ *     resumes (ClearDropVote 0x4775f0), the game loop active (SetGameLoopActive 0x476e00: the sync ring reset, its first
+ *     0x37 queued), the turn counter 0 and the first turns sent (SendTurns 0x476500);
+ *   - kp_netgame_game_turn: TurnManagerStep 0x476c00's first half, a poll of the turns: the turns received (their
+ *     leaves handled in g, HandlePlayerLeftGame 0x477a60), overdue ones waited for (WaitForLaggingPlayers 0x47a810,
+ *     whose modal loop is a state here: KP_NETGAME_WAIT until a turn arrives), the turns in transit topped up (each
+ *     sent turn followed by its 0x37), and the turn's commands as ExecuteGameTurn 0x4768a0 runs them: the Storm IDs from
+ *     7 down to 0, each command its sender's record (KpCommand.player, 0x508d48), the leavers' 0x57 first (recorded
+ *     for the replay, which plays it; a live game's 0x57 changes nothing). Each sender's 0x37 is checked against the
+ *     ring (CheckSyncCommand 0x47a510) and its keep-alive and sync commands counted (exactly 1);
+ *   - kp_netgame_game_turn_end, after the commands ran (kp_run_turn): ResolveDesync 0x47a630 when a sender was out of
+ *     sync, the turn counter, AdvanceSyncRing 0x47a490; then, at a poll (not RunGame's first turn), PollTurn 0x444cc0's
+ *     multiplayer branch: the minimap's statistics captured, the sprites' checksum requested;
+ *   - kp_netgame_game_draw after the turn's first frame (the draw that follows it in the original): the sprites'
+ *     checksum of the view whose top tile row is screen_tile_y (kp_sync_capture_sprites). */
+enum { KP_NETGAME_TURN, KP_NETGAME_WAIT, KP_NETGAME_NO_MEMORY };
+/* ComputeFramesPerTurn 0x445470 (and SetSpeedTable 0x445110's second half): the provider's turns per second asked
+ * again (SNetGetProviderCaps; a failure is the fatal network error 0x51), which the game's frames per turn come from
+ * (kp_hub_frames_per_turn). The original asks twice before RunGame: at the speed's setup (0x481040) and at StartGame
+ * 0x443900. 0, or -1 when the caps did not come. */
+int kp_netgame_game_caps(KpNetGame *ng);
+void kp_netgame_game_begin(KpNetGame *ng, KpGame *g);
+int kp_netgame_game_turn(KpNetGame *ng, KpGame *g, const KpCommand **list, int *count);
+void kp_netgame_game_turn_end(KpNetGame *ng, KpGame *g, int poll);
+void kp_netgame_game_draw(KpNetGame *ng, KpGame *g, int64_t screen_tile_y);
+/* timeout.bin (WaitForLaggingPlayers 0x47a810, while `lagging`): OpenTimeoutDialog 0x47aaa0's countdown, 45 seconds
+ * unless the dialog closed less than 2 minutes before (then 2 less than it had left), counted down a second at a time
+ * (TickTimeoutCountdown 0x47ab00); at 0 Drop Players (control 2) is enabled, which runs ResolveDesync 0x47a630
+ * (TimeoutDialogActivateCase 0x47aa68): 1 when it ran, 0 while the countdown runs or no dialog shows. */
+int kp_netgame_timeout_drop(KpNetGame *ng);
+/* RefreshLaggingPlayerList 0x47aba0's players: the slots 0..7 of human players whose Storm status is present without
+ * a turn (0x10000 without 0x20000), in slot order (timeout.bin shuffles them, kp_ui_timeout.c's
+ * ShuffleDwordsWithGameSeed 0x47a8d0); their count. */
+int kp_netgame_lagging_slots(const KpNetGame *ng, int slots[KP_NETGAME_PLAYERS]);
+/* ComputeGameResults 0x477270 (no Battle.net): each Storm ID's result (KP_NETGAME_WIN..KP_NETGAME_DISCONNECT, 0 none) from the committed
+ * results of its game player, a draw for all in a game of one player, most Use Map Settings games and a replay; then
+ * ResolveDesync's drops and the last other human standing's win (its committed result made victory). The local Storm
+ * ID's result is returned. */
+enum { KP_NETGAME_NO_RESULT, KP_NETGAME_WIN, KP_NETGAME_LOSS, KP_NETGAME_DRAW, KP_NETGAME_DISCONNECT };
+int kp_netgame_game_results(const KpNetGame *ng, KpGame *g, uint8_t out[KP_NETGAME_PLAYERS]);
+/* EndGame 0x443db0's network side: LeaveStormGame 0x477e50(0x40000001), the turn state reset (the game loop over). */
+void kp_netgame_game_end(KpNetGame *ng);
+/* QueueTurnCommand 0x476c80 of a local command in game: 0, or -1 when it is dropped (empty, past the message, or a
+ * full turn with too many turns in transit). */
+int kp_netgame_command(KpNetGame *ng, const uint8_t *bytes, size_t size);
+/* The chat command 0x5c (ExecuteTurnCommands 0x475d30's length 0x52): the ID, the sender's record, its text (80 bytes,
+ * NUL-terminated) */
+#define KP_NETGAME_CHAT_COMMAND 0x5c
+#define KP_NETGAME_CHAT_COMMAND_SIZE 0x52
+/* ReceiveMessages 0x476b80 in game, each frame before the frame's turn (GameLoop 0x4451f0's step 5): the waiting SNet
+ * messages drained, each a run of in-game messages of types 0..2 (0x4ef2b8; a type of 3 or more ends it, as does a
+ * message its handler refuses). HandleChatMessage 0x475b40: a chat line (type 0, SendInGameChat 0x473be0: {0, an
+ * unwritten byte, the text}) from an active player whose lines show (chat_mask) and who plays a record is shown
+ * (kp_chat_display) and handed to `record` as the chat command 0x5c the replay keeps under the local Storm ID; type 1
+ * is shown as "<From: name> text" by hooks.timed, type 2 is refused. kp_chat_display adds a sound and an event: run it
+ * under the session's guard. */
+/* SendInGameChat 0x473be0: a slash command (HandleChatSlashCommand 0x46fd90; in game its lines are timed messages
+ * and a whisper is the in-game message type 1), else the line as one direct message to each active Storm ID of
+ * `recipients` (WORD 0x5264ba): the sender sees its own line only when it is among them */
+void kp_netgame_game_chat(KpNetGame *ng, const char *text, uint16_t recipients);
+void kp_netgame_game_messages(KpNetGame *ng, KpGame *g, void (*record)(void *ud, const uint8_t *cmd, size_t size),
+	void *ud);
 
 /* Queries the screens make. */
 int kp_netgame_open_slots(const KpNetGame *ng);         /* CountOpenPlayerSlots 0x479550 */

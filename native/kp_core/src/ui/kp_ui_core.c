@@ -1002,7 +1002,7 @@ static int control_default(KpUi *ui, KpUiControl *c, KpUiEvent *e);
 #define FLAG_VK_HOTKEY 0x100u
 #define FLAG_CHAR_HOTKEY 0x200u
 #define FLAG_NO_FOCUS 0x20000000u
-#define DIALOG_NESTED 0x8000000u    /* a dialog composited into another dialog's bitmap */
+#define DIALOG_NESTED KP_UI_NESTED
 #define CHECK_BOX_FRAME 11          /* CheckBoxProc 0x4c74a0's wUser: the box's first theme frame */
 #define KEY_SHIFT 0x03           /* the key event's flags +0x0a: either Shift (GetModifierKeyState 0x440060) */
 #define KEY_UPPER_FLAG 0x08      /* the key event's flags +0x0a bit 3: the character hotkeys too */
@@ -1980,6 +1980,26 @@ int kp_ui_present(KpUi *ui)
 	ui->image_log.repaint = 0;
 	ui->region_count = 0;
 	return draws;
+}
+
+int32_t kp_ui_screen_layer(const KpUi *ui, int32_t d)
+{
+	for (d = d < 0 ? ui->open : ui->controls[d].next; d >= 0; d = ui->controls[d].next) {
+		uint32_t flags = ui->controls[d].flags;
+		if ((flags & KP_UI_VISIBLE) && !(flags & DIALOG_NESTED)) return d;
+	}
+	return -1;
+}
+
+int32_t kp_ui_glue_screen(const KpUi *ui)
+{
+	int32_t d, screen = -1, last = -1;
+	for (d = kp_ui_screen_layer(ui, -1); d >= 0; d = kp_ui_screen_layer(ui, d)) {
+		const KpUiControl *c = &ui->controls[d];
+		last = d;
+		if (c->left <= 0 && c->top <= 0 && c->right >= KP_UI_SCREEN_W - 1 && c->bottom >= KP_UI_SCREEN_H - 1) screen = d;
+	}
+	return screen >= 0 ? screen : last;
 }
 
 /* --- PCX --- */

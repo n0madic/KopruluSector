@@ -9,6 +9,7 @@
 #include <string.h>
 
 #include "kp_game.h"
+#include "kp_gametype.h"
 #include "kp_ids.h"
 
 #define RESOURCE_TIMER 1     /* InitResourceDialog 0x4a7850: UpdateResourcePanel every 20 ms */
@@ -542,6 +543,13 @@ static int create_leaderboard(KpUi *ui)
 #define TB_EDIT 6
 #define TB_MAX 78               /* TextboxEditCharFilter 0x4b3910 */
 #define TB_SINGLE 1
+#define TB_ALL 2                /* a network game's modes: to everyone, to the allies, to the message dialog's choice */
+#define TB_ALLIES 3
+#define TB_CHOSEN 4
+#define TB_WHISPER_TEMPLATE (-10) /* FormatWhisperLabel 0x4b3eb0's template */
+#define TB_WHISPER_PAD 8
+#define TB_MOD_SHIFT 0x03       /* the key event's flags +0x0a: either Shift, Ctrl */
+#define TB_MOD_CONTROL 0x04
 #define CMD_CHEAT 0x12
 #define EXIT_QUIT_MISSION 4     /* RequestGameExit 0x444e00's code: the glue's campaign menu or its pending mission */
 #define WARP_REFUSED 63         /* HandleMissionWarpCheat 0x40e030: no warp to mission 63 */
@@ -613,6 +621,51 @@ static int process_cheat(KpUi *ui, const uint8_t *text, int64_t *flags)
 	return warp_cheat(ui, text);
 }
 
+static uint16_t storm_bit(int64_t storm)
+{
+	int64_t shift = storm & 31; /* the shift is taken mod 32 into the WORD */
+	return shift < 16 ? (uint16_t)(1u << shift) : 0;
+}
+
+uint16_t kp_ui_ally_recipients(const KpUi *ui)
+{
+	KpGame *g = ui->game;
+	uint16_t mask = 0;
+	int64_t k, m;
+	if (g == NULL || g->local_player < 0 || g->local_player >= 8) return 0;
+	for (k = 0; k < 8; k++) {
+		if (kp_alliance(g, g->local_player, k) == 0) continue;
+		if (!kp_setup_team_game(&g->setup)) {
+			mask |= storm_bit(g->setup.storm[k]);
+			continue;
+		}
+		for (m = 0; m < 8; m++) {
+			if (g->setup.type[m] == KP_CTRL_HUMAN && g->setup.force[m] == g->setup.force[k]) mask |= storm_bit(g->setup.storm[m]);
+		}
+	}
+	return mask;
+}
+
+/* FormatWhisperLabel 0x4b3eb0: child -10's template with the chosen force's name (a team game's) or slot's name, its
+ * right edge past the text. */
+static void whisper_label(KpUi *ui, int32_t label)
+{
+	KpGame *g = ui->game;
+	int32_t t = kp_ui_find_control(ui, ui->hud.textbox, TB_WHISPER_TEMPLATE);
+	const char *format = t >= 0 && ui->controls[t].text != NULL ? (const char *)ui->controls[t].text : "%s";
+	const char *name, *at = strstr(format, "%s");
+	uint8_t target = ui->hud.chat_target;
+	name = (const char *)(g != NULL && kp_setup_team_game(&g->setup) ? kp_ui_force_name(ui, target)
+		: kp_ui_record_name(ui, target));
+	if (at == NULL) snprintf(ui->hud.whisper, sizeof ui->hud.whisper, "%s", format);
+	else snprintf(ui->hud.whisper, sizeof ui->hud.whisper, "%.*s%s%s", (int)(at - format), format, name, at + 2);
+	ui->controls[label].text = (const uint8_t *)ui->hud.whisper;
+	kp_ui_select_control_font(ui, &ui->controls[ui->hud.textbox]);
+	ui->controls[label].right = (int16_t)(ui->controls[label].left + kp_ui_text_width(&ui->text, ui->controls[label].text)
+		+ TB_WHISPER_PAD);
+	ui->text.font = NULL;
+}
+
 /* LayoutTextbox 0x4b3db0 (a single player's mode shows label 1). */
 static void textbox_layout(KpUi *ui)
 {
@@ -622,7 +675,7 @@ static void textbox_layout(KpUi *ui)
 	for (c = ui->controls[d].child; c >= 0; c = ui->controls[c].next) {
 		KpUiControl *k = &ui->controls[c];
 		if (k->id >= 1 && k->id <= TB_WHISPER) {
-			/* TODO: a multiplayer's whisper label (FormatWhisperLabel 0x4b3eb0) */
+			if (k->id == TB_WHISPER) whisper_label(ui, c);
 			if (mode != 0 && SHOWN_IN[k->id] == mode) {
 				kp_ui_show_control(ui, c);
 				label = c;
@@ -695,14 +748,29 @@ static int replay_chat(KpUi *ui, const char *text)
 	return 0;
 }
 
-/* ToggleTextbox 0x4b3bd0. */
-static void textbox_toggle(KpUi *ui, int submit)
+/* SendTextboxChat 0x4b3d60: the line to everyone, to the allies (BuildAllyRecipientMask 0x442070 now), or to the
+ * message dialog's recipients; the mask 0x5264ba itself is restored after. */
+static void textbox_chat(KpUi *ui, const char *text)
+{
+	uint16_t mask = ui->hud.textbox_mode == TB_ALL ? 0xffff
+		: ui->hud.textbox_mode == TB_ALLIES ? kp_ui_ally_recipients(ui) : ui->hud.chat_recipients;
+	if (ui->net != NULL && ui->net->game_chat != NULL) ui->net->game_chat(ui->net->host, text, mask);
+}
+
+/* ToggleTextbox 0x4b3bd0 (mods: the opening key's modifiers). */
+static void textbox_toggle(KpUi *ui, int submit, uint16_t mods)
 {
 	int32_t edit = kp_ui_find_control(ui, ui->hud.textbox, TB_EDIT);
 	if (ui->hud.textbox_mode == 0) {
+		int allies = ui->game != NULL && kp_setup_alliances_allowed(&ui->game->setup);
 		/* TODO: the IME and the player name (Storm 146) */
 		kp_ui_set_accelerators(ui, KP_UI_ACCEL_TEXT); /* SetAccelerators102 0x43f120 */
-		ui->hud.textbox_mode = TB_SINGLE;
+		if (!ui->menus.multiplayer) ui->hud.textbox_mode = TB_SINGLE;
+		else if (mods & TB_MOD_SHIFT) ui->hud.textbox_mode = TB_ALL;
+		else if (allies && (mods & TB_MOD_CONTROL)) ui->hud.textbox_mode = TB_ALLIES;
+		else if (ui->hud.chat_target == KP_UI_CHAT_EVERYONE) ui->hud.textbox_mode = TB_ALL;
+		else if (allies && ui->hud.chat_target == KP_UI_CHAT_ALLIES) ui->hud.textbox_mode = TB_ALLIES;
+		else ui->hud.textbox_mode = TB_CHOSEN;
 	} else {
 		uint8_t *text = edit >= 0 ? kp_ui_edit_buffer(ui, edit) : NULL;
 		if (submit && text != NULL) {
@@ -717,8 +785,8 @@ static void textbox_toggle(KpUi *ui, int submit)
 					cmd[4] = (uint8_t)(flags >> 24);
 					kp_ui_queue_command(ui, cmd, sizeof cmd); /* SendCheatCommand 0x473d40 */
 				}
-			} else if (ui->game->w->replay) {
-				(void)replay_chat(ui, (const char *)text); /* a replay's command first; the rest is a network game's */
+			} else if (!(ui->game->w->replay && replay_chat(ui, (const char *)text)) && ui->menus.multiplayer) {
+				textbox_chat(ui, (const char *)text); /* a replay's command first; the rest is a network game's */
 			}
 			/* a single player's other lines are discarded */
 		}
@@ -733,7 +801,7 @@ static void textbox_toggle(KpUi *ui, int submit)
 static int textbox_edit(KpUi *ui, KpUiControl *c, KpUiEvent *e)
 {
 	KpUiInteract stock = kp_ui_type_interact(c->type);
-	if (e->type == KP_UI_USER && e->code == KP_UI_FOCUS_LOST && ui->hud.textbox_mode != 0) textbox_toggle(ui, 0);
+	if (e->type == KP_UI_USER && e->code == KP_UI_FOCUS_LOST && ui->hud.textbox_mode != 0) textbox_toggle(ui, 0, 0);
 	if ((e->type == KP_UI_KEY_DOWN || e->type == KP_UI_KEY_REPEAT) && (e->key >= 0x21 && e->key <= 0x28)) return 0;
 	if (e->type == KP_UI_CHAR) {
 		const uint8_t *t = kp_ui_edit_buffer(ui, (int32_t)(c - ui->controls));
@@ -786,11 +854,11 @@ static int textbox_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 			return 1;
 		}
 		if (e->key == 13 || e->key == 10) {
-			textbox_toggle(ui, 1);
+			textbox_toggle(ui, 1, e->mods);
 			return 1;
 		}
 		if (e->key == 27 && ui->hud.textbox_mode != 0) {
-			textbox_toggle(ui, 0);
+			textbox_toggle(ui, 0, e->mods);
 			return 1;
 		}
 		break;
@@ -870,7 +938,8 @@ static int create_console(KpUi *ui, KpGame *g, const uint32_t *create_ticks)
 	if (create_ticks != NULL) memcpy(ui->hud.create_tick, create_ticks, sizeof ui->hud.create_tick);
 	ui->hud.resources = -1;
 	ui->hud.replay_viewer = -1;
-	ui->ally.dialog = -1; /* a replay's vision dialog: none open */
+	ui->ally.dialog = -1; /* the alliance dialog: none open */
+	ui->timeout.dialog = -1;
 	ui->hud.leaderboard = -1;
 	ui->hud.textbox = -1;
 	ui->status.panel = -1;
@@ -883,6 +952,10 @@ static int create_console(KpUi *ui, KpGame *g, const uint32_t *create_ticks)
 	if (g == NULL) return 0;
 	ui->hud.live = 1;
 	ui->from_save = 0;
+	if (!from_save) { /* InitLocalPlayerAndChatTargets 0x443be0 (a save's game keeps the process's: 0) */
+		ui->hud.chat_recipients = kp_ui_ally_recipients(ui);
+		ui->hud.chat_target = kp_setup_top_vs_bottom(&g->setup) && !g->w->replay ? KP_UI_CHAT_ALLIES : KP_UI_CHAT_EVERYONE;
+	}
 	/* a new game on the same interface (the glue's): RunGame 0x445310 loops until RequestGameExit 0x444e00 sets the
 	 * code again, InitTriggerState 0x4be240 forgets the result dialog's answer (0x4bcf30) and StartElapsedClock
 	 * 0x47a7c0 the paused seconds */

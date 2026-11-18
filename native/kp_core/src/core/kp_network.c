@@ -7,6 +7,8 @@
 #include "kp_gametype.h"
 
 #define LEFT_GAME_STRING 0x4b /* rez\network.tbl: "%s has left the game." */
+#define DROPPED_STRING 0x4c   /* "%s was dropped from the game." */
+#define DROP_REASON 0x40000006u /* ResolveDesync 0x47a630's SNetDropPlayer reason */
 
 void kp_clear_allied_targets(KpGame *g, int64_t p)
 {
@@ -32,9 +34,7 @@ void kp_command_alliance(KpGame *g, int64_t player, uint32_t stances)
 	 * interface's */
 }
 
-/* CanShareVisionWith 0x447600: in a replay always; an observer shares none, every player may share with an observer;
- * else when the game allows alliances. */
-static int may_share_vision(KpGame *g, int64_t player, int64_t with)
+int kp_can_share_vision(KpGame *g, int64_t player, int64_t with)
 {
 	if (g->w->replay) return 1;
 	if (kp_controller(g, player) == KP_CTRL_OBSERVER) return 0;
@@ -47,7 +47,7 @@ void kp_command_vision(KpGame *g, int64_t player, int64_t mask)
 	int64_t p;
 	if (player < 0 || player >= 8) kp_game_fail(g, "network: the vision of player %lld", (long long)player);
 	for (p = 7; p >= 0; p--) {
-		if (kp_band(mask, (int64_t)1 << p) != 0 && !may_share_vision(g, player, p)) return;
+		if (kp_band(mask, (int64_t)1 << p) != 0 && !kp_can_share_vision(g, player, p)) return;
 	}
 	g->players.shared_vision[player] = kp_bor(kp_bor(kp_band(mask, 0xff), kp_band(g->players.shared_vision[player], 0xff00)),
 		(int64_t)1 << player);
@@ -59,4 +59,41 @@ void kp_command_leave(KpGame *g, int64_t player)
 	kp_event(g, KP_EVENT_PLAYER_MESSAGE, LEFT_GAME_STRING, player, 0, NULL);
 	kp_trigger_player_left(g, player, 0);
 	kp_clear_selection_row(g, player);
+}
+
+void kp_set_net_state(KpGame *g, const uint8_t state[8])
+{
+	int k;
+	for (k = 0; k < 8; k++) g->net_state[k] = state[k];
+	g->has_net_state = 1;
+}
+
+/* CountActiveHumansInForce 0x4b2b50: the humans of the force whose Storm IDs are still active */
+static int active_humans(KpGame *g, int64_t force)
+{
+	int s, n = 0;
+	for (s = 7; s >= 0; s--) {
+		int64_t storm = g->setup.storm[s];
+		if (g->setup.force[s] == force && g->setup.type[s] == KP_CTRL_HUMAN && storm >= 0 && storm < 8
+			&& g->net_state[storm] == KP_NET_ACTIVE)
+			n++;
+	}
+	return n;
+}
+
+int kp_network_player_left(KpGame *g, int64_t storm, uint32_t reason)
+{
+	int64_t record = kp_setup_storm_slot(&g->setup, storm), player, row;
+	int team = kp_setup_team_game(&g->setup), dropped = reason == DROP_REASON;
+	if (record < 0) return 0; /* no record of the Storm ID: the original reads past its slots, Koprulu does nothing */
+	player = kp_setup_record_player(&g->setup, record);
+	row = team ? record : player;
+	kp_event(g, KP_EVENT_PLAYER_MESSAGE, dropped ? DROPPED_STRING : LEFT_GAME_STRING, record, 0, NULL);
+	if (team && active_humans(g, g->setup.force[record]) != 0) {
+		kp_clear_selection_row(g, row);
+		return 0;
+	}
+	kp_trigger_player_left(g, player, dropped);
+	kp_clear_selection_row(g, row);
+	return dropped;
 }

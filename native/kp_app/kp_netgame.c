@@ -5,8 +5,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "kp_gametype.h"
 #include "kp_ids.h"
 #include "kp_net.h"
+#include "kp_record.h"
 
 /* The pending lobby messages other than 0x3e and 0x3f, in FlushLobbyMessages 0x470460's order (0x3e and 0x3f flush
  * between DOWNLOAD and RACE) */
@@ -98,6 +100,18 @@ static void format1(char *out, size_t size, const char *format, const char *arg)
 	}
 	out[n] = 0;
 }
+
+/* DisplayTimedMessage 0x46ac90 in game */
+static void timed(KpNetGame *ng, const char *text)
+{
+	if (ng->hooks.timed) ng->hooks.timed(ng->hooks.ud, text);
+}
+
+/* The in-game messages (0x4ef2b8): their types, the text's offset, its longest with the terminator */
+enum { GAME_CHAT, GAME_CHAT_FROM, GAME_MESSAGE_TYPES = 3 };
+#define GAME_CHAT_TEXT 2
+#define GAME_CHAT_MAX 0x50
+#define GAME_LINE 256 /* the received whisper's line (HandleChatMessage 0x475b40) */
 
 static const uint8_t *template_record(const KpNetGame *ng) { return ng->header.template_record; }
 static int tbyte(const KpNetGame *ng, int at) { return template_record(ng)[at]; }
@@ -708,6 +722,26 @@ static void set_lobby_state(KpNetGame *ng, uint8_t state)
 	if (state == KP_LOBBY_ENTERED) ng->countdown = 0;
 }
 
+/* QueueSyncCommand 0x47a300: the current ring record's 0x37 into the outgoing turn */
+static int queue_turn_command(KpNetGame *ng, const uint8_t *data, uint32_t size);
+
+static void queue_sync(KpNetGame *ng)
+{
+	uint8_t cmd[KP_SYNC_SIZE];
+	kp_sync_command(&ng->sync, cmd);
+	(void)queue_turn_command(ng, cmd, KP_SYNC_SIZE);
+}
+
+/* The outgoing turn sent (SendTurn 0x474830), an empty one as the keep-alive; in game the next turn starts with its
+ * sync command (SendTurns 0x476500, FlushTurn 0x476da0) */
+static void send_out(KpNetGame *ng)
+{
+	if (ng->out_size == 0) ng->out[ng->out_size++] = KP_LOBBY_KEEP_ALIVE;
+	send_turn(ng, ng->out, ng->out_size);
+	ng->out_size = 0;
+	if (ng->in_game) queue_sync(ng);
+}
+
 /* SendTurns 0x476500 */
 static void send_turns(KpNetGame *ng)
 {
@@ -719,52 +753,57 @@ static void send_turns(KpNetGame *ng)
 	target = ng->transit + (ng->in_game ? ng->extra_latency : 0);
 	while (n < target) {
 		n++;
-		if (ng->out_size == 0) ng->out[ng->out_size++] = KP_LOBBY_KEEP_ALIVE;
-		send_turn(ng, ng->out, ng->out_size);
-		ng->out_size = 0;
-		/* TODO: stage N4 queues the sync command 0x37 here in game (0x47a300) */
+		send_out(ng);
 	}
 }
 
-/* QueueTurnCommand 0x476c80 */
-static void queue_turn_command(KpNetGame *ng, const uint8_t *data, uint32_t size)
+/* QueueTurnCommand 0x476c80: 1 queued, 0 dropped */
+static int queue_turn_command(KpNetGame *ng, const uint8_t *data, uint32_t size)
 {
 	if (ng->out_size + size > ng->max_message) {
 		uint32_t n = 0;
-		if (!ng->in_game) return;
+		if (!ng->in_game) return 0;
 		if (!ng->net.turns_in_transit(ng->net.ud, &n)) {
 			report_storm(ng, KP_NETTBL_NETWORK_ERROR, 1);
-			return;
+			return 0;
 		}
-		if (n >= TURN_MAX_IN_TRANSIT - ng->transit) return;
-		/* TODO: stage N4 sends the full turn first (0x476da0) */
-		return;
+		if (n >= TURN_MAX_IN_TRANSIT - ng->transit) return 0;
+		send_out(ng); /* FlushTurn 0x476da0 */
+		if (ng->out_size + size > sizeof ng->out) return 0; /* Koprulu's bound: the original copies past its buffer */
 	}
 	memcpy(ng->out + ng->out_size, data, size);
 	ng->out_size += size;
+	return 1;
 }
 
 static void handle_left_lobby(KpNetGame *ng, int id, uint32_t reason);
+static void handle_left_game(KpNetGame *ng, KpGame *g, int id, uint32_t reason);
 
-/* ProcessLeaveReasons 0x477da0 */
-static void process_leave_reasons(KpNetGame *ng)
+/* ProcessLeaveReasons 0x477da0: g the game in game (mode 3), NULL in the glue */
+static void process_leave_reasons(KpNetGame *ng, KpGame *g)
 {
 	int id;
 	for (id = 0; id < KP_NETGAME_PLAYERS; id++) {
 		uint32_t reason = ng->leave_reasons[id];
 		if (!reason) continue;
-		/* TODO: stage N4 hands a leave in game to HandlePlayerLeftGame 0x477a60 */
-		if (!ng->in_game) handle_left_lobby(ng, id, reason);
+		if (g) handle_left_game(ng, g, id, reason);
+		else if (!ng->in_game) handle_left_lobby(ng, id, reason);
 		ng->leave_reasons[id] = 0;
 	}
 }
 
-/* ReceiveTurns 0x4746a0 and 0x475ac0 */
-static int receive_turns(KpNetGame *ng)
+/* ReceiveTurns 0x4746a0 and 0x475ac0 (the leaves handled with the game RNG enabled) */
+static int receive_turns(KpNetGame *ng, KpGame *g)
 {
 	uint32_t t = now(ng), e;
 	if (ng->net.receive_turns(ng->net.ud, 0, KP_NETGAME_PLAYERS, ng->turn_data, ng->turn_size, ng->status)) {
-		process_leave_reasons(ng);
+		if (g) {
+			uint32_t was = kp_rng_game_set_enabled(g->rng, 1);
+			process_leave_reasons(ng, g);
+			kp_rng_game_set_enabled(g->rng, was);
+		} else {
+			process_leave_reasons(ng, NULL);
+		}
 		ng->last_turn = t;
 		ng->received = 1;
 		return 1;
@@ -777,11 +816,10 @@ static int receive_turns(KpNetGame *ng)
 
 static void execute_lobby_commands(KpNetGame *ng);
 
-/* TurnManagerStep 0x476c00 (the lobby's half) */
+/* TurnManagerStep 0x476c00 before the game loop */
 static int turn_step(KpNetGame *ng)
 {
-	receive_turns(ng);
-	/* TODO: stage N4 waits for the lagging players in game (0x47a810) */
+	receive_turns(ng, NULL);
 	if (!ng->received) return 0;
 	send_turns(ng);
 	execute_lobby_commands(ng);
@@ -807,6 +845,324 @@ static void resolve_desync(KpNetGame *ng)
 	for (id = 0; id < KP_NETGAME_PLAYERS; id++)
 		if ((ng->status[id] & STATUS_PRESENT) && !(ng->status[id] & STATUS_RESPONDING))
 			drop_player(ng, id, KP_NETGAME_DROP_DESYNC);
+}
+
+/* --- the game's turns (net_mgr.cpp, net_misc.cpp; stage N4) --- */
+
+#define LEAVE_COMMAND 0x57
+#define LATENCY_COMMAND 0x55
+#define LATENCY_MAX 2 /* Extra High */
+
+/* The turn's list with one more command of `record`; 0, or -1 out of memory */
+static int add_command(KpNetGame *ng, int64_t record, const uint8_t *cmd, size_t n)
+{
+	KpCommand *c;
+	if (ng->list_count == ng->list_cap) {
+		int cap = ng->list_cap ? 2 * ng->list_cap : 64;
+		KpCommand *l = (KpCommand *)realloc(ng->list, (size_t)cap * sizeof *l);
+		if (!l) return -1;
+		ng->list = l;
+		ng->list_cap = cap;
+	}
+	c = &ng->list[ng->list_count++];
+	c->player = record;
+	c->bytes = cmd;
+	c->size = n;
+	return 0;
+}
+
+/* HandlePlayerLeftGame 0x477a60 outside a replay: the leaver's record marked left (MarkNetPlayerLeft 0x4780c0, the
+ * game's copy too), its {0x57, reason} recorded under its Storm ID (the turn's list: its record's command, which a live
+ * game does not run), the game's side (kp_network_player_left) and the drop flag. The player count 0x5264c1 is
+ * SNet's, which the interface asks. */
+static void handle_left_game(KpNetGame *ng, KpGame *g, int id, uint32_t reason)
+{
+	int r = ng->storm_index[id];
+	ng->players[id].state = 2;
+	g->net_state[id] = KP_NET_LEFT;
+	if (r < KP_NETGAME_PLAYERS) {
+		ng->leave_cmd[id][0] = LEAVE_COMMAND;
+		ng->leave_cmd[id][1] = (uint8_t)reason;
+		if (add_command(ng, r, ng->leave_cmd[id], 2) != 0) ng->list_failed = 1;
+	}
+	if (kp_network_player_left(g, id, reason)) ng->drop_flags[id] = 1;
+}
+
+void kp_netgame_game_begin(KpNetGame *ng, KpGame *g)
+{
+	uint8_t state[KP_NETGAME_PLAYERS];
+	int id;
+	/* StartGame 0x443f40's steps 8 and 11: each Storm ID's record and the player it plays as (a team's leader) */
+	for (id = 0; id < KP_NETGAME_PLAYERS; id++) {
+		int64_t r = kp_setup_storm_slot(&g->setup, id);
+		ng->storm_index[id] = r < 0 ? NO_SLOT : (uint8_t)r;
+		ng->storm_slot[id] = r < 0 ? NO_SLOT : (uint8_t)kp_setup_record_player(&g->setup, r);
+		state[id] = ng->players[id].state;
+	}
+	kp_set_net_state(g, state);
+	if (!saving(ng)) { /* ClearDropVote 0x4775f0 */
+		ng->drop_vote = 0;
+		memset(ng->drop_flags, 0, sizeof ng->drop_flags);
+	}
+	ng->save_open = 0; /* CloseSaveFile 0x498a50: RunGameSession 0x467ba0 closes the save after StartGame */
+	ng->desync = 0;
+	ng->lagging = 0;
+	ng->timeout_shown = 0;
+	/* RunGame 0x445310's step 7: SetGameLoopActive 0x476e00 (the ring reset, its first 0x37), the turns from 0, the
+	 * first turns sent */
+	ng->in_game = 1;
+	kp_sync_reset(&ng->sync, g, 1);
+	queue_sync(ng);
+	ng->turn = 0;
+	send_turns(ng);
+}
+
+typedef struct {
+	KpNetGame *ng;
+	int id, count, failed;
+	int64_t record, player;
+} TurnSplit;
+
+/* ExecuteTurnCommands 0x475d30's walk of a sender's turn: the keep-alive 0x05 and the sync 0x37 counted (0x672988),
+ * the sync checked (a mismatch marks the sender out of sync); the latency 0x55's extra turns (OnLatencyCommand
+ * 0x476d10: 0x672990, the network's side of the command, the game shows its line) */
+static void split_command(void *ud, const uint8_t *cmd, size_t n)
+{
+	TurnSplit *t = (TurnSplit *)ud;
+	KpNetGame *ng = t->ng;
+	if (cmd[0] == LATENCY_COMMAND && n >= 2) ng->extra_latency = cmd[1] < LATENCY_MAX ? cmd[1] : LATENCY_MAX;
+	if (cmd[0] == KP_LOBBY_KEEP_ALIVE) {
+		t->count++;
+	} else if (cmd[0] == KP_SYNC_ID) {
+		if (!ng->config.replay && !kp_sync_check(&ng->sync, cmd, t->player)) {
+			ng->desync = 1;
+			ng->status[t->id] = STATUS_PRESENT;
+		}
+		t->count++;
+	}
+	if (add_command(ng, t->record, cmd, n) != 0) t->failed = 1;
+}
+
+/* ExecuteGameTurn 0x4768a0's commands: the Storm IDs with a turn from 7 down to 0, each as its record (0x508d48) and
+ * player (0x508d44); outside a replay a turn whose keep-alive and sync commands are not exactly one marks its sender out
+ * of sync */
+static int game_commands(KpNetGame *ng)
+{
+	TurnSplit t;
+	int id;
+	ng->desync = 0;
+	for (id = KP_NETGAME_PLAYERS - 1; id >= 0; id--) {
+		if (!(ng->status[id] & STATUS_HAS_TURN)) continue;
+		memset(&t, 0, sizeof t);
+		t.ng = ng;
+		t.id = id;
+		t.record = ng->storm_index[id];
+		t.player = ng->storm_slot[id];
+		if (ng->turn_size[id]) (void)kp_record_split(ng->turn_data[id], ng->turn_size[id], split_command, &t);
+		if (t.failed) return -1;
+		if (!ng->config.replay && t.count != 1) {
+			ng->desync = 1;
+			ng->status[id] = STATUS_PRESENT;
+		}
+	}
+	return 0;
+}
+
+#define TIMEOUT_SECONDS 45
+#define TIMEOUT_MEMORY_MS 120000 /* a dialog closed this recently gives the next one what it had left, less 2 s */
+#define TIMEOUT_REOPEN_LOSS 2
+#define TIMEOUT_TICK_MS 1000
+
+/* OpenTimeoutDialog 0x47aaa0, then WaitForLaggingPlayers' t0 */
+static void open_timeout(KpNetGame *ng)
+{
+	uint32_t t = now(ng);
+	if (!ng->timeout_shown || t - ng->timeout_closed > TIMEOUT_MEMORY_MS)
+		ng->timeout_seconds = TIMEOUT_SECONDS;
+	else
+		ng->timeout_seconds = ng->timeout_seconds > TIMEOUT_REOPEN_LOSS ? ng->timeout_seconds - TIMEOUT_REOPEN_LOSS : 0;
+	ng->timeout_shown = 1;
+	ng->lagging = 1;
+	ng->lag_clock = now(ng);
+}
+
+/* A pass of the wait without a turn: TickTimeoutCountdown 0x47ab00 a second after the last tick */
+static void tick_timeout(KpNetGame *ng)
+{
+	uint32_t t = now(ng);
+	if (t - ng->lag_clock <= TIMEOUT_TICK_MS) return;
+	if (ng->timeout_seconds) ng->timeout_seconds--;
+	ng->lag_clock = t;
+}
+
+int kp_netgame_timeout_drop(KpNetGame *ng)
+{
+	if (!ng->lagging || ng->timeout_seconds) return 0;
+	resolve_desync(ng);
+	return 1;
+}
+
+int kp_netgame_lagging_slots(const KpNetGame *ng, int slots[KP_NETGAME_PLAYERS])
+{
+	int s, n = 0;
+	for (s = 0; s < KP_NETGAME_PLAYERS; s++) {
+		int id = ng->slots[s].storm;
+		if (ng->slots[s].type != KP_CTRL_HUMAN || id < 0 || id >= KP_NETGAME_PLAYERS) continue;
+		if ((ng->status[id] & STATUS_PRESENT) && !(ng->status[id] & STATUS_HAS_TURN)) slots[n++] = s;
+	}
+	return n;
+}
+
+int kp_netgame_game_results(const KpNetGame *ng, KpGame *g, uint8_t out[KP_NETGAME_PLAYERS])
+{
+	/* the committed results 0x5349e0 of each Storm ID's game player (0x672878): 1 left 4, 2 defeat 2, 3 victory 1, 5
+	 * draw 3, the others 0 */
+	static const uint8_t BY_STATE[6] = { 0, KP_NETGAME_DISCONNECT, KP_NETGAME_LOSS, KP_NETGAME_WIN, 0, KP_NETGAME_DRAW };
+	int player[KP_NETGAME_PLAYERS], i, active = 0, others = 0, other = 0, local = ng->local_storm, local_result;
+	const uint8_t *t = g->setup.template_record;
+	for (i = 0; i < KP_NETGAME_PLAYERS; i++) {
+		int64_t slot = kp_setup_storm_slot(&g->setup, i);
+		player[i] = slot >= 0 ? (int)kp_setup_record_player(&g->setup, slot) : KP_NETGAME_PLAYERS;
+		out[i] = 0;
+		if (player[i] < 0 || player[i] >= KP_NETGAME_PLAYERS) continue;
+		active++;
+		if (g->results[player[i]] >= 0 && g->results[player[i]] < 6) out[i] = BY_STATE[g->results[player[i]]];
+	}
+	if (local < 0 || local >= KP_NETGAME_PLAYERS) return KP_NETGAME_LOSS;
+	if (out[local] == 0) out[local] = KP_NETGAME_LOSS;
+	local_result = out[local];
+	/* one player, Use Map Settings outside the server templates (type 0x80 with a sub-byte) and the types 0x11..0x16,
+	 * a replay: a draw for everyone, the local result kept */
+	if (active == 1 || (kp_setup_ums(&g->setup) && !(t[0] == 0x80 && t[1] != 0) && (uint8_t)(t[0] - 0x11) > 5)
+		|| g->w->replay) {
+		for (i = 0; i < KP_NETGAME_PLAYERS; i++) {
+			if (player[i] < KP_NETGAME_PLAYERS) out[i] = KP_NETGAME_DRAW;
+		}
+		return local_result;
+	}
+	/* ResolveDesync's vote (0x529041, the flags 0x529042): 2 this seat in the minority, 1 even */
+	for (i = 0; i < KP_NETGAME_PLAYERS; i++) {
+		if (ng->drop_flags[i]) out[i] = ng->drop_vote == 2 ? 0 : KP_NETGAME_DISCONNECT;
+	}
+	if (ng->drop_vote == 2) out[local] = KP_NETGAME_DISCONNECT;
+	else if (ng->drop_vote == 1) out[local] = 0;
+	/* the last other human standing without a result wins (no computers in the game) */
+	for (i = 0; i < KP_NETGAME_PLAYERS; i++) {
+		if (i != local && kp_netgame_player_active(ng, i)) {
+			others++;
+			other = i;
+		}
+	}
+	if (others == 1) {
+		int k, computers = 0;
+		for (k = 0; k < KP_NETGAME_PLAYERS; k++) {
+			computers += g->setup.type[k] == KP_CTRL_COMPUTER || g->setup.type[k] == KP_CTRL_LOBBY_COMPUTER;
+		}
+		if (computers == 0 && player[other] < KP_NETGAME_PLAYERS && g->results[player[other]] == 0) {
+			out[other] = KP_NETGAME_WIN;
+			g->results[player[other]] = 3;
+		}
+	}
+	return out[local];
+}
+
+void kp_netgame_game_end(KpNetGame *ng)
+{
+	ng->lagging = 0;
+	leave_storm(ng, KP_NETGAME_LEAVE_CODE);
+}
+
+int kp_netgame_game_turn(KpNetGame *ng, KpGame *g, const KpCommand **list, int *count)
+{
+	int alive;
+	*list = NULL;
+	*count = 0;
+	ng->list_count = 0;
+	ng->list_failed = 0;
+	alive = receive_turns(ng, g);
+	if (!ng->received) {
+		/* WaitForLaggingPlayers 0x47a810: the turns are overdue (2.5 s without one); it waits until one arrives */
+		if (ng->lagging) tick_timeout(ng);
+		else if (!alive) open_timeout(ng);
+		return KP_NETGAME_WAIT;
+	}
+	if (ng->lagging) { /* the dialog closed */
+		ng->lagging = 0;
+		ng->timeout_closed = now(ng);
+	}
+	send_turns(ng);
+	if (ng->list_failed || game_commands(ng) != 0) return KP_NETGAME_NO_MEMORY;
+	*list = ng->list;
+	*count = ng->list_count;
+	return KP_NETGAME_TURN;
+}
+
+void kp_netgame_game_turn_end(KpNetGame *ng, KpGame *g, int poll)
+{
+	if (ng->desync) resolve_desync(ng);
+	ng->turn++;
+	kp_sync_advance(&ng->sync, g);
+	if (poll) kp_sync_capture_minimap(&ng->sync, g);
+}
+
+void kp_netgame_game_draw(KpNetGame *ng, KpGame *g, int64_t screen_tile_y)
+{
+	kp_sync_capture_sprites(&ng->sync, g, kp_sync_view_row(screen_tile_y));
+}
+
+int kp_netgame_command(KpNetGame *ng, const uint8_t *bytes, size_t size)
+{
+	if (size == 0 || size > ng->max_message) return -1;
+	return queue_turn_command(ng, bytes, (uint32_t)size) ? 0 : -1;
+}
+
+
+/* HandleChatMessage 0x475b40: the bytes the message used, 0 refused */
+static uint32_t game_chat(KpNetGame *ng, KpGame *g, int sender, const uint8_t *m, uint32_t n, int type,
+	void (*record)(void *ud, const uint8_t *cmd, size_t size), void *ud)
+{
+	const char *text = (const char *)m + GAME_CHAT_TEXT;
+	uint32_t len;
+	int r;
+	if (type != GAME_CHAT && type != GAME_CHAT_FROM) return 0; /* 0x4be940 */
+	if (!kp_netgame_player_active(ng, sender) || n < GAME_CHAT_TEXT) return 0;
+	len = kp_netgame_net_string(text, GAME_CHAT_MAX, n - GAME_CHAT_TEXT, 0, 0);
+	if (!len) return 0;
+	r = ng->storm_index[sender];
+	if (!(ng->chat_mask & (1u << sender)) || r >= KP_NETGAME_PLAYERS) return len + GAME_CHAT_TEXT;
+	if (type == GAME_CHAT) {
+		/* the original's command is a stack buffer: the bytes after the text's terminator are what it held */
+		uint8_t cmd[KP_NETGAME_CHAT_COMMAND_SIZE];
+		memset(cmd, 0, sizeof cmd);
+		cmd[0] = KP_NETGAME_CHAT_COMMAND;
+		cmd[1] = (uint8_t)r;
+		copy((char *)cmd + GAME_CHAT_TEXT, GAME_CHAT_MAX, text);
+		if (record) record(ud, cmd, sizeof cmd);
+		kp_chat_display(g, (const char *)cmd + GAME_CHAT_TEXT, r, 0);
+	} else {
+		char line[GAME_LINE];
+		format1(line, sizeof line, text_of(&ng->hooks, KP_NETTBL_FROM), kp_netgame_player_name(ng, sender));
+		append(line, sizeof line, " ");
+		append(line, sizeof line, text);
+		timed(ng, line);
+	}
+	return len + GAME_CHAT_TEXT;
+}
+
+void kp_netgame_game_messages(KpNetGame *ng, KpGame *g, void (*record)(void *ud, const uint8_t *cmd, size_t size),
+	void *ud)
+{
+	int sender = -1;
+	const uint8_t *m = NULL;
+	uint32_t n = 0;
+	while (receive_message(ng, &sender, &m, &n)) {
+		while (m && n != 0 && m[0] < GAME_MESSAGE_TYPES) {
+			uint32_t used = game_chat(ng, g, sender, m, n, m[0], record, ud);
+			if (used == 0 || used > n) break;
+			m += used;
+			n -= used;
+		}
+	}
 }
 
 /* --- the lobby messages (net_chat_cmds.cpp, P25 group 1) --- */
@@ -1425,11 +1781,27 @@ static void send_whisper_text(KpNetGame *ng, const char *text, int id)
 	add_chat(ng, -1, line);
 }
 
-/* SendWhisper 0x4701f0 (the chat room's half; stage N4 adds the game's) */
+/* SendWhisper 0x4701f0: in the chat room a 'M' message, in game the in-game message type 1 (not recorded) */
 static void send_whisper(KpNetGame *ng, const char *text, int id)
 {
+	uint8_t m[GAME_CHAT_TEXT + GAME_CHAT_MAX];
+	char line[KP_NETGAME_LINE];
+	size_t n;
 	if (!text[0] || !kp_netgame_player_active(ng, id)) return;
-	if (!ng->in_game && ng->in_chat_room) send_whisper_text(ng, text, id);
+	if (!ng->in_game) {
+		if (ng->in_chat_room) send_whisper_text(ng, text, id);
+		return;
+	}
+	n = strlen(text) + 1;
+	if (n > GAME_CHAT_MAX) return;
+	m[0] = GAME_CHAT_FROM;
+	m[1] = 0; /* never written by the original */
+	copy((char *)m + GAME_CHAT_TEXT, GAME_CHAT_MAX, text);
+	send_message(ng, id, m, (uint32_t)(n + GAME_CHAT_TEXT));
+	format1(line, sizeof line, text_of(&ng->hooks, KP_NETTBL_TO), kp_netgame_player_name(ng, id));
+	append(line, sizeof line, " ");
+	append(line, sizeof line, text);
+	timed(ng, line);
 }
 
 /* MatchSlashCommandPlayer 0x470320: the text after `keyword name` (and the space when required), the slot in *slot */
@@ -1461,8 +1833,8 @@ static void mask_line(KpNetGame *ng, int index, int slot)
 {
 	char line[KP_NETGAME_LINE];
 	format1(line, sizeof line, text_of(&ng->hooks, index), ng->slots[slot].name);
-	/* TODO: stage N4 shows it in game for 7 s (DisplayTimedMessage 0x46ac90) */
-	if (!ng->in_game && ng->in_chat_room) add_chat(ng, -1, line);
+	if (ng->in_game) timed(ng, line);
+	else if (ng->in_chat_room) add_chat(ng, -1, line);
 }
 
 /* HandleChatSlashCommand 0x46fd90: 0 for a line that is no command, else 1 */
@@ -1498,6 +1870,25 @@ static int slash_command(KpNetGame *ng, const char *text)
 			return 1;
 		}
 	return 1;
+}
+
+/* SendInGameChat 0x473be0 */
+void kp_netgame_game_chat(KpNetGame *ng, const char *text, uint16_t recipients)
+{
+	uint8_t m[GAME_CHAT_TEXT + GAME_CHAT_MAX];
+	size_t n;
+	int id;
+	if (slash_command(ng, text)) return;
+	n = strlen(text);
+	if (!recipients || !n) return;
+	/* the original sends n + 3 bytes whatever it copied; the box keeps a line under 78 characters */
+	if (n + 1 > GAME_CHAT_MAX) n = GAME_CHAT_MAX - 1;
+	m[0] = GAME_CHAT;
+	m[1] = 0;
+	copy((char *)m + GAME_CHAT_TEXT, GAME_CHAT_MAX, text);
+	for (id = 0; id < KP_NETGAME_PLAYERS; id++)
+		if ((recipients & (1u << id)) && kp_netgame_player_active(ng, id))
+			send_message(ng, id, m, (uint32_t)(n + GAME_CHAT_TEXT + 1));
 }
 
 void kp_netgame_chat(KpNetGame *ng, const char *text)
@@ -1957,10 +2348,30 @@ int kp_netgame_init(KpNetGame *ng, const KpNetCalls *net, const KpNetGameHooks *
 	}
 	ng->max_message = caps.maxmsg < KP_NETGAME_TURN_MAX ? caps.maxmsg : KP_NETGAME_TURN_MAX;
 	ng->transit = caps.turns_in_transit < 2 ? 2 : caps.turns_in_transit > 8 ? 8 : caps.turns_in_transit;
+	ng->turns_per_second = caps.turns_per_sec;
 	return 0;
 }
 
-void kp_netgame_free(KpNetGame *ng) { kp_transfer_reset(&ng->transfer); }
+int kp_netgame_game_caps(KpNetGame *ng)
+{
+	KpSnetCaps caps;
+	memset(&caps, 0, sizeof caps);
+	caps.size = CAPS_SIZE;
+	if (!ng->net.provider_caps(ng->net.ud, &caps)) {
+		report_storm(ng, KP_NETTBL_NETWORK_ERROR, 1);
+		return -1;
+	}
+	ng->turns_per_second = caps.turns_per_sec;
+	return 0;
+}
+
+void kp_netgame_free(KpNetGame *ng)
+{
+	kp_transfer_reset(&ng->transfer);
+	free(ng->list);
+	ng->list = NULL;
+	ng->list_cap = ng->list_count = 0;
+}
 
 /* TemplateNetFlags 0x4476f0 */
 static uint32_t template_net_flags(const KpNetGame *ng, const uint8_t *t)
@@ -2177,6 +2588,139 @@ void kp_netgame_game_setup(const KpNetGame *ng, KpGameSetup *s)
 	for (k = 0; k < 8; k++) {
 		s->user_select[k] = ng->user_select[k];
 		s->color[k] = k;
+	}
+}
+
+int kp_netgame_resumes(const KpNetGame *ng) { return saving(ng) && ng->header.save_id != 0; }
+
+void kp_netgame_save_record(KpNetGame *ng, const KpGame *g, uint32_t save_id, KpNetGameSave *out)
+{
+	const KpGameSetup *s = &g->setup;
+	int k, players = 0, computers = 0;
+	memset(out, 0, sizeof *out);
+	/* WriteSaveTagAndHeader 0x49a8e0's steps 2 and 3 on the live header */
+	for (k = 0; k < KP_NETGAME_PLAYERS; k++) players += ng->players[k].state == 1; /* SNetGetNumPlayers' total */
+	for (k = 0; k < 8; k++) computers += s->type[k] == KP_CTRL_COMPUTER;
+	ng->header.id = 0;
+	ng->header.save_id = save_id;
+	ng->header.players = ng->header.max_players = (uint8_t)players;
+	ng->header.save_players = (uint8_t)computers;
+	out->header = ng->header;
+	out->rng_state = g->rng ? (uint32_t)g->rng->state : 0;
+	for (k = 0; k < KP_NETGAME_SLOTS; k++) {
+		KpNetSlot *p = &out->players[k];
+		p->slot = k;
+		p->storm = (int32_t)s->storm[k];
+		p->type = (uint8_t)s->type[k];
+		p->race = (uint8_t)s->race[k];
+		p->force = (uint8_t)s->force[k];
+		copy(p->name, sizeof p->name, s->name[k]);
+	}
+	/* RecordSlotSummary 0x47e290 at the start: the lobby's local slot and slot types, the races after the random ones */
+	out->local_slot = (uint8_t)ng->local_slot;
+	for (k = 0; k < 8; k++) {
+		out->types[k] = ng->slots[k].type;
+		out->races[k] = (uint8_t)s->race_summary[k];
+	}
+	memcpy(out->forces, ng->forces, sizeof out->forces);
+	memcpy(out->force_names, ng->force_names, sizeof out->force_names);
+	out->tileset = ng->tileset;
+	out->width = ng->width;
+	out->height = ng->height;
+	out->local_player = (uint32_t)g->local_record;
+}
+
+/* ForceHasHuman 0x4b2d20 / ForceHasComputer 0x4b2cf0 over a setup's slots 0..7 (a lobby computer counts) */
+static int setup_force_has(const KpGameSetup *s, int64_t f, int computer)
+{
+	int k;
+	for (k = 7; k >= 0; k--) {
+		if (s->force[k] != f) continue;
+		if (computer ? s->type[k] == KP_CTRL_COMPUTER || s->type[k] == KP_CTRL_LOBBY_COMPUTER : s->type[k] == KP_CTRL_HUMAN)
+			return 1;
+	}
+	return 0;
+}
+
+/* GetForceLeaderSlot 0x4b2930: of slots 7..0 of force f played by a human or a computer, the lowest Storm ID
+ * (unsigned: a computer's -1 is the highest; the lower slot on a tie), -1 none */
+static int force_leader_slot(const KpGameSetup *s, int64_t f)
+{
+	int k, best = -1;
+	uint32_t low = 0;
+	for (k = 7; k >= 0; k--) {
+		uint32_t storm = (uint32_t)s->storm[k];
+		if (s->force[k] != f || (s->type[k] != KP_CTRL_HUMAN && s->type[k] != KP_CTRL_COMPUTER)) continue;
+		if (best < 0 || storm <= low) {
+			best = k;
+			low = storm;
+		}
+	}
+	return best;
+}
+
+/* A setup's record k from a lobby slot (0x6726c8's 36 bytes) */
+static void setup_record(KpGameSetup *s, int k, const KpNetSlot *p)
+{
+	s->storm[k] = p->storm;
+	s->type[k] = p->type;
+	s->race[k] = p->race;
+	s->force[k] = p->force;
+	snprintf(s->name[k], sizeof s->name[k], "%.*s", KP_PLAYER_NAME - 1, p->name);
+}
+
+static void swap_records(KpGameSetup *s, int a, int b)
+{
+	int64_t storm = s->storm[a], type = s->type[a], race = s->race[a], force = s->force[a];
+	char name[KP_SETUP_NAME];
+	memcpy(name, s->name[a], sizeof name);
+	s->storm[a] = s->storm[b];
+	s->type[a] = s->type[b];
+	s->race[a] = s->race[b];
+	s->force[a] = s->force[b];
+	memcpy(s->name[a], s->name[b], sizeof name);
+	s->storm[b] = storm;
+	s->type[b] = type;
+	s->race[b] = race;
+	s->force[b] = force;
+	memcpy(s->name[b], name, sizeof name);
+}
+
+void kp_netgame_restore_slots(const KpNetGame *ng, KpGameSetup *s)
+{
+	KpNetSlot old[8];
+	int k;
+	int64_t f;
+	if (!s->multiplayer) return;
+	/* steps 1 and 2: the lobby's slots as the game's types, then every record emptied */
+	memcpy(old, ng->slots, sizeof old);
+	for (k = 7; k >= 0; k--) {
+		if (old[k].type == KP_CTRL_LOBBY_COMPUTER) old[k].type = KP_CTRL_COMPUTER;
+		else if (old[k].type == KP_CTRL_OPEN || old[k].type == KP_CTRL_CLOSED) old[k].type = KP_CTRL_NONE;
+	}
+	for (k = 0; k < KP_SETUP_SLOTS; k++) {
+		s->storm[k] = s->type[k] = s->race[k] = s->force[k] = 0;
+		memset(s->name[k], 0, sizeof s->name[k]);
+	}
+	/* step 3: each lobby slot into its saved record (the lower slot wins a record two name; 8 writes record 8) */
+	for (k = 7; k >= 0; k--) {
+		int t = old[k].type, d = ng->saved_slots[k];
+		if (t != KP_CTRL_HUMAN && t != KP_CTRL_COMPUTER && t != KP_CTRL_RESCUE && t != KP_CTRL_RESCUE_ACTIVE
+			&& t != KP_CTRL_NEUTRAL)
+			continue;
+		if (d < KP_SETUP_SLOTS) setup_record(s, d, &old[k]);
+	}
+	/* step 4 */
+	for (k = KP_SETUP_SLOTS - 1; k >= 0; k--)
+		if (s->type[k] != KP_CTRL_HUMAN) s->storm[k] = -1;
+	if (!kp_setup_team_game(s)) return;
+	/* step 7: a force whose saved leader slot has no human, the force's human with the lowest Storm ID moves there */
+	for (f = 1; f <= 4; f++) {
+		int64_t leader = s->leader[f];
+		int h;
+		if (setup_force_has(s, f, 1) || !setup_force_has(s, f, 0)) continue;
+		if (leader < 0 || leader >= KP_SETUP_SLOTS || s->type[leader] == KP_CTRL_HUMAN) continue;
+		if ((h = force_leader_slot(s, f)) >= 0) swap_records(s, (int)leader, h);
 	}
 }
 

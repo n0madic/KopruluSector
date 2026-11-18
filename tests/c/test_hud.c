@@ -94,8 +94,8 @@ static void free_hud(void *p)
 }
 
 /* The console of game og on a logical screen w x h (the game's first view on it), its interface
- * made at 1000 ms, over the mission's tileset. */
-static Hud *with_hud(KpT *T, KpOracleGame *og, int32_t w, int32_t h)
+ * made at 1000 ms, over the mission's tileset; a network game's interface over net's hooks (NULL: none). */
+static Hud *hud_of(KpT *T, KpOracleGame *og, int32_t w, int32_t h, KpTNetHost *net)
 {
 	size_t size;
 	const uint8_t *console_art = kp_t_console_art(T, &size); /* skips the test before anything is made */
@@ -116,6 +116,7 @@ static Hud *with_hud(KpT *T, KpOracleGame *og, int32_t w, int32_t h)
 	H->map.palettes = &d->palettes;
 	H->map.tileset_index = (int)(m->tileset % 8);
 	H->map.colors = m->has_colors ? m->colors : NULL;
+	if (net != NULL) kp_t_net_host(H->ui, net);
 	if (kp_hud_init(&H->hud, H->ui, NULL, H->g, &H->map, 1000, w, h, 0) != 0) {
 		char msg[sizeof H->ui->error];
 		snprintf(msg, sizeof msg, "%s", H->ui->error);
@@ -126,6 +127,8 @@ static Hud *with_hud(KpT *T, KpOracleGame *og, int32_t w, int32_t h)
 	kp_t_defer(T, free_hud, H);
 	return H;
 }
+
+static Hud *with_hud(KpT *T, KpOracleGame *og, int32_t w, int32_t h) { return hud_of(T, og, w, h, NULL); }
 
 /* A frame's results: the view the interface moved to (moved, x, y) and whether a trigger wait ends. */
 typedef struct {
@@ -3942,7 +3945,7 @@ static void glue_menus_start_a_campaign_mission(KpT *T)
 	kp_t_eq(T, ui->cursor_theme, 0, "the game's arrow, not the room's");
 	kp_ui_end_game(ui);
 	kp_ui_set_hd(ui, 1);
-	kp_glue_score(G->glue, game->g, 3, 754, 0);
+	kp_glue_score(G->glue, game->g, 3, 754, 0, NULL, 0);
 	wait_for(G, "rez\\gluscore.bin", 2000);
 	/* the HD interface (ADR 0013 R4d): the panel's picture is logged for its HD art, the tabs' closing strip is not
 	 * (Remastered's untab art is a wider strip for its own layout, it hid the tabs' notches over the SD panel) */
@@ -4113,8 +4116,9 @@ static void glue_wheel_scrolls_the_lists(KpT *T)
 	oy = G->glue->place_y + ui->controls[ui->open].top + 4;
 	kp_glue_wheel(G->glue, 1, ox, oy);
 	kp_t_eq(T, kp_ui_list_top(ui, list), 1, "and over its dialog, its only list");
+	/* a screen run modally takes every mouse event (RunModalDialog 0x4c35c0's flag 0x80000000), off the screen too */
 	kp_glue_wheel(G->glue, -1, -1000, -1000);
-	kp_t_eq(T, kp_ui_list_top(ui, list), 1, "nothing off the screen");
+	kp_t_eq(T, kp_ui_list_top(ui, list), 2, "the screen's only list wherever the pointer is");
 	kp_t_eq(T, kp_ui_list_selection(ui, list), 0, "the wheel selects nothing");
 }
 
@@ -4202,6 +4206,167 @@ static void glue_room_cancel_by_back_leaves_no_game_input(KpT *T)
 	kp_glue_menus(G->glue, KP_GLUE_CAMPAIGN);
 	for (k = 0; k < 20; k++) glue_frame(G); /* the idle event of each frame reaches no game */
 	kp_t_ok(T, ui->input.proc[KP_UI_IDLE] == NULL, "no game input after the room");
+}
+
+/* --- the minimap's network dialogs (phase N stage N4) --- */
+
+#define NET_ALPHA 1                /* terran01's human record (the seat) and its rescuable's, the network game's humans */
+#define NET_BETA 2
+#define MINIMAP_MESSAGE 3          /* the minimap's Messaging and Diplomacy buttons */
+#define MINIMAP_DIPLOMACY 4
+#define ALLY_FIRST_BOX 1           /* allyfltr.bin's alliance boxes 1..12, vision boxes 13..24, names -10.. */
+#define ALLY_FIRST_VISION 13
+#define ALLY_FIRST_NAME (-10)
+#define MESSAGE_PLAYER 1           /* msgfltr.bin's option buttons and list */
+#define MESSAGE_ALLIES 3
+#define MESSAGE_LIST 4
+#define CHAT_ALLIES 9
+#define CMD_VISION 0x0d
+#define CMD_ALLIANCE 0x0e
+
+typedef struct {
+	KpT *T;
+	Hud *H;
+	uint32_t now;
+	KpTNetHost host;
+} NetConsole;
+
+static void net_frames(NetConsole *c, int n)
+{
+	int k;
+	for (k = 0; k < n; k++) {
+		c->now += 16;
+		kp_t_ui_idle(c->H->ui);
+		frame(c->H, 640, 480, c->now, 0, NO_CURSOR, KEEP);
+	}
+}
+
+/* terran01's console as Alpha's seat of a network game with Beta (kp_t_net_game), Alpha Storm ID 0. */
+static NetConsole *net_console(KpT *T)
+{
+	NetConsole *c = (NetConsole *)calloc(1, sizeof *c);
+	KpOracleGame *og = terran01(T);
+	kp_t_ok(T, c != NULL, "out of memory");
+	kp_t_defer(T, free, c);
+	kp_t_net_game(T, og->g, NET_ALPHA, NET_BETA, 0);
+	c->T = T;
+	c->H = hud_of(T, og, 640, 480, &c->host);
+	c->now = 1000;
+	net_frames(c, 5);
+	return c;
+}
+
+static int32_t net_control(NetConsole *c, int32_t dialog, int16_t id)
+{
+	int32_t k = dialog >= 0 ? kp_ui_find_control(c->H->ui, dialog, id) : -1;
+	if (k < 0) kp_t_fail(c->T, "no control %d", id);
+	return k;
+}
+
+static int net_shown(NetConsole *c, int32_t k) { return (c->H->ui->controls[k].flags & KP_UI_VISIBLE) != 0; }
+static int net_checked(NetConsole *c, int32_t k) { return c->H->ui->controls[k].words36[0] != 0; }
+
+/* A control's activation (its code 2: a click's), then the frames. */
+static void net_activate(NetConsole *c, int32_t k)
+{
+	(void)kp_ui_send_user(c->H->ui, k, KP_UI_CLOSE, 0);
+	net_frames(c, 4);
+}
+
+static void net_enter(NetConsole *c)
+{
+	kp_hud_key(c->H->ui, 1, 0x0d, 0);
+	kp_hud_key(c->H->ui, 0, 0x0d, 0);
+	net_frames(c, 10);
+}
+
+static const char *net_modeless(NetConsole *c, char *name, size_t size)
+{
+	KpUi *ui = c->H->ui;
+	return ui->modeless >= 0 ? kp_t_ui_bin(ui, ui->modeless, name, size) : "";
+}
+
+/* MinimapButtonInit 0x46d130 in a network game of two: Messaging and Diplomacy shown, the terrain button hidden. The
+ * Messaging dialog (msgfltr.bin, OpenMessageDialog 0x441be0, ApplyMessageDialog 0x441f00): the list holds the other
+ * humans; Allies sets the chat's target 9 with the allies' Storm IDs, a listed player its record with its Storm ID and
+ * the sender's. */
+static void message_dialog_chooses_the_chat_target(KpT *T)
+{
+	NetConsole *c;
+	KpUi *ui;
+	int32_t button, list;
+	char name[128];
+	if (!ready(T, "test_hud.message_dialog_chooses_the_chat_target", TERRAN01)) return;
+	c = net_console(T);
+	ui = c->H->ui;
+	kp_set_alliance(c->H->g, NET_ALPHA, NET_BETA, 1);
+	button = net_control(c, ui->minimap.dialog, MINIMAP_MESSAGE);
+	kp_t_ok(T, net_shown(c, button), "the Messaging button");
+	kp_t_ok(T, net_shown(c, net_control(c, ui->minimap.dialog, MINIMAP_DIPLOMACY)), "the Diplomacy button");
+	net_activate(c, button);
+	kp_t_eq_str(T, net_modeless(c, name, sizeof name), "rez\\msgfltr.bin", NULL);
+	list = net_control(c, ui->modeless, MESSAGE_LIST);
+	kp_t_eq(T, kp_ui_list_count(ui, list), 1, "Beta alone listed");
+	kp_t_eq(T, (int64_t)kp_ui_list_data(ui, list, 0), NET_BETA, NULL);
+	net_activate(c, net_control(c, ui->modeless, MESSAGE_ALLIES));
+	net_enter(c);
+	kp_t_eq_str(T, net_modeless(c, name, sizeof name), "", "OK closes it");
+	kp_t_eq(T, ui->hud.chat_target, CHAT_ALLIES, NULL);
+	kp_t_eq(T, ui->hud.chat_recipients, kp_ui_ally_recipients(ui), "the allies");
+	net_activate(c, button);
+	net_activate(c, net_control(c, ui->modeless, MESSAGE_PLAYER));
+	net_enter(c);
+	kp_t_eq(T, ui->hud.chat_target, NET_BETA, "Beta");
+	kp_t_eq(T, ui->hud.chat_recipients, 0x3, "Beta's Storm ID and the sender's");
+}
+
+/* The Diplomacy dialog (allyfltr.bin, OpenAllianceDialog 0x441b70, ApplyAllianceDialog 0x441cb0): a row per other
+ * human; a checked alliance box takes the seat's own stance byte, a vision box the row's bit; OK queues the alliance
+ * command 0x0e (two bits a player) and the vision command 0x0d, the game unchanged until they run. */
+static void alliance_dialog_queues_stances_and_vision(KpT *T)
+{
+	NetConsole *c;
+	KpUi *ui;
+	KpGame *g;
+	int32_t row, box, vision;
+	uint8_t cmds[2][KP_UI_COMMAND_BYTES];
+	size_t sizes[2], n;
+	uint32_t stances;
+	int64_t own;
+	int count = 0;
+	char name[128];
+	if (!ready(T, "test_hud.alliance_dialog_queues_stances_and_vision", TERRAN01)) return;
+	c = net_console(T);
+	ui = c->H->ui;
+	g = c->H->g;
+	own = kp_alliance(g, NET_ALPHA, NET_ALPHA);
+	net_activate(c, net_control(c, ui->minimap.dialog, MINIMAP_DIPLOMACY));
+	kp_t_eq_str(T, net_modeless(c, name, sizeof name), "rez\\allyfltr.bin", NULL);
+	row = net_control(c, ui->modeless, ALLY_FIRST_NAME);
+	box = net_control(c, ui->modeless, ALLY_FIRST_BOX);
+	vision = net_control(c, ui->modeless, ALLY_FIRST_VISION);
+	kp_t_ok(T, net_shown(c, row) && ui->controls[row].user == NET_BETA, "Beta's row");
+	kp_t_ok(T, !net_shown(c, net_control(c, ui->modeless, ALLY_FIRST_NAME - 1)), "one row");
+	kp_t_ok(T, !(ui->controls[box].flags & KP_UI_DISABLED) && !net_checked(c, box), "an enemy");
+	kp_t_ok(T, !(ui->controls[vision].flags & KP_UI_DISABLED) && !net_checked(c, vision), "no vision shared");
+	(void)kp_t_ui_take_commands(ui, NULL, NULL);
+	net_activate(c, box);
+	net_activate(c, vision);
+	kp_t_ok(T, net_checked(c, box) && net_checked(c, vision), "both checked");
+	net_enter(c);
+	kp_t_eq_str(T, net_modeless(c, name, sizeof name), "", "OK closes it");
+	while ((n = kp_ui_take_command(ui, cmds[count < 2 ? count : 1], KP_UI_COMMAND_BYTES)) != 0) {
+		if (count < 2) sizes[count] = n;
+		count++;
+	}
+	kp_t_eq(T, count, 2, "the alliance and the vision");
+	kp_t_ok(T, sizes[0] == 5 && cmds[0][0] == CMD_ALLIANCE, "0x0e");
+	stances = (uint32_t)cmds[0][1] | (uint32_t)cmds[0][2] << 8 | (uint32_t)cmds[0][3] << 16 | (uint32_t)cmds[0][4] << 24;
+	kp_t_eq(T, (int64_t)((stances >> (2 * NET_BETA)) & 3), own & 3, "Beta takes the seat's own byte");
+	kp_t_eq(T, (int64_t)((stances >> (2 * NET_ALPHA)) & 3), own & 3, "the seat's own kept");
+	kp_t_ok(T, sizes[1] == 3 && cmds[1][0] == CMD_VISION, "0x0d");
+	kp_t_eq(T, (int64_t)(cmds[1][1] | cmds[1][2] << 8), kp_shared_vision(g, NET_ALPHA) | (1 << NET_BETA), "Beta's bit");
+	kp_t_eq(T, kp_alliance(g, NET_ALPHA, NET_BETA), 0, "the game changes by the command only");
 }
 
 /* --- the multiplayer screens over a network of the test's (KpUiNet, phase N stage N3) --- */
@@ -5433,6 +5598,8 @@ static const KpTest TESTS[] = {
 		0 },
 	{ "glue_room_cancel_by_back_leaves_no_game_input", glue_room_cancel_by_back_leaves_no_game_input, 0 },
 	{ "glue_chat_room_follows_the_network", glue_chat_room_follows_the_network, 0 },
+	{ "message_dialog_chooses_the_chat_target", message_dialog_chooses_the_chat_target, 0 },
+	{ "alliance_dialog_queues_stances_and_vision", alliance_dialog_queues_stances_and_vision, 0 },
 	{ "glue_network_ready_room_waits_for_the_players", glue_network_ready_room_waits_for_the_players, 0 },
 	{ "destroyed_dialog_leaves_no_image", destroyed_dialog_leaves_no_image, 0 },
 	{ "glue_hands_the_cinematics_to_the_host", glue_hands_the_cinematics_to_the_host, 0 },

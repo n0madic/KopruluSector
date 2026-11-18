@@ -6,12 +6,19 @@
  * it (melee, Use Map Settings, team), its joiners placed by their saved records and refused without the save. The
  * original's side of the same lobbies is test_lobby_trace's. */
 #include "kp_test.h"
+#include "kp_test_ui.h"
 
+#include <stdlib.h>
+
+#include "kp_game.h"
+#include "kp_gametype.h"
 #include "kp_ids.h"
+#include "kp_kpf.h"
 #include "kp_net.h"
 #include "kp_net_lobby.h"
 #include "kp_netsave.h"
 #include "kp_start.h"
+#include "kp_transfer.h"
 
 #define SETTLE_MS 3000 /* a lobby message's round: a few 250 ms passes and Storm's latency */
 #define START_MS 30000 /* the countdown (24 turns at 250 ms), the start information, the ready room */
@@ -442,6 +449,83 @@ static void save_file_reads_back(KpT *T)
 	kp_t_eq(T, kp_netsave_probe(data, size, SAVE_NAME ".mlt", NULL, NULL), KP_NETSAVE_OTHER_VERSION, "restored");
 }
 
+/* The first place of text's bytes in data, NULL none */
+static uint8_t *find_bytes(uint8_t *data, size_t size, const char *text)
+{
+	size_t n = strlen(text), k;
+	for (k = 0; k + n <= size; k++)
+		if (memcmp(data + k, text, n) == 0) return data + k;
+	return NULL;
+}
+
+/* Koprulu's network save (kp_netsave.h): NETG reads back whole with its name and expansion byte, another schema is
+ * another version and another size unreadable; a container of kind SAVE holding it reads as the original's probe does
+ * (the display name from the file's name), refused for the other game, a long name, a damaged byte or no NETG; the
+ * original's file is no container of Koprulu's. */
+static void koprulu_save_reads_back(KpT *T)
+{
+	static const uint8_t hash[32] = { 1 };
+	KpTemplates t;
+	KpNetGameSave a, b;
+	KpKpfOut section;
+	uint8_t netg[KP_NETSAVE_NETG_SIZE], *data, *original;
+	char name[KP_NETSAVE_NAME];
+	size_t size, original_size;
+	int expansion = -1;
+	kp_net_lobby_templates(&t);
+	kp_net_lobby_melee_save(&a, &t, 2);
+	a.forces[0] = a.forces[1] = 1;
+	a.forces[2] = 2;
+	kp_netsave_netg_write(&a, 1, SAVE_NAME, netg);
+	kp_t_eq(T, kp_netsave_netg_read(netg, sizeof netg, &b, &expansion, name), KP_NETSAVE_VALID, "NETG reads");
+	same_save(T, &a, &b);
+	kp_t_ok(T, expansion == 1 && strcmp(name, SAVE_NAME) == 0, "its expansion byte %d and name \"%s\"", expansion, name);
+	kp_t_eq(T, kp_netsave_netg_read(netg, sizeof netg - 1, &b, NULL, NULL), KP_NETSAVE_UNREADABLE, "a short NETG");
+	netg[0] = KP_NETSAVE_NETG_VERSION + 1;
+	kp_t_eq(T, kp_netsave_netg_read(netg, sizeof netg, &b, NULL, NULL), KP_NETSAVE_OTHER_VERSION, "another schema");
+	netg[0] = KP_NETSAVE_NETG_VERSION;
+	memset(&section, 0, sizeof section);
+	section.fourcc = KP_NETSAVE_NETG;
+	section.schema_version = 1;
+	section.payload = netg;
+	section.size = sizeof netg;
+	kp_t_eq(T, kp_kpf_build("SAVE", 2, 0, "test", hash, &section, 1, &data, &size), 0, "the container");
+	kp_t_defer(T, free, data);
+	kp_t_ok(T, kp_netsave_koprulu(data, size), "Koprulu's container");
+	kp_t_eq(T, kp_netsave_koprulu_read(data, size, "maps/save/" SAVE_NAME ".mlx", 1, &b, name), KP_NETSAVE_VALID,
+		"the save reads");
+	same_save(T, &a, &b);
+	kp_t_eq_str(T, name, SAVE_NAME, "the display name");
+	kp_t_eq(T, kp_netsave_koprulu_read(data, size, SAVE_NAME ".mlt", 0, &b, NULL), KP_NETSAVE_UNREADABLE,
+		"a Brood War save in the original game");
+	kp_t_eq(T, kp_netsave_koprulu_read(data, size, SAVE_NAME ".mlt", -1, &b, NULL), KP_NETSAVE_VALID,
+		"the probe does not ask the game");
+	kp_t_eq(T, kp_netsave_koprulu_read(data, size, "1234567890123456789012345678.mlt", -1, &b, NULL),
+		KP_NETSAVE_UNREADABLE, "a name of 28 characters");
+	{
+		/* a byte of NETG's name, which the section's CRC covers */
+		uint8_t *at = find_bytes(data, size, SAVE_NAME);
+		kp_t_ok(T, at != NULL, "NETG's name in the container");
+		if (at) *at ^= 0x55;
+		kp_t_eq(T, kp_netsave_koprulu_read(data, size, SAVE_NAME ".mlt", -1, &b, NULL), KP_NETSAVE_UNREADABLE,
+			"a damaged byte (its CRC)");
+		if (at) *at ^= 0x55;
+	}
+	section.fourcc = "XTRA";
+	{
+		uint8_t *other;
+		size_t other_size;
+		kp_t_eq(T, kp_kpf_build("SAVE", 2, 0, "test", hash, &section, 1, &other, &other_size), 0, "the container");
+		kp_t_eq(T, kp_netsave_koprulu_read(other, other_size, SAVE_NAME ".mlt", -1, &b, NULL), KP_NETSAVE_UNREADABLE,
+			"a container without NETG");
+		free(other);
+	}
+	original = save_file(T, &a, KP_NETSAVE_VERSION, 1, &original_size);
+	kp_t_ok(T, !kp_netsave_koprulu(original, original_size), "the original's save is not Koprulu's");
+	kp_t_eq(T, kp_netsave_koprulu_read(original, original_size, SAVE_NAME ".mlt", -1, &b, NULL), KP_NETSAVE_UNREADABLE,
+		"nor read as one");
+}
+
 static void slot_is(KpT *T, const KpNetGame *ng, int s, uint8_t type, uint8_t race, uint8_t force, uint8_t saved)
 {
 	const KpNetSlot *r = &ng->slots[s];
@@ -593,6 +677,292 @@ static void resumed_team_save(KpT *T)
 	slot_is(T, &s[0].game, 1, KP_CTRL_HUMAN, RACE_ZERG, 1, 1);
 }
 
+/* One seat's transfer alone (kp_transfer.h): the seat holds a file the origin offered and uploads it to the receiver the
+ * origin names. The acknowledgements and stops of another seat change nothing; the receiver's go on and end the upload. */
+typedef struct {
+	int sent, last_to;
+	uint8_t last_type;
+} SendLog;
+
+enum { TX_ORIGIN = 0, TX_SELF = 1, TX_RECEIVER = 2, TX_STRANGER = 3, TX_ID = 5, TX_SIZE = 300, TX_CAPACITY = 137 };
+
+static void tx_send(void *ud, int storm, const uint8_t *packet, size_t size)
+{
+	SendLog *log = (SendLog *)ud;
+	(void)size;
+	log->sent++;
+	log->last_to = storm;
+	log->last_type = packet[0];
+}
+
+static uint8_t *tx_read(void *ud, const char *path, size_t *size)
+{
+	(void)ud;
+	(void)path;
+	*size = TX_SIZE;
+	return (uint8_t *)calloc(1, TX_SIZE);
+}
+
+static int tx_find(void *ud, const char *name, uint32_t size, uint32_t crc, char *out, size_t out_size)
+{
+	(void)ud;
+	(void)name;
+	(void)size;
+	(void)crc;
+	snprintf(out, out_size, "%s", "own.scm");
+	return 1;
+}
+
+static void transfer_upload_obeys_only_its_receiver(KpT *T)
+{
+	KpTransfer t;
+	KpTransferIo io;
+	SendLog log;
+	uint8_t offer[42], upload[7], ack[7], stop[3];
+	int after_upload;
+	memset(&t, 0, sizeof t); /* kp_transfer_begin frees what the structure holds */
+	memset(&log, 0, sizeof log);
+	memset(&io, 0, sizeof io);
+	io.send = tx_send;
+	io.read = tx_read;
+	io.find = tx_find;
+	io.ud = &log;
+	kp_transfer_begin(&t, &io, TX_SELF, TX_CAPACITY);
+	memset(offer, 0, sizeof offer);
+	offer[0] = KP_TRANSFER_OFFER;
+	offer[1] = TX_ID;
+	kp_net_put32(offer + 2, TX_SIZE);
+	memcpy(offer + 10, "own.scm", 8);
+	kp_t_eq(T, kp_transfer_dispatch(&t, offer, sizeof offer, TX_ORIGIN), 1, "the offer of a file this seat holds");
+	upload[0] = KP_TRANSFER_UPLOAD;
+	upload[1] = TX_ID;
+	upload[2] = TX_RECEIVER;
+	kp_net_put32(upload + 3, 0);
+	kp_t_eq(T, kp_transfer_dispatch(&t, upload, sizeof upload, TX_ORIGIN), 1, "the origin's upload request");
+	after_upload = log.sent;
+	kp_t_eq(T, log.last_type, KP_TRANSFER_DATA, "the upload starts with chunks");
+	kp_t_eq(T, log.last_to, TX_RECEIVER, "to the receiver");
+	ack[0] = KP_TRANSFER_ACK;
+	ack[1] = TX_ID;
+	ack[2] = TX_ORIGIN;
+	kp_net_put32(ack + 3, 64);
+	stop[0] = KP_TRANSFER_STOP;
+	stop[1] = TX_ID;
+	stop[2] = TX_ORIGIN;
+	kp_t_eq(T, kp_transfer_dispatch(&t, ack, sizeof ack, TX_STRANGER), 0, "another seat's acknowledgement");
+	kp_t_eq(T, log.sent, after_upload, "sends nothing");
+	kp_t_eq(T, kp_transfer_dispatch(&t, stop, sizeof stop, TX_STRANGER), 0, "another seat's stop");
+	kp_t_eq(T, log.sent, after_upload, "answers nothing");
+	kp_t_eq(T, kp_transfer_dispatch(&t, ack, sizeof ack, TX_RECEIVER), 1, "the receiver's acknowledgement");
+	kp_t_eq(T, log.sent, after_upload + 1, "sends the next chunk");
+	kp_t_eq(T, log.last_to, TX_RECEIVER, "to the receiver");
+	kp_t_eq(T, kp_transfer_dispatch(&t, stop, sizeof stop, TX_RECEIVER), 1, "the receiver's stop");
+	kp_t_eq(T, log.last_type, KP_TRANSFER_STATUS, "answers with the status");
+	kp_t_eq(T, log.last_to, TX_ORIGIN, "to the origin");
+	kp_t_eq(T, kp_transfer_dispatch(&t, ack, sizeof ack, TX_RECEIVER), 0, "no acknowledgement of an ended upload");
+	kp_transfer_reset(&t);
+}
+
+/* --- the game's end (ComputeGameResults 0x477270) --- */
+
+#define TERRAN01 "missions/terran/terran01"
+#define ALPHA 1               /* terran01's human record (the seat) and its rescuable's, the network game's humans */
+#define BETA 2
+#define MELEE 0x02
+#define USE_MAP_SETTINGS 0x0a
+#define MELEE_VICTORY 1       /* the melee template's victory and starting units */
+#define MELEE_STARTING_UNITS 2
+#define COMMITTED_DEFEAT 2    /* the committed results 0x5349e0 */
+#define COMMITTED_VICTORY 3
+
+/* A network game's results by Storm ID: Alpha (the seat, Storm ID 0) and Beta (Storm ID 1), both active, no computer
+ * in the lobby, of template type `type`. */
+static KpNetGame *results_game(KpT *T, KpGame *g, int type)
+{
+	KpNetGame *ng = (KpNetGame *)calloc(1, sizeof *ng);
+	int k;
+	kp_t_ok(T, ng != NULL, "out of memory");
+	kp_t_defer(T, free, ng);
+	kp_t_net_game(T, g, ALPHA, BETA, 0);
+	for (k = 0; k < KP_SETUP_SLOTS; k++) {
+		if (k != ALPHA && k != BETA) g->setup.type[k] = 0;
+	}
+	g->setup.template_record[KP_TEMPLATE_TYPE] = (uint8_t)type;
+	/* a melee's victory and starting units (Use Map Settings has neither: kp_template_ums) */
+	g->setup.template_record[KP_TEMPLATE_VICTORY] = type == MELEE ? MELEE_VICTORY : 0;
+	g->setup.template_record[KP_TEMPLATE_STARTING_UNITS] = type == MELEE ? MELEE_STARTING_UNITS : 0;
+	memset(g->results, 0, sizeof g->results);
+	ng->local_storm = 0;
+	ng->players[0].state = ng->players[1].state = 1;
+	return ng;
+}
+
+/* The committed results by Storm ID (1 left 4, 2 defeat 2, 3 victory 1, 5 draw 3), the seat's 0 a defeat; the last
+ * other human standing without a result wins when no computer plays, after ResolveDesync's vote: 2 drops the seat (4)
+ * and clears the flagged, 1 flags the others as left and clears the seat's; Use Map Settings is a draw for everyone
+ * with the seat's own result returned. */
+static void game_results_follow_the_original(KpT *T)
+{
+	static const char *const FILES[] = { KP_T_DATA, TERRAN01, NULL };
+	KpGame *g;
+	KpNetGame *ng;
+	uint8_t out[KP_NETGAME_PLAYERS];
+	if (!kp_t_ready(T, "test_netgame.game_results_follow_the_original", FILES)) return;
+	g = kp_t_game(T, TERRAN01, 0, 0, NULL)->g;
+	ng = results_game(T, g, MELEE);
+	g->results[ALPHA] = COMMITTED_VICTORY;
+	g->results[BETA] = COMMITTED_DEFEAT;
+	kp_t_eq(T, kp_netgame_game_results(ng, g, out), KP_NETGAME_WIN, "the seat's victory");
+	kp_t_ok(T, out[0] == KP_NETGAME_WIN && out[1] == KP_NETGAME_LOSS, "%d %d", out[0], out[1]);
+	kp_t_ok(T, out[2] == 0 && out[7] == 0, "no other Storm ID");
+	ng = results_game(T, g, MELEE);
+	g->results[ALPHA] = COMMITTED_DEFEAT;
+	kp_t_eq(T, kp_netgame_game_results(ng, g, out), KP_NETGAME_LOSS, "the seat's defeat");
+	kp_t_eq(T, out[1], KP_NETGAME_WIN, "Beta standing alone wins");
+	kp_t_eq(T, g->results[BETA], COMMITTED_VICTORY, "and its result is committed");
+	ng = results_game(T, g, MELEE);
+	g->setup.type[4] = KP_CTRL_LOBBY_COMPUTER;
+	kp_t_eq(T, kp_netgame_game_results(ng, g, out), KP_NETGAME_LOSS, "no result: a defeat");
+	kp_t_eq(T, out[1], 0, "a computer plays: nobody wins by standing");
+	ng = results_game(T, g, MELEE);
+	ng->drop_flags[1] = 1;
+	ng->drop_vote = 2;
+	kp_t_eq(T, kp_netgame_game_results(ng, g, out), KP_NETGAME_DISCONNECT, "the minority's seat left");
+	kp_t_eq(T, out[1], KP_NETGAME_WIN, "the flagged cleared, then the last one standing");
+	ng = results_game(T, g, MELEE);
+	ng->drop_flags[1] = 1;
+	ng->drop_vote = 2;
+	ng->players[1].state = 2; /* dropped: no longer standing */
+	(void)kp_netgame_game_results(ng, g, out);
+	kp_t_eq(T, out[1], 0, "a dropped flagged one cleared");
+	ng = results_game(T, g, MELEE);
+	ng->drop_flags[1] = 1;
+	ng->drop_vote = 1;
+	ng->players[1].state = 2;
+	kp_t_eq(T, kp_netgame_game_results(ng, g, out), 0, "an even vote clears the seat's");
+	kp_t_eq(T, out[1], KP_NETGAME_DISCONNECT, "the flagged left");
+	ng = results_game(T, g, USE_MAP_SETTINGS);
+	g->results[ALPHA] = COMMITTED_VICTORY;
+	kp_t_eq(T, kp_netgame_game_results(ng, g, out), KP_NETGAME_WIN, "Use Map Settings: the seat's own");
+	kp_t_ok(T, out[0] == KP_NETGAME_DRAW && out[1] == KP_NETGAME_DRAW, "a draw for everyone");
+}
+
+/* What a network game's save keeps for its lobby (kp_netgame_save_record, SaveGame 0x498d20 in multiplayer): the live
+ * header gets the save's ID, Storm's player count as players and maximum, the ID 0 and the computers of slots 0..7;
+ * the player table is the started game's records, the summary the lobby's local slot and types with the races after
+ * the random ones, the local player the seat's own record, the RNG state the game's. */
+static void network_save_keeps_the_lobby_part(KpT *T)
+{
+	static const char *const FILES[] = { KP_T_DATA, TERRAN01, NULL };
+	KpGame *g;
+	KpNetGame *ng;
+	KpNetGameSave rec;
+	int k, computers = 0;
+	if (!kp_t_ready(T, "test_netgame.network_save_keeps_the_lobby_part", FILES)) return;
+	g = kp_t_game(T, TERRAN01, 0, 0, NULL)->g;
+	ng = results_game(T, g, MELEE);
+	g->setup.type[5] = KP_CTRL_COMPUTER;
+	g->setup.race_summary[ALPHA] = RACE_PROTOSS;
+	for (k = 0; k < 8; k++) computers += g->setup.type[k] == KP_CTRL_COMPUTER;
+	ng->header.id = 0x77;
+	ng->header.max_players = 4;
+	ng->local_slot = ALPHA;
+	ng->slots[ALPHA].type = KP_CTRL_HUMAN;
+	ng->slots[5].type = KP_CTRL_LOBBY_COMPUTER;
+	ng->forces[ALPHA] = 1;
+	snprintf(ng->force_names[0], sizeof ng->force_names[0], "Force 1");
+	ng->tileset = 4;
+	ng->width = ng->height = 128;
+	kp_netgame_save_record(ng, g, SAVE_ID, &rec);
+	kp_t_ok(T, ng->header.save_id == SAVE_ID && ng->header.id == 0, "the live header's save ID and game ID");
+	kp_t_ok(T, ng->header.players == 2 && ng->header.max_players == 2, "Storm's players: %d of %d",
+		ng->header.players, ng->header.max_players);
+	kp_t_eq(T, ng->header.save_players, computers, "the computers of slots 0..7");
+	kp_t_eq(T, rec.header.save_id, SAVE_ID, "the save's header");
+	kp_t_eq(T, rec.rng_state, (uint32_t)g->rng->state, "the game RNG's state");
+	for (k = 0; k < KP_NETGAME_SLOTS; k++)
+		kp_t_ok(T, rec.players[k].slot == k && rec.players[k].storm == g->setup.storm[k] &&
+				rec.players[k].type == g->setup.type[k] && rec.players[k].race == g->setup.race[k] &&
+				rec.players[k].force == g->setup.force[k],
+			"player record %d: the started game's", k);
+	kp_t_ok(T, strcmp(rec.players[ALPHA].name, "Alpha") == 0 && strcmp(rec.players[BETA].name, "Beta") == 0,
+		"the players' names");
+	kp_t_ok(T, rec.local_slot == ALPHA && rec.local_player == ALPHA, "the local slot %d and player %u", rec.local_slot,
+		rec.local_player);
+	kp_t_ok(T, rec.types[ALPHA] == KP_CTRL_HUMAN && rec.types[5] == KP_CTRL_LOBBY_COMPUTER, "the lobby's types");
+	kp_t_eq(T, rec.races[ALPHA], RACE_PROTOSS, "the races after the random ones");
+	kp_t_ok(T, rec.forces[ALPHA] == 1 && strcmp(rec.force_names[0], "Force 1") == 0, "the forces and their names");
+	kp_t_ok(T, rec.tileset == 4 && rec.width == 128 && rec.height == 128, "the map's tileset and size");
+}
+
+/* RestoreMultiplayerSaveSlots 0x4790b0 (kp_netgame_restore_slots): the resumed lobby's humans (new Storm IDs, names)
+ * back in the records 0x672608 names, a lobby computer as a computer, open slots empty, every other record cleared and
+ * only the humans' Storm IDs kept; the lower lobby slot wins a record two name. In a team game a force whose saved
+ * leader slot lost its human (and has no computer) gets the force's human of the lowest Storm ID there. */
+static void restored_slots_follow_the_original(KpT *T)
+{
+	KpNetGame *ng = (KpNetGame *)calloc(1, sizeof *ng);
+	KpGameSetup s;
+	int k;
+	kp_t_ok(T, ng != NULL, "out of memory");
+	kp_t_defer(T, free, ng);
+	memset(&s, 0, sizeof s);
+	s.multiplayer = 1;
+	for (k = 0; k < KP_SETUP_SLOTS; k++) {
+		s.storm[k] = 5;
+		s.type[k] = KP_CTRL_HUMAN;
+		snprintf(s.name[k], sizeof s.name[k], "Saved %d", k);
+	}
+	memset(ng->saved_slots, NO_SAVED, sizeof ng->saved_slots);
+	ng->slots[0] = (KpNetSlot){ 0, 1, KP_CTRL_HUMAN, RACE_ZERG, 0, "Beta" };
+	ng->saved_slots[0] = 2;
+	ng->slots[1] = (KpNetSlot){ 1, 0, KP_CTRL_HUMAN, RACE_TERRAN, 0, "Alpha" };
+	ng->saved_slots[1] = 0;
+	ng->slots[2] = (KpNetSlot){ 2, -1, KP_CTRL_LOBBY_COMPUTER, RACE_PROTOSS, 0, "Computer" };
+	ng->saved_slots[2] = 4;
+	ng->slots[3] = (KpNetSlot){ 3, -1, KP_CTRL_OPEN, RACE_ZERG, 0, "" };
+	ng->saved_slots[3] = 6;
+	ng->slots[4] = (KpNetSlot){ 4, 3, KP_CTRL_HUMAN, RACE_ZERG, 0, "Gamma" };
+	ng->saved_slots[4] = 2; /* Beta's record too: Beta's slot is lower */
+	kp_netgame_restore_slots(ng, &s);
+	kp_t_ok(T, s.type[2] == KP_CTRL_HUMAN && s.storm[2] == 1 && strcmp(s.name[2], "Beta") == 0 && s.race[2] == RACE_ZERG,
+		"Beta in its saved record 2 (Storm ID %lld, \"%s\")", (long long)s.storm[2], s.name[2]);
+	kp_t_ok(T, s.type[0] == KP_CTRL_HUMAN && s.storm[0] == 0 && strcmp(s.name[0], "Alpha") == 0,
+		"Alpha in its saved record 0");
+	kp_t_ok(T, s.type[4] == KP_CTRL_COMPUTER && s.storm[4] == -1, "the lobby computer as a computer in record 4");
+	for (k = 0; k < KP_SETUP_SLOTS; k++) {
+		if (k == 0 || k == 2 || k == 4) continue;
+		kp_t_ok(T, s.type[k] == KP_CTRL_NONE && s.storm[k] == -1 && s.name[k][0] == 0, "record %d empty", k);
+	}
+	kp_t_eq(T, kp_setup_storm_slot(&s, 1), 2, "Beta's Storm ID plays record 2");
+	kp_t_eq(T, kp_setup_storm_slot(&s, 3), -1, "Gamma lost the record to Beta");
+	/* a team game: force 1's saved leader slot 1 lost its human, its human of the lowest Storm ID takes it */
+	memset(&s, 0, sizeof s);
+	s.multiplayer = 1;
+	s.template_record[KP_TEMPLATE_TEAMS] = 2;
+	s.leader[1] = 1;
+	s.leader[2] = 5;
+	memset(ng->slots, 0, sizeof ng->slots);
+	memset(ng->saved_slots, NO_SAVED, sizeof ng->saved_slots);
+	ng->slots[0] = (KpNetSlot){ 0, 2, KP_CTRL_HUMAN, RACE_ZERG, 1, "Beta" };
+	ng->saved_slots[0] = 3;
+	ng->slots[1] = (KpNetSlot){ 1, 1, KP_CTRL_HUMAN, RACE_TERRAN, 1, "Alpha" };
+	ng->saved_slots[1] = 2;
+	ng->slots[2] = (KpNetSlot){ 2, 0, KP_CTRL_HUMAN, RACE_PROTOSS, 2, "Gamma" };
+	ng->saved_slots[2] = 6;
+	ng->slots[3] = (KpNetSlot){ 3, -1, KP_CTRL_LOBBY_COMPUTER, RACE_PROTOSS, 2, "Computer" };
+	ng->saved_slots[3] = 7;
+	kp_netgame_restore_slots(ng, &s);
+	kp_t_ok(T, kp_setup_team_game(&s), "a team game");
+	kp_t_ok(T, s.type[1] == KP_CTRL_HUMAN && s.storm[1] == 1 && strcmp(s.name[1], "Alpha") == 0,
+		"Alpha (Storm ID 1, the force's lowest) in the leader's slot 1: \"%s\"", s.name[1]);
+	kp_t_ok(T, s.type[2] == KP_CTRL_NONE && s.storm[2] == -1, "Alpha's saved record 2 empty");
+	kp_t_ok(T, s.type[3] == KP_CTRL_HUMAN && s.storm[3] == 2, "Beta stays in record 3");
+	kp_t_eq(T, kp_setup_record_player(&s, 3), 1, "Beta plays as its force's leader");
+	kp_t_ok(T, s.type[6] == KP_CTRL_HUMAN && s.storm[6] == 0, "force 2 has a computer: Gamma stays in record 6");
+	kp_t_eq(T, kp_setup_record_player(&s, 6), 5, "Gamma plays as force 2's saved leader");
+}
+
 static const KpTest TESTS[] = {
 	{ "stat_string_round_trip", stat_string_round_trip, 0 },
 	{ "net_string_classes", net_string_classes, 0 },
@@ -601,8 +971,13 @@ static const KpTest TESTS[] = {
 	{ "kick_and_ban", kick_and_ban, 0 },
 	{ "ums_ready_room", ums_ready_room, 0 },
 	{ "save_file_reads_back", save_file_reads_back, 0 },
+	{ "koprulu_save_reads_back", koprulu_save_reads_back, 0 },
 	{ "resumed_melee_save", resumed_melee_save, 0 },
 	{ "resumed_ums_save", resumed_ums_save, 0 },
 	{ "resumed_team_save", resumed_team_save, 0 },
+	{ "transfer_upload_obeys_only_its_receiver", transfer_upload_obeys_only_its_receiver, 0 },
+	{ "game_results_follow_the_original", game_results_follow_the_original, 0 },
+	{ "network_save_keeps_the_lobby_part", network_save_keeps_the_lobby_part, 0 },
+	{ "restored_slots_follow_the_original", restored_slots_follow_the_original, 0 },
 };
 KP_SUITE(kp_suite_netgame, "test_netgame", TESTS);

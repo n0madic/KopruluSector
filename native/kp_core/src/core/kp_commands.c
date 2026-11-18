@@ -679,28 +679,43 @@ void kp_chat_display(KpGame *g, const char *text, int64_t sender, int normal)
 	kp_event(g, KP_EVENT_CHAT, sender, normal ? 1 : 0, 0, text);
 }
 
-/* CanPlayerPause 0x47cb20 of the issuer's record: a single player always; in a network game (the lobby state 0x672600
- * at 9 in a game) a human with pauses left. */
+int kp_can_pause(KpGame *g, int64_t record)
+{
+	if (record < 0 || record >= 8) return 0;
+	if (g->setup.multiplayer == 0) return 1;
+	return kp_controller(g, record) == KP_CTRL_HUMAN && g->pauses[record] != 0;
+}
+
 static int may_pause(KpGame *g, int64_t record)
 {
 	if (record < 0 || record >= 8) kp_game_fail(g, "commands: a pause of record %lld", (long long)record);
-	if (g->setup.multiplayer == 0) return 1;
-	return kp_controller(g, record) == KP_CTRL_HUMAN && g->pauses[record] != 0;
+	return kp_can_pause(g, record);
+}
+
+int kp_storm_active(const KpGame *g, int64_t storm)
+{
+	/* "still in the game" is the network's player state (0x673818); without a network (the seats, a replay) every
+	 * human record's Storm ID counts */
+	if (storm < 0 || storm >= 8) return 0;
+	return g->has_net_state ? g->net_state[storm] == KP_NET_ACTIVE : kp_setup_storm_slot(&g->setup, storm) >= 0;
+}
+
+int64_t kp_lowest_active_storm(const KpGame *g)
+{
+	int64_t storm;
+	for (storm = 0; storm < 8 && !kp_storm_active(g, storm); storm++) {
+	}
+	return storm;
 }
 
 /* ExecSaveGame 0x472f50's gate: never in a tournament (IsTournamentMode 0x447d00); in a network game only the command
  * of the lowest Storm ID still in the game (0x4771e0, the issuer's record's). */
 static int may_save(KpGame *g, int64_t record)
 {
-	int64_t storm, p;
+	int64_t p;
 	if (kp_setup_tournament(&g->setup)) return 0;
 	if (g->setup.multiplayer == 0) return 1;
-	/* "still in the game" is the network's player state (0x673818, IsStormPlayerActive 0x4780a0). TODO: a seat's leave
-	 * (kp_hub.h has none yet): until the hub carries one, every human record's Storm ID counts */
-	for (storm = 0; storm < 8; storm++) {
-		if (kp_setup_storm_slot(&g->setup, storm) >= 0) break;
-	}
-	p = kp_setup_storm_slot(&g->setup, storm);
+	p = kp_setup_storm_slot(&g->setup, kp_lowest_active_storm(g));
 	return p >= 0 && p == record;
 }
 
@@ -838,9 +853,9 @@ void kp_execute_command(KpGame *g, int64_t record, const uint8_t *b, size_t size
 	case BURROW_COMMAND: case UNBURROW_COMMAND: burrow_selection(g, id == BURROW_COMMAND, flag(b, size, 1)); break;
 	case CHAT_COMMAND: { /* the dispatcher 0x475d30's DisplayChatMessage 0x46a860 (a network player's text, which
 	                      * HandleChatMessage 0x475b40 recorded in the replay): the record of byte 1 says it, from the
-	                      * replay's blocks (0x4769b0) or the live turns (0x4768a0); the lines are the interface's.
-	                      * TODO: a live game's chat: SNetSendMessage's messages beside the turns, each recorded by
-	                      * 0x475b40 as this command; the turn hub carries turns only (kp_hub.h) */
+	                      * replay's blocks (0x4769b0) or the live turns (0x4768a0); the lines are the interface's. A
+	                      * live network game's chat comes beside the turns (SNetSendMessage) and is recorded as this
+	                      * command (kp_netgame_game_messages); the turn hub carries turns only (kp_hub.h) */
 		char text[CHAT_TEXT];
 		size_t n = 0;
 		int64_t sender = byte_at(g, b, size, 1);

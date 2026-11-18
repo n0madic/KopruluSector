@@ -166,7 +166,7 @@ Tests:
 **Not done:**
 - The save's "lowest Storm ID still in the game" counts every human record: the network's player state (`0x673818`) waits for a seat's leave in the turn hub (`TODO:` in `kp_commands.c`). The latency's extra turns are the hub's since M6.
 - A team game's live leave (`HandlePlayerLeftGame` `0x477a60`'s team branch: the force takes its result only when its last active human leaves, `0x4b2b50`; the live leave waits for the hub) and its score screen's team roster (`TODO:` in `kp_ui_score.c`); `NextSelectedUnit`'s clearing of a dead unit's dashed circles.
-- A team game's dashed circles are the seat's since M6 (the selection circles' pool and the sprite's bits `0x06`, out of the shared hash). A network game's save loads as a single player's (its first human's record is the seat's): the lobby's load of a network save is not ported.
+- A team game's dashed circles are the seat's since M6 (the selection circles' pool and the sprite's bits `0x06`, out of the shared hash). A network game's save loads as a single player's (its first human's record is the seat's): the lobby's load of a network save is not ported (phase N ports it with the network game: [N4](phase-network.md#n4-the-game-over-the-network-done-2026-11-18)).
 
 Tests: `test_multiplayer` (20 cases: the four commands, RetirePlayer, the defeat's message, Transmission, Center View, the pause actions, the result dialog, the trigger lists, the speed and cheats, the pause limit, saves and loads, the latency; a team game's slots, its units and supply, its triggers and its commands and dashed circles).
 

@@ -117,6 +117,7 @@ int kp_ui_timer_order(const KpUiTimers *t, int32_t *out, int max);
 #define KP_UI_PLAIN 0x20000u
 #define KP_UI_TRANSLUCENT 0x40000u
 #define KP_UI_DROPPED 0x100000u      /* a combo box dropped open: the paint pass draws it after its siblings */
+#define KP_UI_NESTED 0x8000000u      /* a dialog composited into another dialog's bitmap (a glue popup) */
 #define KP_UI_INITIALIZING 0x04000000u
 #define KP_UI_PRESSED 0x40000000u
 #define KP_UI_CONSUMED 0x80000000u
@@ -154,7 +155,13 @@ typedef struct {
 	uint32_t create_tick[KP_UI_HUD_DIALOGS]; /* the tick each console dialog is created at (0: ui->now), for the oracle */
 	int32_t leaderboard;             /* 0x6ab270: the leaderboard dialog (statlb.bin) */
 	int32_t textbox;                 /* 0x6be65c: the text box (<race>textbox.bin) */
-	uint8_t textbox_mode;            /* 0x6be658: 0 closed, 1 a single player's message line */
+	uint8_t textbox_mode;            /* 0x6be658: 0 closed, 1 a single player's message line; a network game's 2 to
+	                                  * everyone, 3 to the allies, 4 to the message dialog's choice */
+	uint8_t chat_target;             /* 0x529040: a network game's chat choice, a slot (a team game's force),
+	                                  * KP_UI_CHAT_EVERYONE, KP_UI_CHAT_ALLIES (InitLocalPlayerAndChatTargets 0x443be0) */
+	uint16_t chat_recipients;        /* 0x5264ba: the Storm IDs the message dialog's choice reaches */
+	uint8_t message_choice, message_index; /* 0x6662ac, 0x6662ad: msgfltr.bin's choice and its list's row */
+	char whisper[50];                /* 0x6be660: the whisper label (FormatWhisperLabel 0x4b3eb0) */
 	uint8_t lb_state, lb_expanded;   /* 0x6ab274 (0 hidden, 1 values, 2 greed), 0x6ab278 */
 	char lb_values[8][16];           /* 0x6ab280: a row's value (greed: its minerals) */
 	char lb_gas[8][16];              /* 0x6ab300: a greed row's gas */
@@ -845,6 +852,8 @@ typedef struct {
 	uint32_t local_storm, elapsed;   /* 0x508d58; GetElapsedSeconds 0x47a780 */
 	int replay;                      /* 0x66b414 */
 	int from_save;                   /* 0x66b410: the game was loaded from a save (the host's) */
+	int network;                     /* a network game (0x672664): the Storm players' results below */
+	uint8_t storm_results[8];        /* ComputeGameResults 0x477270 by Storm ID (0x66ca70): 1 win, 2 loss, 3 draw, 4 left */
 	int64_t mission;                 /* 0x526524: the campaign mission, 0 a custom game */
 } KpUiScoreData;
 typedef struct {
@@ -1012,6 +1021,9 @@ typedef struct KpUiNet {
 	 * Cancel in multiplayer) */
 	void (*reset_provider)(void *host);
 	void (*shutdown)(void *host);
+	/* SetLocalPlayerName 0x475750 at the login screen's Ok (SelectLoginProfile 0x45a240): the chosen profile's name
+	 * (UTF-8) as the player's on the network; NULL none */
+	void (*player_name)(void *host, const char *name);
 	/* EnumNetworkGames 0x475570 (SNetEnumGamesEx): the provider's games now, in the order Storm lists them; their
 	 * count */
 	int (*games)(void *host, KpUiGame *out, int max);
@@ -1062,6 +1074,14 @@ typedef struct KpUiNet {
 	int (*ready_room)(void *host);
 	void (*briefing_arm)(void *host);              /* ArmBriefingReady 0x475d10 (ReadyRoomPostLoad 0x460c80) */
 	void (*briefing_start)(void *host, int abort); /* SendBriefingStart 0x475cc0: the 0x54, or Storm left */
+	/* The network game's (phase N, stage N4). SendInGameChat 0x473be0 of a message line (UTF-8) to the Storm IDs of
+	 * recipients (WORD 0x5264ba) */
+	void (*game_chat)(void *host, const char *text, uint16_t recipients);
+	int (*game_latency)(void *host); /* GetExtraLatency 0x4765f0: the turns of latency added, 0..2 */
+	/* WaitForLaggingPlayers 0x47a810: -1 while no turn is overdue, else the lagging human slots in slot order (their
+	 * count) and the countdown's seconds before Drop Players (0x675020) */
+	int (*game_lagging)(void *host, int slots[8], uint32_t *seconds);
+	void (*game_drop)(void *host); /* TimeoutDialogActivateCase 0x47aa68: ResolveDesync 0x47a630 */
 	/* PollBriefingTurn 0x476b20: a turn step at most every 250 ms; 1 once every present player's 0x54 arrived */
 	int (*briefing_poll)(void *host);
 	void *host;
@@ -1519,7 +1539,9 @@ struct KpUi {
 		const KpUiFile *grp;         /* 0x67505c: a glue box's frame (RunOkBox 0x47acd0's argument) */
 		uint8_t open;
 	} box;
-	struct { uint8_t index; char name[KP_UI_SAVE_NAME]; } save; /* 0x6a5e9e, 0x6a5e80: the save dialog's remembered row and name */
+	/* 0x6a5e9e, 0x6a5e80: the save dialog's remembered row and name; 0x6a5ea0: the interface clock of the last save
+	 * command (sent 0 before the first: GetTickCount is far past 120 s then) */
+	struct { uint8_t index; char name[KP_UI_SAVE_NAME]; uint32_t sent_tick; int sent; } save;
 	/* The save-replay dialog (kp_ui_replay_save.c, RunSaveReplayDialog 0x4809d0): its remembered row and name, the race
 	 * and victory of its frame, the frame's GRP (0x67cc98's glue\pal<r><d|v>\tile.grp, made from dlgs\tile.grp; size 0
 	 * none; its path dlgs\tile.grp's, whose HD art the HD interface draws), the list being filled and the name its Delete
@@ -1586,10 +1608,17 @@ struct KpUi {
 #define KP_UI_SLOT_NAMES 8
 	uint8_t slot_names[KP_UI_SLOT_NAMES][25]; /* a replay's player records' names (0x6726c8 +0x0b), the host's */
 	struct {
-		int32_t dialog;                  /* the replay's vision dialog, rez\allyfltr.bin (-1 none) */
+		int32_t dialog;                  /* the alliance dialog, rez\allyfltr.bin or teamfltr.bin (-1 none) */
 		uint16_t vision;                 /* 0x6662b0: the vision mask being edited */
 		int reveal;                      /* control 25's state at the open: 0x67cc88 */
+		uint8_t stances[12];             /* 0x6662a0: a network game's alliance bytes being edited */
 	} ally;
+	struct {
+		int32_t dialog;                  /* 0x675010: timeout.bin (-1 none) */
+		uint32_t seconds;                /* 0x675020 as last shown */
+		char countdown[16];              /* 0x675030: "%d:%02d" */
+		int lagging[8], lagging_count;   /* the lagging slots as last listed (the rows redrawn when they change) */
+	} timeout;
 	uint8_t addon_anchor;            /* a layout host's (phase 10): an add-on's preview starts beside its parent */
 	void (*menu_handler)(struct KpUi *ui, int32_t dialog); /* 0x675068: the open in-game menu's handler */
 	uint32_t pause_tick;             /* 0x675180: the interface clock at the pause (PauseGame 0x47cbb0) */
@@ -1797,6 +1826,14 @@ int kp_ui_region(const KpUi *ui, int16_t out[KP_UI_REGION][4]);
  * 0x4c51c0), a dialog's open combo boxes (KP_UI_DROPPED) after its others with their rectangles; the region is then
  * emptied. Returns the number of draw calls. */
 int kp_ui_present(KpUi *ui);
+/* The dialogs that reach the screen, in BlitDialogToScreen 0x4c5630's order: the visible ones from the open list's
+ * head to its tail, each blitted over the ones before it at its own place (the chat room's map preview over the room);
+ * the nested ones (popups) are composited into another's bitmap by kp_ui_present. The layer after d (-1: the first);
+ * -1 after the last. */
+int32_t kp_ui_screen_layer(const KpUi *ui, int32_t d);
+/* The glue's screen among those layers: the last that covers the whole 640 x 480 screen (its margins widen it, its
+ * place is the screen's), else the last; -1 none. */
+int32_t kp_ui_glue_screen(const KpUi *ui);
 /* The default procedures of a control type (the tables 0x4f10f8, 0x4f1148). */
 KpUiInteract kp_ui_type_interact(int type);
 KpUiDraw kp_ui_type_draw(int type);
@@ -1883,11 +1920,16 @@ enum { KP_UI_GAME_MENU, KP_UI_GAME_MENU_HELP, KP_UI_GAME_MENU_OPTIONS, KP_UI_GAM
 void kp_ui_game_menu(KpUi *ui, int which);
 /* The options dialogs (kp_ui_options.c): OpenSoundOptions 0x49ed20, OpenSpeedOptions 0x49f060, OpenVideoOptions
  * 0x4be5c0; ApplyVolumeOptions 0x49ea60. */
-enum { KP_UI_OPTIONS_SPEED = 1, KP_UI_OPTIONS_SOUND, KP_UI_OPTIONS_VIDEO, KP_UI_OPTIONS_TIPS, KP_UI_OPTIONS_TIPS_AUTOMATIC };
+enum { KP_UI_OPTIONS_SPEED = 1, KP_UI_OPTIONS_SOUND, KP_UI_OPTIONS_VIDEO, KP_UI_OPTIONS_TIPS, KP_UI_OPTIONS_TIPS_AUTOMATIC,
+	KP_UI_OPTIONS_NETWORK };
 void kp_ui_options_dialog(KpUi *ui, int which);
 /* The save and load dialogs (kp_ui_saveload.c): OpenSaveGameDialog 0x49b0b0 / OpenLoadGameDialog 0x49af50 (load =
  * 1); the wait box of SaveGameFile 0x498d20 around the host's save. */
 void kp_ui_save_dialog(KpUi *ui, int load);
+/* IsLowestActivePlayer 0x477800 (a single player: 1) and IsSaveCooldownOver 0x49add0 (a network game's 120 s after the
+ * last save command; a single player: 1): the save's gates the game menu and the save dialog share. */
+int kp_ui_lowest_active(const KpUi *ui);
+int kp_ui_save_cooled(const KpUi *ui);
 /* DeleteSaveFile 0x498b30: the host deletes the save's file (ui->delete_save) and the list loses the name; 0 when the
  * file stays (the list keeps it). */
 int kp_ui_delete_save(KpUi *ui, const char *name);
@@ -2003,6 +2045,11 @@ void kp_ui_timed_message(KpUi *ui, const uint8_t *text, uint32_t ms);
 /* The name in player p's record (0x6726c8 + 0x0b): the setup's, else for a computer, rescuable or neutral slot
  * AssignDefaultComputerPlayerNames 0x4074a0's ("" none). */
 const uint8_t *kp_ui_record_name(KpUi *ui, int64_t p);
+/* A network game's chat choices past the slots (0x529040, msgfltr.bin's): everyone, the allies */
+#define KP_UI_CHAT_EVERYONE 8
+#define KP_UI_CHAT_ALLIES 9
+/* GetForceName 0x4b2bf0: network.tbl's "Team 1".."Team 4" of a force (its low byte), "" when the table has none. */
+const uint8_t *kp_ui_force_name(KpUi *ui, int64_t force);
 /* A table string formatted as the original's SStrVPrintf with a name and two numbers (%s the name, %d x then y, %%;
  * anything else copied), never the string as a printf format: out holds at most size - 1 bytes and a 0. */
 void kp_ui_format_name_xy(char *out, size_t size, const uint8_t *format, const uint8_t *name, int64_t x, int64_t y);
@@ -2478,6 +2525,15 @@ void kp_ui_set_view(KpUi *ui, int32_t w, int32_t h);
 void kp_ui_set_screen_position(KpUi *ui, int32_t x, int32_t y);
 /* SetTextboxPrompt 0x4b38c0: the text box's prompt (control 5; NULL none), shown while the text box is closed: the
  * targeting's (network.tbl 0x3f) and the placement's (0x40). */
+/* BuildAllyRecipientMask 0x442070: the Storm IDs of the local player's allies (a team game's: of the allied slots'
+ * forces' humans), the chat's "to allies". */
+uint16_t kp_ui_ally_recipients(const KpUi *ui);
+/* DrawPlayerColorListItem 0x441c00: a row's player (the control's user) in its minimap colour, a 12 x 12 square, then
+ * the name (the alliance dialog's rows, the lagging players of timeout.bin). */
+void kp_ui_player_item_draw(KpUi *ui, KpUiControl *c, int32_t x, int32_t y, const int16_t clip[4]);
+/* WaitForLaggingPlayers 0x47a810's dialog, each frame of a network game: timeout.bin opens while a turn is overdue
+ * (ui->net's game_lagging), its lagging players and countdown refreshed, and closes when the turn came. */
+void kp_ui_net_wait(KpUi *ui);
 void kp_ui_set_textbox_prompt(KpUi *ui, const uint8_t *text);
 /* CenterScreenOnUnit 0x422b10: the unit's tile at the view's centre (nothing for a unit without a sprite). */
 void kp_ui_centre_on_unit(KpUi *ui, int64_t unit);

@@ -20,6 +20,8 @@
 #define TILED_CANCEL 5               /* 0x508ba0[5] = 0x79: Cancel's */
 #define PREVIEW_IDLES 5              /* SnapshotOptions 0x47bd80's countdown */
 #define VOLUME_STEPS 10              /* InitSoundSlider 0x49f000: page 10, tick 1, 0..100 */
+#define LATENCY_LEVELS 3             /* netdlg.bin's option buttons 1..3 */
+#define CMD_LATENCY 0x55             /* QueueLatencyCommand 0x476de0: {0x55, level} */
 #define CMD_SPEED 0x0f               /* SendGameSpeedCommand 0x474380 */
 #define MUSIC_OFF (-10000)
 #define ID_MUSIC 1
@@ -318,6 +320,48 @@ static int speed_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 	return kp_ui_modeless_default(ui, d, e);
 }
 
+/* --- the network options (rez\netdlg.bin: NetworkDialogProc 0x46fa00, Low, High and Extra High latency) --- */
+
+static int latency_button(KpUi *ui, KpUiControl *c, KpUiEvent *e)
+{
+	/* LatencyButtonProc 0x46fa90 with SyncLatencyButton 0x46fac0: the button of the current extra latency checked */
+	int32_t self = (int32_t)(c - ui->controls);
+	if (e->type == KP_UI_USER && e->code == KP_UI_POST_LOAD && c->id >= 1 && c->id <= LATENCY_LEVELS) {
+		int v = ui->net != NULL && ui->net->game_latency != NULL ? ui->net->game_latency(ui->net->host) : 0;
+		(void)kp_ui_send_user(ui, self, KP_UI_VALUE_CHANGED, v == c->id - 1);
+	}
+	return kp_ui_type_interact(c->type)(ui, c, e);
+}
+
+static int network_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
+{
+	static const KpUiInteract CHILDREN[LATENCY_LEVELS] = { latency_button, latency_button, latency_button };
+	int32_t self = (int32_t)(d - ui->controls);
+	if (e->type == KP_UI_USER) {
+		switch (e->code) {
+		case KP_UI_CREATE: init_sub_dialog(ui, self); break;
+		case KP_UI_DESTROY: return sub_dialog_destroyed(ui, d, e);
+		case KP_UI_CLOSE: /* CloseNetworkDialog 0x46f9a0: OK queues each checked level (QueueLatencyCommand 0x476de0) */
+			if (ui->result == ID_OK) {
+				int k;
+				for (k = 0; k < LATENCY_LEVELS; k++) {
+					int32_t c = kp_ui_find_control(ui, self, (int16_t)(k + 1));
+					if (c >= 0 && ui->controls[c].words36[0] != 0) {
+						uint8_t cmd[2] = { CMD_LATENCY, (uint8_t)k };
+						kp_ui_queue_command(ui, cmd, sizeof cmd);
+					}
+				}
+			}
+			apply_or_revert(ui, 0);
+			back_to_options(ui, self);
+			return 1;
+		case KP_UI_POST_LOAD: kp_ui_bind_interacts(ui, self, CHILDREN, LATENCY_LEVELS); break;
+		default: break;
+		}
+	}
+	return kp_ui_modeless_default(ui, d, e);
+}
+
 /* --- the video options (our koprulu\video.bin; the original's rez\video.bin had the gamma, the colour cycling, now
  * always on, and the portraits) --- */
 
@@ -566,6 +610,7 @@ void kp_ui_options_dialog(KpUi *ui, int which)
 	case KP_UI_OPTIONS_VIDEO:
 		(void)kp_ui_open_modeless(ui, "koprulu\\video.bin", video_proc);
 		break;
+	case KP_UI_OPTIONS_NETWORK: (void)kp_ui_open_modeless(ui, "rez\\netdlg.bin", network_proc); break; /* 0x46f990 */
 	case KP_UI_OPTIONS_TIPS:
 	case KP_UI_OPTIONS_TIPS_AUTOMATIC: /* OpenTipsDialog 0x4b4f50 */
 		ui->tips_automatic = which == KP_UI_OPTIONS_TIPS_AUTOMATIC;

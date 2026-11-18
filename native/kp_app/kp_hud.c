@@ -776,11 +776,16 @@ int kp_glue_room(KpGlue *g, KpGame *game, int state)
 	return 0;
 }
 
-void kp_glue_score(KpGlue *g, KpGame *game, int result, uint32_t elapsed, int from_save)
+void kp_glue_score(KpGlue *g, KpGame *game, int result, uint32_t elapsed, int from_save, const uint8_t *storm_results,
+	int local_result)
 {
 	KpUiScoreData d;
 	kp_ui_score_data(g->ui, game, result, g->profile->name[0] ? g->profile->name : DEFAULT_NAME, elapsed, &d);
 	d.from_save = from_save;
+	if (storm_results != NULL) {
+		memcpy(d.storm_results, storm_results, sizeof d.storm_results);
+		d.result = local_result;
+	}
 	kp_ui_score_open(g->ui, &d);
 	g->screen = KP_GLUE_SCORE;
 	g->has_composed = 0;
@@ -906,7 +911,8 @@ KpGlueEvent kp_glue_frame(KpGlue *g, int32_t w, int32_t h, uint32_t now_ms, int 
 {
 	KpUi *ui = g->ui;
 	KpGlueEvent ev;
-	int32_t bottom = -1, d;
+	uint32_t layers = 2166136261u;
+	int32_t d;
 	int draws, k;
 	ui->now = now_ms;
 	if (g->screen == KP_GLUE_TITLE) {
@@ -922,19 +928,28 @@ KpGlueEvent kp_glue_frame(KpGlue *g, int32_t w, int32_t h, uint32_t now_ms, int 
 	}
 	ev = poll(g);
 	draws = kp_ui_present(ui);
-	for (d = ui->open; d >= 0; d = ui->controls[d].next) bottom = d; /* the screen: the open list's last */
+	for (d = ui->open; d >= 0; d = ui->controls[d].next) { /* the screen's layers and their places */
+		const KpUiControl *c = &ui->controls[d];
+		uint32_t v[4];
+		v[0] = (uint32_t)d;
+		v[1] = c->flags & (KP_UI_VISIBLE | KP_UI_NESTED);
+		v[2] = (uint32_t)c->left;
+		v[3] = (uint32_t)c->top;
+		for (k = 0; k < 4; k++) layers = (layers ^ v[k]) * 16777619u;
+	}
 	g->place_x = half_floor(w - KP_LAYOUT_MIN_W);
 	g->place_y = half_floor(h - KP_LAYOUT_MIN_H);
-	/* composed again only when the screen changed: a repaint, another dialog, the size, the palette (the margins) */
+	/* composed again only when the screen changed: a repaint, other dialogs or places, the size, the palette (the
+	 * margins) */
 	*changed = 0;
-	if (draws > 0 || !g->has_composed || w != g->composed_w || h != g->composed_h || bottom != g->composed_bottom
+	if (draws > 0 || !g->has_composed || w != g->composed_w || h != g->composed_h || layers != g->composed_layers
 		|| ui->glue.palette_serial != g->composed_serial) {
 		g->has_composed = 1;
 		g->composed_w = w;
 		g->composed_h = h;
-		g->composed_bottom = bottom;
+		g->composed_layers = layers;
 		g->composed_serial = ui->glue.palette_serial;
-		*changed = kp_canvas_compose_screen(&g->canvas, ui, w, h, bottom, g->place_x, g->place_y) > 0;
+		*changed = kp_canvas_compose_screen(&g->canvas, ui, w, h, g->place_x, g->place_y) > 0;
 	}
 	*palette = 0;
 	if (!g->has_palette || ui->glue.palette_serial != g->palette_serial) {

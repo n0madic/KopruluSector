@@ -48,8 +48,8 @@ typedef struct {
 	 * 127.0.0.1's ports from BASE, -1 a program the map does not hold, on --lan-port) */
 	int lan_port;
 	char lan_map[32];
-	/* Create Game lists StarCraft 1.17's saved network games (.mlt, .mlx; kp_netsave.h) and a resumed lobby finds them:
-	 * the network oracle's runs only (no option sets it; the product's own network saves are stage N4's) */
+	/* Create Game reads StarCraft 1.17's saved network games (.mlt, .mlx; kp_netsave.h) besides Koprulu's own, and a
+	 * resumed lobby finds them: the network oracle's runs only (no option sets it; the product resumes Koprulu's) */
 	int original_saves;
 	int play;              /* the mission in play mode (with the console) */
 	int scale_mode;        /* --scale-mode auto|integer|sharp */
@@ -228,7 +228,15 @@ typedef struct KpFlow {
 	int playing;
 	int result;            /* the game's result for the interface's result dialog, 0 none */
 	int glue_room;         /* the ready room's glue state of the game started from the glue, 0 none */
+	/* the network's game (stage N4): the game in play is the chat room's (its turns netplay's KpNetGame), its first
+	 * turn ran (RunGame 0x445310's step 8: the frames run after it), Storm's game left (EndGame 0x443db0) */
+	int net_game, net_running, net_left;
 	char pending_save[KP_PROFILE_SAVE_NAME], pending_load[KP_PROFILE_SAVE_NAME], load_on_start[KP_PROFILE_SAVE_NAME];
+	uint32_t pending_save_id; /* the save command's DWORD (a network save's ID, FindMultiplayerSaveById 0x4995e0) */
+	/* the network save this seat's lobby found (its path; kp_flow_find_save), "" none; a resumed game's start loads it
+	 * before the first turn (net_resume) */
+	char net_load[KP_FLOW_MAP_PATH];
+	int net_resume;
 	double game_started_at;
 	/* the campaign's run */
 	int has_run;
@@ -367,7 +375,8 @@ int kp_flow_entry_save(KpFlow *f, int index, KpNetGameHeader *h);
 /* FindMultiplayerSaveById 0x4995e0 (the user's maps folder: its saves of this game's extension, then its subfolders',
  * in FindFirstFileA's order; the first whose header has the ID names the save), LoadSavedGameByName 0x498bd0 (the
  * first file of that name and extension below the folder, in the same order) and ReadSaveHeaderAndGameBlock 0x499c50
- * (KpNetGameHooks.find_save): 1 with out read, 0 none (always without KpAppFlags.original_saves). */
+ * (KpNetGameHooks.find_save) over Koprulu's network saves (and the original's with KpAppFlags.original_saves): 1 with
+ * out read and KpFlow.net_load the file, 0 none. */
 int kp_flow_find_save(KpFlow *f, uint32_t id, KpNetGameSave *out);
 /* The map transfer's files over the flow's folders (KpNetGameConfig.transfer; its send is the game's): read a disk
  * file, find a local copy of an offered file (FindLocalCopy 0x441080: the user's maps folder, its download folder

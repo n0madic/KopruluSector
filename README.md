@@ -16,9 +16,12 @@ on your own copy of the original data.
   ruRU text and speech.
 - **Every platform:** macOS, Windows, Linux, Android, iOS and the web (WebAssembly). Phones have touch controls and
   zoom.
+- **Network play on a local network,** compatible with StarCraft 1.17.0.1 itself: Multiplayer → Local Area Network
+  (UDP/IP) lists, hosts and joins the games of Koprulu and of the original, transfers the map and plays the game with
+  them ([phase N](docs/phase-network.md)). Games among Koprulu's players can be saved and resumed. This works on the
+  desktops; the web and the phones need the relay, which is still to come.
 
-Not included: network play and Battle.net. The simulation already runs a network game's rules: several players' seats
-of one game share its state in one process (a development mode, [phase M](docs/phase-multiplayer.md)).
+Not included: Battle.net.
 
 > **No game data is included.** This repository holds only code and its own definitions. You need a legal copy of
 > StarCraft: Brood War 1.17.0.1 or StarCraft: Remastered. The game reads it on your machine, from the install itself
@@ -245,6 +248,8 @@ the settings for one run:
 | `--scale-mode integer\|sharp` | how the picture is scaled to the window |
 | `--console edges\|ornaments` | the console's shape on wide screens |
 | `--no-vsync` | turns vertical sync off |
+| `--lan-port PORT` | the local network's UDP port (default 6111, the original's; the next port is used too) |
+| `--lan-map BASE:HOSTS:SELF` | several games on one machine: game SELF of HOSTS, on the ports from BASE (for testing) |
 
 Your profile, saves and settings are kept in the system's per-user application folder. Saves do not carry over between
 builds whose saved state differs: the load screen says that such a save is of another version.

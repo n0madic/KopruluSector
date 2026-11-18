@@ -34,6 +34,23 @@ int kp_t_ui_take_commands(KpUi *ui, uint8_t *first, size_t *first_size);
 /* The BIN name of control d's dialog in lower case ("" for a control without a BIN). */
 const char *kp_t_ui_bin(const KpUi *ui, int32_t d, char *out, size_t size);
 
+/* The host's side of a network game's interface (KpUiNet's game hooks, phase N stage N4): the last chat line and its
+ * recipients, the lines sent, the extra latency it answers, the lagging players (-1 none) with the countdown's seconds,
+ * the drops asked. */
+typedef struct {
+	KpUiNet net;
+	char chat[64];
+	uint16_t recipients;
+	int chats, latency, lagging, slots[8], drops;
+	uint32_t seconds;
+} KpTNetHost;
+/* ui as a network game's interface over h's hooks (h cleared, nobody lagging); before the console is made. */
+void kp_t_net_host(KpUi *ui, KpTNetHost *h);
+/* Game g as a network game of two humans named Alpha (record alpha, the seat's) and Beta (record beta), Alpha's
+ * Storm ID alpha_storm and Beta's the other of 0 and 1, the other records without one, both played by humans; alliances
+ * allowed, three pauses each, Alpha no ally of Beta. */
+void kp_t_net_game(KpT *T, struct KpGame *g, int64_t alpha, int64_t beta, int64_t alpha_storm);
+
 #ifdef __cplusplus
 }
 #endif

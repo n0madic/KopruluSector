@@ -311,16 +311,22 @@ int kp_canvas_compose(KpCanvas *c, KpUi *ui, int32_t w, int32_t h, const KpPanel
 	return finish(c, ui);
 }
 
-int kp_canvas_compose_screen(KpCanvas *c, KpUi *ui, int32_t w, int32_t h, int32_t dialog, int32_t x, int32_t y)
+int kp_canvas_compose_screen(KpCanvas *c, KpUi *ui, int32_t w, int32_t h, int32_t x, int32_t y)
 {
+	int32_t screen = kp_ui_glue_screen(ui), k;
 	if (resize(c, w, h) != 0) return -1;
 	c->place_count = 0;
 	kp_ui_canvas_begin(ui, &c->canvas);
-	if (dialog >= 0) {
-		kp_ui_canvas_screen(ui, &c->canvas, dialog, x, y);
-		add_place(c, dialog, x, y);
-	} else {
-		kp_ui_canvas_fill(&c->canvas, 0, 0, w, h, 0);
+	if (screen < 0) kp_ui_canvas_fill(&c->canvas, 0, 0, w, h, 0);
+	for (k = kp_ui_screen_layer(ui, -1); k >= 0; k = kp_ui_screen_layer(ui, k)) { /* each over the ones before it */
+		const KpUiControl *d = &ui->controls[k];
+		int32_t dx = x + d->left, dy = y + d->top;
+		if (k == screen) {
+			kp_ui_canvas_screen(ui, &c->canvas, k, dx, dy);
+		} else {
+			kp_ui_canvas_dialog(ui, &c->canvas, k, dx, dy);
+		}
+		add_place(c, k, dx, dy);
 	}
 	return finish(c, ui);
 }

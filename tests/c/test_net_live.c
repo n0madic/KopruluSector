@@ -10,10 +10,14 @@
  *   for its room to fill (KOPRULU_NET_LIVE_PLAYERS players, Koprulu included; default 2), sends the map to the
  *   emulated players without it (Koprulu's upload, the original's download) and starts.
  *
- * Koprulu leaves Storm's game after the start (its network game is stage N4's), so the emulated players play on alone.
+ * After the start (stage N4) Koprulu plays the game KOPRULU_NET_LIVE_FRAMES frames over the network with the emulated
+ * players (KP_TURNS_NET, a frame every frame time of the header's speed, as the product's loop), recording it: no
+ * desync on its side (no sender out of sync, nobody dropped), then its replay written beside KOPRULU_NET_LIVE_OUT
+ * (REPLAY_FILE: the emulator plays it, tools/net_live.py) and the game left by the menu's quit (EndGame 0x443db0).
+ * Without the variable (or 0) it leaves Storm's game at the start, and the emulated players play on alone.
  * Both tests need the emulator running and the 1.17 data (the templates, the map's header): CI skips them without
  * KOPRULU_NET_BRIDGE. KOPRULU_NET_LIVE_MAP names the map file both sides play (the host's; the joiner checks its
- * download against it). */
+ * download against it, and plays it). */
 #include "kp_test.h"
 
 #include <stdio.h>
@@ -26,12 +30,17 @@
 #include "kp_net_sock.h"
 #include "kp_net_world.h"
 #include "kp_netgame.h"
+#include "kp_rep.h"
+#include "kp_session.h"
+#include "kp_start.h"
 #include "kp_transfer.h"
 
 #define BRIDGE_ENV "KOPRULU_NET_BRIDGE"        /* BASE[:HOSTS]: the bridge's first port and its emulated hosts */
 #define MAP_ENV "KOPRULU_NET_LIVE_MAP"         /* the map file both sides play */
 #define OUT_ENV "KOPRULU_NET_LIVE_OUT"         /* Koprulu's start, as JSON */
 #define PLAYERS_ENV "KOPRULU_NET_LIVE_PLAYERS" /* the hosted room's players before the Start, Koprulu included */
+#define FRAMES_ENV "KOPRULU_NET_LIVE_FRAMES"   /* the game's frames Koprulu plays after the start (0: none) */
+#define REPLAY_FILE "koprulu.rep"              /* Koprulu's replay of the game, beside OUT_ENV's file */
 #define NAME "Beta"                            /* Koprulu's player, and its hosted game's name */
 #define HOST_GAME "Alpha"                      /* the emulated host's game: its player's name */
 #define DEFAULT_PLAYERS 2
@@ -41,6 +50,8 @@
 #define ROOM_MS 900000      /* the room filled, the map sent, the countdown run */
 #define START_WAIT_MS 2000  /* the host's Start this long after its room filled, as the emulator's driver waits */
 #define LEAVE_MS 1500       /* after the start: Storm's leave sent before the sockets close */
+#define BEGIN_MS 30000      /* the game's first turns (the emulated players load the map in real time) */
+#define LAG_MS 120000       /* the game's frames within their time and this much more (the emulator's waits) */
 #define SPEED_FASTEST 6
 #define MELEE "Melee"
 #define EXPANSION_EXT ".scx"
@@ -56,11 +67,24 @@ typedef struct {
 	char map_file[KP_TRANSFER_PATH];
 	char map_name[KP_TRANSFER_NAME]; /* its base name */
 	char offered[KP_TRANSFER_NAME];  /* the hosted map's name (OFFERED_PREFIX and the base name) */
+	/* the game after the start */
+	KpSession *session;
+	KpDataMap game_map;
+	int map_open;
+	int begun;          /* RunGame 0x445310's first turn ran */
+	uint32_t next;      /* the clock of the next frame */
+	uint32_t frame_ms;  /* a frame at the header's speed */
+	int64_t frames;     /* the frames run */
 } Live;
 
 static void live_free(void *p)
 {
 	Live *v = (Live *)p;
+	if (v->session) {
+		kp_session_free(v->session);
+		free(v->session);
+	}
+	if (v->map_open) kp_data_map_close(&v->game_map);
 	kp_net_lobby_free(&v->l);
 	kp_net_sock_close(v->sock);
 	free(v);
@@ -202,10 +226,123 @@ static void write_start(KpT *T, const Live *v, const char *role)
 	kp_t_log(T, "the start written to %s", path);
 }
 
-/* After the start: Storm's game left (AbortNetworkGame 0x474e60), its leave sent */
-static void leave(Live *v)
+/* The seat's loop on the sockets' clock: the lobby's frames until the game's session exists; then, every frame time,
+ * RunGame 0x445310's first turn polled until it ran, then GameLoop's messages and a frame (none while the turns are
+ * overdue) */
+static void live_frame(KpNetSeat *ns)
 {
-	kp_netgame_abort(&v->l.seat[0].game);
+	Live *v = (Live *)(void *)ns->w;
+	KpSession *s = v->session;
+	KpT *T = v->l.n.T;
+	if (!s) {
+		kp_net_lobby_frame(&v->l.seat[0]);
+		return;
+	}
+	if (!before(v, v->next)) {
+		v->next = now(v) + v->frame_ms;
+		if (!v->begun) {
+			int r = kp_session_net_begin(s);
+			kp_t_ok(T, r >= 0, "the game's first turn: %s", s->error);
+			v->begun = r == 1;
+			return;
+		}
+		kp_session_net_messages(s);
+		if (kp_session_step(s, NULL)) v->frames++;
+		kp_t_ok(T, !s->failed, "the game at frame %lld: %s", (long long)v->frames, s->error);
+	}
+}
+
+/* Koprulu's replay of the game beside OUT_ENV's file (none without it) */
+static void write_replay(KpT *T, Live *v)
+{
+	const char *out = getenv(OUT_ENV);
+	char path[KP_TRANSFER_PATH + 32];
+	KpRep rep;
+	KpError e;
+	uint8_t *file;
+	size_t size, n;
+	FILE *f;
+	int rc;
+	if (!out || !*out) return;
+	for (n = strlen(out); n > 0 && out[n - 1] != '/' && out[n - 1] != '\\'; n--) {
+	}
+	kp_t_ok(T, n + strlen(REPLAY_FILE) < sizeof path, "the path %s is too long", out);
+	snprintf(path, sizeof path, "%.*s" REPLAY_FILE, (int)n, out);
+	memset(&rep, 0, sizeof rep);
+	kp_t_ok(T, kp_session_replay_file(v->session, NULL, &rep, &e) == 0, "the replay: %s", e.msg);
+	rc = kp_rep_write(&rep, &file, &size, &e);
+	kp_rep_free(&rep);
+	kp_t_ok(T, rc == 0, "the replay's file: %s", e.msg);
+	f = fopen(path, "wb");
+	rc = f && fwrite(file, 1, size, f) == size;
+	if (f && fclose(f) != 0) rc = 0;
+	free(file);
+	kp_t_ok(T, rc, "cannot write %s", path);
+	kp_t_log(T, "the replay written to %s", path);
+}
+
+/* After the start (FRAMES_ENV): the game's session (StartGame 0x443f40 after the lobby: the provider's caps again, the
+ * map's mission for the template, the lobby's setup, seed, speed and Storm ID, its turns the network game's, recorded),
+ * its frames played on the sockets' clock; no sender out of sync and nobody dropped; the replay written. 0 without
+ * FRAMES_ENV. */
+static int play_game(KpT *T, Live *v)
+{
+	const char *env = getenv(FRAMES_ENV);
+	const KpData *data = kp_t_data_117(T);
+	KpNetGame *ng = &v->l.seat[0].game;
+	KpSessionStart st;
+	KpMission m;
+	KpError e;
+	char name[KP_TRANSFER_NAME + 8];
+	int64_t frames = env && *env ? atoll(env) : 0;
+	uint32_t until;
+	int id;
+	if (frames <= 0) return 0;
+	kp_t_ok(T, v->map != NULL, "the game needs " MAP_ENV);
+	kp_t_eq(T, kp_netgame_game_caps(ng), 0, "the game's caps");
+	kp_t_ok(T, kp_data_map_open(&v->game_map, &data->files, v->map_file, &e) == 0, "%s", e.msg);
+	v->map_open = 1;
+	kp_t_ok(T, kp_data_map_mission(&v->game_map, kp_netgame_ums(ng) ? KP_CHK_UMS : KP_CHK_MELEE, &m, &e) == 0, "%s",
+		e.msg);
+	v->session = (KpSession *)calloc(1, sizeof *v->session);
+	kp_t_ok(T, v->session != NULL, "out of memory");
+	snprintf(name, sizeof name, "maps/%s", v->map_name);
+	kp_t_ok(T, kp_session_load_from(v->session, &data->shared, &data->dat, &m, name, &v->game_map.files) == 0,
+		"the game does not load: %s", v->session->error);
+	kp_session_start_defaults(&st);
+	st.seed = ng->seed;
+	st.speed = ng->header.speed + 1;
+	st.has_setup = 1;
+	kp_netgame_game_setup(ng, &st.setup);
+	st.local_storm = ng->local_storm;
+	st.net = ng;
+	st.record = 1;
+	kp_t_ok(T, kp_session_start(v->session, &st) == 0, "the game does not start: %s", v->session->error);
+	kp_t_guard(T, v->session->g);
+	kp_t_ok(T, ng->header.speed < KP_CLOCK_SPEEDS, "the speed %u", (unsigned)ng->header.speed);
+	v->frame_ms = (uint32_t)KP_CLOCK_SPEED_MS[ng->header.speed];
+	v->next = now(v);
+	v->l.n.frame = live_frame;
+	until = now(v) + BEGIN_MS + (uint32_t)frames * v->frame_ms + LAG_MS;
+	while (v->frames < frames) {
+		kp_t_ok(T, before(v, until), "frame %lld of %lld in time (first turn %s, waiting %d)", (long long)v->frames,
+			(long long)frames, v->begun ? "ran" : "not run", ng->lagging);
+		kp_net_lobby_advance(&v->l, v->frame_ms);
+	}
+	kp_t_log(T, "the game played to frame %lld (turn %lld)", (long long)kp_scalar(v->session->g, KP_FRAME),
+		(long long)kp_scalar(v->session->g, KP_TURN));
+	kp_t_ok(T, !ng->desync, "a sender out of sync");
+	for (id = 0; id < KP_NETGAME_PLAYERS; id++) kp_t_ok(T, !ng->drop_flags[id], "Storm ID %d dropped", id);
+	write_replay(T, v);
+	return 1;
+}
+
+/* After the start: Storm's game left, its leave sent (the game's quit, EndGame 0x443db0, after a game played; else
+ * AbortNetworkGame 0x474e60) */
+static void leave(KpT *T, Live *v)
+{
+	if (play_game(T, v)) kp_netgame_game_end(&v->l.seat[0].game);
+	else kp_netgame_abort(&v->l.seat[0].game);
 	kp_net_lobby_advance(&v->l, LEAVE_MS);
 }
 
@@ -237,7 +374,7 @@ static void lobby_join(KpT *T)
 		kp_t_ok(T, s->download_size == v->map_size && memcmp(s->download, v->map, v->map_size) == 0,
 			"the downloaded map (%lu bytes) differs from %s (%lu bytes)", (unsigned long)s->download_size, v->map_file,
 			(unsigned long)v->map_size);
-	leave(v);
+	leave(T, v);
 }
 
 static void lobby_host(KpT *T)
@@ -295,7 +432,7 @@ static void lobby_host(KpT *T)
 	run_to_start(T, v, players);
 	kp_t_log(T, "started: seed %#lx", (unsigned long)s->game.seed);
 	write_start(T, v, "host");
-	leave(v);
+	leave(T, v);
 }
 
 static const KpTest TESTS[] = {

@@ -635,7 +635,9 @@ SDL_AppResult SDL_AppIterate(void *appstate)
 
 static void window_event(KpApp *a, int event)
 {
-	if (a->flow.session) kp_clock_on_window(&a->flow.session->clock, event, KP_AUTOPAUSE);
+	/* a network game's clock runs on: the other seats' turns do not wait for this window (the original pauses only a
+	 * single player's game) */
+	if (a->flow.session && !a->flow.net_game) kp_clock_on_window(&a->flow.session->clock, event, KP_AUTOPAUSE);
 	if (event == KP_WINDOW_FOCUS_LOST || event == KP_WINDOW_FOCUS_GAINED) kp_input_focus(a, event == KP_WINDOW_FOCUS_GAINED);
 	/* without a pause menu of its own the product ends the autopause when the focus returns */
 	if (KP_AUTOPAUSE && event == KP_WINDOW_FOCUS_GAINED && a->flow.session && a->flow.hud_on) kp_session_resume(a->flow.session);

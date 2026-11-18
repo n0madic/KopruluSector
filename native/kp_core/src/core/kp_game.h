@@ -630,6 +630,14 @@ struct KpGame {
 	 * steps move the local human): a lobby's local slot, else the local player. Its Set Mission Objectives write
 	 * there (kp_briefing_objectives). */
 	int64_t briefing_player;
+	/* A network game's player table 0x673818 by Storm ID (IsNetPlayerActive 0x4780a0: KP_NET_ACTIVE; 0 none,
+	 * KP_NET_LEFT): the network sets it at the game's start and marks a leaver (HandlePlayerLeftGame 0x477a60, the
+	 * same turn on every seat). The save command's lowest active Storm ID (GetLowestActiveStormId 0x4771e0) and a
+	 * team game's leave (CountActiveHumansInForce 0x4b2b50) read it. The network's: neither saved nor hashed (a resumed
+	 * game's comes from its lobby). has_net_state 0 (no network: the seats, a replay): every human record's Storm ID
+	 * counts as active. */
+	int64_t net_state[8];
+	int64_t has_net_state;
 
 	int64_t scalar[KP_SCALAR_COUNT];
 	uint8_t scalar_present[KP_SCALAR_COUNT];
@@ -1059,7 +1067,7 @@ const KpDumpField *kp_dump_fields(int *count);
  * leaves the game unchanged when it refuses the save. *out is malloc'd. A save loads only in a build of its version:
  * a change of the walk raises it (tests/c/test_save.c's save_schema_matches_its_version), and there are no
  * migrations (ADR 0021). */
-#define KP_SAVE_VERSION 5
+#define KP_SAVE_VERSION 6
 #define KP_SAVE_NAME 256
 int kp_save(KpGame *g, const char *mission, const char *data, uint8_t **out, size_t *size, KpError *err);
 int kp_load(KpGame *g, const uint8_t *bytes, size_t size, const char *mission, const char *data, KpError *err);
@@ -1095,7 +1103,8 @@ int kp_state_hash(KpGame *g, KpSectionHash each, void *ud, uint64_t *total);
  * (the walk's seat fields, KpStateRange.seat: the local selection and its circles' colours, the screen, the placement,
  * the CRT generator, the remembered terrain and the creep shown, the images' bounds the seat's redraw refreshes, the
  * unit query's marks, the requirement evaluator's last error and offsets cache, which the interface's queries and
- * checks write too, the VIEW section), with the bits of a mixed field that
+ * checks write too, the setup's Storm IDs of slots 8..11, a network host's and its joiners' apart (version 2), the
+ * VIEW section), with the bits of a mixed field that
  * are the seat's masked (a tile's creep shown 0x40000000, a creep tile's variant, a sprite's selection bits 0x0f), and
  * the images world in a canonical order instead of its slots: the sprites of the rows (in their order) but the fog
  * ghosts' and the placement cursor's, each with its images but the selection pools' (health bars, circles, placement
@@ -1103,7 +1112,7 @@ int kp_state_hash(KpGame *g, KpSectionHash each, void *ud, uint64_t *total);
  * order, the free lists left out (a fog ghost takes a sprite and images from the shared pools, as the original's does).
  * each(ud, tag, hash, bytes) per section of the walk (NULL: none; the bytes hashed, not the save's), *out (NULL: none)
  * the fold of all but VIEW. At a step boundary, as kp_state_hash. -1 out of memory. */
-#define KP_SHARED_HASH_VERSION 1
+#define KP_SHARED_HASH_VERSION 2
 int kp_shared_hash(KpGame *g, KpSectionHash each, void *ud, uint64_t *out);
 /* In-process snapshots of the state the save walks (the arrays as they are; never written to a file nor taken to
  * another build): the size of the game's snapshot, the snapshot into the caller's buffer of size bytes, and the
@@ -1482,9 +1491,31 @@ void kp_formation_point(KpGame *g, int64_t n, const KpFormation *f, int64_t *x, 
  * never the dropped one 0x40000006). */
 void kp_clear_allied_targets(KpGame *g, int64_t p);
 void kp_command_alliance(KpGame *g, int64_t player, uint32_t stances);
+/* CanShareVisionWith 0x447600: in a replay always; an observer shares none, every player may share with an observer;
+ * else when the game allows alliances. */
+int kp_can_share_vision(KpGame *g, int64_t player, int64_t with);
 void kp_command_vision(KpGame *g, int64_t player, int64_t mask);
 void kp_command_leave(KpGame *g, int64_t player);
+/* The network player table's states (KP_NET_*) by Storm ID: kp_network_player_left and the save command read it. */
+enum { KP_NET_NONE, KP_NET_ACTIVE, KP_NET_LEFT };
+void kp_set_net_state(KpGame *g, const uint8_t state[8]);
+/* HandlePlayerLeftGame 0x477a60 in a network game (not a replay) once the network marked Storm ID storm left (state
+ * KP_NET_LEFT): the message "%s has left the game." or, for the drop reason 0x40000006 (ResolveDesync's), "%s was
+ * dropped from the game." of its record, its game player's state (dropped or defeat; a team game's only when no human of
+ * the leaver's force is still active, CountActiveHumansInForce 0x4b2b50), its selection row (a team game's by its
+ * record). 1 when the network sets the Storm ID's drop flag 0x529042 (the drop reason, the same condition), else 0.
+ * The caller enables the game RNG around it (ProcessLeaveReasons 0x477da0). */
+int kp_network_player_left(KpGame *g, int64_t storm, uint32_t reason);
 
+/* CanPause 0x47cb20 of a record: a single player always; in a network game (the lobby state 0x672600 at 9 in a game)
+ * a human with pauses left (0 for a record past 0..7). */
+int kp_can_pause(KpGame *g, int64_t record);
+/* IsNetPlayerActive 0x4780a0 of a Storm ID (0..7, else 0): the network's state KP_NET_ACTIVE, or without a network any
+ * human record's Storm ID. */
+int kp_storm_active(const KpGame *g, int64_t storm);
+/* GetLowestActiveStormId 0x4771e0 in a network game: the smallest Storm ID 0..7 still in the game (the network's state,
+ * or without one any human record's), 8 none. */
+int64_t kp_lowest_active_storm(const KpGame *g);
 /* kp_commands.c: a command of the issuer's record (a turn's KpCommand.player: the seat's record, 0x508d48), which plays
  * as its game player (KP_COMMAND_PLAYER 0x508d44, kp_setup_record_player: a team game's leader). */
 void kp_execute_command(KpGame *g, int64_t record, const uint8_t *bytes, size_t size);

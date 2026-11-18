@@ -1,6 +1,8 @@
 """tools/net_live.py: the mixed lobby's comparison of the starts (phase N, stage N3.5), on synthetic starts: the same
 start passes; a seed, a template, a header byte, a slot record or a download that differs is reported; the game ID and
-the records past the eighth between seats of different roles are not compared."""
+the records past the eighth between seats of different roles are not compared. The mixed game's sync commands (stage
+N4), on synthetic turn logs: equal values pass, a differing one is reported, turns without every player are not
+compared."""
 from __future__ import annotations
 
 import json
@@ -109,6 +111,59 @@ class RecordingTest(unittest.TestCase):
         self.assertEqual(roles, {"Alpha": "join"})
         self.assertEqual(downloads, {"Alpha": MAP})
         self.assertEqual(missing, ["Gamma"])
+
+
+def sync_log(rows: list[tuple[int, int, str]]) -> str:
+    return "\n".join(json.dumps({"frame": t, "turn": t, "player": p, "bytes": b}) for t, p, b in rows) + "\n"
+
+
+class SyncTest(unittest.TestCase):
+    def check(self, rows: list[tuple[int, int, str]], room: int = 2) -> tuple[int, list[str]]:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "commands.jsonl"
+            path.write_text(sync_log(rows))
+            return net_live.sync_turns(path, room)
+
+    def test_equal_sync_commands_pass(self):
+        rows = [(0, 0, "05"), (0, 1, "05"), (1, 0, "37125d8e000000"), (1, 1, "37125d8e000000"),
+                (2, 0, "37aa5d8e000000" + "0901"), (2, 1, "37aa5d8e000000")]
+        self.assertEqual(self.check(rows), (2, []))
+
+    def test_a_differing_sync_command_is_reported(self):
+        full, bad = self.check([(1, 0, "37125d8e000000"), (1, 1, "37135d8e000000")])
+        self.assertEqual(full, 1)
+        self.assertEqual(len(bad), 1)
+        self.assertIn("turn 1", bad[0])
+
+    def test_a_differing_hash_is_reported(self):
+        self.assertEqual(len(self.check([(1, 0, "37125d8e000000"), (1, 1, "37125d8f000000")])[1]), 1)
+
+    def test_each_senders_view_may_differ(self):
+        # the sprites' checksum byte, its row and the minimap's count are the sender's own (the live join's turn 6)
+        self.assertEqual(self.check([(6, 0, "3741389f00000e"), (6, 3, "3741389f626d12")]), (1, []))
+
+    def test_turns_without_every_player_are_not_full(self):
+        self.assertEqual(self.check([(1, 0, "37125d8e000000"), (2, 0, "37125d8e000000")]), (0, []))
+
+    def test_every_emulated_player_is_compared(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            game = Path(tmp)
+            (game / "Alpha").mkdir()
+            (game / "Alpha" / "commands.jsonl").write_text(sync_log([(1, 0, "37125d8e000000"),
+                                                                    (1, 1, "37125d8e000000")]))
+            out = net_live.compare_game(game, ["Alpha", "Gamma"], 2)
+        self.assertEqual(out, ["Gamma has no commands.jsonl"])
+
+    def test_a_drop_is_reported(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            game = Path(tmp)
+            (game / "Alpha").mkdir()
+            (game / "Alpha" / "commands.jsonl").write_text(sync_log([(1, 0, "37125d8e000000"),
+                                                                    (1, 1, "37125d8e000000")]))
+            (game / "Alpha" / "snet.jsonl").write_text(
+                json.dumps({"fn": "SNetReceiveTurns"}) + "\n" + json.dumps({"fn": "SNetDropPlayer"}) + "\n")
+            out = net_live.compare_game(game, ["Alpha"], 2)
+        self.assertEqual(out, ["Alpha: 1 SNetDropPlayer calls"])
 
 
 if __name__ == "__main__":

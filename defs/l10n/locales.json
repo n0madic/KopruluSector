@@ -21,9 +21,7 @@
     {"locale": "frFR", "table": "STAT", "row": "STR_PERCENT", "why": "\"% terminé\": a bare percent sign, as ruRU's"},
     {"locale": "plPL", "table": "STAT", "row": "STR_PERCENT", "why": "\"% ukończono\": a bare percent sign, as ruRU's"}
   ],
-  "keep": [
-    {"locale": "frFR", "dialog": "rez\\netdlg.bin", "record": 4, "why": "the high latency label takes é as its hotkey, which no physical key's Latin letter gives; the dialog is the multiplayer's, which no engine path opens"}
-  ],
+  "keep": [],
   "rows": [
     {"locale": "deDE", "table": "STAT", "row": 117, "text": "Wiss. Institut (Terraner)\u0007*\u0007Gebäude", "why": "\"Wissenschaftliches Institut (Terraner)\" is 183 pixels in font10, the status panel's name control is 174 pixels wide (widened as ruRU's)"},
     {"locale": "deDE", "table": "STAT", "row": 120, "text": "Unbenutztes Gebäude (Terraner)\u0007*\u0007*", "why": "\"Nicht verwendetes Gebäude (Terraner)\" is 194 pixels, the status panel's name control is 174 pixels wide (widened as ruRU's)"},
@@ -108,7 +106,11 @@
     {"locale": "ruRU", "dialog": "rez\\statdata.bin", "record": 17, "rect": [143, 44, 268, 57], "why": "\"Обеспечено поголовья: 200\" is 118 pixels"},
     {"locale": "ruRU", "dialog": "rez\\statdata.bin", "record": 18, "rect": [143, 58, 268, 71], "why": "the third supply line, as the others"},
     {"locale": "ruRU", "dialog": "rez\\statdata.bin", "record": 19, "rect": [143, 72, 268, 85], "why": "\"Максимум припасов: 200\""},
-    {"locale": "ruRU", "dialog": "rez\\statdata.bin", "record": 28, "rect": [142, 21, 268, 34], "why": "the morph label \"Создание пристройки\" is 110 pixels, the control had 108"}
+    {"locale": "ruRU", "dialog": "rez\\statdata.bin", "record": 28, "rect": [142, 21, 268, 34], "why": "the morph label \"Создание пристройки\" is 110 pixels, the control had 108"},
+    {"locale": "frFR", "dialog": "rez\\allyfltr.bin", "record": 24, "rect": [240, 7, 293, 22], "why": "as record 25: the column's two lines stay one label"},
+    {"locale": "frFR", "dialog": "rez\\allyfltr.bin", "record": 25, "rect": [240, 23, 293, 38], "why": "\"partagée\" is 53 pixels, the centred column label 48 at the dialog's right edge: widened left into the allies label's empty end (\"Alliés\" ends at 228)"},
+    {"locale": "frFR", "dialog": "rez\\teamfltr.bin", "record": 30, "rect": [240, 5, 293, 20], "why": "as allyfltr's"},
+    {"locale": "frFR", "dialog": "rez\\teamfltr.bin", "record": 31, "rect": [240, 21, 293, 36], "why": "as allyfltr's"}
   ],
   "texts": [
     {"locale": "plPL", "dialog": "rez\\gluLogin.bin", "record": 6, "text": "n\u0004N\u0001owy ID", "why": "\"Nowy identyfikator\" is 203 pixels, the text button 155, and the dialog's background art frames the button where it is (a wider control draws its text over the frame)"},
@@ -126,7 +128,27 @@
     {"locale": "frFR", "dialog": "rez\\gluScore.bin", "record": 8, "text": "s\u0004S\u0001auver la partie", "why": "\"Sauvegarder comme partie enregistrée\" is 431 pixels, the centred button 210 wide; the base's is \"Save Replay\""},
     {"locale": "frFR", "dialog": "rez\\tips_dlg.bin", "record": 2, "text": "p\u0004P\u0001récédente", "why": "\"Astuce précédente\" is 137 pixels, the centred button 104 and the gaps beside it 16 pixels each"},
     {"locale": "frFR", "dialog": "rez\\tips_dlg.bin", "record": 3, "text": "s\u0004S\u0001uivante", "why": "as the previous tip's"},
-    {"locale": "plPL", "dialog": "rez\\gluScore.bin", "record": 9, "text": "Razem", "why": "\"Łączny wynik\" is 141 pixels, the right-aligned label 131 with 0 pixels left of it: the column header says \"total\""}
+    {"locale": "plPL", "dialog": "rez\\gluScore.bin", "record": 9, "text": "Razem", "why": "\"Łączny wynik\" is 141 pixels, the right-aligned label 131 with 0 pixels left of it: the column header says \"total\""},
+    {"locale": "deDE", "dialog": "rez\\allyfltr.bin", "record": 23, "text": "Verbündet", "why": "\"Verbündete\" is 66 pixels, the centred column label 64, and the shared vision's column starts beside it; the alliance dialog opens in a network game since phase N"},
+    {"locale": "deDE", "dialog": "rez\\teamfltr.bin", "record": 29, "text": "Verbündet", "why": "as allyfltr's"},
+    {"locale": "deDE", "dialog": "rez\\netdlg.bin", "record": 12, "text": "Zeit, verbessert aber die Netzwerk-", "why": "the second paragraph's lines \"Zeit, verbessert aber die Netzwerkleistung\" (253 pixels) and \"für Systeme mit langsamen oder schlechten\" (254) pass the labels' 246; the paragraph is rebroken over its four lines, the words the same"},
+    {"locale": "deDE", "dialog": "rez\\netdlg.bin", "record": 13, "text": "leistung für Systeme mit langsamen", "why": "as record 12"},
+    {"locale": "deDE", "dialog": "rez\\netdlg.bin", "record": 14, "text": "oder schlechten Netzwerkverbindungen.", "why": "as record 12"},
+    {"locale": "frFR", "dialog": "rez\\netdlg.bin", "record": 4, "text": "h\u0004H\u0001aute latence", "why": "Remastered's high latency label takes é as its hotkey, which no physical key's Latin letter gives; \"Haute latence\" takes h, which no other control of the dialog has"},
+    {"locale": "frFR", "dialog": "rez\\netdlg.bin", "record": 11, "text": "Une latence plus élevée augmente ce", "why": "the second paragraph's lines \"Une latence plus élevée augmente ce temps\" (254 pixels) and \"de réponse, mais améliore les performances\" (262) pass the labels' 246; the paragraph is rebroken over its four lines, the words the same"},
+    {"locale": "frFR", "dialog": "rez\\netdlg.bin", "record": 12, "text": "temps de réponse, mais améliore les", "why": "as record 11"},
+    {"locale": "frFR", "dialog": "rez\\netdlg.bin", "record": 13, "text": "performances sur systèmes lents ou", "why": "as record 11"},
+    {"locale": "frFR", "dialog": "rez\\netdlg.bin", "record": 14, "text": "réseaux à forte perte.", "why": "as record 11"},
+    {"locale": "ruRU", "dialog": "rez\\allyfltr.bin", "record": 24, "text": "Общий", "why": "\"Общий доступ\" is 83 pixels, the centred column label 48; with the line under it, \"Общий обзор\" names the shared vision"},
+    {"locale": "ruRU", "dialog": "rez\\allyfltr.bin", "record": 25, "text": "обзор", "why": "as record 24"},
+    {"locale": "ruRU", "dialog": "rez\\teamfltr.bin", "record": 30, "text": "Общий", "why": "as allyfltr's"},
+    {"locale": "ruRU", "dialog": "rez\\teamfltr.bin", "record": 31, "text": "обзор", "why": "as allyfltr's"},
+    {"locale": "ruRU", "dialog": "rez\\netdlg.bin", "record": 9, "text": "мыши и реакцией боевой единицы", "why": "\"мыши и реакцией боевой единицы на этот\" is 255 pixels, the labels 246; the first paragraph's last two lines are rebroken, the words the same"},
+    {"locale": "ruRU", "dialog": "rez\\netdlg.bin", "record": 10, "text": "на этот щелчок.", "why": "as record 9"},
+    {"locale": "ruRU", "dialog": "rez\\netdlg.bin", "record": 11, "text": "Увеличенная задержка повышает это", "why": "the second paragraph's lines \"Увеличенная задержка повышает это время,\" and \"в системах с медленным или нестабильным\" are 260 pixels, the labels 246; the paragraph is rebroken over its four lines, \"сглаживает производительность\" said as \"улучшает работу\""},
+    {"locale": "ruRU", "dialog": "rez\\netdlg.bin", "record": 12, "text": "время, но улучшает работу сети", "why": "as record 11"},
+    {"locale": "ruRU", "dialog": "rez\\netdlg.bin", "record": 13, "text": "в системах с медленным или", "why": "as record 11"},
+    {"locale": "ruRU", "dialog": "rez\\netdlg.bin", "record": 14, "text": "нестабильным подключением.", "why": "as record 11"}
   ],
   "strings": [
     {"locale": "deDE", "mission": "expterran/terran03", "string": 14, "text": "TERRANER 3: \"TARSONIS-RUINEN\"\r\n- Zerstören Sie die Schwarmstöcke,\r\n  um die Zerg-Bruten zu vernichten.\r\n- Bringen Sie Duran nach der\r\n  Zerstörung zum PSI-Disruptor.\r\n- Duran muss überleben.", "why": "the title \"TERRANER 3: \"DIE RUINEN VON TARSONIS\"\" is 252 pixels, the first lines of the objectives too, past the ready room's 222, so the text wraps beyond the control's lines; the lines are rebroken at 36 characters and the title shortened, the sense the same"},

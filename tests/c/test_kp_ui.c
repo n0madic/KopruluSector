@@ -3,9 +3,13 @@
  * console over a replayed game against the original's captures, the keys, the selection commands, the result dialogs,
  * the game menus and the console's work over native games. The console's host and the presentation's canvas and layout
  * are tested in test_hud.c, over the interface's C host (native/kp_app/kp_hud.h) and kp_present's canvas and layout. */
+#include <ctype.h>
+
 #include "kp_test_app.h"
 #include "kp_test_ui.h"
+#include "kp_ids.h"
 #include "kp_kpf.h"
+#include "kp_start.h"
 #include "kp_text.h"
 
 #include "../../native/kp_core/src/ui/kp_ui_text.h"
@@ -4057,6 +4061,283 @@ static void region_grows_past_its_inline_fragments(KpT *T)
 	}
 }
 
+/* --- a network game's interface (phase N, stage N4) --- */
+
+#define VK_RETURN 0x0d
+#define VK_SHIFT_KEY 0x10
+#define VK_CONTROL_KEY 0x11
+#define TEXTBOX_ALL 2              /* the message line's modes: everyone, the allies, the chosen player */
+#define TEXTBOX_ALLIES 3
+#define TEXTBOX_CHOSEN 4
+#define CHAT_EVERYONE 8            /* the chat's targets beside a player */
+#define CHAT_ALLIES 9
+#define MENU_SAVE 1                /* gamemenu.bin */
+#define MENU_LOAD 2
+#define MENU_PAUSE 7
+#define MENU_RESUME 8
+#define CMD_PAUSE 0x10
+#define CMD_LATENCY 0x55
+#define SAVE_COOLDOWN_MS 120000u   /* a network save's cooldown (NetworkGameMenuTimer 0x47b680) */
+#define TIMEOUT_DROP 2             /* timeout.bin */
+#define TIMEOUT_COUNTDOWN (-30)
+#define TIMEOUT_FIRST_ROW (-10)
+#define LATENCY_LOW 1              /* netdlg.bin's option buttons 1..3 */
+#define LATENCY_HIGH 2
+#define LATENCY_EXTRA 3
+#define ALPHA 1                    /* the network game's two humans: terran01's human record, its rescuable's */
+#define BETA 2
+
+/* terran01 as a network game of Alpha (the seat) and Beta (kp_t_net_game). */
+static KpGame *net_game(KpT *T, int64_t alpha_storm)
+{
+	KpGame *g = terran01(T)->g;
+	kp_t_net_game(T, g, ALPHA, BETA, alpha_storm);
+	return g;
+}
+
+/* The console of a network game over the host's hooks. */
+static Menu *net_menu(KpT *T, KpGame *g, KpTNetHost *h)
+{
+	Menu *m = (Menu *)calloc(1, sizeof *m);
+	KpOracleUi *u = kp_t_ui(T, KP_ORACLE_UI_STRINGS);
+	kp_t_ok(T, m != NULL, "out of memory");
+	kp_t_defer(T, free, m);
+	kp_ui_font_set(u->ui, 1);
+	theme(T, u->ui, 1);
+	kp_t_net_host(u->ui, h);
+	m->T = T;
+	m->ui = u->ui;
+	m->clock.ui = u->ui;
+	m->clock.now = 1000;
+	u->ui->now = 1000;
+	hud(T, u->ui, g);
+	frames(&m->clock, 5);
+	return m;
+}
+
+static int32_t in_modeless(Menu *m, int16_t id)
+{
+	int32_t c = m->ui->modeless >= 0 ? kp_ui_find_control(m->ui, m->ui->modeless, id) : -1;
+	kp_t_ok(m->T, c >= 0, "no control %d in the dialog", id);
+	return c;
+}
+
+static int shown(Menu *m, int32_t c) { return (m->ui->controls[c].flags & KP_UI_VISIBLE) != 0; }
+static int usable(Menu *m, int32_t c) { return !(m->ui->controls[c].flags & KP_UI_DISABLED); }
+static int checked(Menu *m, int32_t c) { return m->ui->controls[c].words36[0] != 0; }
+
+/* A control's activation (its code 2), then the frames. */
+static void activate(Menu *m, int32_t c)
+{
+	(void)kp_ui_send_user(m->ui, c, KP_UI_CLOSE, 0);
+	frames(&m->clock, 4);
+}
+
+/* Enter with the modifier key held (0 none). */
+static void enter(Menu *m, uint16_t modifier)
+{
+	if (modifier) kp_ui_window_key(m->ui, 1, modifier, 0);
+	key(m, VK_RETURN, '\r', 2);
+	if (modifier) kp_ui_window_key(m->ui, 0, modifier, 0);
+}
+
+/* A line typed in the open message line and sent. */
+static void type_line(Menu *m, const char *text)
+{
+	for (; *text; text++) key(m, (uint16_t)toupper((unsigned char)*text), *text, 1);
+	enter(m, 0);
+}
+
+/* The commands queued since the last take, each one's bytes. */
+static int net_commands(KpUi *ui, uint8_t out[4][KP_UI_COMMAND_BYTES], size_t sizes[4])
+{
+	uint8_t buf[KP_UI_COMMAND_BYTES];
+	size_t n;
+	int count = 0;
+	while ((n = kp_ui_take_command(ui, buf, sizeof buf)) != 0) {
+		if (count < 4) {
+			memcpy(out[count], buf, n);
+			sizes[count] = n;
+		}
+		count++;
+	}
+	return count;
+}
+
+/* InitNetworkGameMenu 0x47b4c0 and NetworkGameMenuTimer 0x47b680: the menu does not pause a network game; Load hidden,
+ * Save only for the lowest active Storm ID (0x4771e0) and disabled for two minutes after a save; Pause while the seat
+ * has pauses and the game runs, its command 0x10. */
+static void network_menu_follows_the_lowest_storm_id(KpT *T)
+{
+	KpGame *g;
+	Menu *m;
+	KpTNetHost h;
+	uint8_t cmds[4][KP_UI_COMMAND_BYTES];
+	size_t sizes[4];
+	char name[128];
+	if (!kp_t_ready(T, "test_kp_ui.network_menu_follows_the_lowest_storm_id", GAME_FILES)) return;
+	g = net_game(T, 1);
+	m = net_menu(T, g, &h);
+	key(m, 0x79, 0, 10); /* F10 */
+	kp_t_eq_str(T, modeless(m->ui, name, sizeof name), "rez\\gamemenu.bin", NULL);
+	kp_t_eq(T, kp_scalar(g, KP_PAUSED), 0, "a network game's menu does not pause it");
+	kp_t_ok(T, !shown(m, in_modeless(m, MENU_LOAD)), "no Load");
+	kp_t_ok(T, !shown(m, in_modeless(m, MENU_SAVE)), "Storm ID 1: no Save");
+	kp_t_ok(T, shown(m, in_modeless(m, MENU_PAUSE)) && !shown(m, in_modeless(m, MENU_RESUME)), "Pause, no Resume");
+	key(m, 0x1b, 27, 10);
+	kp_t_eq_str(T, modeless(m->ui, name, sizeof name), "", NULL);
+	g->setup.storm[ALPHA] = 0;
+	g->setup.storm[BETA] = 1;
+	key(m, 0x79, 0, 10);
+	kp_t_ok(T, shown(m, in_modeless(m, MENU_SAVE)) && usable(m, in_modeless(m, MENU_SAVE)), "Storm ID 0 saves");
+	m->ui->save.sent = 1;
+	m->ui->save.sent_tick = m->clock.now;
+	frames(&m->clock, 20);
+	kp_t_ok(T, !usable(m, in_modeless(m, MENU_SAVE)), "the timer disables Save after a save");
+	m->clock.now += SAVE_COOLDOWN_MS;
+	frames(&m->clock, 20);
+	kp_t_ok(T, usable(m, in_modeless(m, MENU_SAVE)), "and enables it two minutes later");
+	(void)net_commands(m->ui, cmds, sizes);
+	activate(m, in_modeless(m, MENU_PAUSE));
+	kp_t_eq(T, net_commands(m->ui, cmds, sizes), 1, "Pause's command");
+	kp_t_ok(T, sizes[0] == 1 && cmds[0][0] == CMD_PAUSE, "0x10");
+	kp_t_eq(T, kp_scalar(g, KP_PAUSED), 0, "the game pauses by its command only");
+	g->pauses[ALPHA] = 0;
+	key(m, 0x79, 0, 10);
+	kp_t_ok(T, m->ui->modeless < 0 || !shown(m, in_modeless(m, MENU_PAUSE)), "no pauses left: no Pause");
+}
+
+/* The message line of a network game (ToggleTextbox 0x4b3ba0, SendChatMessage 0x473be0): Enter opens it for the chat's
+ * target (everyone by default outside Top vs Bottom), Shift for everyone, Ctrl for the allies (AddAlliesToRecipientMask:
+ * the Storm IDs of the players the seat is allied to, itself among them); a chosen player's mode names the player in
+ * its label (FormatWhisperLabel 0x4b3eb0) and sends to the dialog's recipients. */
+static void network_chat_goes_to_its_recipients(KpT *T)
+{
+	KpGame *g;
+	Menu *m;
+	KpTNetHost h;
+	uint16_t allies;
+	if (!kp_t_ready(T, "test_kp_ui.network_chat_goes_to_its_recipients", GAME_FILES)) return;
+	g = net_game(T, 0);
+	m = net_menu(T, g, &h);
+	kp_t_eq(T, m->ui->hud.chat_target, CHAT_EVERYONE, "everyone outside Top vs Bottom");
+	enter(m, 0);
+	kp_t_eq(T, m->ui->hud.textbox_mode, TEXTBOX_ALL, "Enter: to everyone");
+	type_line(m, "hi");
+	kp_t_eq(T, h.chats, 1, NULL);
+	kp_t_eq_str(T, h.chat, "hi", NULL);
+	kp_t_eq(T, h.recipients, 0xffff, "everyone");
+	kp_set_alliance(g, ALPHA, BETA, 1);
+	allies = kp_ui_ally_recipients(m->ui);
+	kp_t_ok(T, (allies & 0x2) != 0 && (allies & ~0x3) == 0, "the ally's Storm ID (0x%x)", allies);
+	enter(m, VK_CONTROL_KEY);
+	kp_t_eq(T, m->ui->hud.textbox_mode, TEXTBOX_ALLIES, "Ctrl+Enter: to the allies");
+	type_line(m, "go");
+	kp_t_eq(T, h.recipients, allies, "the allies");
+	enter(m, VK_SHIFT_KEY);
+	kp_t_eq(T, m->ui->hud.textbox_mode, TEXTBOX_ALL, "Shift+Enter: to everyone");
+	key(m, 0x1b, 27, 2); /* Escape: nothing sent */
+	kp_t_eq(T, m->ui->hud.textbox_mode, 0, NULL);
+	m->ui->hud.chat_target = BETA;
+	m->ui->hud.chat_recipients = 0x3;
+	enter(m, 0);
+	kp_t_eq(T, m->ui->hud.textbox_mode, TEXTBOX_CHOSEN, "the chosen player");
+	kp_t_ok(T, strstr(m->ui->hud.whisper, "Beta") != NULL, "the label names Beta: %s", m->ui->hud.whisper);
+	type_line(m, "w");
+	kp_t_eq(T, h.recipients, 0x3, "the chosen player and the sender");
+	kp_t_eq(T, h.chats, 3, NULL);
+}
+
+/* WaitForLaggingPlayers 0x47a810's timeout.bin: open while a turn is late with a row per lagging player and the
+ * countdown, Drop Players enabled at 0 and asking the drop; gone once the turn comes. */
+static void timeout_dialog_counts_down_and_drops(KpT *T)
+{
+	KpGame *g;
+	Menu *m;
+	KpTNetHost h;
+	int32_t row, countdown, drop;
+	char name[128];
+	if (!kp_t_ready(T, "test_kp_ui.timeout_dialog_counts_down_and_drops", GAME_FILES)) return;
+	g = net_game(T, 0);
+	m = net_menu(T, g, &h);
+	h.lagging = 1;
+	h.slots[0] = BETA;
+	h.seconds = 45;
+	kp_ui_net_wait(m->ui);
+	frames(&m->clock, 2);
+	kp_t_eq_str(T, modeless(m->ui, name, sizeof name), "rez\\timeout.bin", NULL);
+	row = in_modeless(m, TIMEOUT_FIRST_ROW);
+	countdown = in_modeless(m, TIMEOUT_COUNTDOWN);
+	drop = in_modeless(m, TIMEOUT_DROP);
+	kp_t_ok(T, shown(m, row) && strcmp((const char *)m->ui->controls[row].text, "Beta") == 0, "Beta's row");
+	kp_t_ok(T, !shown(m, m->ui->controls[row].next), "one row");
+	kp_t_ok(T, shown(m, countdown) && strcmp((const char *)m->ui->controls[countdown].text, "0:45") == 0, "0:45");
+	kp_t_ok(T, !usable(m, drop), "no drop yet");
+	h.seconds = 0;
+	kp_ui_net_wait(m->ui);
+	frames(&m->clock, 2);
+	kp_t_ok(T, !shown(m, countdown) && usable(m, drop), "the countdown's end");
+	activate(m, drop);
+	kp_t_eq(T, h.drops, 1, "Drop Players");
+	h.lagging = -1;
+	kp_ui_net_wait(m->ui);
+	frames(&m->clock, 2);
+	kp_t_eq_str(T, modeless(m->ui, name, sizeof name), "", "the turn came");
+}
+
+/* The options' Network (netdlg.bin, 0x46f990): shown in a network game only, the current extra latency checked; OK
+ * queues the checked level's command 0x55 (QueueLatencyCommand 0x476de0). */
+static void network_options_queue_the_latency(KpT *T)
+{
+	KpGame *g;
+	Menu *m;
+	KpTNetHost h;
+	uint8_t cmds[4][KP_UI_COMMAND_BYTES];
+	size_t sizes[4];
+	char name[128];
+	if (!kp_t_ready(T, "test_kp_ui.network_options_queue_the_latency", GAME_FILES)) return;
+	g = net_game(T, 0);
+	m = net_menu(T, g, &h);
+	h.latency = 1;
+	key(m, 0x79, 0, 10);
+	key(m, 0x4f, 'o', 10);
+	kp_t_eq_str(T, modeless(m->ui, name, sizeof name), "rez\\options.bin", NULL);
+	kp_ui_options_dialog(m->ui, KP_UI_OPTIONS_NETWORK);
+	frames(&m->clock, 10);
+	kp_t_eq_str(T, modeless(m->ui, name, sizeof name), "rez\\netdlg.bin", NULL);
+	kp_t_ok(T, checked(m, in_modeless(m, LATENCY_HIGH)) && !checked(m, in_modeless(m, LATENCY_LOW)), "high latency checked");
+	activate(m, in_modeless(m, LATENCY_EXTRA));
+	kp_t_ok(T, checked(m, in_modeless(m, LATENCY_EXTRA)) && !checked(m, in_modeless(m, LATENCY_HIGH)), "one of the group");
+	(void)net_commands(m->ui, cmds, sizes);
+	key(m, 0x4f, 'o', 10);
+	kp_t_eq(T, net_commands(m->ui, cmds, sizes), 1, "the latency command");
+	kp_t_ok(T, sizes[0] == 2 && cmds[0][0] == CMD_LATENCY && cmds[0][1] == LATENCY_EXTRA - 1, "{0x55, 2}");
+}
+
+/* CaptureScoreRoster 0x461e00 of a network game: the humans' lobby names and Storm IDs, the computers "Computer"; the
+ * rows sort by the Storm players' results (ComputeGameResults 0x477270). */
+static void network_score_lists_the_storm_players(KpT *T)
+{
+	KpGame *g;
+	Menu *m;
+	KpTNetHost h;
+	KpUiScoreData d;
+	int k, alpha = -1, beta = -1;
+	if (!kp_t_ready(T, "test_kp_ui.network_score_lists_the_storm_players", GAME_FILES)) return;
+	g = net_game(T, 1);
+	m = net_menu(T, g, &h);
+	kp_ui_score_data(m->ui, g, VICTORY, "Player", 60, &d);
+	kp_t_eq(T, d.network, 1, NULL);
+	kp_t_eq(T, (int64_t)d.local_storm, 1, "Alpha's Storm ID");
+	for (k = 0; k < KP_UI_SCORE_SLOTS; k++) {
+		if (strcmp(d.roster[k].name, "Alpha") == 0) alpha = k;
+		if (strcmp(d.roster[k].name, "Beta") == 0) beta = k;
+	}
+	kp_t_ok(T, alpha >= 0 && beta >= 0, "the lobby's names");
+	kp_t_eq(T, (int64_t)d.roster[alpha].storm, 1, NULL);
+	kp_t_eq(T, (int64_t)d.roster[beta].storm, 0, NULL);
+}
+
 static const KpTest TESTS[] = {
 	{ "region_cuts_overlapping_rects", region_cuts_overlapping_rects, 0 },
 	{ "region_grows_past_its_inline_fragments", region_grows_past_its_inline_fragments, 0 },
@@ -4133,5 +4414,10 @@ static const KpTest TESTS[] = {
 	{ "video_options_set_and_revert", video_options_set_and_revert, 0 },
 	{ "options_dialogs_keep_at_ok_alone", options_dialogs_keep_at_ok_alone, 0 },
 	{ "dialog_keys_walk_the_focus", dialog_keys_walk_the_focus, 0 },
+	{ "network_menu_follows_the_lowest_storm_id", network_menu_follows_the_lowest_storm_id, 0 },
+	{ "network_chat_goes_to_its_recipients", network_chat_goes_to_its_recipients, 0 },
+	{ "timeout_dialog_counts_down_and_drops", timeout_dialog_counts_down_and_drops, 0 },
+	{ "network_options_queue_the_latency", network_options_queue_the_latency, 0 },
+	{ "network_score_lists_the_storm_players", network_score_lists_the_storm_players, 0 },
 };
 KP_SUITE(kp_suite_kp_ui, "test_kp_ui", TESTS);

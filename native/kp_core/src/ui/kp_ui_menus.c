@@ -124,8 +124,8 @@ static KpUiMenus *mn(KpUi *ui) { return &ui->menus; }
 static int32_t modal_prepared(KpUi *ui, const char *bin, KpUiInteract proc, KpUiModalDone done,
 	void (*prepare)(KpUi *ui, int32_t dialog))
 {
-	/* RunModal 0x4c35c0: every capture released, the dialog's procedure runs until the dialog ends; the continuation
-	 * then */
+	/* RunModal 0x4c35c0: every capture released, the dialog's flag 0x80000000 set (its input stops there: what it
+	 * leaves reaches no dialog under it), the dialog's procedure runs until the dialog ends; the continuation then */
 	KpUiMenus *m = mn(ui);
 	int32_t d;
 	if (m->modal_count >= KP_UI_MODALS) return -1;
@@ -140,6 +140,7 @@ static int32_t modal_prepared(KpUi *ui, const char *bin, KpUiInteract proc, KpUi
 	if (ui->timers.in_pass > 0) ui->timers.suspend = 1;
 	m->modal_count++;
 	kp_ui_release_captures(ui);
+	ui->controls[d].flags |= KP_UI_CONSUMED;
 	kp_ui_init_dialog(ui, d, proc);
 	return d;
 }
@@ -1045,6 +1046,7 @@ static int login_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 			int s = kp_ui_list_selection(ui, m->login_list);
 			if (s == KP_UI_LIST_NONE || s >= m->profile_count) return 1;
 			snprintf(m->player, sizeof m->player, "%s", m->profiles[s].name);
+			if (ui->net != NULL && ui->net->player_name != NULL) ui->net->player_name(ui->net->host, m->player);
 			kp_ui_glue_slide_out(ui, self);
 			return 1;
 		}

@@ -1221,7 +1221,10 @@ static void walk(Codec *c, KpGame *g)
 	I64(g->setup.multiplayer);
 	I64(g->setup.slots);
 	I64(g->setup.started);
-	I64S(g->setup.storm);
+	i64s(c, g->setup.storm, 8);
+	/* slots 8..11: the host's from its map's setup (-1), a joiner's zeroed lobby slots (0), as the original's 0x57eee0
+	 * (the network oracle's start tables) */
+	SEAT_PART(i64s(c, g->setup.storm + 8, KP_SETUP_SLOTS - 8));
 	I64S(g->setup.type);
 	I64S(g->setup.race);
 	I64S(g->setup.force);
@@ -1795,6 +1798,9 @@ static void exclusions(Ranges *rs, KpGame *g)
 	/* the session's music rotation: the next game's (KpCarry); the CRT's draw is in its holdrand (RNGS) */
 	EXCLUDE(g->music_rotation, HOST);
 	EXCLUDE(g->briefing_player, HOST); /* the briefing's, before the game */
+	/* the network's player table (a resumed game's is its lobby's) */
+	EXCLUDE_ARRAY(g->net_state, HOST);
+	EXCLUDE(g->has_net_state, HOST);
 	/* the interface's refreshes (restored() raises them) */
 	EXCLUDE(g->local_selection_serial, VIEW);
 	EXCLUDE(g->interface_refresh, VIEW);

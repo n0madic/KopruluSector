@@ -189,8 +189,14 @@ static void first_turn(void *ud)
 		kp_briefing_objectives(f->g, kp_briefing_lead(f->g));
 	}
 	kp_prime(f->g);
-	if (!f->start->hub) kp_run_turn(f->g, NULL, 0); /* a seat's comes from the hub (kp_session_seat_begin) */
+	/* a seat's comes from the hub (kp_session_seat_begin), a network game's from the network (kp_session_net_begin) */
+	if (!f->start->hub && !f->start->net) kp_run_turn(f->g, NULL, 0);
 }
+
+typedef struct {
+	KpSession *s;
+	int status;
+} NetFrame;
 
 int kp_session_load_from(KpSession *s, const KpHostShared *sh, const KpDat *dat, KpMission *mission, const char *name,
 	const KpFiles *files)
@@ -213,7 +219,8 @@ static int start_turns(KpSession *s, const KpSessionStart *start)
 		kp_turns_seats(&s->turns, start->hub, start->seat);
 		return 0;
 	}
-	if (start->replay) return kp_turns_replay(&s->turns, start->replay);
+	if (start->net) kp_turns_net(&s->turns, start->net);
+	else if (start->replay) return kp_turns_replay(&s->turns, start->replay);
 	if (!start->record) return 0;
 	if (!(s->rec = (KpRecorder *)malloc(sizeof *s->rec))) return -1;
 	if (kp_record_init(s->rec) != 0) {
@@ -325,6 +332,127 @@ int kp_session_seat_begin(KpSession *s)
 	return s->failed ? -1 : 0;
 }
 
+/* The view's top tile row the sprites' checksum starts from (the screen's draws keep it, 0x5264b2) */
+static int64_t screen_tile_y(const KpGame *g)
+{
+	int64_t y = kp_scalar(g, KP_SCREEN_Y);
+	return y == KP_NIL ? 0 : y;
+}
+
+/* TurnManagerStep 0x476c00 as the network game polls it: the turn's commands recorded at the frame and run, the sync
+ * ring advanced (at a poll, PollTurn 0x444cc0's minimap statistics after it) */
+static int net_turn(KpSession *s, int poll)
+{
+	KpTurns *t = &s->turns;
+	const KpCommand *list;
+	int count;
+	switch (kp_netgame_game_turn(t->net, s->g, &list, &count)) {
+	case KP_NETGAME_TURN: break;
+	case KP_NETGAME_WAIT: return KP_TURNS_WAIT;
+	default: return KP_TURNS_NO_MEMORY;
+	}
+	if (s->rec) kp_turns_record(t, s->rec, kp_scalar(s->g, KP_FRAME), list, count);
+	kp_run_turn(s->g, list, count);
+	kp_netgame_game_turn_end(t->net, s->g, poll);
+	return KP_TURNS_READY;
+}
+
+/* RunGame 0x445310's step 7 at the first call (the game primed: kp_netgame_game_begin), then its step 8's turn */
+static void net_first(void *ud)
+{
+	NetFrame *f = (NetFrame *)ud;
+	KpSession *s = f->s;
+	if (!s->net_begun) {
+		s->net_begun = 1;
+		kp_netgame_game_begin(s->turns.net, s->g);
+		kp_turns_net_begin(&s->turns, kp_scalar(s->g, KP_SPEED));
+	}
+	f->status = net_turn(s, 0);
+}
+
+int kp_session_net_begin(KpSession *s)
+{
+	NetFrame f;
+	if (s->failed || !s->g || s->turns.kind != KP_TURNS_NET) return -1;
+	f.s = s;
+	f.status = KP_TURNS_WAIT;
+	(void)kp_session_guard(s, net_first, &f);
+	if (s->failed) return -1;
+	if (f.status == KP_TURNS_NO_MEMORY) {
+		fail(s, "network: out of memory");
+		return -1;
+	}
+	if (f.status != KP_TURNS_READY) return 0;
+	s->start_turn = kp_scalar(s->g, KP_TURN);
+	return 1;
+}
+
+/* A received chat line's command 0x5c, recorded under the local Storm ID at the frame (HandleChatMessage 0x475b40) */
+static void record_chat(void *ud, const uint8_t *cmd, size_t size)
+{
+	KpSession *s = (KpSession *)ud;
+	KpCommand c;
+	if (!s->rec) return;
+	c.player = s->g->local_record;
+	c.bytes = cmd;
+	c.size = size;
+	kp_turns_record(&s->turns, s->rec, kp_scalar(s->g, KP_FRAME), &c, 1);
+}
+
+static void net_messages(void *ud)
+{
+	KpSession *s = ((NetFrame *)ud)->s;
+	kp_netgame_game_messages(s->turns.net, s->g, record_chat, s);
+}
+
+void kp_session_net_messages(KpSession *s)
+{
+	NetFrame f;
+	if (s->failed || !s->g || s->turns.kind != KP_TURNS_NET) return;
+	f.s = s;
+	f.status = 0;
+	(void)kp_session_guard(s, net_messages, &f);
+}
+
+/* A network game's frame (RunPendingFrames 0x444e30's iteration): PollTurn's countdown, a turn at its end, then the
+ * frame (a paused one's flashes and triggers), and after a turn's first frame the draw's sprites' checksum */
+static void net_frame(void *ud)
+{
+	NetFrame *f = (NetFrame *)ud;
+	KpSession *s = f->s;
+	KpTurns *t = &s->turns;
+	if (t->countdown > 1) {
+		t->countdown--;
+		kp_run_frame_between_turns(s->g);
+		f->status = KP_TURNS_BETWEEN;
+		return;
+	}
+	f->status = net_turn(s, 1);
+	if (f->status != KP_TURNS_READY) {
+		t->countdown = 1; /* polled again at the next frame */
+		return;
+	}
+	kp_run_frame_between_turns(s->g);
+	kp_netgame_game_draw(t->net, s->g, screen_tile_y(s->g));
+	t->countdown = t->frames_per_turn;
+}
+
+static int net_step(KpSession *s, double (*clock_ms)(void))
+{
+	NetFrame f;
+	double t0 = clock_ms ? clock_ms() : 0, ms;
+	f.s = s;
+	f.status = KP_TURNS_WAIT;
+	(void)kp_session_guard(s, net_frame, &f);
+	if (f.status == KP_TURNS_NO_MEMORY && !s->failed) fail(s, "step: out of memory");
+	if (s->failed || f.status == KP_TURNS_WAIT) return 0;
+	s->tick++;
+	ms = clock_ms ? clock_ms() - t0 : 0;
+	s->step_ms += ms;
+	if (ms > s->step_max_ms) s->step_max_ms = ms;
+	return 1;
+}
+
 #define KP_REPLAY_RESULT 3 /* the victory dialog's result (KP_EVENT_GAME_RESULT's a) */
 
 int kp_session_step(KpSession *s, double (*clock_ms)(void))
@@ -334,6 +462,7 @@ int kp_session_step(KpSession *s, double (*clock_ms)(void))
 	int64_t f;
 	int status;
 	if (s->failed || !s->g) return 0;
+	if (s->turns.kind == KP_TURNS_NET) return net_step(s, clock_ms);
 	f = kp_scalar(s->g, KP_FRAME);
 	memset(&frame, 0, sizeof frame);
 	frame.g = s->g;
@@ -376,6 +505,18 @@ int kp_session_steps_per_tick(const KpSession *s)
 	return kp_turns_playing(&s->turns) && s->g && s->g->replay_multiplier >= 8 && kp_scalar(s->g, KP_SPEED) != 0 ? 10 : 1;
 }
 
+/* Whether a network game's step queued a save (KP_EVENT_SAVE_GAME, still waiting for the host) */
+static int net_save_queued(KpSession *s)
+{
+	KpEvent e;
+	int64_t k;
+	if (s->turns.kind != KP_TURNS_NET || !s->g) return 0;
+	for (k = 0; kp_event_peek(s->g, k, &e); k++) {
+		if (e.kind == KP_EVENT_SAVE_GAME) return 1;
+	}
+	return 0;
+}
+
 int kp_session_advance(KpSession *s, double now, double *alpha, double (*clock_ms)(void))
 {
 	int due = kp_clock_advance_wall(&s->clock, now, alpha), ran = 0, k;
@@ -387,6 +528,9 @@ int kp_session_advance(KpSession *s, double now, double *alpha, double (*clock_m
 		if (k == 0) break;
 		ran++;
 		if (k < per) break;
+		/* every seat writes a network save at the end of the step that ran its command (the original's ExecSaveGame
+		 * 0x472f50 saves within the turn): the host writes it before the next step */
+		if (net_save_queued(s)) break;
 	}
 	if (s->failed) *alpha = 1;
 	return ran;
@@ -741,8 +885,15 @@ static int deflate_core(const uint8_t *core, size_t size, uint8_t **out, size_t 
 int kp_save_encode(KpSession *s, const KpSaveIdentity *id, const KpSaveCampaign *camp, const KpSavePresentation *pres,
 	uint8_t **out, size_t *size, KpError *err)
 {
+	return kp_save_encode_with(s, id, camp, pres, NULL, NULL, 0, out, size, err);
+}
+
+int kp_save_encode_with(KpSession *s, const KpSaveIdentity *id, const KpSaveCampaign *camp,
+	const KpSavePresentation *pres, const char *fourcc, const uint8_t *extra, size_t extra_size, uint8_t **out,
+	size_t *size, KpError *err)
+{
 	Buf cmds, cmp, prs, rpl, mpc;
-	KpKpfOut sections[6];
+	KpKpfOut sections[7];
 	const KpMission *mission = &s->host.data.mission;
 	uint8_t *core = NULL, *zcore = NULL;
 	size_t core_size = 0, zcore_size = 0;
@@ -854,6 +1005,12 @@ int kp_save_encode(KpSession *s, const KpSaveIdentity *id, const KpSaveCampaign 
 	sections[3].fourcc = "PRES";
 	sections[3].payload = prs.b;
 	sections[3].size = prs.n;
+	if (fourcc) {
+		sections[nsections].fourcc = fourcc;
+		sections[nsections].payload = extra;
+		sections[nsections].size = extra_size;
+		nsections++;
+	}
 	for (k = 0; k < nsections; k++) sections[k].schema_version = 1;
 	sections[0].schema_version = CORE_SCHEMA;
 	rc = cmds.failed || cmp.failed || prs.failed || rpl.failed || mpc.failed ? -1

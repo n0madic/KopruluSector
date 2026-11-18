@@ -9,9 +9,20 @@
  * creates or joins, polls where the original polled, and plays the player's lobby actions (net.py's `actions`: chat
  * lines, slot actions) and the host's Start where the recording shows their first call; the screens' own calls (the
  * latency bars' SNetGetPlayerCaps, SNetGetNumPlayers, the game list's SNetEnumGamesEx, the password's SNetGetGameInfo)
- * are skipped. The replay ends where the original's lobby ended: at the start (after the Use Map Settings ready room's
- * handshake), or at the end of the recording (a kicked or banned player, the host that kicked it). A resumed game's
- * lobby finds its save among the player's preloaded files (the driver's copies in the guest's maps folder). */
+ * are skipped. A resumed game's lobby finds its save among the player's preloaded files (the driver's copies in the
+ * guest's maps folder).
+ *
+ * After the start the game is replayed too (stage N4): the game's caps (ComputeFramesPerTurn 0x445470), then a
+ * KpSession of the lobby's setup, seed and Storm ID over the network game (KP_TURNS_NET), whose turns must be the
+ * original's: every SNetSendTurn byte for byte, its sync command 0x37 among them (the units' or the resources' hash, the
+ * sprites' and the minimap's statistics of the seat's view). The driver runs ReceiveMessages where the original drained
+ * its messages and the frames until one polls where it polled; it plays the player's in-game actions where the
+ * recording shows them: the local commands (the bytes after a sent turn's 0x37), the chat lines (SNetSendMessage),
+ * net.py's memory poke at a frame's end (desync), Drop Players once timeout.bin's countdown ended (drop) and the menu's
+ * quit (SNetLeaveGame). The replay ends at the end of the recording (a kicked or banned player, the host that kicked it,
+ * a game the driver stopped), or at the start of a resumed game: its world is the original's save, which Koprulu does
+ * not load (the plan leaves a mixed resume out), so RestoreMultiplayerSaveSlots 0x4790b0 is checked on Koprulu's own
+ * saves (test_netgame). */
 #include "kp_test.h"
 
 #include <stdarg.h>
@@ -42,8 +53,10 @@ typedef struct {
 	int next, len;
 } Frame;
 
-/* The phases of a player's replay */
-enum { PHASE_MENU, PHASE_ROOM, PHASE_READY_ROOM, PHASE_STARTED, PHASE_LEFT };
+/* The phases of a player's replay: the menus, the chat room, the ready room, the start (the caps the game asks), the
+ * game's first turn (RunGame 0x445310's), the game, back in the menus */
+enum { PHASE_MENU, PHASE_ROOM, PHASE_READY_ROOM, PHASE_STARTED, PHASE_GAME_FIRST, PHASE_GAME, PHASE_LEFT };
+#define POLL_FRAMES 16 /* the most frames a poll of the turns may wait for (the frames per turn) */
 
 typedef struct {
 	KpT *T;
@@ -72,6 +85,12 @@ typedef struct {
 	const uint8_t *tbl;
 	size_t tbl_size;
 	long calls;
+	/* the game */
+	KpSession *session;
+	KpDataMap game_map;
+	int map_open;
+	long commands_queued;
+	uint32_t game_done; /* the in-game actions played (bit k: action k) */
 	uint8_t message[DATA_MAX];
 	uint8_t turns[KP_NETGAME_PLAYERS][KP_NETGAME_TURN_MAX];
 } Replay;
@@ -470,6 +489,7 @@ typedef struct {
 	uint32_t seed;
 	const uint8_t *tbl;
 	size_t tbl_size;
+	int play; /* the game after the lobby replayed too (not a resumed save's: its world is the original's) */
 } Job;
 
 static const KpJson *first_call(const KpJson *calls, const char *fn)
@@ -599,12 +619,164 @@ static void room_poll(Replay *r)
 	}
 }
 
+/* --- the game --- */
+
+/* RunGame 0x445310's first turn, polled where the original polled it */
+static void game_first(Replay *r)
+{
+	int rc;
+	preset(r, 1);
+	rc = kp_session_net_begin(r->session);
+	if (rc < 0) fail(r, "the game's first turn: %s", r->session->error);
+	else if (rc == 1) r->phase = PHASE_GAME;
+}
+
+/* The game's session (StartGame 0x443f40 after the lobby): the map's mission for the template's load (melee or Use Map
+ * Settings), the lobby's setup, seed, speed and Storm ID, its turns the network game's; then RunGame 0x445310's steps
+ * 7 and 8 (kp_session_net_begin: the turns sent, the first turn polled). */
+static void game_start(Replay *r, const Job *job)
+{
+	const KpData *d = job->data;
+	KpSessionStart st;
+	KpGameSetup setup;
+	KpMission m;
+	KpError e;
+	char name[KP_TRANSFER_NAME + 8];
+	kp_netgame_game_setup(&r->ng, &setup);
+	if (kp_data_map_open(&r->game_map, &d->files, kp_json_field_str(job->golden, "map", ""), &e) != 0) {
+		fail(r, "the game's map: %s", e.msg);
+		return;
+	}
+	r->map_open = 1;
+	if (kp_data_map_mission(&r->game_map, kp_template_ums(setup.template_record) ? KP_CHK_UMS : KP_CHK_MELEE, &m, &e)
+		!= 0) {
+		fail(r, "the game's mission: %s", e.msg);
+		return;
+	}
+	if (!(r->session = (KpSession *)calloc(1, sizeof *r->session))) {
+		kp_mission_free(&m);
+		fail(r, "out of memory");
+		return;
+	}
+	snprintf(name, sizeof name, "maps/%s", job->map_name);
+	if (kp_session_load_from(r->session, &d->shared, &d->dat, &m, name, &r->game_map.files) != 0) {
+		fail(r, "the game does not load: %s", r->session->error);
+		return;
+	}
+	kp_session_start_defaults(&st);
+	st.seed = r->ng.seed;
+	st.expansion = r->expansion;
+	st.speed = r->ng.header.speed + 1;
+	st.has_setup = 1;
+	st.setup = setup;
+	st.local_storm = r->ng.local_storm;
+	st.net = &r->ng;
+	if (kp_session_start(r->session, &st) != 0) {
+		fail(r, "the game does not start: %s", r->session->error);
+		return;
+	}
+	kp_t_guard(r->T, r->session->g);
+	r->phase = PHASE_GAME_FIRST;
+	game_first(r);
+}
+
+/* The local commands of the poll's first turn sent: the recorded SendTurn's bytes past its 0x37, queued since the turn
+ * before (QueueTurnCommand 0x476c80) */
+static void queue_local(Replay *r)
+{
+	const Frame *f = &r->frames[0];
+	int k;
+	for (k = f->next + 1; k < f->len; k++) {
+		const KpJson *c = kp_json_at(f->items, k);
+		uint8_t b[KP_NETGAME_TURN_MAX];
+		long n;
+		if (kp_oracle_net_is(c, "SNetReceiveTurns") || kp_oracle_net_is(c, "SNetReceiveMessage")) return;
+		if (!kp_oracle_net_is(c, "SNetSendTurn")) continue;
+		n = kp_oracle_net_unhex(kp_json_field_str(c, "given", ""), b, sizeof b);
+		if (n > KP_SYNC_SIZE && b[0] == KP_SYNC_ID) {
+			if (kp_netgame_command(&r->ng, b + KP_SYNC_SIZE, (size_t)(n - KP_SYNC_SIZE)) != 0)
+				fail(r, "the local commands %.60s do not queue", kp_json_field_str(c, "given", ""));
+			r->commands_queued++;
+		}
+		return;
+	}
+}
+
+/* The player's next in-game action of a kind (its "at" a frame; net.py's), NULL none; at >= 0 only one at that frame */
+static const KpJson *game_action(Replay *r, const char *kind, int64_t at)
+{
+	int k;
+	for (k = 0; k < kp_json_len(r->actions) && k < 32; k++) {
+		const KpJson *a = kp_json_at(r->actions, k), *when = kp_json_get(a, "at");
+		if ((r->game_done & (1u << k)) || !when || kp_json_is(when, KP_JSON_STRING) ||
+			strcmp(kp_json_field_str(a, "kind", ""), kind) != 0 || (at >= 0 && kp_json_int(when, -1) != at))
+			continue;
+		r->game_done |= 1u << k;
+		return a;
+	}
+	return NULL;
+}
+
+/* A memory write of net.py's at the end of a frame (after its triggers, FRAME_END_PC): the form the recordings use,
+ * "*665AE0+8:HEX", the first active unit's hit points (CUnit +8) */
+static void game_pokes(Replay *r)
+{
+	KpGame *g = r->session->g;
+	const KpJson *a;
+	while ((a = game_action(r, "poke", kp_scalar(g, KP_FRAME))) != NULL) {
+		const char *v = kp_json_field_str(a, "value", "");
+		uint8_t b[4];
+		int64_t n = g->lists[KP_LIST_ACTIVE].head;
+		if (strncmp(v, "*665AE0+8:", 10) != 0 || kp_hex_decode(v + 10, b, sizeof b) != 0 || n == 0) {
+			fail(r, "the poke %s is not one the replay makes", v);
+			return;
+		}
+		kp_set_unit_hp(g, n, (int64_t)kp_net_get32(b));
+	}
+}
+
+/* A poll of the turns where the original's next record is its SNetReceiveTurns: the frames run until one polls (the
+ * frames between turns make no call) */
+static void game_poll(Replay *r)
+{
+	int at = r->frames[0].next, k;
+	queue_local(r);
+	for (k = 0; k < POLL_FRAMES && !r->failed && r->frames[0].next == at; k++) {
+		preset(r, 1); /* ReceiveTurns 0x475ac0 reads the clock before SNetReceiveTurns */
+		(void)kp_session_step(r->session, NULL);
+		if (r->session->failed) fail(r, "the game's step: %s", r->session->error);
+		else game_pokes(r);
+	}
+}
+
+/* The player's chat line in game (SendTextboxChat 0x4b3d60 -> SendInGameChat 0x473be0): its recipients the Storm IDs
+ * of the original's run of the same message */
+static void game_chat(Replay *r)
+{
+	const Frame *f = &r->frames[0];
+	const KpJson *a = game_action(r, "chat", -1);
+	const char *given = kp_json_field_str(peek(r), "given", "");
+	uint16_t recipients = 0;
+	int k;
+	if (!a) {
+		fail(r, "the original's in-game message %.40s has no chat action left", given);
+		return;
+	}
+	for (k = f->next; k < f->len; k++) {
+		const KpJson *c = kp_json_at(f->items, k);
+		if (skipped(c)) continue;
+		if (!kp_oracle_net_is(c, "SNetSendMessage") || strcmp(kp_json_field_str(c, "given", ""), given) != 0) break;
+		recipients |= (uint16_t)(1u << (kp_oracle_net_arg(c, 0) & 15));
+	}
+	kp_netgame_game_chat(&r->ng, kp_json_field_str(a, "value", ""), recipients);
+}
+
 /* One step of the screens at the top frame's next record; 0 when the replay ends */
 static int step(Replay *r, const Job *job)
 {
 	const KpJson *c = peek(r);
 	const char *fn;
-	if (!c || r->failed || r->phase == PHASE_STARTED) return 0;
+	if (!c || r->failed || (r->phase == PHASE_STARTED && !job->play)) return 0;
 	fn = kp_oracle_net_fn(c);
 	if (strcmp(fn, "SNetGetProviderCaps") == 0 && !r->inited) {
 		KpNetCalls calls;
@@ -675,6 +847,27 @@ static int step(Replay *r, const Job *job)
 		}
 	} else if (strcmp(fn, "SNetGetGameInfo") == 0 && r->phase == PHASE_ROOM) {
 		if (!kp_netgame_start(&r->ng)) return fail(r, "Start refused");
+	} else if (strcmp(fn, "SNetGetProviderCaps") == 0 && r->phase == PHASE_STARTED) {
+		if (kp_netgame_game_caps(&r->ng) != 0) return fail(r, "the game's caps");
+	} else if (strcmp(fn, "SNetGetTurnsInTransit") == 0 && r->phase == PHASE_STARTED) {
+		game_start(r, job);
+	} else if (strcmp(fn, "SNetReceiveTurns") == 0 && r->phase == PHASE_GAME_FIRST) {
+		game_first(r);
+	} else if (strcmp(fn, "SNetReceiveMessage") == 0 && (r->phase == PHASE_GAME_FIRST || r->phase == PHASE_GAME)) {
+		kp_session_net_messages(r->session);
+		if (r->session->failed) return fail(r, "the game's messages: %s", r->session->error);
+	} else if (strcmp(fn, "SNetReceiveTurns") == 0 && r->phase == PHASE_GAME) {
+		game_poll(r);
+	} else if (strcmp(fn, "SNetSendMessage") == 0 && r->phase == PHASE_GAME) {
+		game_chat(r);
+	} else if (strcmp(fn, "SNetDropPlayer") == 0 && r->phase == PHASE_GAME) {
+		/* net.py's auto_drop: Drop Players pressed once the countdown ended */
+		if (!kp_netgame_timeout_drop(&r->ng))
+			return fail(r, "Drop Players is not enabled (%s, %u seconds left)", r->ng.lagging ? "waiting" : "no wait",
+				r->ng.timeout_seconds);
+	} else if (strcmp(fn, "SNetLeaveGame") == 0 && r->phase == PHASE_GAME) {
+		kp_netgame_game_end(&r->ng); /* the game menu's quit: EndGame 0x443db0 */
+		r->phase = PHASE_LEFT;
 	} else if (strcmp(fn, "SNetLeaveGame") == 0 && (r->phase == PHASE_ROOM || r->phase == PHASE_READY_ROOM)) {
 		/* the room closed (the player left, or a leave reason's popup was dismissed) */
 		kp_netgame_abort(&r->ng);
@@ -693,6 +886,11 @@ static int step(Replay *r, const Job *job)
 static void replay_free(void *p)
 {
 	Replay *r = (Replay *)p;
+	if (r->session) {
+		kp_session_free(r->session);
+		free(r->session);
+	}
+	if (r->map_open) kp_data_map_close(&r->game_map);
 	if (r->inited) kp_netgame_free(&r->ng);
 	free(r);
 }
@@ -734,13 +932,17 @@ static void replay_player(KpT *T, void *ud)
 		}
 	}
 	next = peek(r);
-	if (!r->failed && r->phase == PHASE_STARTED && next &&
+	if (!r->failed && r->phase == PHASE_STARTED && !job->play && next &&
 		(kp_oracle_net_is(next, "SNetReceiveMessage") || (kp_oracle_net_is(next, "SNetReceiveTurns") && kp_netgame_ums(&r->ng))))
 		fail(r, "the lobby started a poll earlier than the original's (its next %s)", kp_oracle_net_fn(next));
 	if (!r->failed && !r->has_map && r->phase == PHASE_STARTED && !r->downloaded)
 		fail(r, "the player without the map started without downloading it");
 	kp_t_log(T, "%s: %ld calls, phase %d, lobby state %d, seed %#x%s", r->who, r->calls, r->phase, r->ng.lobby_state,
 		r->ng.seed, r->downloaded ? ", the map downloaded" : "");
+	if (r->session && r->session->g)
+		kp_t_log(T, "%s: the game at frame %lld, turn %lld, %ld turns with local commands", r->who,
+			(long long)kp_scalar(r->session->g, KP_FRAME), (long long)kp_scalar(r->session->g, KP_TURN),
+			r->commands_queued);
 	kp_t_ok(T, !r->failed, "%s", r->why);
 }
 
@@ -803,6 +1005,7 @@ static void replay_game(KpT *T, const KpData *data, const char *name, int *playe
 			"%s: the host offered no map", name);
 	}
 	job.seed = kp_oracle_net_seed(kp_json_get(kp_json_at(list, host), "calls"));
+	job.play = !h.save_id;
 	job.tbl = kp_files_need(&data->files, NETWORK_TBL, &job.tbl_size, &e);
 	kp_t_ok(T, job.tbl != NULL, "%s: %s", NETWORK_TBL, e.msg);
 	kp_t_defer(T, free, (void *)job.tbl);
@@ -810,8 +1013,10 @@ static void replay_game(KpT *T, const KpData *data, const char *name, int *playe
 		int mark = kp_t_mark(T);
 		job.player = kp_json_at(list, k);
 		(*players)++;
-		if (kp_t_pcall(T, replay_player, &job, msg, sizeof msg) != 0 && !(*failed)++)
-			snprintf(first, first_size, "%s", msg);
+		if (kp_t_pcall(T, replay_player, &job, msg, sizeof msg) != 0) {
+			kp_t_log(T, "differs: %s", msg);
+			if (!(*failed)++) snprintf(first, first_size, "%s", msg);
+		}
 		kp_t_release(T, mark);
 	}
 }
