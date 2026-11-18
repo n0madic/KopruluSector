@@ -9,6 +9,8 @@
 #define SAVE_COMMAND 0x06
 #define LOAD_COMMAND 0x07
 #define RESTART_COMMAND 0x08
+#define PLAYER_FLAG_SET 0x38  /* ExecPlayerFlag 0x473b60; 0x39 clears */
+#define VOICE_UNSQUELCH 0x3b  /* ExecVoiceSquelch 0x473bc0 (0x3a, 0x3b) */
 #define FOG_UNIT_REACH 0x60        /* FindUnitOfTypeAtPoint 0x418210's square, in pixels around the point */
 #define SPEED_COMMAND 0x0f
 #define PAUSE_COMMAND 0x10
@@ -731,6 +733,9 @@ void kp_execute_command(KpGame *g, int64_t record, const uint8_t *b, size_t size
 	if (id == SYNC) return;
 	/* The keep-alive 0x05 only counts the network's turns (0x672988, atlas P25); no game state. */
 	if (id == KEEP_ALIVE) return;
+	/* ExecPlayerFlag 0x473b60 (0x38, 0x39) changes the network player table 0x673818, which the turn manager holds
+	 * (kp_netgame.c); ExecVoiceSquelch 0x473bc0 (0x3a, 0x3b) has no effect. No game state. */
+	if (id >= PLAYER_FLAG_SET && id <= VOICE_UNSQUELCH) return;
 	/* ExecuteGameTurn 0x4768a0 by the Storm ID's maps: the game player (a team game's leader) and the issuer's record;
 	 * a replay's blocks (0x4769b0) set both to the record */
 	player = kp_setup_record_player(&g->setup, record);

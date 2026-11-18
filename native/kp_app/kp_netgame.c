@@ -923,9 +923,24 @@ typedef struct {
 	int64_t record, player;
 } TurnSplit;
 
+#define PLAYER_FLAG_SET 0x38
+#define PLAYER_FLAG_CLEAR 0x39
+#define PLAYER_FLAG 0x2
+
+/* The local seat's record 0x508d54 (8 = none) */
+static int64_t local_record(const KpNetGame *ng)
+{
+	return ng->local_storm >= 0 && ng->local_storm < KP_NETGAME_PLAYERS ? ng->storm_index[ng->local_storm] : NO_SLOT;
+}
+
 /* ExecuteTurnCommands 0x475d30's walk of a sender's turn: the keep-alive 0x05 and the sync 0x37 counted (0x672988),
  * the sync checked (a mismatch marks the sender out of sync); the latency 0x55's extra turns (OnLatencyCommand
- * 0x476d10: 0x672990, the network's side of the command, the game shows its line) */
+ * 0x476d10: 0x672990, the network's side of the command, the game shows its line); ExecPlayerFlag 0x473b60's 0x38
+ * and 0x39, which set and clear the flag 0x2 of the sender's network player (0x67381a) when the sender is another
+ * seat and still active.
+ * Koprulu's guards, not the original's, for a peer's bytes: a Storm ID without a record (8, the original's tables
+ * read past their end) runs no game command, and a chat line 0x5c names its sender's record (the original shows the
+ * text as the record byte 1 names; no seat sends its chat through the turns, kp_netgame_game_messages records it) */
 static void split_command(void *ud, const uint8_t *cmd, size_t n)
 {
 	TurnSplit *t = (TurnSplit *)ud;
@@ -939,7 +954,15 @@ static void split_command(void *ud, const uint8_t *cmd, size_t n)
 			ng->status[t->id] = STATUS_PRESENT;
 		}
 		t->count++;
+	} else if (cmd[0] == PLAYER_FLAG_SET || cmd[0] == PLAYER_FLAG_CLEAR) {
+		KpNetPlayer *p = &ng->players[t->id];
+		if (t->record != local_record(ng) && p->state == 1) {
+			if (cmd[0] == PLAYER_FLAG_SET) p->flags |= PLAYER_FLAG;
+			else p->flags &= (uint16_t)~PLAYER_FLAG;
+		}
 	}
+	if (t->record >= KP_NETGAME_PLAYERS) return;
+	if (cmd[0] == KP_NETGAME_CHAT_COMMAND && cmd[1] != t->record) return;
 	if (add_command(ng, t->record, cmd, n) != 0) t->failed = 1;
 }
 

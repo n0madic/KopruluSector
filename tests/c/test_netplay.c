@@ -55,6 +55,12 @@
 #define CHAT_LINE "gl hf"
 #define ALL_STORM_IDS 0xffu  /* a chat line's recipients: every Storm ID (WORD 0x5264ba) */
 #define REPLAYS_ENV "KP_NETPLAY_REPLAYS" /* a folder: each seat's replay written there (the emulator plays them) */
+#define FOREIGN_LINE "not mine" /* a chat line a peer puts in its turn under the other seat's record */
+#define PLAYER_FLAG_SET_COMMAND 0x38 /* ExecPlayerFlag 0x473b60: the sender's network flag 0x2 set */
+#define PLAYER_FLAG 0x2
+#define VOICE_SQUELCH_COMMAND 0x3a /* ExecVoiceSquelch 0x473bc0: no effect */
+#define NO_RECORD 8           /* a Storm ID's record when it has none (0x672898) */
+#define FOREIGN_FRAMES 300
 
 typedef struct {
 	KpSession *session;
@@ -66,6 +72,7 @@ typedef struct {
 	int64_t frames; /* its frames run */
 	int poke_at;   /* the frame whose end writes the first unit's hit points, -1 none */
 	int commands;  /* the seat queues its commands at COMMAND_FRAME */
+	int foreign;   /* the seat queues bytes no seat sends at COMMAND_FRAME (queue_foreign) */
 	int64_t worker_order; /* its worker's order at MOVING_FRAME */
 	uint64_t hash[MAX_FRAMES + 1]; /* the shared hash after each frame */
 	uint64_t section[MAX_FRAMES + 1][MAX_SECTIONS]; /* and its sections' (their tags the play's) */
@@ -167,6 +174,22 @@ static void queue_commands(Play *p, int k)
 	kp_t_ok(p->T, kp_netgame_command(ng, click, sizeof click) == 0, "seat %d's right-click queued", k);
 }
 
+/* Bytes a peer may put in its turn that no seat sends: a chat line 0x5c naming the other seat's record, the player
+ * flag 0x38 and the voice squelch 0x3a */
+static void queue_foreign(Play *p, int k)
+{
+	KpNetGame *ng = &p->l.seat[k].game;
+	int other = p->l.seat[1 - k].game.local_storm;
+	uint8_t chat[KP_NETGAME_CHAT_COMMAND_SIZE], flag = PLAYER_FLAG_SET_COMMAND, squelch[2] = { VOICE_SQUELCH_COMMAND, 0 };
+	memset(chat, 0, sizeof chat);
+	chat[0] = KP_NETGAME_CHAT_COMMAND;
+	chat[1] = ng->storm_index[other];
+	memcpy(chat + 2, FOREIGN_LINE, sizeof FOREIGN_LINE);
+	kp_t_ok(p->T, kp_netgame_command(ng, chat, sizeof chat) == 0, "seat %d's chat command queued", k);
+	kp_t_ok(p->T, kp_netgame_command(ng, &flag, 1) == 0, "seat %d's player flag queued", k);
+	kp_t_ok(p->T, kp_netgame_command(ng, squelch, sizeof squelch) == 0, "seat %d's squelch queued", k);
+}
+
 /* A seat's frame of the LAN's loop: the lobby's until its game starts; then, every FRAME_MS, RunGame 0x445310's first
  * turn polled until it ran, then GameLoop's messages and a frame (none while the turns are overdue) */
 static void seat_frame(KpNetSeat *ns)
@@ -200,6 +223,7 @@ static void seat_frame(KpNetSeat *ns)
 		queue_commands(p, k);
 		if (k == 0) kp_netgame_game_chat(&p->l.seat[k].game, CHAT_LINE, ALL_STORM_IDS);
 	}
+	if (q->foreign && q->frames == COMMAND_FRAME) queue_foreign(p, k);
 	if (q->commands && q->frames == LAST_COMMAND_FRAME) {
 		static const uint8_t SELECT_NONE[2] = { SELECT_COMMAND, 0 };
 		kp_t_ok(p->T, kp_netgame_command(&p->l.seat[k].game, SELECT_NONE, sizeof SELECT_NONE) == 0,
@@ -602,12 +626,71 @@ static void a_silent_seat_is_dropped_after_the_countdown(KpT *T)
 	kp_t_ok(T, !ng->lagging, "no more waiting");
 }
 
+/* The game's chat lines of a seat with this text, among its events not yet taken */
+static int chat_lines(KpGame *g, const char *text)
+{
+	KpEvent e;
+	int64_t k;
+	int n = 0;
+	for (k = 0; kp_event_peek(g, k, &e); k++)
+		if (e.kind == KP_EVENT_CHAT && e.text && strcmp(e.text, text) == 0) n++;
+	return n;
+}
+
+/* Two seats; the second puts in its turn a chat line under the first's record, the player flag 0x38 and the voice
+ * squelch 0x3a: neither game shows the line (a turn's chat names its sender's record), the first sets the second's
+ * flag 0x2 (ExecPlayerFlag 0x473b60), the second leaves its own, and both play on in lockstep */
+static void a_peers_foreign_commands_run_as_the_original_allows(KpT *T)
+{
+	Play *p = play_lobby(T, MAP_FILE, 2, 41, 0);
+	int storm, k;
+	uint16_t own;
+	play_start(p);
+	p->seat[1].foreign = 1;
+	play_begin(p);
+	storm = p->l.seat[1].game.local_storm;
+	kp_t_eq(T, p->l.seat[0].game.players[storm].flags & PLAYER_FLAG, 0, "the second's flag 0x2 starts clear");
+	own = p->l.seat[1].game.players[storm].flags;
+	play_until(p, 0, FOREIGN_FRAMES, FOREIGN_FRAMES * FRAME_MS * 4);
+	play_until(p, 1, FOREIGN_FRAMES, FOREIGN_FRAMES * FRAME_MS * 4);
+	same_hashes(p, 0, 1, 1, -1);
+	for (k = 0; k < 2; k++) {
+		kp_t_eq(T, chat_lines(p->seat[k].session->g, FOREIGN_LINE), 0, "seat %d shows no line under another record", k);
+		kp_t_ok(T, !p->l.seat[k].game.desync, "seat %d saw no desync", k);
+	}
+	kp_t_eq(T, p->l.seat[0].game.players[storm].flags & PLAYER_FLAG, PLAYER_FLAG, "the first set the second's flag");
+	kp_t_eq(T, p->l.seat[1].game.players[storm].flags, own, "the second's own flags are its own");
+}
+
+/* Two seats; the first's map of the second's Storm ID to its record emptied after the start (8, as for a Storm ID the
+ * lobby gave no slot): the second's selection and right-click run in its game only, the first runs none of them (the
+ * original would run them under record 8, past its tables) and plays on */
+static void a_turn_without_a_record_runs_no_command(KpT *T)
+{
+	Play *p = play_lobby(T, MAP_FILE, 2, 43, 0);
+	int storm;
+	int64_t record;
+	play_start(p);
+	p->seat[1].commands = 1;
+	play_begin(p);
+	storm = p->l.seat[1].game.local_storm;
+	record = p->l.seat[0].game.storm_index[storm];
+	p->l.seat[0].game.storm_index[storm] = NO_RECORD;
+	play_until(p, 0, FOREIGN_FRAMES, FOREIGN_FRAMES * FRAME_MS * 4);
+	play_until(p, 1, FOREIGN_FRAMES, FOREIGN_FRAMES * FRAME_MS * 4);
+	kp_t_eq(T, p->seat[1].worker_order, KP_ORD_MOVE, "the second's worker moves in its game");
+	kp_t_ok(T, p->seat[1].session->g->selections[record][0] != 0, "the second's game ran its selection");
+	kp_t_eq(T, p->seat[0].session->g->selections[record][0], 0, "the first's game ran none of its commands");
+}
+
 static const KpTest TESTS[] = {
 	{ "two_seats_play_in_lockstep", two_seats_play_in_lockstep, 0 },
 	{ "two_seats_play_in_lockstep_on_a_lossy_lan", two_seats_play_in_lockstep_on_a_lossy_lan, 0 },
 	{ "a_leaver_is_seen_at_one_turn", a_leaver_is_seen_at_one_turn, 0 },
 	{ "a_desync_drops_each_side_in_a_game_of_two", a_desync_drops_each_side_in_a_game_of_two, 0 },
 	{ "a_silent_seat_is_dropped_after_the_countdown", a_silent_seat_is_dropped_after_the_countdown, 0 },
+	{ "a_peers_foreign_commands_run_as_the_original_allows", a_peers_foreign_commands_run_as_the_original_allows, 0 },
+	{ "a_turn_without_a_record_runs_no_command", a_turn_without_a_record_runs_no_command, 0 },
 };
 
 KP_SUITE(kp_suite_netplay, "test_netplay", TESTS);
