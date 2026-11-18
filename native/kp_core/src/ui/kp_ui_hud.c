@@ -624,7 +624,8 @@ static int process_cheat(KpUi *ui, const uint8_t *text, int64_t *flags)
 static uint16_t storm_bit(int64_t storm)
 {
 	int64_t shift = storm & 31; /* the shift is taken mod 32 into the WORD */
-	return shift < 16 ? (uint16_t)(1u << shift) : 0;
+	if (shift >= 16) return 0;
+	return (uint16_t)(1u << shift);
 }
 
 uint16_t kp_ui_ally_recipients(const KpUi *ui)

@@ -1476,7 +1476,7 @@ static void lg_act(LGen *g, int kind, const uint8_t *args, size_t n)
 	uint8_t op[260];
 	Reader r;
 	op[0] = (uint8_t)(L_ACTION | (unsigned)kind << 4);
-	memcpy(op + 1, args, n);
+	if (n > 0) memcpy(op + 1, args, n); /* an action without arguments passes NULL */
 	r.d = args;
 	r.size = n;
 	r.at = 0;
