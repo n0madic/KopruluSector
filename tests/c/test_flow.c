@@ -15,6 +15,8 @@
 #include "kp_gametype.h"
 #include "kp_ids.h"
 #include "kp_mpq.h"
+#include "kp_net_lobby.h"
+#include "kp_netsave.h"
 #include "kp_oracle.h"
 #include "kp_rep.h"
 #include "kp_script_flow.h"
@@ -1358,6 +1360,178 @@ static void save_replay_lists_in_the_file_systems_order(KpT *T)
 	for (k = 0; k < n && k < (size_t)kp_ui_list_count(ui, list); k++) {
 		kp_t_eq_str(T, (const char *)kp_ui_list_text(ui, list, (int)k), LISTED[k], "row %lu", (unsigned long)k);
 	}
+}
+
+/* The map transfer's files (kp_flow_transfer_io): FindLocalCopy 0x441080 searches the user's maps folder as
+ * FindFileByName 0x499450 does, its files in the file system's order (NTFS's), then its subfolders in that order, the
+ * name compared without case and the size and CRC-32 checked; SaveDownloadedFile 0x4418c0 writes maps/download/ and
+ * the next search finds it there. */
+static void map_transfer_finds_and_saves_the_users_maps(KpT *T)
+{
+	static const uint8_t MAP[] = "the offered map's bytes", OTHER[] = "another map, same size!";
+	static const uint8_t NEW[] = "a downloaded map";
+	static const char *const FOLDERS[] = { "_under", "Zeta", "alpha", ".hidden" }; /* and download, the save's */
+	static const char *const LISTED[] = { "alpha", "download", "Zeta", "_under" };
+	Host *H = glue_host(T, 0);
+	KpTransferIo io = kp_flow_transfer_io(&H->f);
+	uint32_t size = (uint32_t)sizeof MAP, crc = kp_transfer_crc(MAP, sizeof MAP);
+	char maps[400], path[400], out[400], download[400];
+	char **names;
+	uint8_t *back;
+	size_t n = 0, k;
+	int count = 0;
+	kp_t_eq(T, (int)sizeof OTHER, (int)sizeof MAP, "the other map has the offer's size");
+	/* a download goes to maps/download/, the folders made when missing */
+	snprintf(maps, sizeof maps, "%smaps", H->pref);
+	kp_t_ok(T, io.save(io.ud, "new.scx", NEW, sizeof NEW, out, sizeof out), "the download saved");
+	snprintf(download, sizeof download, "%s/download/new.scx", maps);
+	kp_t_eq_str(T, out, download, "the download's path");
+	back = kp_read_file(download, &n);
+	kp_t_ok(T, back != NULL && n == sizeof NEW && memcmp(back, NEW, n) == 0, "the download's bytes");
+	free(back);
+	back = io.read(io.ud, download, &n);
+	kp_t_ok(T, back != NULL && n == sizeof NEW, "the download read back");
+	free(back);
+	kp_t_ok(T, io.find(io.ud, "NEW.SCX", (uint32_t)sizeof NEW, kp_transfer_crc(NEW, sizeof NEW), out, sizeof out),
+		"the download found, its name without case");
+	kp_t_eq_str(T, out, download, "the download found where it was saved");
+	/* the folders in NTFS's order (upper case: '_' after the letters), the hidden one left out */
+	for (k = 0; k < sizeof FOLDERS / sizeof FOLDERS[0]; k++) {
+		snprintf(path, sizeof path, "%s/%s", maps, FOLDERS[k]);
+		kp_t_ok(T, kp_t_mkdir(path) == 0, "%s", path);
+		if (FOLDERS[k][0] == '.') kp_t_ok(T, kp_t_hide(path) == 0, "%s hidden", path);
+	}
+	names = kp_list_ntfs(maps, 1, &count);
+	kp_t_eq(T, count, (int)(sizeof LISTED / sizeof LISTED[0]), "the folders but the hidden one");
+	for (k = 0; k < (size_t)count && k < sizeof LISTED / sizeof LISTED[0]; k++)
+		kp_t_eq_str(T, names[k], LISTED[k], "folder %lu in NTFS's order", (unsigned long)k);
+	kp_list_files_free(names, count);
+	kp_t_ok(T, !io.find(io.ud, "test.scm", size, crc, out, sizeof out), "no copy yet");
+	/* a hidden folder's copy is not searched, alpha's has another CRC, download's comes before Zeta's */
+	snprintf(path, sizeof path, "%s/.hidden/test.scm", maps);
+	write_bytes(T, path, MAP, sizeof MAP);
+	snprintf(path, sizeof path, "%s/alpha/test.scm", maps);
+	write_bytes(T, path, OTHER, sizeof OTHER);
+	kp_t_ok(T, !io.find(io.ud, "test.scm", size, crc, out, sizeof out), "neither the hidden copy nor the other map");
+	snprintf(path, sizeof path, "%s/Zeta/Test.SCM", maps);
+	write_bytes(T, path, MAP, sizeof MAP);
+	kp_t_ok(T, io.find(io.ud, "test.scm", size, crc, out, sizeof out), "Zeta's copy");
+	kp_t_eq_str(T, out, path, "Zeta's copy");
+	snprintf(path, sizeof path, "%s/download/TEST.scm", maps);
+	write_bytes(T, path, MAP, sizeof MAP);
+	kp_t_ok(T, io.find(io.ud, "test.scm", size, crc, out, sizeof out), "download's copy");
+	kp_t_eq_str(T, out, path, "download's copy comes before Zeta's");
+	snprintf(path, sizeof path, "%s/test.scm", maps);
+	write_bytes(T, path, MAP, sizeof MAP);
+	kp_t_ok(T, io.find(io.ud, "test.scm", size, crc, out, sizeof out), "the folder's own copy");
+	kp_t_eq_str(T, out, path, "the folder's files come before its subfolders");
+	kp_t_ok(T, !io.find(io.ud, "test.scm", size + 1, crc, out, sizeof out), "another size");
+	kp_t_ok(T, !io.find(io.ud, "test.scm", size, crc ^ 1u, out, sizeof out), "another CRC");
+}
+
+/* A saved network game's file of the test's own: a game ID, an RNG state (told apart by it), Brood War's byte */
+static void write_net_save(KpT *T, const char *path, uint32_t id, uint32_t rng, int version, int expansion)
+{
+	KpNetGameSave s;
+	uint8_t *bytes;
+	size_t size = 0;
+	memset(&s, 0, sizeof s);
+	s.header.save_id = id;
+	snprintf(s.header.name, sizeof s.header.name, "Test Game");
+	snprintf(s.header.title, sizeof s.header.title, "Test Map");
+	s.header.players = 2;
+	s.header.max_players = 4;
+	s.header.width = s.header.height = 96;
+	s.header.tileset = 4;
+	s.rng_state = rng;
+	bytes = kp_net_lobby_save_file(&s, version, "Test", expansion, &size);
+	kp_t_ok(T, bytes != NULL, "out of memory");
+	write_bytes(T, path, bytes, size);
+	free(bytes);
+}
+
+static const KpUiMapEntry *listed_entry(const KpUi *ui, const char *file)
+{
+	int k;
+	for (k = 0; k < ui->menus.entry_count; k++)
+		if (strcmp(ui->menus.entries[k].file, file) == 0) return &ui->menus.entries[k];
+	return NULL;
+}
+
+/* Create Game's saved network games (the oracle's original_saves; stage N4 lists Koprulu's own). The list adds the
+ * game's saves (.mlt; .mlx with Brood War) as save entries; LoadSaveEntryInfo 0x45d5e0 reads one (the map's title, the
+ * display name, players, size, tileset) or refuses it (66 unreadable, 67 another version). A lobby resumes a save by
+ * its ID (kp_flow_find_save): FindMultiplayerSaveById 0x4995e0 searches the user's maps folder (its files in NTFS's
+ * order, then its subfolders) for the ID, LoadSavedGameByName 0x498bd0 then opens the first file of that display name
+ * and extension without case: a namesake found earlier wins, as the original's does. */
+static void network_saves_list_and_resume_by_id(KpT *T)
+{
+	Host *H = glue_host(T, 0);
+	KpUi *ui = H->f.ui;
+	KpUiMenus *m = &ui->menus;
+	const KpUiMapEntry *e;
+	KpNetGameSave out;
+	char maps[400], path[400];
+	int k;
+	snprintf(maps, sizeof maps, "%smaps", H->pref);
+	(void)kp_t_mkdir(maps);
+	snprintf(path, sizeof path, "%s/save", maps);
+	kp_t_ok(T, kp_t_mkdir(path) == 0, "%s", path);
+	snprintf(path, sizeof path, "%s/save/Resume.mlt", maps);
+	write_net_save(T, path, 0x1234u, 0x222u, KP_NETSAVE_VERSION, 0);
+	snprintf(path, sizeof path, "%s/save/Resume.mlx", maps);
+	write_net_save(T, path, 0x1234u, 0x333u, KP_NETSAVE_VERSION, 1);
+	snprintf(path, sizeof path, "%s/Old.mlt", maps);
+	write_net_save(T, path, 0x99u, 0x555u, KP_NETSAVE_VERSION - 1, 0);
+	snprintf(path, sizeof path, "%s/Damaged.mlt", maps);
+	write_bytes(T, path, (const uint8_t *)"not a save", 10);
+	/* the lists */
+	m->state = KP_GLUE_PLAY_CUSTOM;
+	m->map_dir[0] = 0;
+	m->expansion = 0;
+	m->multiplayer = 1;
+	kp_t_ok(T, ui->list_entries(ui->host, ui) > 0, "the list");
+	kp_t_ok(T, listed_entry(ui, "Old.mlt") == NULL, "no saves listed without the oracle's original saves");
+	kp_t_ok(T, !kp_flow_find_save(&H->f, 0x1234u, &out), "no save found without them");
+	H->flags.original_saves = 1;
+	m->multiplayer = 0;
+	kp_t_ok(T, ui->list_entries(ui->host, ui) > 0, "the list");
+	kp_t_ok(T, listed_entry(ui, "Old.mlt") == NULL, "no saves listed in single player");
+	kp_t_ok(T, !kp_flow_find_save(&H->f, 0x1234u, &out), "no save found in single player");
+	m->multiplayer = 1;
+	kp_t_ok(T, ui->list_entries(ui->host, ui) > 0, "the list");
+	for (k = 0; k < m->entry_count; k++)
+		if (m->entries[k].kind == KP_UI_ENTRY_SAVE) ui->load_entry(ui->host, ui, k);
+	e = listed_entry(ui, "Old.mlt");
+	kp_t_ok(T, e && e->kind == KP_UI_ENTRY_SAVE && e->status == 1 && e->save_title == 47 && e->description == 67,
+		"another version's save");
+	e = listed_entry(ui, "Damaged.mlt");
+	kp_t_ok(T, e && e->kind == KP_UI_ENTRY_SAVE && e->status == 1 && e->save_title == 47 && e->description == 66,
+		"an unreadable save");
+	snprintf(m->map_dir, sizeof m->map_dir, "save");
+	kp_t_ok(T, ui->list_entries(ui->host, ui) > 0, "the save folder's list");
+	kp_t_ok(T, listed_entry(ui, "Resume.mlx") == NULL, "Brood War's save is not the original game's");
+	e = listed_entry(ui, "Resume.mlt");
+	kp_t_ok(T, e && e->kind == KP_UI_ENTRY_SAVE, "the save listed");
+	if (e) ui->load_entry(ui->host, ui, (int)(e - m->entries));
+	kp_t_ok(T, e && e->status == 0 && e->save_title == 47, "the save reads");
+	if (e) {
+		kp_t_eq_str(T, e->map, "Test Map", "the save's map title");
+		kp_t_eq_str(T, e->text, "Resume", "the save's display name");
+		kp_t_ok(T, e->game_players == 2 && e->players == 4 && e->width == 96 && e->height == 96 && e->tileset == 4,
+			"the save's players, size and tileset");
+	}
+	/* a lobby's resume by ID */
+	kp_t_ok(T, kp_flow_find_save(&H->f, 0x1234u, &out), "the save found by its ID");
+	kp_t_eq(T, out.rng_state, 0x222u, "the subfolder's save");
+	kp_t_ok(T, !kp_flow_find_save(&H->f, 0x4321u, &out), "no save of another ID");
+	snprintf(path, sizeof path, "%s/RESUME.MLT", maps);
+	write_net_save(T, path, 0x77u, 0x444u, KP_NETSAVE_VERSION, 0);
+	kp_t_ok(T, kp_flow_find_save(&H->f, 0x1234u, &out), "the ID's display name opens its namesake");
+	kp_t_ok(T, out.rng_state == 0x444u && out.header.save_id == 0x77u, "the folder's namesake comes first");
+	m->expansion = 1;
+	kp_t_ok(T, kp_flow_find_save(&H->f, 0x1234u, &out), "Brood War's save found by its ID");
+	kp_t_eq(T, out.rng_state, 0x333u, "Brood War's save");
 }
 
 /* Play Custom (glue state 11) against the original's screens (stage M0's custom goldens). Each game is its own
@@ -4222,6 +4396,8 @@ static const KpTest TESTS[] = {
 	{ "load_replay_imports_and_exports", load_replay_imports_and_exports, 0 },
 	{ "save_replay_writes_the_replays_folder", save_replay_writes_the_replays_folder, 0 },
 	{ "save_replay_lists_in_the_file_systems_order", save_replay_lists_in_the_file_systems_order, 0 },
+	{ "map_transfer_finds_and_saves_the_users_maps", map_transfer_finds_and_saves_the_users_maps, 0 },
+	{ "network_saves_list_and_resume_by_id", network_saves_list_and_resume_by_id, 0 },
 	{ "play_custom_screens_are_the_originals", play_custom_screens_are_the_originals, 0 },
 	{ "custom_games_end_in_the_next_scenario_or_the_campaign_menu", custom_games_end_in_the_next_scenario_or_the_campaign_menu, 0 },
 	{ "custom_saves_find_their_maps_folder", custom_saves_find_their_maps_folder, 0 },

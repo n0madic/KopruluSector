@@ -10,14 +10,28 @@ ready room for a mission) with the original's input and timer passes; the UI tim
 buttons' frames, the menus' CRT draws and every capture (the screen's dialog with its popups composited; the title's
 palette too) must equal the original's. Exit status 1 when they differ.
 
+The network screens of phase N (stage N3, docs/phase-network.md) take a player of the network oracle's recordings
+(`python -m sc_emulator net`, koprulu-private/emu/net-n2/<game>/<player>: input.jsonl, screens/, player.json): the
+replay gets Storm's providers as the original enumerated them ("provider" lines from the player's list and
+standard.snp's and battle.snp's caps.dat) and follows the player through the connection, login, join and create
+screens. Its map lists are the product's (kp_flow_interface_host) over a user folder made like the emulator's: the
+game's map named "!" + its name in the user's maps (its BroodWar for an expansion game) for a player that has it, and
+the player's preloaded files there; the install's maps are koprulu-private/full/app's, as the emulator's C:\\StarCraft.
+When tools/net_check.py's goldens hold the player's game, the chat room's lobby is Koprulu's (kp_netgame.h behind the
+screens' adapter kp_netui.h) over the player's recorded SNet calls, gated by the run's clock (kp_oracle_net.h): the
+calls Koprulu makes must be the original's.
+
 Usage (the emulator's venv): python3 tools/menus_check.py --root DIR
+       python3 tools/menus_check.py --player DIR
 """
 from __future__ import annotations
 
 import argparse
 import json
 import logging
+import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -27,19 +41,40 @@ import room_check  # noqa: E402
 log = logging.getLogger("menus_check")
 MAIN_MENU = "rez\\gluMain.bin"
 TITLE = "rez\\titledlg.bin"
+# the emulator's user maps folder (sc_emulator vfs.py DOCUMENTS_DIR + "\\Starcraft\\maps\\") and its install
+USER_MAPS = "C:\\Users\\Player\\Documents\\Starcraft\\maps\\"
+INSTALL = room_check.ROOT / "koprulu-private/full/app"
 ROOM_STATES = (7, 8, 9)  # the glue states of the ready rooms (Terran, Zerg, Protoss)
+LEFT_DOWN, LEFT_UP, LEFT_DOUBLE = 4, 5, 6  # the input events' types (kp_ui.h's KpUiEventType)
+TICK_BASE_MS = 3600000  # the emulator's GetTickCount at virtual time 0 (hle/kernel32.py)
+RELEASE_AFTER_MS = {"click": 210, "combo": 0}  # the release after the driver's note (inputs.py, custom.py)
+# Storm's providers of 1.17 by the name the connection screen lists: id, caps flags and maximum players (the caps.dat
+# entries of standard.snp and battle.snp; storm-udp.md), in SNetEnumProviders' order (CompareProviders): the screen
+# inserts each at its list's head, so it lists them in reverse.
+PROVIDERS = {
+    "Local Area Network (UDP/IP)": (0x5544504E, 3, 256),
+    "Direct Cable Connection": (0x5343424C, 0, 4),
+    "Modem": (0x4D4F444D, 0, 2),
+    "Local Area Network (IPX)": (0x4950584E, 3, 256),
+    "Battle.net\u0099": (0x424E4554, 0, 256),
+}
 
 
-def menus_lines(path: Path) -> tuple[list[str], list[dict]]:
+def menus_lines(path: Path, until_game: bool = False, input_log: list[dict] | None = None) \
+        -> tuple[list[str], list[dict]]:
     """The records from the title's first timer on (the main menu's when the run has no title), as kp_oracle
     room_replay's lines: "title TICK" when it has one, "start TICK" the main menu's first timer; a glue state change is
-    a line "glue STATE" before the record that has it."""
+    a line "glue STATE" before the record that has it. With until_game they end where a game began: the first timer
+    set outside the glue (the game console's). With the driver's input_log, the releases that ran a modal loop move
+    back to their dispatch (unnest)."""
     owners, records, started, glue, title, start = {}, [], False, None, None, None
     for line in path.read_text().splitlines():
         r = json.loads(line)
         if "owner" in r:
             owners[r["owner"]] = r["ref"]
             continue
+        if until_game and started and "tset" in r and "glue" not in r:
+            break
         bin_name = owners.get(r["tset"][0], [None])[0] if "tset" in r else None
         if bin_name == TITLE and title is None and start is None:
             title, started = r["t"], True
@@ -49,6 +84,8 @@ def menus_lines(path: Path) -> tuple[list[str], list[dict]]:
             records.append(r)
     if start is None:
         return [], []
+    if input_log:
+        records = unnest(records, input_log)
     lines = ([f"title {title}"] if title is not None else []) + [f"start {start}"]
     glue_at = [None]
 
@@ -65,16 +102,103 @@ def menus_lines(path: Path) -> tuple[list[str], list[dict]]:
     return lines, records
 
 
+def action_tick(r: dict) -> int | None:
+    """The tick of a record the replay acts on (an input event, a timer pass, a lobby turn), None for the others."""
+    if "ev" in r or "turn" in r:
+        return r["t"]
+    return r.get("tpass")
+
+
+def unnest(records: list[dict], input_log: list[dict]) -> list[dict]:
+    """The original logs an input event when its dispatch ends (uilog.py's on_dispatch_tick), so a left release whose
+    handler ran a modal loop (a confirmation popup's) follows that loop's records: a release after a release, with
+    no press between. It moves back to its dispatch: the driver's release at its position (the player's input_log;
+    inputs.py's click releases RELEASE_AFTER_MS after its note, custom.py's select_combo notes the release), before
+    the first pass, event or turn after that release, with its tick."""
+    releases = sorted((e["t"] + RELEASE_AFTER_MS[e["kind"]] + TICK_BASE_MS, e["x"], e["y"])
+                      for e in input_log if e.get("kind") in RELEASE_AFTER_MS)
+    out, button, k = list(records), None, 0
+    while k < len(out):
+        r = out[k]
+        kind = r["ev"][0] if "ev" in r else None
+        if kind in (LEFT_DOWN, LEFT_DOUBLE):
+            button = LEFT_DOWN
+        elif kind == LEFT_UP:
+            if button == LEFT_UP:
+                x, y = r["ev"][1], r["ev"][2]
+                tick = max((t for t, rx, ry in releases if (rx, ry) == (x, y) and t <= r["t"]), default=None)
+                if tick is None:
+                    log.warning("an unpaired release at %d (%d, %d) without the driver's", r["t"], x, y)
+                else:
+                    at = next(j for j in range(k + 1) if j == k or (action_tick(out[j]) or -1) > tick)
+                    out.insert(at, dict(out.pop(k), t=tick))
+            button = LEFT_UP
+        k += 1
+    return out
+
+
+def provider_lines(player: Path) -> list[str] | None:
+    """The "provider ID FLAGS MAX NAME" lines of the providers the player's connection screen listed (player.json's
+    "providers" event, top to bottom), in Storm's order; None when a name is not one of 1.17's."""
+    events = json.loads((player / "player.json").read_text()).get("events", [])
+    listed = next((e["items"] for e in events if e.get("kind") == "providers"), [])
+    if any(name not in PROVIDERS for name in listed):
+        return None
+    return [f"provider {PROVIDERS[n][0]} {PROVIDERS[n][1]} {PROVIDERS[n][2]} {n}" for n in reversed(listed)]
+
+
+def maps_lines(player: Path, pref: Path) -> list[str]:
+    """The map lists' folders of a network player ("maps_pref", "maps_install" lines): pref made the emulator's user
+    folder (sc_emulator net.py: the game's map preloaded as "!" + its name, the player's preloads below the maps)."""
+    spec = json.loads((player.parent / "spec.json").read_text())
+    me = next(p for p in spec["players"] if p["name"] == player.name)
+    maps = pref / "maps"
+    folder = maps / "BroodWar" if spec["expansion"] else maps
+    folder.mkdir(parents=True)
+    if me["has_map"]:
+        source = (room_check.ROOT / "tools/research" / spec["map_path"]).resolve()
+        shutil.copyfile(source, folder / ("!" + source.name))
+    for guest, host in me["preload"]:
+        if guest.lower().startswith(USER_MAPS.lower()):
+            to = maps.joinpath(*guest[len(USER_MAPS):].split("\\"))
+            to.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(host, to)
+    return [f"maps_pref {pref}/", f"maps_install {INSTALL}"]
+
+
+def net_lines(player: Path) -> list[str]:
+    """The "net GOLDEN PLAYER" line of a network player whose game the network oracle's goldens hold
+    (tools/net_check.py's tests/golden/oracle/net/<game>.json): the chat room's lobby then plays over the player's
+    recorded SNet calls; none without the golden."""
+    golden = room_check.ROOT / "tests/golden/oracle/net" / f"{player.parent.name}.json"
+    return [f"net {golden} {player.name}"] if golden.is_file() else []
+
+
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--root", required=True, type=Path, help="the menus run's directory (DIR of menus.py)")
+    where = ap.add_mutually_exclusive_group(required=True)
+    where.add_argument("--root", type=Path, help="the menus run's directory (DIR of menus.py)")
+    where.add_argument("--player", type=Path, help="a player of the network oracle (DIR/<game>/<player>)")
     a = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
-    lines, records = menus_lines(a.root / "menus" / "input.jsonl")
+    run = a.root / "menus" if a.root else a.player
+    # TODO: stage N4 plays the network game the chat room started; until then a network player's run ends at its start
+    input_log = json.loads((a.player / "player.json").read_text()).get("input_log") if a.player else None
+    lines, records = menus_lines(run / "input.jsonl", until_game=a.player is not None, input_log=input_log)
     if not lines:
-        log.error("%s: no main menu", a.root)
+        log.error("%s: no main menu", run)
         return 1
-    ok = room_check.replay("menus", oracle_cli.command("menus_replay"), lines, a.root / "screens", records, "glue*.cap")
+    if a.player:
+        providers = provider_lines(a.player)
+        if providers is None:
+            log.error("%s: a provider that is not one of 1.17's", a.player)
+            return 1
+    screens = (a.root or a.player) / "screens"
+    with tempfile.TemporaryDirectory(prefix="menus_check-") as tmp:
+        if a.player:
+            lines = providers + net_lines(a.player) + maps_lines(a.player, Path(tmp)) + lines
+        ok = room_check.replay("menus", oracle_cli.command("menus_replay"), lines, screens, records, "glue*.cap",
+                               encoding="latin-1")
     print(f"menus_check: {'equal' if ok else 'differs'}")
     return 0 if ok else 1
 

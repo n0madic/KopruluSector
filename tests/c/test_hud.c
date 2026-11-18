@@ -4204,6 +4204,189 @@ static void glue_room_cancel_by_back_leaves_no_game_input(KpT *T)
 	kp_t_ok(T, ui->input.proc[KP_UI_IDLE] == NULL, "no game input after the room");
 }
 
+/* --- the multiplayer screens over a network of the test's (KpUiNet, phase N stage N3) --- */
+
+typedef struct {
+	KpUiNet net;
+	int poll;     /* the chat room's next PollLobby answer */
+	int room;     /* PollLobby's step 3: the race ready room's state, 0 none */
+	int ready;    /* PollBriefingTurn's answer */
+	int entered, released, aborted, armed, starts, start_aborts, polls;
+} FakeNet;
+
+static FakeNet *fake(void *host) { return (FakeNet *)host; }
+static int fake_enter(void *host) { return ++fake(host)->entered > 0; }
+static void fake_release(void *host) { fake(host)->released++; }
+static void fake_abort(void *host) { fake(host)->aborted++; }
+static int fake_ready_room(void *host) { return fake(host)->room; }
+static void fake_arm(void *host) { fake(host)->armed++; }
+
+static int fake_poll(void *host)
+{
+	int r = fake(host)->poll;
+	fake(host)->poll = 0;
+	return r;
+}
+
+/* The lobby a host of two slots shows: Alpha's game, slot 2 open */
+static void fake_view(void *host, KpUiLobby *out)
+{
+	(void)host;
+	memset(out, 0, sizeof *out);
+	snprintf(out->game_name, sizeof out->game_name, "Test Game");
+	snprintf(out->title, sizeof out->title, "Test Map");
+	out->width = out->height = 64;
+	out->max_players = 2;
+	out->speed = 4;
+	out->type = 2; /* Melee */
+	out->host = 1;
+	snprintf(out->slots[0].name, sizeof out->slots[0].name, "Alpha");
+	out->slots[0].type = 2;  /* a human */
+	out->slots[0].race = 6;  /* random */
+	out->slots[1].type = 6;  /* open */
+	out->slots[1].storm = -1;
+	out->slots[0].storm = 0;
+	out->lobby_state = 1;
+}
+
+static void fake_start(void *host, int abort)
+{
+	if (abort) fake(host)->start_aborts++;
+	else fake(host)->starts++;
+}
+
+static int fake_ready(void *host)
+{
+	fake(host)->polls++;
+	return fake(host)->ready;
+}
+
+/* The interface's network: the test's, the UDP provider chosen, in multiplayer */
+static FakeNet *fake_net(KpT *T, KpUi *ui)
+{
+	FakeNet *n = (FakeNet *)calloc(1, sizeof *n);
+	kp_t_ok(T, n != NULL, "out of memory");
+	kp_t_defer(T, free, n);
+	n->net.lobby_enter = fake_enter;
+	n->net.lobby_poll = fake_poll;
+	n->net.lobby_view = fake_view;
+	n->net.lobby_abort = fake_abort;
+	n->net.lobby_release = fake_release;
+	n->net.ready_room = fake_ready_room;
+	n->net.briefing_arm = fake_arm;
+	n->net.briefing_start = fake_start;
+	n->net.briefing_poll = fake_ready;
+	n->net.host = n;
+	ui->net = &n->net;
+	ui->menus.multiplayer = 1;
+	ui->menus.conn.provider = 0x5544504eu; /* 'UDPN' */
+	return n;
+}
+
+static void until_event(Glue *G, int frames)
+{
+	int k;
+	G->has_last = 0;
+	for (k = 0; k < frames && !G->has_last; k++) glue_frame(G);
+}
+
+/* The chat room (glue state 3) on the network's answers: PollLobby's start ends the screens with the network's event in
+ * the race ready room's state of a Use Map Settings game (else the room's own state, the game at once); a leave reason
+ * aborts the game and shows its text in a modal popup, the room closing only after the popup's Ok (LeaveLobby 0x450980),
+ * then the provider's join screen. */
+static void glue_chat_room_follows_the_network(KpT *T)
+{
+	enum { CHAT = 3, ZERG_ROOM = 8, JOIN = 10, FRAMES = 1000 };
+	Glue *G;
+	KpUi *ui;
+	FakeNet *n;
+	if (!kp_t_ready(T, "test_hud.glue_chat_room_follows_the_network", GLUE_FILES)) return;
+	G = glue_bare(T);
+	ui = G->ui;
+	n = fake_net(T, ui);
+	n->room = ZERG_ROOM;
+	kp_glue_menus(G->glue, CHAT);
+	wait_for(G, "rez\\gluchat.bin", FRAMES);
+	kp_t_eq(T, n->entered, 1, "the room joined the lobby (InitJoinedLobby)");
+	n->poll = KP_UI_LOBBY_START;
+	until_event(G, FRAMES);
+	kp_t_ok(T, G->has_last && G->last.kind == KP_GLUE_NETWORK, "the start is the network's event (%d)", G->last.kind);
+	kp_t_eq(T, G->last.state, ZERG_ROOM, "in the Zerg ready room's state");
+	kp_t_eq(T, n->released, 1, "the room released the lobby");
+	kp_t_eq(T, n->aborted, 0, "the game not aborted");
+	/* a melee game starts at once: the room's own state */
+	n->room = 0;
+	kp_glue_menus(G->glue, CHAT);
+	wait_for(G, "rez\\gluchat.bin", FRAMES);
+	n->poll = KP_UI_LOBBY_START;
+	until_event(G, FRAMES);
+	kp_t_ok(T, G->has_last && G->last.kind == KP_GLUE_NETWORK && G->last.state == CHAT, "a melee game's start");
+	/* booted: the popup over the room, which closes after its Ok */
+	kp_glue_menus(G->glue, CHAT);
+	wait_for(G, "rez\\gluchat.bin", FRAMES);
+	kp_ui_lobby_leave(ui, 0);
+	glue_frame(G);
+	kp_t_eq(T, n->aborted, 1, "the leave aborts the game");
+	wait_for(G, "rez\\glupok.bin", FRAMES);
+	kp_t_ok(T, ui->menus.chat.dialog >= 0 && !ui->menus.chat.destroyed, "the room stays under its popup");
+	kp_t_eq(T, ui->menus.state, CHAT, "still the chat room's state");
+	glue_vk(ui, 0x0d);
+	until_event(G, FRAMES);
+	kp_t_ok(T, G->has_last && G->last.kind == KP_GLUE_PROFILE, "the screens go on (%d)", G->last.kind);
+	kp_t_eq(T, ui->menus.state, JOIN, "the UDP provider's join screen next");
+	kp_t_eq(T, n->released, 3, "each room released the lobby");
+}
+
+/* A network game's race ready room (ReadyRoomPostLoad 0x460c80, FinishBriefing 0x460a20, PollBriefingReady
+ * 0x461120): the artwork and Replay hidden, the ready state armed; Start disables itself, shows "Waiting for other
+ * players" and sends the 0x54; the room ends as the game's start only when every player's arrived, and Cancel leaves
+ * Storm's game. */
+static void glue_network_ready_room_waits_for_the_players(KpT *T)
+{
+	enum { PROTOSS_ROOM = 9, START = 13, CANCEL = 14, REPLAY = 20, ARTWORK = 5, WAITING = -12, FRAMES = 4000 };
+	Glue *G;
+	KpUi *ui;
+	FakeNet *n;
+	KpOracleGame *game;
+	int pass;
+	if (!kp_t_ready(T, "test_hud.glue_network_ready_room_waits_for_the_players", GLUE_FILES)) return;
+	if (!kp_t_has(T, PROTOSS01)) {
+		kp_t_log(T, "SKIP the network ready room: no " PROTOSS01);
+		return;
+	}
+	for (pass = 0; pass < 2; pass++) {
+		G = glue(T);
+		ui = G->ui;
+		n = fake_net(T, ui);
+		game = kp_t_game(T, PROTOSS01, 0, 1, NULL);
+		kp_t_ok(T, kp_glue_room(G->glue, game->g, PROTOSS_ROOM) == 0, "the ready room: %s", ui->error);
+		wait_for(G, "rez\\glurdyp.bin", FRAMES);
+		kp_t_eq(T, n->armed, 1, "the ready state armed");
+		kp_t_ok(T, !(ui->controls[child_of(ui, ui->open, REPLAY)].flags & KP_UI_VISIBLE), "Replay hidden");
+		kp_t_ok(T, !(ui->controls[child_of(ui, ui->open, ARTWORK)].flags & KP_UI_VISIBLE), "the artwork hidden");
+		if (pass == 1) {
+			glue_click(G, CANCEL, -1, -1);
+			until_event(G, FRAMES);
+			kp_t_ok(T, G->has_last && G->last.kind == KP_GLUE_ROOM_CANCEL, "Cancel ends the room");
+			kp_t_eq(T, n->start_aborts, 1, "Cancel leaves Storm's game");
+			kp_t_eq(T, n->starts, 0, "no 0x54 sent");
+			continue;
+		}
+		glue_click(G, START, -1, -1);
+		glue_frame(G);
+		kp_t_eq(T, n->starts, 1, "Start sends the 0x54");
+		kp_t_ok(T, ui->controls[child_of(ui, ui->open, START)].flags & KP_UI_DISABLED, "Start disabled");
+		kp_t_ok(T, ui->controls[child_of(ui, ui->open, WAITING)].flags & KP_UI_VISIBLE, "Waiting for other players");
+		until_event(G, 200);
+		kp_t_ok(T, !G->has_last, "the room waits for the other players");
+		kp_t_ok(T, n->polls > 0, "the room polls the turns");
+		n->ready = 1;
+		until_event(G, FRAMES);
+		kp_t_ok(T, G->has_last && G->last.kind == KP_GLUE_ROOM_START, "every player's 0x54: the game starts");
+		ui->game = NULL; /* the host's destroy_scene */
+	}
+}
+
 /* The screens' work for the host: View Intro is an event of its own once the host plays cinematics (else the main menu
  * opens again, as it did), and a mission history's cinematic row ends as its mission with the cinematic to play first
  * (it left a blank screen: no state of the glue loop took it). */
@@ -5249,6 +5432,8 @@ static const KpTest TESTS[] = {
 	{ "glue_login_delete_then_new_id_starts_without_progress", glue_login_delete_then_new_id_starts_without_progress,
 		0 },
 	{ "glue_room_cancel_by_back_leaves_no_game_input", glue_room_cancel_by_back_leaves_no_game_input, 0 },
+	{ "glue_chat_room_follows_the_network", glue_chat_room_follows_the_network, 0 },
+	{ "glue_network_ready_room_waits_for_the_players", glue_network_ready_room_waits_for_the_players, 0 },
 	{ "destroyed_dialog_leaves_no_image", destroyed_dialog_leaves_no_image, 0 },
 	{ "glue_hands_the_cinematics_to_the_host", glue_hands_the_cinematics_to_the_host, 0 },
 	{ "main_menu_buttons_the_remake_lacks_are_inert", main_menu_buttons_the_remake_lacks_are_inert, 0 },

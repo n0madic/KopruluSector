@@ -302,6 +302,23 @@ void kp_ui_edit_scroll_home(KpUi *ui, int32_t control)
 	if (k >= 0) ui->edits[k].scroll = 0;
 }
 
+void kp_ui_edit_set_colour(KpUi *ui, int32_t control, uint8_t style)
+{
+	int k = slot_of(ui, control);
+	if (k >= 0) ui->edits[k].mode = (uint8_t)(style << 4);
+}
+
+void kp_ui_edit_clear(KpUi *ui, int32_t control)
+{
+	/* the text's first byte 0 and the cursor +0x3e 0, marked dirty; the scroll follows the empty text */
+	int k = slot_of(ui, control);
+	if (k < 0) return;
+	ui->edits[k].text[0] = 0;
+	ui->edits[k].cursor = 0;
+	ui->edits[k].scroll = 0;
+	kp_ui_mark_dirty(ui, control);
+}
+
 /* The width of the character at text[at], *past the byte after it. */
 static int32_t one_width(const KpUi *ui, const uint8_t *text, size_t at, size_t *past)
 {

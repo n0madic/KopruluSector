@@ -1,5 +1,6 @@
 /* The fuzz targets' entries (kp_fuzz.h; phase T, stage T2, ADR 0022). */
 #include "kp_fuzz.h"
+#include "kp_fuzz_lobby.h"
 #include "kp_fuzz_net.h"
 
 #include <errno.h>
@@ -37,7 +38,8 @@
 static const char *const COMMAND_MAPS[] = { "scenarios/build_terran", "scenarios/bench_combat", "scenarios/ai_queen" };
 #define COMMAND_MAP_COUNT ((int)(sizeof COMMAND_MAPS / sizeof COMMAND_MAPS[0]))
 
-static const char *const NAMES[KP_FUZZ_TARGETS] = { "rep", "chk", "save", "commands", "turns", "udp", "snet" };
+static const char *const NAMES[KP_FUZZ_TARGETS] = { "rep", "chk", "save", "commands", "turns", "udp", "snet", "lobby",
+	"transfer" };
 
 /* the seeds' plain orders: stop and hold position */
 static const uint8_t STOP[2] = { 0x1a, 0 }, HOLD[2] = { 0x2b, 0 };
@@ -202,6 +204,8 @@ int kp_fuzz_init(int target, char *why, size_t why_size)
 	case KP_FUZZ_TURNS: return 0;
 	case KP_FUZZ_UDP: return 0;
 	case KP_FUZZ_SNET: return 0;
+	case KP_FUZZ_LOBBY: return 0;
+	case KP_FUZZ_TRANSFER: return 0;
 	case KP_FUZZ_CHK: (void)need_data(why, why_size); why[0] = 0; return 0; /* with the data when present */
 	case KP_FUZZ_SAVE: return save_start(why, why_size);
 	case KP_FUZZ_COMMANDS:
@@ -564,6 +568,8 @@ int kp_fuzz_run(int target, const uint8_t *d, size_t size, char *why, size_t why
 	case KP_FUZZ_TURNS: return run_turns(d, size, why, why_size);
 	case KP_FUZZ_UDP: return kp_fuzz_net_udp(d, size, why, why_size);
 	case KP_FUZZ_SNET: return kp_fuzz_net_snet(d, size, why, why_size);
+	case KP_FUZZ_LOBBY: return kp_fuzz_lobby_run(d, size, why, why_size);
+	case KP_FUZZ_TRANSFER: return kp_fuzz_transfer_run(d, size, why, why_size);
 	default: return failed(why, why_size, "no target %d", target);
 	}
 }
@@ -657,6 +663,11 @@ static void net_seed(void *ud, int snet, const char *name, const uint8_t *b, siz
 	seed((Seeds *)ud, snet ? KP_FUZZ_SNET : KP_FUZZ_UDP, name, -1, b, n);
 }
 
+static void lobby_seed(void *ud, int lobby, const char *name, const uint8_t *b, size_t n)
+{
+	seed((Seeds *)ud, lobby ? KP_FUZZ_LOBBY : KP_FUZZ_TRANSFER, name, -1, b, n);
+}
+
 /* The synthetic seeds: a replay of a made-up header, record and map bytes (no data's bytes in it), plain orders of
  * the commands target (stop, hold, the speed, a cheat, a pause and resume), the network targets' sessions. */
 static void synthetic_seeds(Seeds *sd)
@@ -678,7 +689,8 @@ static void synthetic_seeds(Seeds *sd)
 			0xf8, 0xf9, 0xfa, 0x00, 3, 0x13, 3, 0, 0xf8, 0xf9, 0xfa, 0xf8, 0xf9, 0xfa };
 		seed(sd, KP_FUZZ_TURNS, "synthetic.turns", -1, TURNS, sizeof TURNS);
 	}
-	if (kp_fuzz_net_seeds(net_seed, sd, sd->why, sizeof sd->why) < 0) {
+	if (kp_fuzz_net_seeds(net_seed, sd, sd->why, sizeof sd->why) < 0 ||
+		kp_fuzz_lobby_seeds(lobby_seed, sd, sd->why, sizeof sd->why) < 0) {
 		sd->failed = 1;
 		return;
 	}

@@ -701,8 +701,8 @@ void kp_hud_capture_lost(KpHud *h)
 
 /* --- the glue --- */
 
-/* The profile's IDs as the interface's character list, and its Play Custom choices as the screen's registry values
- * ("Custom Type", "Game Subtype"). */
+/* The profile's IDs as the interface's character list, and its Create Game choices as the screen's registry values
+ * ("Custom Type", "Game Subtype", multiplayer's "Game Type" and "Game Speed"). */
 static void characters(KpUi *ui, const KpProfile *p)
 {
 	KpUiCreate *c = &ui->menus.create;
@@ -710,6 +710,8 @@ static void characters(KpUi *ui, const KpProfile *p)
 	ui->menus.profiles_changed = 0;
 	snprintf(c->custom_type, sizeof c->custom_type, "%s", p->custom_type);
 	snprintf(c->game_subtype, sizeof c->game_subtype, "%s", p->game_subtype);
+	snprintf(c->net_type, sizeof c->net_type, "%s", p->net_type);
+	snprintf(c->game_speed, sizeof c->game_speed, "%s", p->game_speed);
 	c->registry_changed = 0;
 }
 
@@ -797,6 +799,8 @@ static void take_profile(KpGlue *g, const char *player)
 		KpUiCreate *c = &ui->menus.create;
 		snprintf(g->profile->custom_type, sizeof g->profile->custom_type, "%s", c->custom_type);
 		snprintf(g->profile->game_subtype, sizeof g->profile->game_subtype, "%s", c->game_subtype);
+		snprintf(g->profile->net_type, sizeof g->profile->net_type, "%s", c->net_type);
+		snprintf(g->profile->game_speed, sizeof g->profile->game_speed, "%s", c->game_speed);
 		c->registry_changed = 0;
 	}
 	/* another ID logged in (or the logged-in one deleted): its saves, the original's save\<name>\ (the list stays
@@ -861,6 +865,10 @@ static KpGlueEvent poll(KpGlue *g)
 			g->screen = KP_GLUE_NONE;
 			ev.kind = KP_GLUE_CUSTOM;
 			ev.save = m->create.choice;
+		} else if (action == KP_UI_MENU_NETWORK) { /* the chat room's start (PollLobby 0x474f00): the network's game */
+			g->screen = KP_GLUE_NONE;
+			ev.kind = KP_GLUE_NETWORK;
+			ev.state = m->state;
 		} else {
 			/* the next state's screen (View Intro does nothing without a host that plays cinematics) */
 			kp_ui_menus_enter(ui, m->state);
@@ -910,6 +918,7 @@ KpGlueEvent kp_glue_frame(KpGlue *g, int32_t w, int32_t h, uint32_t now_ms, int 
 	} else {
 		kp_ui_tick(ui, now_ms);
 		idle(ui);
+		if (ui->net != NULL) kp_ui_lobby_idle(ui); /* the chat room's LobbyUpdate, a popup over it or not */
 	}
 	ev = poll(g);
 	draws = kp_ui_present(ui);

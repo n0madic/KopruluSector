@@ -1248,17 +1248,23 @@ static int listed(const KpSnpGame *e)
 
 int kp_snet_enum_games(KpSnet *s, int (*fn)(void *ud, const KpSnetGame *g), void *ud, uint32_t *hint)
 {
-	const KpSnpGame *head, *e;
-	ListedGame *copy;
-	int count = 0, k;
 	if (!fn) return fail(s, KP_SNET_ERROR_PARAMETER);
 	if (hint) *hint = 0;
 	if (!s->snp) return fail(s, KP_SNET_ERROR_NO_PROVIDER);
-	for (e = head = kp_snp_udp_lock_games(s->snp); e; e = e->next) count += listed(e);
+	return kp_snet_list_games(s->snp, &s->hooks, fn, ud, hint) ? 1 : fail(s, KP_SNET_ERROR_NO_MEMORY);
+}
+
+int kp_snet_list_games(KpSnpUdp *snp, const KpSnetHooks *hooks, int (*fn)(void *ud, const KpSnetGame *g), void *ud,
+	uint32_t *hint)
+{
+	const KpSnpGame *head, *e;
+	ListedGame *copy;
+	int count = 0, k;
+	for (e = head = kp_snp_udp_lock_games(snp); e; e = e->next) count += listed(e);
 	copy = count ? (ListedGame *)malloc((size_t)count * sizeof *copy) : NULL;
 	if (count && !copy) {
-		kp_snp_udp_unlock_games(s->snp);
-		return fail(s, KP_SNET_ERROR_NO_MEMORY);
+		kp_snp_udp_unlock_games(snp);
+		return 0;
 	}
 	for (k = 0, e = head; e; e = e->next) {
 		if (!listed(e)) continue;
@@ -1269,9 +1275,9 @@ int kp_snet_enum_games(KpSnet *s, int (*fn)(void *ud, const KpSnetGame *g), void
 		memcpy(copy[k].stats, e->stats, sizeof copy[k].stats);
 		k++;
 	}
-	kp_snp_udp_unlock_games(s->snp);
+	kp_snp_udp_unlock_games(snp);
 	if (hint) *hint = KP_SNP_ENUM_HINT;
-	if (s->hooks.unlock) s->hooks.unlock(s->hooks.ud);
+	if (hooks && hooks->unlock) hooks->unlock(hooks->ud);
 	for (k = 0; k < count; k++) {
 		KpSnetGame g;
 		g.id = copy[k].id;
@@ -1282,7 +1288,7 @@ int kp_snet_enum_games(KpSnet *s, int (*fn)(void *ud, const KpSnetGame *g), void
 		g.max_players = copy[k].max_players;
 		if (!fn(ud, &g)) break;
 	}
-	if (s->hooks.lock) s->hooks.lock(s->hooks.ud);
+	if (hooks && hooks->lock) hooks->lock(hooks->ud);
 	free(copy);
 	return 1;
 }

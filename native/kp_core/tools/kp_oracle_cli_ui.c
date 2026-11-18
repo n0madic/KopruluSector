@@ -11,11 +11,16 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "kp_flow.h"
+#include "kp_host.h"
+#include "kp_netui.h"
 #include "kp_oracle_cli.h"
+#include "kp_oracle_net.h"
 
 #define LINES_FLAGS 0x2000 /* the text lines' layer: index 0 shows the game view (ui_check.py TRANSPARENT) */
 #define CURSOR_BYTES (256 * 256)
 #define IDLE 13
+#define RESULT_START 101 /* a ready room's Start (every player ready) */
 
 /* A golden, a hud log and a run directory's logs, loaded. */
 typedef struct {
@@ -595,15 +600,41 @@ static void glue_crt(Glue *g)
 	}
 }
 
-/* A dialog's bitmap as the expected picture. */
+/* A dialog's bitmap as the expected picture, rectangles of it skipped (screen coordinates, inclusive). */
+#define BITMAP_MASKS 4
 typedef struct {
 	const KpUiSurface *s;
+	int64_t mask[BITMAP_MASKS][4];
+	int masks;
 } Bitmap;
 
 static int bitmap_pixel(void *ud, int64_t x, int64_t y)
 {
-	const KpUiSurface *s = ((Bitmap *)ud)->s;
-	return s->pixels[y * s->w + x];
+	const Bitmap *b = (const Bitmap *)ud;
+	int k;
+	for (k = 0; k < b->masks; k++)
+		if (x >= b->mask[k][0] && x <= b->mask[k][2] && y >= b->mask[k][1] && y <= b->mask[k][3]) return -1;
+	return b->s->pixels[y * b->s->w + x];
+}
+
+static void bitmap_init(Bitmap *b, const KpUiSurface *s)
+{
+	b->s = s;
+	b->masks = 0;
+}
+
+/* Skips a control's rectangle on the screen (its dialog's offset added). */
+static void bitmap_mask_control(Bitmap *b, KpUi *ui, int32_t dialog, int16_t id)
+{
+	const KpUiControl *d = &ui->controls[dialog], *c;
+	int32_t k = kp_ui_find_control(ui, dialog, id);
+	if (k < 0 || b->masks >= BITMAP_MASKS) return;
+	c = &ui->controls[k];
+	b->mask[b->masks][0] = d->left + c->left;
+	b->mask[b->masks][1] = d->top + c->top;
+	b->mask[b->masks][2] = d->left + c->right;
+	b->mask[b->masks][3] = d->top + c->bottom;
+	b->masks++;
 }
 
 /* A game for a room or a result dialog (oracle.start_mission with no options). */
@@ -687,15 +718,265 @@ static void set_progress(KpUi *ui, const Progress *p, Progress *saved)
 	ui->menus.profiles_changed = 0; /* a read of the profile list clears it */
 }
 
+/* The network screens' host (phase N, stage N3): Storm's providers as the original enumerated them (the run's "provider
+ * ID FLAGS MAX NAME" lines in SNetEnumProviders' order: caps.dat's flags and maximum players, the name's bytes as
+ * Storm's), every provider initialized; with a line "net GOLDEN PLAYER" (the network oracle's golden of the run's game
+ * and the player's name) the selected provider's game is Koprulu's KpNetGame over the player's recorded SNet
+ * (kp_oracle_net.h), behind the screens' adapter (kp_netui.h). */
+typedef struct {
+	KpNetUi nu; /* first: KpUiNet's host */
+	KpUiProvider providers[KP_UI_PROVIDERS];
+	int provider_count;
+	KpUiNet net;
+	KpJsonDoc doc;
+	int has_doc; /* doc holds the recording (freed with the host, whether or not it was usable) */
+	const KpJson *player;
+	char name[KP_NETGAME_NAME];
+	uint32_t key_hash, seed;
+	KpOracleNet *rec;
+	KpNetGame game;
+	int inited;
+	const KpTemplates *templates;
+	KpFlow *flow; /* the map lists' (MapsHost's) */
+} NetHost;
+
+static NetHost *net_of(void *host) { return (NetHost *)((KpNetUi *)host)->owner; }
+
+static int net_providers(void *host, KpUiProvider *out, int max)
+{
+	const NetHost *h = net_of(host);
+	int n = h->provider_count < max ? h->provider_count : max;
+	memcpy(out, h->providers, (size_t)n * sizeof *out);
+	return n;
+}
+
+/* InitializeSelectedProvider 0x4bafa0: the player's game over its recording (every provider initialized without one) */
+static int net_select_provider(void *host, uint32_t id)
+{
+	NetHost *h = net_of(host);
+	KpNetCalls calls;
+	KpNetGameHooks hooks;
+	KpNetGameConfig config;
+	(void)id;
+	if (!h->rec) return 1;
+	if (h->inited) {
+		kp_netgame_free(&h->game);
+		h->inited = 0;
+		h->nu.game = NULL;
+	}
+	calls = kp_oracle_net_calls(h->rec);
+	hooks = kp_netui_game_hooks(&h->nu);
+	memset(&config, 0, sizeof config);
+	snprintf(config.player_name, sizeof config.player_name, "%s", h->name);
+	config.key_hash = h->key_hash;
+	config.templates = h->templates;
+	if (h->flow) config.transfer = kp_flow_transfer_io(h->flow);
+	if (kp_netgame_init(&h->game, &calls, &hooks, &config) != 0) return 0;
+	h->inited = 1;
+	h->nu.game = &h->game;
+	return 1;
+}
+
+static int net_entry_map(void *owner, KpUi *ui, int index, KpMapHeader *mh, char *path, size_t size)
+{
+	NetHost *h = (NetHost *)owner;
+	(void)ui;
+	return h->flow != NULL && kp_flow_entry_map(h->flow, index, mh, path, size);
+}
+
+static int net_entry_save(void *owner, KpUi *ui, int index, KpNetGameHeader *h)
+{
+	NetHost *n = (NetHost *)owner;
+	(void)ui;
+	return n->flow != NULL && kp_flow_entry_save(n->flow, index, h);
+}
+
+static int net_find_save(void *owner, uint32_t id, KpNetGameSave *out)
+{
+	NetHost *n = (NetHost *)owner;
+	return n->flow != NULL && kp_flow_find_save(n->flow, id, out);
+}
+
+static uint32_t net_time(void *owner) { return ((NetHost *)owner)->seed; }
+
+/* Without a recording, the game the run created: Storm took it */
+static uint32_t net_created(void *host, KpUi *ui, int index, uint8_t speed)
+{
+	(void)host;
+	(void)ui;
+	(void)index;
+	(void)speed;
+	return 0;
+}
+
+/* The game's recording of the line "net GOLDEN PLAYER": 1, 0 none, -1 unreadable */
+static int net_recording(NetHost *h, const char *rest, KpUi *ui)
+{
+	char path[512], name[KP_NETGAME_NAME];
+	const KpJson *root, *players;
+	uint8_t *text;
+	size_t size;
+	char err[256];
+	int k;
+	if (sscanf(rest, "%511s %24s", path, name) != 2) return -1;
+	if (!(text = kp_read_file(path, &size))) return -1;
+	kp_json_doc_init(&h->doc);
+	h->has_doc = 1;
+	root = kp_json_parse(&h->doc, (const char *)text, size, err, sizeof err);
+	free(text);
+	if (!root || kp_json_field_int(root, "version", 0) != KP_ORACLE_NET_VERSION) return -1;
+	players = kp_json_get(root, "players");
+	for (k = 0; k < kp_json_len(players); k++) {
+		const KpJson *p = kp_json_at(players, k), *calls = kp_json_get(p, "calls");
+		KpNetGameHeader g;
+		int j;
+		if (strcmp(kp_json_field_str(p, "name", ""), name) == 0) h->player = p;
+		for (j = 0; j < kp_json_len(calls); j++)
+			if (kp_oracle_net_is(kp_json_at(calls, j), "SNetCreateLadderGame") &&
+				kp_oracle_net_header(kp_json_at(calls, j), &g)) {
+				h->key_hash = g.key_hash;
+				h->seed = kp_oracle_net_seed(calls);
+			}
+	}
+	if (!h->player) return -1;
+	snprintf(h->name, sizeof h->name, "%s", name);
+	if (!(h->rec = kp_oracle_net_new(h->player, &h->game, &ui->now))) return -1;
+	return 1;
+}
+
+/* The run's providers: 1 when it has any (the screens get the host), 0 none, -1 a malformed line or recording. */
+static int net_host_init(NetHost *h, const KpTraceFile *f, KpUi *ui)
+{
+	int k;
+	memset(h, 0, sizeof *h);
+	for (k = 0; k < f->count; k++) {
+		const KpTraceRecord *r = &f->records[k];
+		unsigned long long id, flags, max;
+		int name = 0;
+		KpUiProvider *p;
+		if (strcmp(r->word, "net") == 0) {
+			if (h->rec || net_recording(h, r->rest, ui) < 0) return -1;
+			continue;
+		}
+		if (strcmp(r->word, "provider") != 0) continue;
+		if (h->provider_count >= KP_UI_PROVIDERS || sscanf(r->rest, "%llu %llu %llu %n", &id, &flags, &max, &name) != 3
+			|| name == 0) {
+			return -1;
+		}
+		p = &h->providers[h->provider_count++];
+		p->id = (uint32_t)id;
+		p->flags = (uint32_t)flags;
+		p->max_players = (uint32_t)max;
+		snprintf(p->name, sizeof p->name, "%s", r->rest + name);
+		p->name[strcspn(p->name, "\r")] = 0;
+	}
+	h->nu.ui = ui;
+	h->nu.owner = h;
+	h->nu.entry_map = net_entry_map;
+	h->nu.entry_save = net_entry_save;
+	h->nu.find_save = net_find_save;
+	h->nu.time = net_time;
+	kp_netui_hooks(&h->nu, &h->net);
+	h->net.providers = net_providers;
+	h->net.select_provider = net_select_provider;
+	if (!h->rec) h->net.create_game = net_created;
+	return h->provider_count > 0;
+}
+
+static void net_host_free(NetHost *h)
+{
+	if (h->inited) kp_netgame_free(&h->game);
+	kp_oracle_net_free(h->rec);
+	kp_netui_free(&h->nu);
+	if (h->has_doc) kp_json_doc_free(&h->doc);
+}
+
+/* The map lists' host (phase N, stage N3): the product's own (kp_flow_interface_host) over a flow of the run's folders
+ * only: "maps_pref DIR" the user's folder with its separator (its maps: the emulator's Documents\\Starcraft), "maps_install
+ * DIR" the install's (its Maps). */
+typedef struct {
+	KpFlow *flow;
+	KpAppFlags flags;
+	char pref[512];
+} MapsHost;
+
+static void maps_log(void *ctx, const char *line)
+{
+	(void)ctx;
+	fprintf(stderr, "menus_replay: %s\n", line);
+}
+
+static void maps_sync(void *ctx) { (void)ctx; }
+
+/* The run's folders: 1 when it has them (ui gets the host), 0 none, -1 a malformed or long line. */
+static int maps_host_init(MapsHost *h, const KpTraceFile *f, const KpData *d, KpUi *ui)
+{
+	int k, has = 0;
+	memset(h, 0, sizeof *h);
+	for (k = 0; k < f->count; k++) {
+		const KpTraceRecord *r = &f->records[k];
+		char *to;
+		size_t size;
+		if (strcmp(r->word, "maps_pref") == 0) {
+			to = h->pref;
+			size = sizeof h->pref;
+		} else if (strcmp(r->word, "maps_install") == 0 && h->flags.res_dir_count == 0) {
+			to = h->flags.res_dirs[h->flags.res_dir_count++];
+			size = sizeof h->flags.res_dirs[0];
+		} else {
+			continue;
+		}
+		if (snprintf(to, size, "%s", r->rest) >= (int)size) return -1;
+		to[strcspn(to, "\r")] = 0;
+		has = 1;
+	}
+	if (!has) return 0;
+	if (!h->pref[0] || d == NULL) return -1;
+	h->flags.original_saves = 1; /* the emulator's user folder holds the original's saved network games */
+	if (!(h->flow = (KpFlow *)calloc(1, sizeof *h->flow))) return -1;
+	h->flow->host.log = maps_log;
+	h->flow->host.sync_files = maps_sync;
+	h->flow->flags = &h->flags;
+	h->flow->data = d;
+	h->flow->pref = h->pref;
+	h->flow->ui = ui;
+	kp_flow_interface_host(h->flow, ui);
+	return 1;
+}
+
 typedef struct {
 	Glue g;
+	NetHost net;
+	MapsHost maps;
 	int64_t states[256];
 	int state_count, expansion, at;
 	KpOracleGame *games[64];
 	int game_count;
-	int room, room_state, room_opened;
+	int room, room_state, room_opened, room_net;
+	int chat_open; /* the chat room's first modal pass made (menus_chat_first_pass) */
 	Progress saved;
 } Menus;
+
+/* What Koprulu draws differently on purpose, skipped in the glue's captures: on the main menu (gluMain.bin) the
+ * version label (the remake's own text) and the labels of the buttons outside the remake (Campaign Editor, and
+ * Multiplayer without a network), hidden; on the connection screen (gluConn.bin) the gateway list (control 12):
+ * Battle.net's gateways from the registry, outside phase N (the atlas excludes them). */
+#define MAIN_MULTI 4
+#define MAIN_EDITOR 5
+#define MAIN_VERSION 10
+#define CONN_GATEWAYS 12
+static void koprulu_masks(KpUi *ui, int32_t screen, Bitmap *b)
+{
+	char bin[64];
+	kp_oracle_ui_bin_name(ui, ui->controls[screen].bin, 1, bin, sizeof bin);
+	if (strcmp(bin, "rez\\glumain.bin") == 0) {
+		bitmap_mask_control(b, ui, screen, MAIN_VERSION);
+		bitmap_mask_control(b, ui, screen, MAIN_EDITOR);
+		if (ui->net == NULL) bitmap_mask_control(b, ui, screen, MAIN_MULTI);
+	} else if (strcmp(bin, "rez\\gluconn.bin") == 0) {
+		bitmap_mask_control(b, ui, screen, CONN_GATEWAYS);
+	}
+}
 
 static void menus_captures(Menus *m, int64_t before)
 {
@@ -711,7 +992,8 @@ static void menus_captures(Menus *m, int64_t before)
 			kp_ui_present(ui);
 			if (s->pixels && s->w == 640 && s->h == 480) {
 				Bitmap b;
-				b.s = s;
+				bitmap_init(&b, s);
+				koprulu_masks(ui, bottom, &b);
 				if (kp_trace_compare_pixels(cap, bitmap_pixel, &b, 0, 0, s->w - 1, s->h - 1, getenv("ROOM_DUMP")) > 0) {
 					g->pixel_differences++;
 				}
@@ -722,6 +1004,24 @@ static void menus_captures(Menus *m, int64_t before)
 			}
 		}
 	}
+}
+
+/* The game a network lobby started (its map, setup and 0x48 seed) for its race ready room's briefing */
+static KpOracleGame *start_net_game(const KpNetGame *ng, int expansion)
+{
+	KpOracleGame *og = (KpOracleGame *)calloc(1, sizeof *og);
+	KpOracleOpts opts;
+	KpGameSetup setup;
+	KpError err;
+	char key[sizeof KP_ORACLE_MAPS + KP_TRANSFER_PATH];
+	if (!og) exit(kp_cli_fail("out of memory"));
+	kp_oracle_opts(&opts);
+	kp_netgame_game_setup(ng, &setup);
+	opts.host.setup = &setup;
+	opts.host.local_storm = ng->local_storm;
+	snprintf(key, sizeof key, "%s%s", KP_ORACLE_MAPS, kp_netgame_map_path(ng));
+	if (kp_oracle_game_start(og, ".", key, ng->seed, expansion, &opts, &err) != 0) exit(kp_cli_fail("%s", err.msg));
+	return og;
 }
 
 static void menus_follow(Menus *m)
@@ -735,6 +1035,21 @@ static void menus_follow(Menus *m)
 		if (m->state_count < 256) m->states[m->state_count++] = state;
 		m->expansion = mm->expansion;
 		if (action == KP_UI_MENU_EXIT) return;
+		if (action == KP_UI_MENU_NETWORK && room_race(state) >= 0 && m->net.inited) {
+			/* a Use Map Settings game's race ready room over the game the lobby started */
+			KpOracleGame *og = start_net_game(&m->net.game, mm->expansion);
+			if (m->game_count < 64) m->games[m->game_count++] = og;
+			ui->game = og->g;
+			if (kp_ui_ready_room_open(ui, room_race(state)) < 0) exit(kp_cli_fail("ui: the ready room: %s", ui->error));
+			kp_ui_ready_room_continue(ui);
+			m->room = m->room_net = 1;
+			m->room_state = state;
+			m->room_opened = 0;
+			take(g);
+			return;
+		}
+		/* TODO: stage N4 plays the network game the chat room or its ready room started; the run's menus end there */
+		if (action == KP_UI_MENU_NETWORK) return;
 		if (action == KP_UI_MENU_MISSION && room_race(state) >= 0) {
 			KpOracleGame *og;
 			if (m->saved.set) {
@@ -768,11 +1083,49 @@ static void menus_follow(Menus *m)
 		for (d = ui->open; d >= 0; d = ui->controls[d].next) open |= d == ui->briefing.dialog;
 		if (open) {
 			m->room_opened = 1;
-		} else if (m->room_opened) { /* the room ended: Cancel goes back to the campaign menu */
+		} else if (m->room_opened) { /* the room ended: Cancel goes back to the campaign menu, a network game's by its
+		                               * provider (SetGlueStateFromProvider 0x457e50) */
 			m->room = 0;
-			kp_ui_menus_enter(ui, m->expansion == 0 ? 6 : 22);
+			if (m->room_net && ui->result == RESULT_START) return; /* TODO: stage N4's network game */
+			kp_ui_menus_enter(ui, m->room_net ? kp_ui_menus_provider_state(ui) : m->expansion == 0 ? 6 : 22);
+			m->room_net = 0;
 			take(g);
 		}
+	}
+}
+
+/* RunModalDialog 0x4c35c0's first pass over the chat room: its idle callback (LobbyUpdate 0x450d80, installed by
+ * LobbyJoinCheck 0x450ea0 when the dialog started) runs at the tick the room opened, before the loop waits (the input
+ * log's idle events come every 100 ms after it); a resumed save's first refresh locks the rows there */
+static void menus_chat_first_pass(Menus *m)
+{
+	KpUi *ui = m->g.u.ui;
+	const KpUiChat *c = &ui->menus.chat;
+	int open = ui->net != NULL && c->polling && c->dialog >= 0;
+	if (open && !m->chat_open) {
+		m->chat_open = 1;
+		kp_ui_lobby_idle(ui);
+		take(&m->g);
+	} else if (!open) {
+		m->chat_open = 0;
+	}
+}
+
+/* The chat room's passes at the original's messages before an action at tick: its modal loop handled each as it came
+ * (PollLobby 0x474f00 takes one per pass, LobbyUpdate 0x450d80 running about 670 times a second) */
+static void menus_messages(Menus *m, int64_t tick)
+{
+	Glue *g = &m->g;
+	KpUi *ui = g->u.ui;
+	uint32_t at;
+	int index;
+	if (m->net.rec == NULL || ui->net == NULL) return;
+	while ((index = kp_oracle_net_next_message(m->net.rec, &at)) >= 0 && (int64_t)at < tick) {
+		menus_captures(m, at);
+		if ((int32_t)(at - ui->now) > 0) ui->now = at;
+		kp_ui_lobby_idle(ui);
+		take(g);
+		if (kp_oracle_net_next_message(m->net.rec, &at) == index) break; /* the room took none: not polling */
 	}
 }
 
@@ -798,6 +1151,23 @@ int kp_cli_menus_replay(int argc, char **argv)
 	}
 	ui = g->u.ui;
 	ui->menus.profile_count = 0;
+	switch (net_host_init(&m->net, &g->file, ui)) {
+	case -1:
+		net_host_free(&m->net);
+		return kp_cli_fail("menus_replay: a malformed provider or net line, or its recording unreadable");
+	case 1: { /* the multiplayer screens: Create Game's templates are the data's */
+		KpError err;
+		const KpData *d = kp_oracle_data(".", &err);
+		if (d == NULL) return kp_cli_fail("%s", err.msg);
+		ui->net = &m->net.net;
+		ui->templates = &d->templates;
+		m->net.templates = &d->templates;
+		if (maps_host_init(&m->maps, &g->file, d, ui) < 0) return kp_cli_fail("menus_replay: malformed maps lines");
+		m->net.flow = m->maps.flow;
+		break;
+	}
+	default: break;
+	}
 	kp_trace_clocks(&g->u, &g->clocks);
 	glue_crt(g);
 	/* the font keys' bursts of CRT draws end with srand(time(NULL)): the clock is the next draw's state */
@@ -857,7 +1227,10 @@ int kp_cli_menus_replay(int argc, char **argv)
 		const KpTraceRecord *r = &g->file.records[k];
 		int64_t tick = record_tick(r);
 		m->at = k;
-		if (tick >= 0) menus_captures(m, tick);
+		if (tick >= 0) {
+			menus_messages(m, tick);
+			menus_captures(m, tick);
+		}
 		if (strcmp(r->word, "del") == 0 && kp_ui_title_is_open(ui) && is_deletion(r->rest, title_end)) {
 			menus_captures(m, start); /* the captures before the main menu are the title's (its Sleep runs no timer) */
 			kp_ui_title_close(ui);
@@ -892,15 +1265,27 @@ int kp_cli_menus_replay(int argc, char **argv)
 			page_tick = -1;
 			if (progress_at[k].set) set_progress(ui, &progress_at[k], &m->saved); /* the log's field is 0-based */
 			kp_oracle_ui_input(ui, kind, a, b);
+			/* the chat room's idle callback (LobbyUpdate 0x450d80) at the run's idle events */
+			if (kind == IDLE && ui->net != NULL) kp_ui_lobby_idle(ui);
 			take(g);
 		} else if (strcmp(r->word, "turn") == 0) {
 			ui->now = (uint32_t)first_number(r->rest);
 			kp_ui_ready_room_turn(ui);
+			if (ui->net != NULL) kp_ui_lobby_idle(ui); /* the chat room's pass that made the turn */
 			take(g);
 		}
 		menus_follow(m);
+		menus_chat_first_pass(m);
 	}
 	menus_captures(m, INT64_MAX);
+	if (m->net.rec != NULL) {
+		char first[512];
+		long n = kp_oracle_net_differences(m->net.rec, first, sizeof first);
+		if (n > 0) {
+			fprintf(stderr, "menus_replay: %ld SNet calls differ from the original's; the first %s\n", n, first);
+			g->pixel_differences += n;
+		}
+	}
 	if (kp_ui_title_is_open(ui)) { /* no record of DestroyTitleScreen's deletion: the main menu never opened */
 		fprintf(stderr, "menus_replay: the title never closed (no \"del %s\")\n", title_end);
 		title_lost = 1;
@@ -915,6 +1300,8 @@ int kp_cli_menus_replay(int argc, char **argv)
 	ui->game = NULL;
 	free(progress_at);
 	glue_free(g);
+	net_host_free(&m->net);
+	free(m->maps.flow);
 	free(m);
 	return status;
 }
@@ -933,7 +1320,7 @@ static void room_captures(Glue *g, int64_t before)
 			const KpUiSurface *s = &ui->controls[ui->briefing.dialog].bitmap; /* as the last repaint left it */
 			Bitmap b;
 			int64_t differ;
-			b.s = s;
+			bitmap_init(&b, s);
 			if (s->pixels && kp_trace_compare_pixels(cap, bitmap_pixel, &b, 0, 0, s->w - 1, s->h - 1, getenv("ROOM_DUMP")) > 0) {
 				g->pixel_differences++;
 			}
@@ -1230,7 +1617,7 @@ static void score_capture(Glue *g, const KpTraceCapture *cap, void *ud)
 	(void)ud;
 	if (dialog < 0) return;
 	kp_ui_paint_dialog(ui, dialog);
-	b.s = &ui->controls[dialog].bitmap;
+	bitmap_init(&b, &ui->controls[dialog].bitmap);
 	if (b.s->pixels && kp_trace_compare_pixels(cap, bitmap_pixel, &b, 0, 0, b.s->w - 1, b.s->h - 1, getenv("ROOM_DUMP")) > 0) {
 		g->pixel_differences++;
 	}

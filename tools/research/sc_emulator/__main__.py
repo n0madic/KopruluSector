@@ -380,7 +380,8 @@ def main(argv=None):
     ne.add_argument("--spec", default="", help="a GameSpec JSON (net.py) instead of the arguments")
     ne.add_argument("--suite", default="", help="comma-separated games of net.suite() instead of the arguments")
     ne.add_argument("--players", default="Alpha@10.0.0.1:host,Beta@10.0.0.2",
-                    help="NAME@IP[:host|join],...: the first is the host unless a role says otherwise")
+                    help="NAME@IP[:host|join|external],...: the first is the host unless a role says otherwise; "
+                    "external is a live peer over --bridge the emulator does not run (it hosts when no player does)")
     ne.add_argument("--actions", default="", help="PLAYER:AT:KIND[:VALUE];... with AT lobby or a frame and KIND "
                     "one of net.Action's: chat, keys, text, slot, race, click, wait, stop, poke (ADDR:HEX) or cut "
                     "(virtual microseconds)")

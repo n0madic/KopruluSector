@@ -48,6 +48,7 @@
 #define TEXT_FONT 1            /* 0x6d3028 */
 #define ID_TEXT (-10)
 #define ID_OBJECTIVES (-11)
+#define ID_WAITING (-12)       /* "Waiting for other players" */
 #define ID_SKIP_IMAGE (-13)
 #define ID_NO_BRIEFING (-14)
 #define ID_START 13
@@ -56,6 +57,7 @@
 #define ID_SKIP 19
 #define ID_REPLAY 20
 #define ID_ANIMATION 1
+#define ID_ARTWORK 5           /* an artwork image a network game's room hides */
 #define RESULT_START 101
 #define RESULT_EXIT 100
 #define SLIDES 7
@@ -86,6 +88,9 @@ static const char LETTERS[3] = { 'Z', 'T', 'P' };
 static const uint16_t SLIDE_TABLE[2 * SLIDES] = { 5, 3, 6, 0, 7, 3, 9, 0, 10, 0, 11, 2, 12, 2 };
 
 static KpUiBriefing *br(KpUi *ui) { return &ui->briefing; }
+
+/* The rooms' multiplayer branches (0x672664): a network game's room, its ready handshake the network's */
+static int net_room(const KpUi *ui) { return ui->menus.multiplayer && ui->net != NULL; }
 
 static int32_t control_id(KpUi *ui, int16_t id) { return kp_ui_find_control(ui, br(ui)->dialog, id); }
 
@@ -560,6 +565,28 @@ static int run_record(KpUi *ui, uint8_t *r)
 	return 1;
 }
 
+/* FinishBriefing 0x460a20 (ReadyRoomButton 0x460b70's Start and Cancel inline it): no current record, Start disabled,
+ * in a network game "Waiting for other players" shown and SendBriefingStart 0x475cc0 (leave: Storm left, the idle
+ * callback cleared) */
+static void finish(KpUi *ui, int leave)
+{
+	KpUiBriefing *b = br(ui);
+	int32_t start = control_id(ui, ID_START);
+	b->current = -1;
+	if (start >= 0) {
+		ui->controls[start].flags |= KP_UI_DISABLED;
+		kp_ui_mark_dirty(ui, start);
+	}
+	if (net_room(ui)) {
+		int32_t waiting = control_id(ui, ID_WAITING);
+		if (waiting >= 0) kp_ui_show_control(ui, waiting);
+		if (ui->net->briefing_start != NULL) ui->net->briefing_start(ui->net->host, leave);
+	} else if (!leave) {
+		b->ready = 1; /* offline: the command 0x54 the next turn step sends */
+	}
+	if (leave) b->polling = 0;
+}
+
 static void tick(KpUi *ui, int32_t owner)
 {
 	/* BriefingTick 0x460ea0 */
@@ -568,6 +595,7 @@ static void tick(KpUi *ui, int32_t owner)
 	if (b->current < 0 || ui->game == NULL) return;
 	if (run_record(ui, kp_briefing_record(ui->game, b->current))) {
 		b->current = b->current + 1 < kp_briefing_count(ui->game) ? b->current + 1 : -1;
+		if (b->current < 0 && net_room(ui)) finish(ui, 0); /* the list's end: a network game's player is ready */
 	}
 }
 
@@ -660,7 +688,9 @@ static void init_briefing(KpUi *ui, int32_t dialog)
 	if (ui->game == NULL || kp_briefing_count(ui->game) == 0) {
 		int32_t none = control_id(ui, ID_NO_BRIEFING), replay = control_id(ui, ID_REPLAY);
 		if (none >= 0) kp_ui_show_control(ui, none);
-		if (replay >= 0) {
+		if (net_room(ui)) {
+			finish(ui, 0);
+		} else if (replay >= 0) {
 			ui->controls[replay].flags |= KP_UI_DISABLED;
 			kp_ui_mark_dirty(ui, replay);
 		}
@@ -687,21 +717,12 @@ static void destroy(KpUi *ui)
 static int button(KpUi *ui, KpUiControl *d)
 {
 	/* ReadyRoomButton 0x460b70 */
-	KpUiBriefing *b = br(ui);
-	int32_t start = control_id(ui, ID_START);
 	switch (ui->result) {
 	case ID_START:
+		finish(ui, 0); /* the dialog stays until PollBriefingReady 0x461120 finds every player ready */
+		return 1;
 	case ID_CANCEL:
-		b->current = -1;
-		if (start >= 0) {
-			ui->controls[start].flags |= KP_UI_DISABLED;
-			kp_ui_mark_dirty(ui, start);
-		}
-		if (ui->result == ID_START) {
-			b->ready = 1; /* 0x475cc0(0): the command 0x54 the next turn step sends */
-			return 1;
-		}
-		b->polling = 0;
+		finish(ui, 1);
 		/* fall through - as the other results */
 	default:
 		stop(ui);
@@ -727,7 +748,15 @@ static int room_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 		case KP_UI_POST_LOAD: {
 			KpUiInteract procs[PROCS];
 			int k;
-			b->polling = 1; /* ReadyRoomPostLoad 0x460c80: the idle callback PollBriefingReady 0x461120 */
+			/* ReadyRoomPostLoad 0x460c80: a network game's room hides the artwork 5 and Replay, and arms the ready
+			 * handshake (ArmBriefingReady 0x475d10); then the idle callback PollBriefingReady 0x461120 */
+			if (net_room(ui)) {
+				int32_t art = control_id(ui, ID_ARTWORK), replay = control_id(ui, ID_REPLAY);
+				if (art >= 0) kp_ui_hide_control(ui, art);
+				if (replay >= 0) kp_ui_hide_control(ui, replay);
+				if (ui->net->briefing_arm != NULL) ui->net->briefing_arm(ui->net->host);
+			}
+			b->polling = 1;
 			b->ready_tick = ui->now - TURN_MS; /* 0x6737ec: the first idle event steps */
 			b->sent = 0;
 			kp_ui_glue_slide_in(ui, self, SLIDE_TABLE, SLIDES, SLIDE_DELAY);
@@ -764,7 +793,8 @@ static int32_t open_room(KpUi *ui)
 int kp_ui_ready_room_open(KpUi *ui, int race)
 {
 	/* RunTerranReadyRoom 0x461420 and its twins: the music, the mission's establishing text (0x414f70: offline, without
-	 * the noglues cheat, a campaign mission's), then the room (kp_ui_ready_room_continue) */
+	 * the noglues cheat, a campaign mission's), then the room (kp_ui_ready_room_continue). A network game's room
+	 * (kp_ui_menus' multiplayer, the chat room's KP_UI_MENU_NETWORK) briefs the game the lobby started. */
 	KpUiBriefing *b = br(ui);
 	const char *text = NULL;
 	char name[KP_UI_ESTABLISHING_NAME];
@@ -778,7 +808,7 @@ int kp_ui_ready_room_open(KpUi *ui, int race)
 	b->log_count = 0;
 	kp_ui_music_stop(ui);
 	kp_ui_music_play(ui, MUSIC[race]);
-	if (ui->game != NULL && !(kp_scalar(ui->game, KP_CHEATS) & CHEAT_NOGLUES)) {
+	if (ui->game != NULL && !ui->menus.multiplayer && !(kp_scalar(ui->game, KP_CHEATS) & CHEAT_NOGLUES)) {
 		int64_t key = kp_scalar(ui->game, KP_MISSION_INDEX);
 		if (key != KP_NIL) text = kp_ui_establishing_text(ui, (uint16_t)key, 0, name);
 	}
@@ -808,13 +838,30 @@ void kp_ui_ready_room_end(KpUi *ui)
 	kp_ui_music_play(ui, MUSIC_TITLE);
 }
 
+/* PollBriefingReady 0x461120 in a network game: PollBriefingTurn 0x476b20 (its own 250 ms), 101 once every player's
+ * 0x54 arrived */
+static void net_poll(KpUi *ui)
+{
+	KpUiBriefing *b = br(ui);
+	/* TODO: result 100 when PollBriefingTurn answers the glue's exit (state 25): stage N4's fatal network errors set it */
+	if (ui->net->briefing_poll == NULL || !ui->net->briefing_poll(ui->net->host)) return;
+	b->polling = 0;
+	ui->result = RESULT_START;
+	(void)kp_ui_send_user(ui, b->dialog, KP_UI_CLOSE, 0);
+}
+
 void kp_ui_ready_room_idle(KpUi *ui)
 {
 	/* PollBriefingReady 0x461120 offline: a network turn step every 250 ms of idle events (0x476b20; the turns come
 	 * back at once, refreshing 0x6737ec); Start's command 0x54 goes out with a step and its ready byte arrives with the
 	 * next, which answers 101 */
 	KpUiBriefing *b = br(ui);
-	if (!b->polling || b->dialog < 0 || ui->now - b->ready_tick < TURN_MS) return;
+	if (!b->polling || b->dialog < 0) return;
+	if (net_room(ui)) {
+		net_poll(ui);
+		return;
+	}
+	if (ui->now - b->ready_tick < TURN_MS) return;
 	kp_ui_ready_room_turn(ui);
 }
 
@@ -822,6 +869,10 @@ void kp_ui_ready_room_turn(KpUi *ui)
 {
 	KpUiBriefing *b = br(ui);
 	if (!b->polling || b->dialog < 0) return;
+	if (net_room(ui)) {
+		net_poll(ui);
+		return;
+	}
 	b->ready_tick = ui->now;
 	if (b->sent) {
 		b->polling = 0;

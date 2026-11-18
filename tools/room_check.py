@@ -213,15 +213,16 @@ def captures(screens: Path, start: int, end: int, out: Path, pattern: str = "glu
     return lines
 
 
-def replay(name: str, tool: list[str], lines: list[str], screens: Path, records: list[dict], pattern: str) -> bool:
-    """Runs a replay tool (oracle_cli.command) over the lines and the captures of the records' time; logs its
-    output."""
+def replay(name: str, tool: list[str], lines: list[str], screens: Path, records: list[dict], pattern: str,
+           encoding: str = "utf-8") -> bool:
+    """Runs a replay tool (oracle_cli.command) over the lines (written in the encoding: latin-1 for the original's
+    bytes) and the captures of the records' time; logs its output."""
     with tempfile.TemporaryDirectory() as tmp:
         ticks = [r.get("t", r.get("tpass", 0)) for r in records if "t" in r or "tpass" in r]
         if ticks:
             lines = lines + captures(screens, min(ticks), max(ticks), Path(tmp), pattern)
         data = Path(tmp) / "records.txt"
-        data.write_text("\n".join(lines) + "\n")
+        data.write_text("\n".join(lines) + "\n", encoding=encoding)
         r = subprocess.run(tool + [str(data)], cwd=ROOT, capture_output=True, text=True)
     for line in (r.stdout + r.stderr).splitlines():
         (log.info if r.returncode == 0 else log.error)("%s: %s", name, line)

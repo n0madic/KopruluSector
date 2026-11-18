@@ -138,6 +138,10 @@ int kp_snet_join_game(KpSnet *s, uint32_t game_id, const char *name, const char 
 int kp_snet_leave_game(KpSnet *s, uint32_t reason);
 /* SNetEnumGamesEx 0x150251c0: fn(ud, game) for each visible listed game until it returns 0; *hint 500. */
 int kp_snet_enum_games(KpSnet *s, int (*fn)(void *ud, const KpSnetGame *g), void *ud, uint32_t *hint);
+/* Its listing over a provider's game list, the list unlocked around the calls of fn (hooks' unlock and lock, NULL
+ * none): 1, 0 out of memory. The network oracle's replay lists a recording's advertisements with it. */
+int kp_snet_list_games(KpSnpUdp *snp, const KpSnetHooks *hooks, int (*fn)(void *ud, const KpSnetGame *g), void *ud,
+	uint32_t *hint);
 
 /* SNetSendTurn 0x15027ee0. */
 int kp_snet_send_turn(KpSnet *s, const void *data, uint32_t size);

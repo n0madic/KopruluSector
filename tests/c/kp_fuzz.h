@@ -23,6 +23,13 @@
  *   snet      Storm's SNet (kp_snet.h) over it: the same datagrams and clock, the pump's passes, turns, messages and
  *             every export StarCraft calls, a game hosted or joined, the events' handlers calling back in; its packets
  *             well-formed and its records within their bound.
+ *   lobby     the multiplayer lobby (kp_netgame.h; phase N, stage N3) of one seat with the screens' pass, over an SNet
+ *             that answers from the input: the receive calls' turns, messages and events, the players' names, the
+ *             game's mode, failing calls, the clock, a saved game's file (kp_netsave.h) the lobby resumes and the
+ *             screens' actions; its sends within the provider's message size and its state within its bounds
+ *             (kp_fuzz_lobby.c tells the ops);
+ *   transfer  the map transfer (kp_transfer.h) alone: other seats' packets, the offer's peers, cancels and resets; its
+ *             packets well-formed, its saves only of names it may save, its transfers within their bounds.
  *
  * save and commands need the game's data (kp_oracle_data("."), run from the source tree's root); the games start once
  * a process and each input begins from their snapshot. A crash or a sanitizer's report is a finding. A game the
@@ -38,7 +45,8 @@
 extern "C" {
 #endif
 
-enum { KP_FUZZ_REP, KP_FUZZ_CHK, KP_FUZZ_SAVE, KP_FUZZ_COMMANDS, KP_FUZZ_TURNS, KP_FUZZ_UDP, KP_FUZZ_SNET, KP_FUZZ_TARGETS };
+enum { KP_FUZZ_REP, KP_FUZZ_CHK, KP_FUZZ_SAVE, KP_FUZZ_COMMANDS, KP_FUZZ_TURNS, KP_FUZZ_UDP, KP_FUZZ_SNET, KP_FUZZ_LOBBY,
+	KP_FUZZ_TRANSFER, KP_FUZZ_TARGETS };
 
 /* The target's name ("rep", ...), and the target of a name (-1 none). */
 const char *kp_fuzz_name(int target);
@@ -64,7 +72,7 @@ typedef struct {
 const KpFuzzStats *kp_fuzz_stats(void);
 
 /* The seeds into dir/<target>/: the synthetic ones (a replay and a CHK of made-up bytes, commands' plain orders, the
- * network targets' sessions on the in-process LAN; the committed tests/fuzz/seeds) and, with_data and the data
+ * network and lobby targets' sessions on the in-process LAN; the committed tests/fuzz/seeds) and, with_data and the data
  * present, the ones made from it (the campaign's and the scenarios' CHKs, the games' saves and replays, commands on the
  * games' own units: Blizzard's bytes, never committed).
  * The save target's game gives a save file and a native save at each of KP_FUZZ_SAVE_SEED_POINTS points. Their

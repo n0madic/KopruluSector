@@ -285,6 +285,16 @@ void kp_ui_list_free(KpUiControl *c)
 	c->list = NULL;
 }
 
+/* The left release's end (ListBoxProc 0x4c6480): the captures released, the tracking timer deleted. After a modal the
+ * list may be gone (the modal's end changed the screen): a slot now holding another kind of control is left alone, and
+ * another list there holds neither a capture nor a tracking timer while the modal's button was pressed. */
+static void list_released(KpUi *ui, int32_t list)
+{
+	if (list < 0 || list >= KP_UI_CONTROLS || !ui->controls[list].used || ui->controls[list].list == NULL) return;
+	kp_ui_release_refs(ui, list);
+	kp_ui_delete_timer(&ui->timers, list, TRACK_TIMER);
+}
+
 int kp_ui_list_proc(KpUi *ui, KpUiControl *c, KpUiEvent *e)
 {
 	/* ListBoxProc 0x4c6480 */
@@ -325,11 +335,14 @@ int kp_ui_list_proc(KpUi *ui, KpUiControl *c, KpUiEvent *e)
 			scroll_to(ui, c, l->hover);
 		}
 		return 1;
-	case KP_UI_LEFT_UP:
+	case KP_UI_LEFT_UP: {
+		int modals = kp_ui_modal_count(ui);
 		if (l != NULL && l->hover != l->selected && l->hover < l->count) (void)send_value(ui, c, l->hover);
-		kp_ui_release_refs(ui, self);
-		kp_ui_delete_timer(&ui->timers, self, TRACK_TIMER);
+		/* a modal run the value opened (a confirmation) holds the rest until it ends, the tracking going on */
+		if (kp_ui_modal_count(ui) > modals) kp_ui_modal_then(ui, list_released, self);
+		else list_released(ui, self);
 		return 1;
+	}
 	case KP_UI_LEFT_DOUBLE: { /* the dialog's default button (0x4c2430) */
 		int32_t k;
 		for (k = ui->controls[c->parent].child; k >= 0; k = ui->controls[k].next) {

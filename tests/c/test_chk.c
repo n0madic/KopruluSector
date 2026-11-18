@@ -706,8 +706,9 @@ static void map_missions(KpT *T)
 /* A map's header for the lists (LoadMapHeader 0x46b5c0 from LoadMapEntryInfo 0x45d870): the header group alone (a map
  * without the game's sections reads), its size, tileset (ERA's low 3 bits), owners and races (User Select marked), the
  * counts (players: owner types 3..7, 0x478e70; computers: types 1 and 5, 0x478ea0; humans: type 6, 0x479550) and the
- * first human slot, SPRP's title and description by their strings (none: ""); a version past the build's or a
- * scenario without OWNR is refused with the version still read. */
+ * first human slot, SPRP's title and description by their strings (none: ""), FORC's slot forces, flags and force
+ * names (a null string marked unnamed; a short chunk zero-filled, LoadForceChunk 0x443320); a version past the
+ * build's or a scenario without OWNR is refused with the version still read. */
 #define HEADER_SLOTS 12
 static void map_header_reads_the_lists_fields(KpT *T)
 {
@@ -719,10 +720,15 @@ static void map_header_reads_the_lists_fields(KpT *T)
 	/* STR: u16 count 2, two offsets, then the strings */
 	static const uint8_t STRS[] = { 2, 0, 6, 0, 18, 0, 'F', 'i', 'x', 't', 'u', 'r', 'e', ' ', 'M', 'a', 'p', 0,
 		'I', 't', 's', ' ', 't', 'e', 'x', 't', 0 };
+	/* FORC: the slots' forces, the force names' strings (2, null, 1, null), the force flags */
+	static const uint8_t FORC[20] = { 0, 1, 1, 2, 3, 0, 1, 2, 2, 0, 0, 0, 1, 0, 0, 0, 1, 3, 0, 0x0f };
+	static const uint8_t SHORT_FORC[10] = { 3, 2, 1, 0, 3, 2, 1, 0, 1, 0 };
+	static const uint8_t FORCE_FLAGS[KP_MAP_HEADER_FORCES] = { 1, 3, 0, 0x0f };
+	static const char *const FORCE_NAMES[KP_MAP_HEADER_FORCES] = { "Its text", "", "Fixture Map", "" };
 	static const struct { const char *tag; const uint8_t *data; size_t n; } PARTS[] = {
 		{ "OWNR", OWNR, sizeof OWNR }, { "SIDE", SIDE, sizeof SIDE }, { "DIM ", DIM, sizeof DIM },
 		{ "ERA ", ERA, sizeof ERA }, { "SPRP", SPRP, sizeof SPRP }, { "STR ", STRS, sizeof STRS },
-		{ "UNIT", NULL, 0 } }; /* no game section: the header still reads */
+		{ "FORC", FORC, sizeof FORC }, { "UNIT", NULL, 0 } }; /* no game section: the header still reads */
 	const KpDefsProfile *profile = kp_t_fixture_profile(T);
 	KpMapHeader h;
 	char err[KP_ERROR_SIZE];
@@ -746,6 +752,20 @@ static void map_header_reads_the_lists_fields(KpT *T)
 	kp_t_eq(T, h.first_human, 3, "the first human slot");
 	kp_t_eq_str(T, h.title, "Fixture Map", "SPRP's title");
 	kp_t_eq_str(T, h.description, "Its text", "SPRP's description");
+	for (p = 0; p < KP_MAP_HEADER_SLOTS; p++) kp_t_eq(T, h.forces[p], FORC[p], "slot %d's force", p);
+	for (p = 0; p < KP_MAP_HEADER_FORCES; p++) {
+		kp_t_eq(T, h.force_flags[p], FORCE_FLAGS[p], "force %d's flags", p + 1);
+		kp_t_eq(T, h.force_named[p], FORCE_NAMES[p][0] != 0, "force %d named", p + 1);
+		kp_t_eq_str(T, h.force_names[p], FORCE_NAMES[p], "force %d's name", p + 1);
+	}
+	v = replaced(T, v, size, "FORC", SHORT_FORC, sizeof SHORT_FORC, &size);
+	kp_t_eq(T, kp_map_header(&h, v, size, profile, 1, err, sizeof err), 0, "a short FORC: %s", err);
+	for (p = 0; p < KP_MAP_HEADER_SLOTS; p++) kp_t_eq(T, h.forces[p], SHORT_FORC[p], "a short FORC: slot %d's force", p);
+	for (p = 0; p < KP_MAP_HEADER_FORCES; p++) {
+		kp_t_eq(T, h.force_flags[p], 0, "a short FORC: force %d's flags zero-filled", p + 1);
+		kp_t_eq(T, h.force_named[p], p == 0, "a short FORC: force %d named", p + 1);
+	}
+	kp_t_eq_str(T, h.force_names[0], "Fixture Map", "a short FORC: force 1's name");
 	v = replaced(T, v, size, "SPRP", NO_TITLE, sizeof NO_TITLE, &size);
 	kp_t_eq(T, kp_map_header(&h, v, size, profile, 1, err, sizeof err), 0, "no title: %s", err);
 	kp_t_eq_str(T, h.title, "", "no title: the lists take the file's name");

@@ -2,7 +2,7 @@
 # libFuzzer's targets (phase T, stage T2; ADR 0022): build/cmake-fuzz with an LLVM clang that has libFuzzer
 # (KOPRULU_CLANG=<clang>, else Homebrew's llvm; Apple's has none), the seeds, then each target KOPRULU_FUZZ_TIME seconds
 # (default 60) under ASan and UBSan.
-#   tools/fuzz.sh [rep|chk|save|commands|turns|udp|snet ...]   (no target: all seven)
+#   tools/fuzz.sh [rep|chk|save|commands|turns|udp|snet|lobby|transfer ...]   (no target: all nine)
 # The targets' entries are tests/c/kp_fuzz.c's (kp_fuzz.h tells what each feeds). Their corpora:
 #   build/fuzz/corpus/<target>   what the fuzzer found, kept between runs (the first directory: new inputs go there;
 #                                TODO: merge it (-merge=1) once it grows: each run replays it whole before searching,
@@ -22,7 +22,7 @@ cd "$(dirname "$0")/.."
 
 TIME="${KOPRULU_FUZZ_TIME:-60}"
 HANG_SECONDS=30
-ALL=(rep chk save commands turns udp snet)
+ALL=(rep chk save commands turns udp snet lobby transfer)
 TARGETS=("$@")
 [ ${#TARGETS[@]} -gt 0 ] || TARGETS=("${ALL[@]}")
 for t in "${TARGETS[@]}"; do

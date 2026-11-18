@@ -19,6 +19,9 @@
 #define THEME_CAMPAIGN 1        /* PalCs */
 #define THEME_NONE 11           /* PalNl */
 #define STATE_MAIN 0
+#define STATE_CONNECTION 2
+#define STATE_CHAT 3
+#define STATE_BATTLE_NET 4
 #define STATE_LOGIN 5
 #define STATE_CAMPAIGN 6
 #define STATE_TERRAN_ROOM 7
@@ -27,9 +30,22 @@
 #define STATE_PLAY_CUSTOM 11
 #define STATE_LOAD_REPLAY 12
 #define STATE_LOAD 13
+#define STATE_JOIN 10
+#define STATE_MODEM 20
+#define STATE_CABLE_JOIN 21
 #define STATE_EXP_CAMPAIGN 22
+/* Storm's provider identifiers (the four characters as a big-endian DWORD) */
+#define PROVIDER_BNET 0x424e4554u
+#define PROVIDER_MODEM 0x4d4f444du
+#define PROVIDER_MODEM_X 0x4d444d58u
+#define PROVIDER_IPX 0x4950584eu
+#define PROVIDER_IPX_X 0x49505858u /* 'IPXX' */
+#define PROVIDER_ATLK 0x41544c4bu  /* 'ATLK' */
+#define PROVIDER_UDP 0x5544504eu
+#define PROVIDER_CABLE 0x5343424cu
 #define DIALOG_TRANSLUCENT 0x40000u
 #define LIST_FLAG 0x20000u
+#define SLIDE_DONE 0x405 /* the dialog's slides ended (kp_ui_glue.c) */
 /* the gluAll and network.tbl strings */
 #define STR_VERSION_FORMAT 3    /* gluAll "%s" */
 #define STR_GAME_TYPE 0xaa      /* gluAll "Select Game Type" */
@@ -62,6 +78,7 @@
 #define R_CANCEL 3
 #define R_EXIT 2
 #define R_SINGLE 3
+#define R_MULTI 4
 #define ID_MAIN_MULTI 4         /* the buttons the remake lacks: Multiplayer, Campaign Editor */
 #define ID_MAIN_EDITOR 5
 #define ID_CAMPAIGN_CUSTOM 10   /* the campaign menus' Play Custom and Load Replay (results 10 and */
@@ -104,21 +121,32 @@ static KpUiMenus *mn(KpUi *ui) { return &ui->menus; }
 
 /* --- the modal runs --- */
 
-int32_t kp_ui_modal(KpUi *ui, const char *bin, KpUiInteract proc, KpUiModalDone done)
+static int32_t modal_prepared(KpUi *ui, const char *bin, KpUiInteract proc, KpUiModalDone done,
+	void (*prepare)(KpUi *ui, int32_t dialog))
 {
-	/* RunModal 0x4c35c0: the dialog's procedure runs until the dialog ends; the continuation then */
+	/* RunModal 0x4c35c0: every capture released, the dialog's procedure runs until the dialog ends; the continuation
+	 * then */
 	KpUiMenus *m = mn(ui);
 	int32_t d;
 	if (m->modal_count >= KP_UI_MODALS) return -1;
 	d = kp_ui_load_dialog(ui, bin);
 	if (d < 0) return -1;
+	if (prepare != NULL) prepare(ui, d);
 	m->modal[m->modal_count].dialog = d;
 	m->modal[m->modal_count].done = done;
 	m->modal[m->modal_count].suspended = ui->timers.in_pass > 0; /* opened by a timer's work: its pass waits */
+	m->modal[m->modal_count].then = NULL;
+	m->modal[m->modal_count].then_control = -1;
 	if (ui->timers.in_pass > 0) ui->timers.suspend = 1;
 	m->modal_count++;
+	kp_ui_release_captures(ui);
 	kp_ui_init_dialog(ui, d, proc);
 	return d;
+}
+
+int32_t kp_ui_modal(KpUi *ui, const char *bin, KpUiInteract proc, KpUiModalDone done)
+{
+	return modal_prepared(ui, bin, proc, done, NULL);
 }
 
 void kp_ui_modal_destroyed(KpUi *ui, int32_t dialog)
@@ -128,14 +156,27 @@ void kp_ui_modal_destroyed(KpUi *ui, int32_t dialog)
 	for (k = m->modal_count - 1; k >= 0; k--) {
 		if (m->modal[k].dialog == dialog) {
 			KpUiModalDone done = m->modal[k].done;
+			KpUiCallback then = m->modal[k].then;
+			int32_t then_control = m->modal[k].then_control;
 			int suspended = m->modal[k].suspended;
 			memmove(&m->modal[k], &m->modal[k + 1], sizeof m->modal[0] * (size_t)(m->modal_count - k - 1));
 			m->modal_count--;
 			if (done != NULL) done(ui, ui->result);
+			if (then != NULL) then(ui, then_control); /* the opening handler returns */
 			if (suspended) kp_ui_resume_pass(ui); /* the timer's work returns: its pass goes on */
 			return;
 		}
 	}
+}
+
+int kp_ui_modal_count(const KpUi *ui) { return ui->menus.modal_count; }
+
+void kp_ui_modal_then(KpUi *ui, KpUiCallback then, int32_t control)
+{
+	KpUiMenus *m = mn(ui);
+	if (m->modal_count == 0) return;
+	m->modal[m->modal_count - 1].then = then;
+	m->modal[m->modal_count - 1].then_control = control;
 }
 
 /* --- the popups (glupopup.cpp, P21) --- */
@@ -317,6 +358,12 @@ static void ok_cancel_popup(KpUi *ui, const uint8_t *text, KpUiModalDone done)
 	(void)run_popup(ui, "rez\\gluPOkCancel.bin", PROCS, 3, popup_proc, done);
 }
 
+void kp_ui_menus_ok_popup(KpUi *ui, const uint8_t *text, KpUiModalDone done) { ok_popup(ui, text, done); }
+
+void kp_ui_menus_ok_cancel_popup(KpUi *ui, const uint8_t *text, KpUiModalDone done) { ok_cancel_popup(ui, text, done); }
+
+void kp_ui_menus_close_popup(KpUi *ui) { close_popup(ui); }
+
 /* --- the edit popup (RunEditPopup 0x45fd50) --- */
 
 static int forbidden(const KpUiMenus *m, uint16_t key)
@@ -454,6 +501,8 @@ static void font_key_draws(KpUi *ui, int decodes)
 	}
 }
 
+void kp_ui_menus_key_draws(KpUi *ui, int decodes) { font_key_draws(ui, decodes); }
+
 /* --- the screens' common end --- */
 
 static void screen_ended(KpUi *ui, int next, int action)
@@ -465,6 +514,8 @@ static void screen_ended(KpUi *ui, int next, int action)
 	m->screen = -1;
 	kp_ui_glue_end(ui, state_theme(next));
 }
+
+void kp_ui_menus_end(KpUi *ui, int next, int action) { screen_ended(ui, next, action); }
 
 /* --- the main menu (glue state 0) --- */
 
@@ -479,6 +530,9 @@ static void main_done(KpUi *ui, int32_t r)
 	else if (r == R_SINGLE) {
 		m->multiplayer = 0;
 		screen_ended(ui, STATE_LOGIN, KP_UI_MENU_STATE);
+	} else if (r == R_MULTI) {
+		m->multiplayer = 1;
+		screen_ended(ui, STATE_CONNECTION, KP_UI_MENU_STATE);
 	} else if (r == R_INTRO) screen_ended(ui, m->state, KP_UI_MENU_INTRO);
 	else if (r == R_CREDITS) screen_ended(ui, m->state, KP_UI_MENU_CREDITS);
 	else if (r == R_LANGUAGE) screen_ended(ui, m->state, KP_UI_MENU_LANGUAGE);
@@ -670,9 +724,9 @@ static int main_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 	if (e->type != KP_UI_USER) return base(ui, d, e);
 	switch (e->code) {
 	case KP_UI_CREATE: {
-		static const int16_t UNSUPPORTED[2] = { ID_MAIN_MULTI, ID_MAIN_EDITOR };
+		static const int16_t UNSUPPORTED[2] = { ID_MAIN_EDITOR, ID_MAIN_MULTI };
 		version_label(ui, self);
-		hide_unsupported_labels(ui, self, UNSUPPORTED, 2);
+		hide_unsupported_labels(ui, self, UNSUPPORTED, ui->net != NULL ? 1 : 2);
 		kp_ui_glue_activate(ui, self, THEME_MAIN);
 		(void)base(ui, d, e);
 		if (!ui->music.playing) kp_ui_music_play(ui, KP_UI_TITLE_MUSIC);
@@ -683,7 +737,8 @@ static int main_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 		int k;
 		memset(procs, 0, sizeof procs);
 		for (k = 1; k <= 4; k++) procs[k] = kp_ui_flc_button_proc; /* 0x5081d0 */
-		procs[ID_MAIN_MULTI - 1] = procs[ID_MAIN_EDITOR - 1] = unsupported_button_proc;
+		procs[ID_MAIN_EDITOR - 1] = unsupported_button_proc;
+		if (ui->net == NULL) procs[ID_MAIN_MULTI - 1] = unsupported_button_proc;
 		procs[7] = procs[8] = kp_ui_text_button_proc;
 		procs[9] = kp_ui_type_interact(10);
 		procs[R_LANGUAGE - 1] = kp_ui_text_button_proc; /* 0x5081d0's eleventh (no record of the original's has it) */
@@ -694,7 +749,8 @@ static int main_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 	}
 	case KP_UI_CLOSE:
 		switch (ui->result) {
-		case R_SINGLE: game_mode_popup(ui); return 1; /* the expansion's data are present */
+		case R_SINGLE: /* the expansion's data are present: ChooseGameMode 0x45a750 (no CD check in multiplayer) */
+		case R_MULTI: game_mode_popup(ui); return 1;
 		case R_LANGUAGE: language_popup(ui); return 1;
 		default: kp_ui_glue_slide_out(ui, self); return 1;
 		}
@@ -706,18 +762,26 @@ static int main_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 
 /* --- the glue's loop --- */
 
-static int32_t open_screen(KpUi *ui, const char *bin, KpUiInteract proc, KpUiModalDone done)
+int32_t kp_ui_menus_open(KpUi *ui, const char *bin, KpUiInteract proc, KpUiModalDone done,
+	void (*prepare)(KpUi *ui, int32_t dialog))
 {
 	KpUiMenus *m = mn(ui);
 	kp_ui_glue_sounds(ui);
-	m->screen = kp_ui_modal(ui, bin, proc, done);
+	m->screen = modal_prepared(ui, bin, proc, done, prepare);
 	return m->screen;
 }
 
+static int32_t open_screen(KpUi *ui, const char *bin, KpUiInteract proc, KpUiModalDone done)
+{
+	return kp_ui_menus_open(ui, bin, proc, done, NULL);
+}
+
 int32_t kp_ui_login_open(KpUi *ui);
+int32_t kp_ui_conn_open(KpUi *ui);
 int32_t kp_ui_campaign_open(KpUi *ui, int expansion);
 int32_t kp_ui_load_open(KpUi *ui);
 int32_t kp_ui_create_open(KpUi *ui);
+int32_t kp_ui_join_open(KpUi *ui);
 
 static const uint8_t *campaign_table(KpUi *ui, int expansion, int race, int *count);
 static uint16_t row16(const uint8_t *row, int at);
@@ -792,6 +856,10 @@ int32_t kp_ui_menus_enter(KpUi *ui, int state)
 	case STATE_MAIN:
 		m->multiplayer = 0;
 		return open_screen(ui, "rez\\gluMain.bin", main_proc, main_done);
+	case STATE_CONNECTION: return ui->net != NULL ? kp_ui_conn_open(ui) : -1;
+	case STATE_JOIN:
+	case STATE_CABLE_JOIN: return ui->net != NULL ? kp_ui_join_open(ui) : -1;
+	case STATE_CHAT: return ui->net != NULL ? kp_ui_lobby_open(ui) : -1;
 	case STATE_LOGIN: return kp_ui_login_open(ui);
 	case STATE_CAMPAIGN: return kp_ui_campaign_open(ui, 0);
 	case STATE_EXP_CAMPAIGN: return kp_ui_campaign_open(ui, 1);
@@ -934,8 +1002,15 @@ static void login_done(KpUi *ui, int32_t r)
 {
 	/* RunLoginScreen 0x459f10's dispatch */
 	KpUiMenus *m = mn(ui);
-	if (r == R_LOGIN_OK) screen_ended(ui, m->expansion ? STATE_EXP_CAMPAIGN : STATE_CAMPAIGN, KP_UI_MENU_STATE);
-	else screen_ended(ui, STATE_MAIN, KP_UI_MENU_STATE);
+	uint32_t provider = m->conn.provider; /* GetProviderId 0x475a10 */
+	if (r == R_LOGIN_OK && !m->multiplayer) screen_ended(ui, m->expansion ? STATE_EXP_CAMPAIGN : STATE_CAMPAIGN, KP_UI_MENU_STATE);
+	else if (r == R_LOGIN_OK) {
+		screen_ended(ui, provider == PROVIDER_MODEM_X || provider == PROVIDER_MODEM ? STATE_MODEM
+			: provider == PROVIDER_CABLE ? STATE_CABLE_JOIN : STATE_JOIN, KP_UI_MENU_STATE);
+	} else if (r == R_LOGIN_CANCEL) {
+		if (ui->net != NULL && ui->net->shutdown != NULL) ui->net->shutdown(ui->net->host); /* ShutdownNetwork 0x477f60 */
+		screen_ended(ui, m->multiplayer ? STATE_CONNECTION : STATE_MAIN, KP_UI_MENU_STATE);
+	} else screen_ended(ui, STATE_MAIN, KP_UI_MENU_STATE);
 }
 
 /* A dialog's wheel events give its list's scroll bar a row up (type 17: code 15) or down (18: 16); the original has no
@@ -1009,6 +1084,231 @@ int32_t kp_ui_login_open(KpUi *ui)
 {
 	mn(ui)->login_list = -1;
 	return open_screen(ui, "rez\\gluLogin.bin", login_proc, login_done);
+}
+
+/* --- the connection screen (glue state 2; gluconn.cpp, atlas P18) --- */
+
+#define R_CONN_OK 9
+#define ID_CONN_LIST 5
+#define ID_CONN_NAME 6
+#define ID_CONN_PLAYERS 7
+#define ID_CONN_DESCRIPTION 8
+#define ID_CONN_OK 9
+#define ID_CONN_CANCEL 10
+#define ID_CONN_GATEWAY_PANEL 11
+#define ID_CONN_GATEWAYS 12
+#define ID_CONN_HINT 13
+#define ID_CONN_GATEWAY_LABEL 14
+#define CONN_GATEWAY_SLIDE 4      /* the gateway panel's entry of the slide-in table */
+#define STR_SUPPORTS 0x68         /* gluAll "Supports up to %d players" */
+#define STR_GATEWAY_HINT 0xb9
+#define MUSIC_TITLE 0x16
+
+static KpUiConn *cn(KpUi *ui) { return &ui->menus.conn; }
+
+static void conn_text(KpUi *ui, int16_t id, const uint8_t *text, int dirty)
+{
+	int32_t c = kp_ui_find_control(ui, cn(ui)->dialog, id);
+	if (c < 0) return;
+	ui->controls[c].text = text;
+	if (dirty) kp_ui_mark_dirty(ui, c);
+}
+
+/* FindSelectedProvider 0x454b60: the first node from the head whose name is the selected item's text */
+static const KpUiProvider *selected_provider(KpUi *ui, int32_t list)
+{
+	KpUiConn *c = cn(ui);
+	const uint8_t *text = kp_ui_list_text(ui, list, kp_ui_list_selection(ui, list));
+	int k;
+	for (k = 0; k < c->count; k++)
+		if (strcmp(c->list[k].name, (const char *)text) == 0) return &c->list[k];
+	return NULL;
+}
+
+/* A provider's description (node +0x114): the "Requirements" text of a provider table 0x503d48 knows, else Storm's */
+static const uint8_t *provider_description(KpUi *ui, const KpUiProvider *p)
+{
+	static const struct { uint32_t id; uint16_t text; } TEXTS[5] = { { PROVIDER_BNET, 103 }, { PROVIDER_MODEM, 100 },
+		{ PROVIDER_IPX, 102 }, { PROVIDER_UDP, 190 }, { PROVIDER_CABLE, 101 } };
+	int k;
+	for (k = 0; k < 5; k++)
+		if (p->id == TEXTS[k].id) return kp_ui_tbl(ui, KP_UI_GLUALL, TEXTS[k].text);
+	return (const uint8_t *)p->description;
+}
+
+static void show_gateway_controls(KpUi *ui, int show)
+{
+	static const int16_t IDS[3] = { ID_CONN_GATEWAYS, ID_CONN_HINT, ID_CONN_GATEWAY_LABEL };
+	int k;
+	for (k = 0; k < 3; k++) {
+		int32_t c = kp_ui_find_control(ui, cn(ui)->dialog, IDS[k]);
+		if (c < 0) continue;
+		if (show) kp_ui_show_control(ui, c);
+		else kp_ui_hide_control(ui, c);
+	}
+}
+
+static void provider_selected(KpUi *ui, int32_t list)
+{
+	/* OnProviderSelected 0x454430: the labels' texts are written, the list alone marked dirty */
+	KpUiConn *c = cn(ui);
+	const KpUiProvider *p = selected_provider(ui, list);
+	int32_t ok;
+	if (p == NULL) return;
+	if ((ok = kp_ui_find_control(ui, c->dialog, ID_CONN_OK)) >= 0) kp_ui_set_enabled(ui, ok, 1);
+	c->previous = c->provider;
+	c->provider = p->id;
+	(void)kp_text_copy((char *)c->name, sizeof c->name, p->name);
+	conn_text(ui, ID_CONN_NAME, c->name, 0);
+	conn_text(ui, ID_CONN_DESCRIPTION, provider_description(ui, p), 0);
+	snprintf((char *)c->players, sizeof c->players, (const char *)kp_ui_tbl(ui, KP_UI_GLUALL, STR_SUPPORTS),
+		(int)p->max_players);
+	conn_text(ui, ID_CONN_PLAYERS, c->players, 0);
+	kp_ui_mark_dirty(ui, list);
+	if (!c->gateways) return;
+	if (c->provider == PROVIDER_BNET) {
+		kp_ui_glue_slide_control(ui, c->dialog, CONN_GATEWAY_SLIDE, 1);
+	} else if (c->previous == PROVIDER_BNET) {
+		kp_ui_glue_slide_control(ui, c->dialog, CONN_GATEWAY_SLIDE, 0);
+		show_gateway_controls(ui, 0);
+	}
+}
+
+static int provider_list_proc(KpUi *ui, KpUiControl *c, KpUiEvent *e)
+{
+	/* ProviderListInteract 0x454a00 */
+	KpUiConn *cs = cn(ui);
+	int32_t self = (int32_t)(c - ui->controls), ok;
+	int k, r;
+	if (e->type == KP_UI_USER) {
+		switch (e->code) {
+		case KP_UI_CREATE: /* FillProviderList 0x454be0: item 0x668a44 (a static 0) selected, then its labels */
+			if ((ok = kp_ui_find_control(ui, cs->dialog, ID_CONN_OK)) >= 0) kp_ui_set_enabled(ui, ok, 0);
+			kp_ui_list_redraw(ui, self, 0);
+			for (k = 0; k < cs->count; k++) (void)kp_ui_list_add(ui, self, (const uint8_t *)cs->list[k].name, 0);
+			kp_ui_list_redraw(ui, self, 1);
+			(void)kp_ui_send_user(ui, self, KP_UI_VALUE_CHANGED, 0);
+			provider_selected(ui, self);
+			if (ok >= 0) kp_ui_mark_dirty(ui, ok);
+			break;
+		case KP_UI_POST_LOAD: c->flags |= LIST_FLAG; break;
+		case KP_UI_VALUE_CHANGED:
+			r = kp_ui_list_proc(ui, c, e);
+			provider_selected(ui, self);
+			(void)r;
+			return 1;
+		default: break;
+		}
+	}
+	return kp_ui_list_proc(ui, c, e);
+}
+
+/* ChooseStateForProvider 0x454b20: Battle.net's state (its provider initialized by the screen's end), or the provider
+ * initialized and the login screen; 0 when it failed (the screen stays) */
+static int choose_state(KpUi *ui)
+{
+	KpUiConn *c = cn(ui);
+	if (c->provider == PROVIDER_BNET) {
+		c->next_state = STATE_BATTLE_NET;
+		return 1;
+	}
+	font_key_draws(ui, 2); /* InitNetworkProvider 0x4757e0: FillProgramInfo 0x46f330's key and name */
+	if (ui->net->select_provider == NULL || !ui->net->select_provider(ui->net->host, c->provider)) return 0;
+	c->next_state = STATE_LOGIN;
+	return 1;
+}
+
+static void conn_done(KpUi *ui, int32_t r)
+{
+	/* RunConnectionScreen 0x454250's dispatch: Battle.net is initialized now (Koprulu's network has no Battle.net:
+	 * the host refuses it and the screen shows again) */
+	KpUiConn *c = cn(ui);
+	int next = c->next_state;
+	if (r != R_CONN_OK) next = STATE_MAIN;
+	else if (c->provider == PROVIDER_BNET) {
+		kp_ui_music_stop(ui); /* StopMusicFadeOut 0x46f040 */
+		if (ui->net->select_provider == NULL || !ui->net->select_provider(ui->net->host, PROVIDER_BNET)) next = STATE_CONNECTION;
+	}
+	c->dialog = -1;
+	screen_ended(ui, next, KP_UI_MENU_STATE);
+}
+
+static void conn_create(KpUi *ui)
+{
+	/* InitConnectionScreen 0x4545c0: Storm's providers (EnumProviderCallback 0x4548c0 inserts each at the list's
+	 * head) */
+	KpUiConn *c = cn(ui);
+	KpUiProvider found[KP_UI_PROVIDERS];
+	int32_t panel;
+	int n = 0, k;
+	if (ui->net->reset_provider != NULL) ui->net->reset_provider(ui->net->host);
+	c->name[0] = c->players[0] = 0;
+	(void)kp_text_copy((char *)c->hint, sizeof c->hint, (const char *)kp_ui_tbl(ui, KP_UI_GLUALL, STR_GATEWAY_HINT));
+	conn_text(ui, ID_CONN_NAME, c->name, 0);
+	conn_text(ui, ID_CONN_PLAYERS, c->players, 0);
+	conn_text(ui, ID_CONN_HINT, c->hint, 1);
+	if (ui->net->providers != NULL) n = ui->net->providers(ui->net->host, found, KP_UI_PROVIDERS);
+	c->count = n < 0 ? 0 : n > KP_UI_PROVIDERS ? KP_UI_PROVIDERS : n;
+	c->gateways = 0;
+	for (k = 0; k < c->count; k++) {
+		KpUiProvider *p = &c->list[c->count - 1 - k];
+		*p = found[k];
+		p->flags &= 2u;
+		if (p->max_players > 8) p->max_players = 8;
+		p->name[sizeof p->name - 1] = p->description[sizeof p->description - 1] = 0;
+		if (p->id == PROVIDER_BNET) c->gateways = 1;
+	}
+	/* Koprulu's: without Battle.net (the original's list always has it) the gateway panel, sliding in, stays hidden */
+	if (!c->gateways && (panel = kp_ui_find_control(ui, c->dialog, ID_CONN_GATEWAY_PANEL)) >= 0) kp_ui_hide_control(ui, panel);
+	if (!ui->music.playing) kp_ui_music_play(ui, MUSIC_TITLE);
+}
+
+static int conn_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
+{
+	/* ConnectionDialogProc 0x454740 */
+	KpUiConn *c = cn(ui);
+	int32_t self = (int32_t)(d - ui->controls);
+	KpUiInteract base = kp_ui_type_interact(0);
+	if (e->type != KP_UI_USER) return base(ui, d, e);
+	switch (e->code) {
+	case KP_UI_CREATE:
+		conn_create(ui);
+		kp_ui_glue_activate(ui, self, THEME_NONE);
+		break;
+	case KP_UI_DESTROY: /* DestroyConnectionScreen 0x4546a0 */
+		conn_text(ui, ID_CONN_NAME, NULL, 0);
+		conn_text(ui, ID_CONN_PLAYERS, NULL, 0);
+		conn_text(ui, ID_CONN_HINT, NULL, 0);
+		c->count = 0;
+		break;
+	case KP_UI_CLOSE:
+		if (ui->result == R_CONN_OK && !choose_state(ui)) return 1;
+		kp_ui_glue_slide_out(ui, self);
+		return 1;
+	case KP_UI_POST_LOAD: { /* InitConnectionDialogControls 0x454830 */
+		static const uint16_t SLIDES[10] = { 1, 0, 2, 2, 3, 3, 4, 2, ID_CONN_GATEWAY_PANEL, 0 }; /* 0x503d78 */
+		KpUiInteract procs[14];
+		c->dialog = self;
+		kp_ui_glue_slide_in(ui, self, SLIDES, 5, 0);
+		memset(procs, 0, sizeof procs);
+		procs[ID_CONN_LIST - 1] = provider_list_proc;
+		procs[ID_CONN_OK - 1] = procs[ID_CONN_CANCEL - 1] = kp_ui_text_button_proc;
+		kp_ui_glue_init_dialog(ui, self, procs, 14, THEME_NONE);
+		break;
+	}
+	case SLIDE_DONE:
+		if (c->gateways) show_gateway_controls(ui, 1);
+		break;
+	default: break;
+	}
+	return base(ui, d, e);
+}
+
+int32_t kp_ui_conn_open(KpUi *ui)
+{
+	cn(ui)->dialog = -1;
+	cn(ui)->next_state = STATE_LOGIN;
+	return open_screen(ui, "rez\\gluConn.bin", conn_proc, conn_done);
 }
 
 /* --- the campaign menus (glue states 6, 22) --- */
@@ -1378,11 +1678,22 @@ static void load_done(KpUi *ui, int32_t r)
 	else screen_ended(ui, STATE_MAIN, KP_UI_MENU_STATE);
 }
 
-#define SLIDE_DONE 0x405 /* the dialog's slides ended (kp_ui_glue.c) */
 
 void kp_ui_menus_refused(KpUi *ui, uint16_t gluall) { mn(ui)->refusal = gluall; }
 
 void kp_ui_menus_net_error(KpUi *ui, uint16_t network) { mn(ui)->net_error = network; }
+
+int kp_ui_menus_provider_state(const KpUi *ui)
+{
+	uint32_t provider = ui->menus.conn.provider;
+	if (provider == PROVIDER_BNET) return STATE_BATTLE_NET;
+	if (provider == PROVIDER_MODEM_X || provider == PROVIDER_MODEM) return STATE_MODEM;
+	if (provider == PROVIDER_CABLE) return STATE_CABLE_JOIN;
+	if (provider == PROVIDER_IPX || provider == PROVIDER_ATLK || provider == PROVIDER_IPX_X || provider == PROVIDER_UDP) {
+		return STATE_JOIN;
+	}
+	return STATE_MAIN;
+}
 
 void kp_ui_menus_flush_net_error(KpUi *ui)
 {
@@ -1479,8 +1790,7 @@ int32_t kp_ui_load_open(KpUi *ui)
 #define COMBO_EVENTS 0x20000u   /* the combo boxes' post-load flag (LocalPlayerListProc 0x456120 and the others) */
 #define SLOT_TIMER 5            /* RefreshComputerSlots 0x456420's own timer while the map is unread */
 #define SLOT_PERIOD 100
-#define PREVIEW_TIMER 12        /* PreviewMapEntry 0x45b970's SetTimer(12, 100) */
-#define PREVIEW_PERIOD 100
+#define PREVIEW_PERIOD 100      /* PreviewMapEntry 0x45b970's SetTimer(main window, 12, 100) */
 #define CREATE_GRP "glue\\create\\iCreate.grp"
 #define ICON_FOLDER 2           /* DrawFolderLabel 0x455fe0 */
 #define ICON_FILE 3             /* DrawMapListItem 0x455850: 3 + highlighted */
@@ -1493,6 +1803,7 @@ int32_t kp_ui_load_open(KpUi *ui)
 #define STR_MISSING 66
 #define STR_MAP_NAME 48
 #define STR_REPLAY 178
+#define STR_INVALID_SAVE 64     /* LoadSaveEntryInfo 0x45d5e0's title until the file is found */
 #define STR_COUNT 30            /* "%u" */
 #define STR_DIMENSIONS 32       /* "%ux%u" */
 #define STR_COMPUTER_COUNT 35
@@ -1508,6 +1819,18 @@ int32_t kp_ui_load_open(KpUi *ui)
 #define STR_CREATE_NO_HUMAN 58  /* 0x8000000c */
 #define STR_CREATE_NO_COMPUTER 57 /* 0x8000000d; FinishSinglePlayerCreate 0x4554a0's too */
 #define STR_CREATE_FAILED 52    /* the other results offline */
+#define STR_CREATE_GAMES 55     /* 0x80000005: Storm's 0x44, too many games on the network */
+#define STR_CREATE_NETWORK 56   /* SErrGetLastError 0x4c6 (gluAll 74 for a modem, not offered) */
+#define SERR_TOO_MANY_GAMES 0x44u
+#define SERR_PROVIDER 0x4c6u
+#define ID_SPEED_LABEL 15       /* gluCreat's (multiplayer): the speed's label and slider */
+#define ID_SPEED 16
+#define STR_SPEED_LABEL 0x5d    /* UpdateGameSpeedLabel 0x456680: "Speed:", the name right-aligned */
+#define STR_SPEED_FIRST 85      /* 0x4ed73c / 0x4edaec: {gluAll 85 "Slowest" + speed, speed} for the speeds 0..6 */
+#define SPEEDS 7                /* 0x503d98 */
+#define SPEED_DEFAULT ((SPEEDS - 1) / 2) /* LoadGameSpeedSetting 0x454ca0: Normal */
+#define FLAG_SLIDER 0x2000000u
+#define GAME_RIGHT_REST "\x12"  /* the rest of a text right-aligned (a list item's, a label's) */
 #define TEMPLATE_TOP_VS_BOTTOM 0x0f
 #define TEMPLATE_SUBTYPE_TEXTS 9 /* FormatTemplateSubtype 0x447bb0: glue string 0xa4 + value */
 #define STR_SUBTYPE_FIRST 0xa4
@@ -1561,6 +1884,17 @@ static const KpTemplate *find_template(const KpUi *ui, uint32_t type, uint32_t s
 {
 	return ui->templates != NULL
 		? kp_templates_find(ui->templates, (int)(type & 0xff), (int)(type >> 8 & 0xff), (int)(subtype & 0xffff)) : NULL;
+}
+
+/* FindTemplateName 0x447a40 / FindTemplateLabel 0x447ac0: the first template of a type and sub-byte */
+static const KpTemplate *template_of_type(const KpUi *ui, uint32_t type, uint32_t sub)
+{
+	int k;
+	for (k = 0; ui->templates != NULL && k < ui->templates->count; k++) {
+		const uint8_t *r = ui->templates->list[k].record;
+		if (r[0] == (type & 0xff) && r[KP_TEMPLATE_SUB] == (sub & 0xff)) return &ui->templates->list[k];
+	}
+	return NULL;
 }
 
 /* IsTemplateMelee 0x447d30: the victory byte 1 */
@@ -1691,7 +2025,30 @@ static void publish_info(KpUi *ui, int k)
 	int j, u, ums;
 	memset(value, 0, sizeof value);
 	m->map_title[0] = m->map_description[0] = 0;
-	if (r != NULL && (r->kind == KP_UI_ENTRY_REPLAY || r->kind == KP_UI_ENTRY_MAP)) {
+	if (r != NULL && r->kind == KP_UI_ENTRY_SAVE) {
+		/* LoadSaveEntryInfo 0x45d5e0: "Map Name: %s" of the game's title, then the save's name; no computer or human
+		 * counts */
+		(void)kp_text_copy_chars((char *)m->map_title, sizeof m->map_title,
+			(const char *)kp_ui_tbl(ui, KP_UI_GLUALL, r->save_title), KP_UI_MAP_TITLE_CHARS);
+		if (r->status != 0) {
+			(void)kp_text_copy((char *)m->map_description, sizeof m->map_description,
+				(const char *)kp_ui_tbl(ui, KP_UI_GLUALL, r->description));
+		} else {
+			size_t n;
+			snprintf((char *)m->map_description, sizeof m->map_description,
+				(const char *)kp_ui_tbl(ui, KP_UI_GLUALL, STR_MAP_NAME), r->map);
+			n = strlen((const char *)m->map_description);
+			snprintf((char *)m->map_description + n, sizeof m->map_description - n, "\n\n%s", r->text);
+			snprintf(value[FIELD_PLAYERS], sizeof value[0], (const char *)kp_ui_tbl(ui, KP_UI_GLUALL, STR_COUNT),
+				(unsigned)r->game_players);
+			snprintf(value[FIELD_SIZE], sizeof value[0], (const char *)kp_ui_tbl(ui, KP_UI_GLUALL, STR_DIMENSIONS),
+				(unsigned)r->width, (unsigned)r->height);
+			if (r->tileset < TILESETS) {
+				snprintf(value[FIELD_TILESET], sizeof value[0], "%s",
+					(const char *)kp_ui_tbl(ui, KP_UI_GLUALL, (uint32_t)(STR_TILESET_FIRST + r->tileset)));
+			}
+		}
+	} else if (r != NULL && (r->kind == KP_UI_ENTRY_REPLAY || r->kind == KP_UI_ENTRY_MAP)) {
 		int replay = r->kind == KP_UI_ENTRY_REPLAY;
 		/* LoadReplayEntryInfo 0x45d250, LoadMapEntryInfo 0x45d870 */
 		if (r->status != 0) {
@@ -1754,55 +2111,56 @@ static void publish_info(KpUi *ui, int k)
 	map_slot_count(ui, c->replay_read ? c->replay_slots : r->players);
 }
 
-/* LoadReplayEntryInfo 0x45d250 (the replay read flag 0x67cc90 set before its loaded test) and LoadMapEntryInfo
- * 0x45d870 (the map's header read: LoadMapHeader 0x46b5c0's players) of entry k, once; the host read a replay's with
- * the list, a map's in load_entry. */
+/* LoadReplayEntryInfo 0x45d250 (the replay read flag 0x67cc90 set before its loaded test), LoadMapEntryInfo 0x45d870
+ * (the map's header read: LoadMapHeader 0x46b5c0's players) and LoadSaveEntryInfo 0x45d5e0 of entry k, once; the host
+ * read a replay's with the list, a map's and a saved game's in load_entry. */
 static void read_entry(KpUi *ui, int k)
 {
 	KpUiCreate *c = cr(ui);
 	KpUiMapEntry *e = &mn(ui)->entries[k];
 	if (e->kind == KP_UI_ENTRY_REPLAY) c->replay_read = 1;
-	if (e->loaded || (e->kind != KP_UI_ENTRY_REPLAY && e->kind != KP_UI_ENTRY_MAP)) return;
+	if (e->loaded || (e->kind != KP_UI_ENTRY_REPLAY && e->kind != KP_UI_ENTRY_MAP && e->kind != KP_UI_ENTRY_SAVE)) return;
 	if (e->kind == KP_UI_ENTRY_REPLAY && e->status == 0) c->replay_slots = e->slots; /* its header read (0x480690) */
-	if (e->kind == KP_UI_ENTRY_MAP) {
+	if (e->kind == KP_UI_ENTRY_MAP || e->kind == KP_UI_ENTRY_SAVE) {
 		if (ui->load_entry != NULL) {
 			ui->load_entry(ui->host, ui, k);
 		} else { /* no host to read it: as a missing file */
 			e->status = 1;
 			e->description = STR_MISSING;
+			e->save_title = STR_INVALID_SAVE;
 		}
-		c->header_human = e->status == 0 ? e->first_human : -1;
+		if (e->kind == KP_UI_ENTRY_MAP) c->header_human = e->status == 0 ? e->first_human : -1;
 	}
 	e->loaded = 1;
 }
 
-/* DeferredPreviewTimer 0x45d1e0: the entry's information 100 ms after its selection. */
-static void preview_tick(KpUi *ui, int32_t owner)
+/* DeferredPreviewTimer 0x45d1e0: the entry's information 100 ms after its selection (the Win32 timer killed first). */
+void kp_ui_menus_tick(KpUi *ui)
 {
 	KpUiMenus *m = mn(ui);
 	int k = m->map_preview;
-	kp_ui_delete_timer(&ui->timers, owner, PREVIEW_TIMER);
+	kp_ui_lobby_tick(ui);
+	if (k < 0 || (int32_t)(ui->now - m->map_preview_due) < 0) return;
 	m->create.replay_read = 0;
 	m->map_preview = -1;
-	if (k < 0 || k >= m->entry_count) return; /* the list was built again under it */
+	if (k >= m->entry_count) return; /* the list was built again under it */
 	read_entry(ui, k);
 	publish_info(ui, k);
 }
 
-/* PreviewMapEntry 0x45b970: an unread map's or replay's fields cleared and its information 100 ms later; any other
- * entry's at once. */
+/* PreviewMapEntry 0x45b970: the timer killed; an unread map's, replay's or saved game's fields cleared and its
+ * information 100 ms later; any other entry's at once. */
 static void preview_entry(KpUi *ui, int k)
 {
 	KpUiMenus *m = mn(ui);
 	const KpUiMapEntry *e;
-	kp_ui_delete_timer(&ui->timers, m->create_dialog, PREVIEW_TIMER);
+	m->map_preview = -1;
 	if (k < 0 || k >= m->entry_count) return;
 	e = &m->entries[k];
-	if ((e->kind == KP_UI_ENTRY_MAP || e->kind == KP_UI_ENTRY_REPLAY) && !e->loaded) {
+	if ((e->kind == KP_UI_ENTRY_MAP || e->kind == KP_UI_ENTRY_REPLAY || e->kind == KP_UI_ENTRY_SAVE) && !e->loaded) {
 		publish_info(ui, -1);
 		m->map_preview = k;
-		(void)kp_ui_set_timer(&ui->timers, m->create_dialog, PREVIEW_TIMER, PREVIEW_PERIOD,
-			kp_ui_callback(ui, preview_tick), ui->now);
+		m->map_preview_due = ui->now + PREVIEW_PERIOD;
 		return;
 	}
 	publish_info(ui, k);
@@ -1880,6 +2238,21 @@ static void slot_tick(KpUi *ui, int32_t owner) { refresh_slots(ui, owner); }
 
 /* AddSubtypeItem 0x456720: a template of the selected type with a value (Top vs Bottom's below the map's slots), its
  * text by FormatTemplateSubtype 0x447bb0, its data the subtype */
+/* FormatTemplateSubtype 0x447bb0: a template's subtype as text (total: the players Top vs Bottom divides) */
+static void format_subtype(KpUi *ui, char *out, size_t size, const uint8_t *r, uint32_t total)
+{
+	uint32_t value = record32(r, KP_TEMPLATE_VALUE);
+	if (r[0] == TEMPLATE_SUBTYPE_TEXTS) {
+		const uint8_t *t = kp_ui_tbl(ui, KP_UI_GLUALL, STR_SUBTYPE_FIRST + value);
+		snprintf(out, size, "%s", t != NULL ? (const char *)t : "");
+	} else if (r[0] == TEMPLATE_TOP_VS_BOTTOM) {
+		snprintf(out, size, (const char *)kp_ui_tbl(ui, KP_UI_GLUALL, STR_TOP_VS_BOTTOM), (unsigned)value,
+			(unsigned)(total - value));
+	} else {
+		snprintf(out, size, "%u", (unsigned)value);
+	}
+}
+
 static void add_subtype_item(KpUi *ui, int32_t list, const uint8_t *r)
 {
 	KpUiCreate *c = cr(ui);
@@ -1888,14 +2261,7 @@ static void add_subtype_item(KpUi *ui, int32_t list, const uint8_t *r)
 	int at;
 	if (value == 0) return;
 	if (r[0] == TEMPLATE_TOP_VS_BOTTOM && (c->slots < 2 || value >= c->slots)) return;
-	if (r[0] == TEMPLATE_SUBTYPE_TEXTS) {
-		snprintf(full, sizeof full, "%s", (const char *)kp_ui_tbl(ui, KP_UI_GLUALL, STR_SUBTYPE_FIRST + value));
-	} else if (r[0] == TEMPLATE_TOP_VS_BOTTOM) {
-		snprintf(full, sizeof full, (const char *)kp_ui_tbl(ui, KP_UI_GLUALL, STR_TOP_VS_BOTTOM), (unsigned)value,
-			(unsigned)(c->slots - value));
-	} else {
-		snprintf(full, sizeof full, "%u", (unsigned)value);
-	}
+	format_subtype(ui, full, sizeof full, r, c->slots);
 	(void)kp_text_copy_chars(text, sizeof text, full, SUBTYPE_CHARS);
 	at = kp_ui_list_add(ui, list, (const uint8_t *)text, 0x10);
 	if (at != KP_UI_LIST_NONE) kp_ui_list_set_data(ui, list, at, record16(r, KP_TEMPLATE_SUBTYPE));
@@ -1937,18 +2303,13 @@ static void on_type_selected(KpUi *ui, int32_t list)
 	int32_t parent = ui->controls[list].parent, label, entries;
 	const KpTemplate *t;
 	char text[KP_UI_TEMPLATE_TEXT * 3 + 1];
-	int s, k;
+	int s;
 	size_t chars;
 	if (kp_ui_list_count(ui, list) == 0 || (s = kp_ui_list_selection(ui, list)) == KP_UI_LIST_NONE) return;
 	c->game_type = kp_ui_list_data(ui, list, s);
 	text[0] = 0;
-	for (k = 0; ui->templates != NULL && k < ui->templates->count; k++) {
-		const uint8_t *r = ui->templates->list[k].record;
-		if (r[0] == (c->game_type & 0xff) && r[KP_TEMPLATE_SUB] == (c->game_type >> 8 & 0xff)) {
-			(void)kp_text_from_legacy(ui->templates->list[k].label, text, sizeof text);
-			break;
-		}
-	}
+	if ((t = template_of_type(ui, c->game_type, c->game_type >> 8)) != NULL)
+		(void)kp_text_from_legacy(t->label, text, sizeof text);
 	/* SStrCopy of 32 bytes, then SStrNCat of ':' within them */
 	chars = kp_text_copy_chars((char *)c->type_label, sizeof c->type_label - 1, text, KP_UI_TEMPLATE_TEXT - 1);
 	if (c->type_label[0] != 0 && chars < KP_UI_TEMPLATE_TEXT - 1) strcat((char *)c->type_label, ":");
@@ -1966,12 +2327,13 @@ static void on_type_selected(KpUi *ui, int32_t list)
 }
 
 /* FillGameTypeList 0x456910: the templates of subtype 1 the player may choose (AddGameTypeItem 0x456990, the name
- * and the type), the registry's "Custom Type" chosen (RestoreGameTypeSelection 0x454d40), else offline the last melee
- * template from the bottom; an empty list disabled. */
+ * and the type), the registry's "Custom Type" chosen (multiplayer's "Game Type"; RestoreGameTypeSelection 0x454d40),
+ * else offline the last melee template from the bottom; an empty list disabled. */
 static void fill_types(KpUi *ui, int32_t list)
 {
 	KpUiMenus *m = mn(ui);
 	KpUiCreate *c = &m->create;
+	const char *type;
 	int k, n, restored = 0;
 	for (k = 0; ui->templates != NULL && k < ui->templates->count; k++) {
 		const KpTemplate *t = &ui->templates->list[k];
@@ -1987,7 +2349,8 @@ static void fill_types(KpUi *ui, int32_t list)
 		kp_ui_set_enabled(ui, list, 0);
 		return;
 	}
-	if (c->custom_type[0] != 0 && select_text(ui, list, c->custom_type) != KP_UI_LIST_NONE) restored = 1;
+	type = m->multiplayer ? c->net_type : c->custom_type;
+	if (type[0] != 0 && select_text(ui, list, type) != KP_UI_LIST_NONE) restored = 1;
 	else kp_ui_list_select(ui, list, 0);
 	if (!m->multiplayer && !restored) {
 		for (k = n - 1; k >= 0; k--) {
@@ -2006,7 +2369,7 @@ static int type_list_proc(KpUi *ui, KpUiControl *c, KpUiEvent *e)
 	int32_t self = (int32_t)(c - ui->controls);
 	if (e->type == KP_UI_USER) {
 		switch (e->code) {
-		case KP_UI_DESTROY: save_choice(ui, self, cr(ui)->custom_type); break;
+		case KP_UI_DESTROY: save_choice(ui, self, mn(ui)->multiplayer ? cr(ui)->net_type : cr(ui)->custom_type); break;
 		case KP_UI_POST_LOAD: c->flags |= COMBO_EVENTS; break;
 		case KP_UI_VALUE_CHANGED:
 			(void)kp_ui_combo_proc(ui, c, e);
@@ -2042,6 +2405,70 @@ static int subtype_list_proc(KpUi *ui, KpUiControl *c, KpUiEvent *e)
 		}
 	}
 	return kp_ui_combo_proc(ui, c, e);
+}
+
+/* LoadGameSpeedSetting 0x454ca0: the registry's "Game Speed" as a speed (gluAll's names by _stricmp), else Normal */
+static int saved_speed(KpUi *ui)
+{
+	const char *saved = cr(ui)->game_speed;
+	int k;
+	size_t i;
+	for (k = 0; saved[0] != 0 && k < SPEEDS; k++) {
+		const uint8_t *name = kp_ui_tbl(ui, KP_UI_GLUALL, (uint16_t)(STR_SPEED_FIRST + k));
+		if (name == NULL) continue;
+		for (i = 0; saved[i] != 0 && ascii_upper((unsigned char)saved[i]) == ascii_upper(name[i]); i++) {}
+		if (saved[i] == 0 && name[i] == 0) return k;
+	}
+	return SPEED_DEFAULT;
+}
+
+/* UpdateGameSpeedLabel 0x456680: the slider's speed asked, its name on the label beside it */
+static void speed_label(KpUi *ui, int32_t slider)
+{
+	const uint8_t *label = kp_ui_tbl(ui, KP_UI_GLUALL, STR_SPEED_LABEL), *name;
+	int16_t p = kp_ui_scrollbar_pos(&ui->controls[slider]);
+	int32_t to = kp_ui_find_control(ui, ui->controls[slider].parent, ID_SPEED_LABEL);
+	KpUiCreate *c = cr(ui);
+	if (p < 0 || p >= SPEEDS) return;
+	c->speed = (uint8_t)p;
+	name = kp_ui_tbl(ui, KP_UI_GLUALL, (uint16_t)(STR_SPEED_FIRST + p));
+	if (to < 0 || label == NULL || name == NULL) return;
+	if (snprintf((char *)c->speed_text, sizeof c->speed_text, "%s" GAME_RIGHT_REST "%s", (const char *)label,
+		(const char *)name) < (int)sizeof c->speed_text) {
+		kp_ui_set_control_text(ui, to, c->speed_text);
+	}
+}
+
+static int speed_slider_proc(KpUi *ui, KpUiControl *c, KpUiEvent *e)
+{
+	/* GameSpeedSliderProc 0x4565d0 (only gluCreat.bin has the slider) */
+	int32_t self = (int32_t)(c - ui->controls);
+	const uint8_t *name;
+	if (e->type == KP_UI_USER) {
+		switch (e->code) {
+		case KP_UI_CREATE:
+			kp_ui_scrollbar_set_range(ui, self, 0, SPEEDS - 1);
+			kp_ui_scrollbar_set_steps(ui, self, 1, 1);
+			(void)kp_ui_send_user(ui, self, KP_UI_VALUE_CHANGED, (uint32_t)saved_speed(ui));
+			speed_label(ui, self);
+			break;
+		case KP_UI_DESTROY: { /* SaveGameSpeedSetting 0x454db0 */
+			int16_t v = kp_ui_scrollbar_pos(c);
+			if (v >= 0 && v < SPEEDS && (name = kp_ui_tbl(ui, KP_UI_GLUALL, (uint16_t)(STR_SPEED_FIRST + v))) != NULL) {
+				(void)kp_text_copy(cr(ui)->game_speed, sizeof cr(ui)->game_speed, (const char *)name);
+				cr(ui)->registry_changed = 1;
+			}
+			break;
+		}
+		case KP_UI_POST_LOAD: c->flags |= FLAG_SLIDER; break;
+		case KP_UI_VALUE_CHANGED:
+			(void)kp_ui_scrollbar_proc(ui, c, e);
+			speed_label(ui, self);
+			return 1;
+		default: break;
+		}
+	}
+	return kp_ui_scrollbar_proc(ui, c, e);
 }
 
 static int local_player_proc(KpUi *ui, KpUiControl *c, KpUiEvent *e)
@@ -2241,7 +2668,10 @@ static int map_list_proc(KpUi *ui, KpUiControl *c, KpUiEvent *e)
 			mn(ui)->map_list = self;
 			c->list->draw_item = map_item_draw;
 			break;
-		case KP_UI_DESTROY: kp_ui_list_clear(ui, self); break;
+		case KP_UI_DESTROY: /* ReleaseMapList 0x45bd20 kills the timer */
+			mn(ui)->map_preview = -1;
+			kp_ui_list_clear(ui, self);
+			break;
 		case KP_UI_POST_LOAD:
 			c->flags |= 0x30000u;
 			mn(ui)->map_list = self;
@@ -2312,7 +2742,32 @@ static uint16_t validate_template(KpUi *ui, int k)
 	return 0;
 }
 
-/* CreateGameFromEntry 0x45bfc0 offline for a replay or a map: 0 with its game chosen, else the gluAll message. */
+/* CreateGameFromEntry 0x45bfc0's multiplayer map (its header read again: the host's check_map, no slot is placed;
+ * ValidateGameTemplate 0x45b700) or saved game (its header the game's, the screen's choices unread), then
+ * CreateMultiplayerGame 0x475040 through the network's host; 0 created, else OnCreateGameOk 0x455240's message
+ * (Storm's errors by SErrGetLastError; a saved game's 0x44 is not told apart). */
+static uint16_t create_net_game(KpUi *ui, int k)
+{
+	KpUiCreate *c = cr(ui);
+	uint16_t refusal;
+	uint32_t err;
+	int local = -1, save = mn(ui)->entries[k].kind == KP_UI_ENTRY_SAVE;
+	if (!save) {
+		if (ui->check_map != NULL && (refusal = ui->check_map(ui->host, k, &local)) != 0) return refusal;
+		if ((refusal = validate_template(ui, k)) != 0) return refusal;
+	}
+	if (ui->net == NULL || ui->net->create_game == NULL) return STR_CREATE_FAILED;
+	err = ui->net->create_game(ui->net->host, ui, k, c->speed);
+	if (err == 0) {
+		c->choice = k;
+		return 0;
+	}
+	if (err == SERR_TOO_MANY_GAMES && !save) return STR_CREATE_GAMES;
+	return err == SERR_PROVIDER ? STR_CREATE_NETWORK : STR_CREATE_FAILED;
+}
+
+/* CreateGameFromEntry 0x45bfc0 for a replay, a map or a saved game (offline: a replay's or a map's game; multiplayer:
+ * a map's or a saved game's network game): 0 with its game chosen, else the gluAll message. */
 static uint16_t create_game(KpUi *ui, int k)
 {
 	KpUiMenus *m = mn(ui);
@@ -2320,6 +2775,7 @@ static uint16_t create_game(KpUi *ui, int k)
 	KpUiMapEntry *e = &m->entries[k];
 	uint16_t refusal;
 	int local = -1;
+	m->map_preview = -1; /* CreateGameFromEntry 0x45bfc0's KillTimer */
 	m->replay_choice = -1;
 	c->choice = -1;
 	if (e->kind == KP_UI_ENTRY_REPLAY) { /* read again (a status 1 is gluAll 51, 2 gluAll 60) */
@@ -2331,6 +2787,7 @@ static uint16_t create_game(KpUi *ui, int k)
 	if (!e->loaded) read_entry(ui, k);
 	if (e->status == 1) return STR_CREATE_INVALID;
 	if (e->status == 2) return STR_CREATE_EXPANSION;
+	if (m->multiplayer) return create_net_game(ui, k);
 	if (template_ums(ui, c->game_type, c->subtype)) {
 		if (e->humans == 0) return STR_CREATE_NO_HUMAN;
 		if (e->computers == 0) return STR_CREATE_NO_COMPUTER;
@@ -2440,7 +2897,7 @@ static int create_ok(KpUi *ui)
 		memcpy(c->dir, m->map_dir, sizeof c->dir);
 		(void)kp_text_copy(c->last, sizeof c->last, (const char *)kp_ui_list_text(ui, m->map_list, s));
 	}
-	return finish_create(ui);
+	return m->multiplayer ? 1 : finish_create(ui);
 }
 
 /* Koprulu's Import (the host's picker; kp_ui_file_imported answers) and Export (the selected file's, a folder's
@@ -2467,10 +2924,20 @@ static void create_done(KpUi *ui, int32_t r)
 {
 	/* RunCreateGameScreen 0x455550: Ok starts the replay's game, or the map's (at once outside Use Map Settings or
 	 * after a replay's read, else from the ready room of the player's race: the host's lobby decides it), Cancel the
-	 * campaign menu */
+	 * campaign menu; multiplayer's Ok the chat room (its game created), Cancel the provider's games */
 	KpUiMenus *m = mn(ui);
 	KpUiCreate *c = &m->create;
+	uint32_t provider = m->conn.provider; /* GetProviderId 0x475a10 */
 	c->active = 0;
+	if (m->multiplayer) { /* the chat room, or back by the provider */
+		if (r == R_CREATE_CANCEL || r == -3) c->replay_read = 0;
+		screen_ended(ui, r == R_CREATE_OK ? STATE_CHAT
+			: r != R_CREATE_CANCEL && r != -3 ? STATE_MAIN
+			: provider == PROVIDER_MODEM || provider == PROVIDER_MODEM_X ? STATE_MODEM
+			: provider == PROVIDER_BNET ? STATE_BATTLE_NET
+			: provider == PROVIDER_CABLE ? STATE_CABLE_JOIN : STATE_JOIN, KP_UI_MENU_STATE);
+		return;
+	}
 	if (r == R_CREATE_OK) {
 		if (m->replay_choice >= 0) {
 			screen_ended(ui, m->state, KP_UI_MENU_REPLAY);
@@ -2531,6 +2998,7 @@ static int create_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 		procs[14 - 1] = procs[15 - 1] = kp_ui_type_interact(9);
 		procs[ID_GAME_TYPE - 1] = type_list_proc;
 		procs[ID_SUBTYPE - 1] = subtype_list_proc;
+		procs[ID_SPEED - 1] = speed_slider_proc;
 		procs[ID_LOCAL_PLAYER - 1] = local_player_proc;
 		for (k = ID_FIRST_SLOT; k <= ID_LAST_SLOT; k++) procs[k - 1] = slot_type_proc;
 		for (k = ID_LOCAL_RACE; k <= ID_LAST_SLOT + RACE_LIST_OFFSET; k++) procs[k - 1] = race_list_proc;
@@ -2583,5 +3051,283 @@ int32_t kp_ui_create_open(KpUi *ui)
 		memcpy(c->preselect, c->last, sizeof c->preselect);
 	}
 	c->active = 1;
-	return open_screen(ui, "rez\\gluCustm.bin", create_proc, create_done);
+	/* RunCreateGameScreen 0x455550: the multiplayer Create Game has its own dialog */
+	return open_screen(ui, m->multiplayer ? "rez\\gluCreat.bin" : "rez\\gluCustm.bin", create_proc, create_done);
+}
+
+/* --- the join screen (glue states 10 and 21; glujoin.cpp, atlas P19) --- */
+
+#define R_JOIN 13
+#define R_JOIN_CANCEL 14
+#define R_JOIN_CREATE 15
+#define ID_JOIN_LIST 5
+#define ID_JOIN_LABEL 6           /* the value labels: the template's label slot, title, type, subtype, map, size, */
+#define ID_JOIN_TITLE 7           /* speed */
+#define ID_JOIN_TYPE 8
+#define ID_JOIN_SUBTYPE 9
+#define ID_JOIN_MAP 10
+#define ID_JOIN_SIZE 11
+#define ID_JOIN_SPEED 12
+#define ID_JOIN_OK 13
+#define JOIN_TIMER 0x2d           /* InitGameList 0x459600's refresh, user code 8 to the dialog every second */
+#define JOIN_PERIOD 1000
+#define TYPE_STATIC 9             /* StaticControlInteract 0x4c1860's control type */
+
+static KpUiJoin *jn(KpUi *ui) { return &ui->menus.join; }
+
+static void join_text(KpUi *ui, int16_t id, const uint8_t *text)
+{
+	/* SetGlueControlText 0x457ed0 (no edit box here) */
+	int32_t c = kp_ui_find_control(ui, jn(ui)->dialog, id);
+	if (c >= 0) kp_ui_set_control_text(ui, c, text);
+}
+
+static void join_enable_ok(KpUi *ui, int enable)
+{
+	int32_t ok = kp_ui_find_control(ui, jn(ui)->dialog, ID_JOIN_OK);
+	if (ok >= 0) kp_ui_set_enabled(ui, ok, enable);
+}
+
+/* FindGameIdByName 0x4590d0: the first node from the head whose text is the item's, byte for byte; 0 none */
+static uint32_t game_id_of(KpUi *ui, const uint8_t *text)
+{
+	KpUiJoin *j = jn(ui);
+	int k;
+	for (k = 0; text != NULL && k < j->node_count; k++)
+		if (strcmp(j->nodes[k].text, (const char *)text) == 0) return j->nodes[k].id;
+	return 0;
+}
+
+/* FindListedGame 0x4755c0 */
+static const KpUiGame *listed_game(KpUi *ui, uint32_t id)
+{
+	KpUiJoin *j = jn(ui);
+	int k;
+	for (k = 0; k < j->game_count; k++)
+		if (j->games[k].id == id) return &j->games[k];
+	return NULL;
+}
+
+static const KpUiGame *selected_game(KpUi *ui, int32_t list)
+{
+	int s = kp_ui_list_selection(ui, list);
+	return s == KP_UI_LIST_NONE ? NULL : listed_game(ui, game_id_of(ui, kp_ui_list_text(ui, list, s)));
+}
+
+int kp_ui_game_texts(KpUi *ui, uint8_t type, uint8_t sub, uint16_t subtype, uint32_t total, int replay, uint8_t *name,
+	uint8_t *label, uint8_t *subtext)
+{
+	const KpTemplate *t = template_of_type(ui, type, sub), *r;
+	char text[KP_UI_GAME_DETAIL];
+	name[0] = label[0] = subtext[0] = 0;
+	if (t != NULL) (void)kp_text_from_legacy(t->name, (char *)name, KP_UI_GAME_DETAIL);
+	if (t != NULL && t->label[0] != 0) {
+		size_t chars;
+		(void)kp_text_from_legacy(t->label, text, sizeof text);
+		chars = kp_text_copy_chars((char *)label, KP_UI_GAME_DETAIL - 1, text, KP_UI_TEMPLATE_TEXT - 1);
+		if (chars < KP_UI_TEMPLATE_TEXT - 1) strcat((char *)label, ":");
+		if ((r = find_template(ui, (uint32_t)type | (uint32_t)sub << 8, subtype)) != NULL)
+			format_subtype(ui, (char *)subtext, KP_UI_GAME_DETAIL, r->record, total);
+	}
+	if (replay) {
+		label[0] = 0;
+		(void)kp_text_copy((char *)subtext, KP_UI_GAME_DETAIL, (const char *)kp_ui_tbl(ui, KP_UI_GLUALL, STR_REPLAY));
+	}
+	return t != NULL;
+}
+
+static void show_game_details(KpUi *ui, int32_t list)
+{
+	/* ShowGameDetails 0x459310 */
+	KpUiJoin *j = jn(ui);
+	const KpUiGame *g = selected_game(ui, list);
+	const uint8_t *speed = NULL;
+	int k, known;
+	if (g == NULL) {
+		static const uint8_t NONE[1] = { 0 };
+		for (k = ID_JOIN_LABEL; k <= ID_JOIN_SPEED; k++) join_text(ui, (int16_t)k, NONE);
+		memset(&j->selected, 0, sizeof j->selected);
+		return;
+	}
+	snprintf((char *)j->size, sizeof j->size, "%ux%u", (unsigned)g->width, (unsigned)g->height);
+	/* FormatLobbyGameDescription 0x450ef0's texts with the maximum players as the total */
+	known = kp_ui_game_texts(ui, g->type, g->sub, g->subtype, g->max_players, g->replay, j->type_name, j->type_label,
+		j->subtype);
+	join_text(ui, ID_JOIN_TITLE, (const uint8_t *)g->name);
+	join_text(ui, ID_JOIN_MAP, (const uint8_t *)g->title);
+	join_text(ui, ID_JOIN_TYPE, known ? j->type_name : NULL);
+	join_text(ui, ID_JOIN_LABEL, j->type_label);
+	join_text(ui, ID_JOIN_SUBTYPE, j->subtype);
+	join_text(ui, ID_JOIN_SIZE, j->size);
+	if (g->speed < SPEEDS) speed = kp_ui_tbl(ui, KP_UI_GLUALL, STR_SPEED_FIRST + g->speed);
+	if (speed != NULL) join_text(ui, ID_JOIN_SPEED, speed);
+	if (g != &j->selected) j->selected = *g;
+}
+
+/* AddGameListEntry 0x4591d0: a listed game's node (appended at the tail when new), its text, its item */
+static void add_game_entry(KpUi *ui, int32_t list, const KpUiGame *g)
+{
+	KpUiJoin *j = jn(ui);
+	KpUiJoinNode *n = NULL;
+	int k, item;
+	for (k = 0; k < j->node_count && n == NULL; k++)
+		if (j->nodes[k].id == g->id) n = &j->nodes[k];
+	if (n == NULL) {
+		if (j->node_count >= KP_UI_GAMES) return; /* SMemAlloc's failure is the original's fatal error */
+		n = &j->nodes[j->node_count++];
+		memset(n, 0, sizeof *n);
+		n->id = g->id;
+	}
+	if (g->players == 0 && g->max_players == 0) {
+		(void)kp_text_copy(n->text, sizeof n->text, g->name);
+	} else {
+		snprintf(n->text, sizeof n->text, "%s" GAME_RIGHT_REST "%u/%u", g->name, (unsigned)g->players,
+			(unsigned)(g->replay ? 8 : g->max_players));
+	}
+	item = kp_ui_list_add(ui, list, (const uint8_t *)n->text, 0);
+	if (item == KP_UI_LIST_NONE) { /* full: RemoveGameListNode 0x459060 */
+		memmove(n, n + 1, (size_t)(j->nodes + j->node_count - (n + 1)) * sizeof *n);
+		j->node_count--;
+		return;
+	}
+	j->appended++;
+	n->item = (uint8_t)item;
+	n->seen = 1;
+}
+
+static void refresh_games(KpUi *ui, int32_t list)
+{
+	/* RefreshGameList 0x4596e0 */
+	KpUiJoin *j = jn(ui);
+	const KpUiGame *g = selected_game(ui, list);
+	uint32_t remembered = g != NULL ? g->id : 0;
+	int k, n;
+	kp_ui_list_redraw(ui, list, 0);
+	kp_ui_list_clear(ui, list);
+	j->appended = 0;
+	for (k = 0; k < j->node_count; k++) j->nodes[k].seen = 0;
+	/* EnumNetworkGames 0x475570 */
+	n = ui->net->games != NULL ? ui->net->games(ui->net->host, j->games, KP_UI_GAMES) : 0;
+	j->game_count = n < 0 ? 0 : n > KP_UI_GAMES ? KP_UI_GAMES : n;
+	for (k = 0; k < j->game_count; k++) add_game_entry(ui, list, &j->games[k]);
+	/* PruneGameList 0x459640 */
+	for (k = n = 0; k < j->node_count; k++)
+		if (j->nodes[k].seen) j->nodes[n++] = j->nodes[k];
+	j->node_count = n;
+	kp_ui_list_redraw(ui, list, 1);
+	join_enable_ok(ui, j->appended != 0);
+	n = kp_ui_list_count(ui, list);
+	if (remembered != 0) {
+		for (k = 0; k < j->node_count && j->nodes[k].id != remembered; k++) {}
+		if (k < j->node_count) kp_ui_list_select(ui, list, j->nodes[k].item);
+		else if (n > 0) kp_ui_list_select(ui, list, 0);
+	} else {
+		kp_ui_list_select(ui, list, n > 0 ? 0 : KP_UI_LIST_NONE);
+	}
+	show_game_details(ui, list);
+}
+
+static int game_list_proc(KpUi *ui, KpUiControl *c, KpUiEvent *e)
+{
+	/* GameListProc 0x459550 */
+	int32_t self = (int32_t)(c - ui->controls);
+	if (e->type == KP_UI_USER) {
+		switch (e->code) {
+		case KP_UI_CREATE: /* InitGameList 0x459600 */
+			jn(ui)->appended = 0;
+			refresh_games(ui, self);
+			kp_ui_list_redraw(ui, self, 1);
+			(void)kp_ui_set_timer(&ui->timers, jn(ui)->dialog, JOIN_TIMER, JOIN_PERIOD, 0, ui->now);
+			break;
+		case KP_UI_DESTROY: kp_ui_delete_timer(&ui->timers, jn(ui)->dialog, JOIN_TIMER); break;
+		case KP_UI_TIMER:
+			if (e->param != JOIN_TIMER) break;
+			refresh_games(ui, self);
+			return 1;
+		case KP_UI_POST_LOAD: c->flags |= LIST_FLAG; break;
+		case KP_UI_VALUE_CHANGED:
+			(void)kp_ui_list_proc(ui, c, e);
+			show_game_details(ui, self);
+			return 1;
+		default: break;
+		}
+	}
+	return kp_ui_list_proc(ui, c, e);
+}
+
+static int game_info_label_proc(KpUi *ui, KpUiControl *c, KpUiEvent *e)
+{
+	/* GameInfoLabelInteract 0x4508f0: the value labels in text colour 6 */
+	if (e->type == KP_UI_USER && e->code == KP_UI_POST_LOAD) c->flags |= KP_UI_PRESSED;
+	return kp_ui_type_interact(TYPE_STATIC)(ui, c, e);
+}
+
+static void join_done(KpUi *ui, int32_t r)
+{
+	/* RunJoinGameScreen 0x459130's dispatch */
+	int next;
+	switch (r) {
+	case R_JOIN: next = STATE_CHAT; break;
+	case R_JOIN_CANCEL: next = ui->menus.conn.provider == PROVIDER_CABLE ? STATE_CONNECTION : STATE_LOGIN; break;
+	case R_JOIN_CREATE: next = STATE_PLAY_CUSTOM; break;
+	default: next = STATE_MAIN; break;
+	}
+	jn(ui)->dialog = -1;
+	screen_ended(ui, next, KP_UI_MENU_STATE);
+}
+
+static int join_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
+{
+	/* JoinScreenProc 0x4597f0 */
+	KpUiJoin *j = jn(ui);
+	int32_t self = (int32_t)(d - ui->controls);
+	KpUiInteract base = kp_ui_type_interact(0);
+	if (e->type != KP_UI_USER) return base(ui, d, e);
+	switch (e->code) {
+	case KP_UI_POST_LOAD: {
+		static const uint16_t SLIDES[8] = { 1, 0, 2, 2, 3, 3, 4, 2 }; /* 0x508100 */
+		KpUiInteract procs[15];
+		int k;
+		j->dialog = self;
+		kp_ui_glue_slide_in(ui, self, SLIDES, 4, 0);
+		memset(procs, 0, sizeof procs); /* 0x508120 */
+		procs[ID_JOIN_LIST - 1] = game_list_proc;
+		procs[ID_JOIN_LABEL - 1] = kp_ui_type_interact(TYPE_STATIC);
+		for (k = ID_JOIN_TITLE; k <= ID_JOIN_SPEED; k++) procs[k - 1] = game_info_label_proc;
+		for (k = R_JOIN; k <= R_JOIN_CREATE; k++) procs[k - 1] = kp_ui_text_button_proc;
+		kp_ui_glue_init_dialog(ui, self, procs, 15, THEME_NONE);
+		break;
+	}
+	case KP_UI_CREATE:
+		if (ui->net->clear_games != NULL) ui->net->clear_games(ui->net->host, 1);
+		join_enable_ok(ui, 0);
+		kp_ui_glue_activate(ui, self, THEME_NONE);
+		break;
+	case KP_UI_CLOSE:
+		if (ui->result == R_JOIN) {
+			join_enable_ok(ui, 0);
+			if (ui->net->join == NULL || !ui->net->join(ui->net->host, &j->selected)) return 1;
+			join_enable_ok(ui, 1);
+		}
+		/* Create Game: no spawn copy here (GetSpawnFlag 0x4635c0's popup is not reached) */
+		kp_ui_glue_slide_out(ui, self);
+		return 1;
+	case KP_UI_DESTROY:
+		if (ui->net->clear_games != NULL) ui->net->clear_games(ui->net->host, 0);
+		j->node_count = j->game_count = 0; /* FreeGameList 0x459000 */
+		break;
+	default: break;
+	}
+	return base(ui, d, e);
+}
+
+int32_t kp_ui_join_open(KpUi *ui)
+{
+	/* RunJoinGameScreen 0x459130: the replay flag cleared (FreeReplayMapData 0x4808d0) */
+	KpUiJoin *j = jn(ui);
+	ui->menus.create.replay_read = 0;
+	j->dialog = -1;
+	j->node_count = j->game_count = j->appended = 0;
+	memset(&j->selected, 0, sizeof j->selected);
+	return open_screen(ui, "rez\\gluJoin.bin", join_proc, join_done);
 }

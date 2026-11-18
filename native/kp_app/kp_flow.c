@@ -10,6 +10,8 @@
 #include "kp_flow.h"
 #include "kp_gametype.h"
 #include "kp_ids.h"
+#include "kp_netplay.h"
+#include "kp_netsave.h"
 #include "kp_text.h"
 
 #include <ctype.h>
@@ -420,6 +422,11 @@ static int rename_old_save(void *host, const char *from, const char *to)
 #define STR_DAMAGED 63
 #define STR_NAME_TOO_LONG 62
 #define STR_MISSING 66
+#define STR_INVALID_SAVE 64    /* LoadSaveEntryInfo 0x45d5e0's titles: before the file is found, after */
+#define STR_SAVED_GAME 47
+#define STR_SAVE_NAME_TOO_LONG 65
+#define STR_SAVE_VERSION 67    /* a save of another version */
+#define SAVE_TARGET_MAX 31     /* LoadSavedGameByName 0x498bd0: the name and the extension, 31 characters at most */
 #define REPLAY_NAME_LIMIT 32   /* LoadReplayEntryInfo 0x45d250: a file name of 32 bytes or more is refused */
 #define KP_REP_LIST_PLAYERS 8  /* its entry's +0x479 */
 #define MAP_ORIGINAL_VERSION 59 /* LoadMapEntryInfo 0x45d870: a header that fails with a later VER is the expansion's */
@@ -429,7 +436,23 @@ static int rename_old_save(void *host, const char *from, const char *to)
 #define ENTRY_PATH KP_FLOW_MAP_PATH
 #define MAP_TEMPLATE "Melee" /* --map's game type without --map-template */
 
-static int has_replay_ext(const char *name);
+/* Whether the name ends in ext, the ASCII letters folded. */
+static int has_ext(const char *name, const char *ext)
+{
+	size_t n = strlen(name), e = strlen(ext);
+	return n >= e && kp_compare_nocase(name + n - e, ext) == 0;
+}
+
+/* Whether the name ends in .rep, in any case. */
+static int has_replay_ext(const char *name) { return has_ext(name, REPLAY_EXT); }
+
+/* The saved network games' extension (0x4995a0): .mlx with Brood War, else .mlt */
+static const char *save_ext(const KpUiMenus *m) { return m->expansion ? KP_NETSAVE_EXT_BW : KP_NETSAVE_EXT; }
+
+/* Whether Create Game lists saved network games and a resumed game finds them: in multiplayer, the original's files
+ * (KpAppFlags.original_saves: the network oracle's runs). TODO: stage N4 lists and finds Koprulu's own network saves
+ * here; until then the product has none, and a lobby that resumes a save tells "Save Game File Not Found." */
+static int listed_saves(const KpFlow *f, const KpUiMenus *m) { return m->multiplayer && f->flags && f->flags->original_saves; }
 
 /* Whether s begins with prefix, the ASCII letters folded. */
 static int prefix_nocase(const char *s, const char *prefix)
@@ -586,6 +609,128 @@ static void map_saved_path(const KpFlow *f, const char *rest, char *out, size_t 
 		snprintf(out, size, "%s/%s", roots[k], rest);
 		if (file_there(out)) return;
 	}
+}
+
+/* --- the map transfer's files (KpTransferIo, phase N stage N3) --- */
+
+#define DOWNLOAD_DIR "download" /* the user's maps\download\ (OpenMapTransferSession 0x477090) */
+#define FIND_DEPTH 16           /* Koprulu's bound of FindFileByName 0x499450's recursion (the original's is MAX_PATH's) */
+
+static uint8_t *transfer_read(void *ud, const char *path, size_t *size)
+{
+	(void)ud;
+	return kp_read_file(path, size);
+}
+
+/* FileMatchesTransfer 0x440fb0: the file has the offer's size and CRC-32 (its size asked first, so a large file of
+ * the name is not read) */
+static int file_matches(const char *path, uint32_t size, uint32_t crc)
+{
+	FILE *fp = fopen(path, "rb");
+	long at;
+	uint8_t *bytes;
+	size_t n = 0;
+	int same;
+	if (!fp) return 0;
+	at = fseek(fp, 0, SEEK_END) == 0 ? ftell(fp) : -1;
+	fclose(fp);
+	if (at < 0 || (unsigned long)at != size || !(bytes = kp_read_file(path, &n))) return 0;
+	same = n == size && kp_transfer_crc(bytes, n) == crc;
+	free(bytes);
+	return same;
+}
+
+/* A file's test while a folder is searched: its path and its name; 1 takes it */
+typedef int (*FindMatch)(void *ctx, const char *path, const char *name);
+
+/* EnumerateFiles 0x49aa20 (FindFileByName 0x499450's walk) below dir: the folder's files in FindFirstFileA's order
+ * (NTFS's), then its non-hidden subfolders in the same order, each searched the same way; the first file whose path
+ * fits out and that match takes. 1 with its path in out. */
+static int find_below(const char *dir, FindMatch match, void *ctx, int depth, char *out, size_t out_size)
+{
+	char **names;
+	char path[ENTRY_PATH];
+	int n = 0, k, hit = 0;
+	names = kp_list_ntfs(dir, 0, &n);
+	for (k = 0; k < n && !hit; k++) {
+		if (snprintf(path, sizeof path, "%s/%s", dir, names[k]) >= (int)sizeof path || strlen(path) >= out_size) continue;
+		if ((hit = match(ctx, path, names[k])) != 0) snprintf(out, out_size, "%s", path);
+	}
+	kp_list_files_free(names, n);
+	if (hit || depth >= FIND_DEPTH) return hit;
+	names = kp_list_ntfs(dir, 1, &n);
+	for (k = 0; k < n && !hit; k++) {
+		if (snprintf(path, sizeof path, "%s/%s", dir, names[k]) >= (int)sizeof path) continue;
+		hit = find_below(path, match, ctx, depth + 1, out, out_size);
+	}
+	kp_list_files_free(names, n);
+	return hit;
+}
+
+typedef struct {
+	const char *name;
+	uint32_t size, crc;
+} TransferMatch;
+
+/* FileMatchesTransfer 0x440fb0 for the offered name (without case) */
+static int transfer_match(void *ctx, const char *path, const char *name)
+{
+	const TransferMatch *t = (const TransferMatch *)ctx;
+	return kp_compare_nocase(name, t->name) == 0 && file_matches(path, t->size, t->crc);
+}
+
+/* FindLocalCopy 0x441080: each folder of map_roots in turn (the user's maps, its download folder included, before the
+ * installs') */
+static int transfer_find(void *ud, const char *name, uint32_t size, uint32_t crc, char *out, size_t out_size)
+{
+	const KpFlow *f = (const KpFlow *)ud;
+	char roots[CUSTOM_BASES][ENTRY_PATH];
+	TransferMatch t;
+	int n = map_roots(f, roots), k;
+	t.name = name;
+	t.size = size;
+	t.crc = crc;
+	for (k = 0; k < n; k++) {
+		if (find_below(roots[k], transfer_match, &t, 0, out, out_size)) return 1;
+	}
+	return 0;
+}
+
+/* SaveDownloadedFile 0x4418c0: <user>maps/download/<name>, the folders made when missing */
+static int transfer_save(void *ud, const char *name, const uint8_t *data, size_t size, char *out, size_t out_size)
+{
+	KpFlow *f = (KpFlow *)ud;
+	char dir[ENTRY_PATH];
+	KpError err;
+	pref_path(f, MAP_DIR, dir, sizeof dir);
+	if (make_dir(dir) != 0) {
+		say(f, "map transfer: cannot create %s: %s", dir, strerror(errno));
+		return 0;
+	}
+	if (strlen(dir) + sizeof "/" DOWNLOAD_DIR > sizeof dir) return 0;
+	strcat(dir, "/" DOWNLOAD_DIR);
+	if (make_dir(dir) != 0) {
+		say(f, "map transfer: cannot create %s: %s", dir, strerror(errno));
+		return 0;
+	}
+	if (snprintf(out, out_size, "%s/%s", dir, name) >= (int)out_size) return 0;
+	if (kp_write_file_atomic(out, data, size, &err) != 0) {
+		say(f, "map transfer: %s", err.msg);
+		return 0;
+	}
+	f->host.sync_files(f->host.ctx);
+	return 1;
+}
+
+KpTransferIo kp_flow_transfer_io(KpFlow *f)
+{
+	KpTransferIo io;
+	memset(&io, 0, sizeof io);
+	io.read = transfer_read;
+	io.find = transfer_find;
+	io.save = transfer_save;
+	io.ud = f;
+	return io;
 }
 
 /* The custom map the next game plays (ADR 0024): its scenario (malloc'd, taken also on failure) under name, read for
@@ -833,20 +978,19 @@ static void replay_entry(KpFlow *f, KpUiMapEntry *e, const char *path)
 
 /* ListMapDirectory 0x45bc70 over the screen's folders (entry_bases; InitMapList 0x455aa0 makes the root): below the
  * root the folder above first (AddFolderEntry 0x45b080's ".."), the folders (Play Custom's root with its "replays"),
- * then the files: Load Replay's replays, Play Custom's maps (.scm; .scx with Brood War) and replays. A replay's header
- * is read here; a map's when the screen first needs it (load_entry). */
+ * then the files: Load Replay's replays, Play Custom's maps (.scm; .scx with Brood War), replays and, on Create Game's,
+ * the saved network games (listed_saves). A replay's header is read here; a map's or a saved game's when the screen
+ * first needs it (load_entry). */
 static int list_entries(void *host, KpUi *ui)
 {
-	static const char *const REPLAY_FILES[] = { REPLAY_EXT };
-	static const char *const CUSTOM_FILES[] = { ".scm", ".scx", REPLAY_EXT };
 	KpFlow *f = (KpFlow *)host;
 	KpUiMenus *m = &ui->menus;
-	int custom = m->state == KP_GLUE_PLAY_CUSTOM, nb, nl = 0, nf = 0, nn = 0, b, k, x;
-	int exts = custom ? (int)(sizeof CUSTOM_FILES / sizeof CUSTOM_FILES[0]) : 1;
-	const char *const *ext = custom ? CUSTOM_FILES : REPLAY_FILES;
+	int custom = m->state == KP_GLUE_PLAY_CUSTOM, nb, nl = 0, nf = 0, nn = 0, b, k, x, exts = 0;
+	int saves = custom && listed_saves(f, m);
+	const char *ext[4];
 	char bases[CUSTOM_BASES][ENTRY_PATH], root[ENTRY_PATH], path[ENTRY_PATH];
-	char **lists[CUSTOM_BASES * 4];
-	int counts[CUSTOM_BASES * 4];
+	char **lists[CUSTOM_BASES * 5];
+	int counts[CUSTOM_BASES * 5];
 	Listed *folders = (Listed *)calloc(KP_UI_MAP_ENTRIES, sizeof *folders);
 	Listed *files = (Listed *)calloc(KP_UI_MAP_ENTRIES, sizeof *files);
 	m->entry_count = 0;
@@ -855,6 +999,12 @@ static int list_entries(void *host, KpUi *ui)
 		free(files);
 		return 0;
 	}
+	if (custom) {
+		ext[exts++] = ".scm";
+		ext[exts++] = ".scx";
+	}
+	ext[exts++] = REPLAY_EXT;
+	if (saves) ext[exts++] = save_ext(m);
 	pref_path(f, REPLAY_DIR, root, sizeof root);
 	(void)make_dir(root);
 	if (custom) {
@@ -895,7 +1045,8 @@ static int list_entries(void *host, KpUi *ui)
 		memset(e, 0, sizeof *e);
 		snprintf(e->file, sizeof e->file, "%s", files[k].name);
 		f->entry_base[m->entry_count] = files[k].base;
-		e->kind = has_replay_ext(e->file) ? KP_UI_ENTRY_REPLAY : KP_UI_ENTRY_MAP;
+		e->kind = has_replay_ext(e->file) ? KP_UI_ENTRY_REPLAY
+			: saves && has_ext(e->file, save_ext(m)) ? KP_UI_ENTRY_SAVE : KP_UI_ENTRY_MAP;
 		e->first_human = -1;
 		if (e->kind == KP_UI_ENTRY_REPLAY) {
 			if (snprintf(path, sizeof path, "%s/%s", bases[files[k].base], e->file) < (int)sizeof path) {
@@ -937,8 +1088,66 @@ static int map_header_at(KpFlow *f, const char *path, KpMapHeader *h, char *why,
 	return rc;
 }
 
+/* A file's name after its folder in the original's encoding (a saved game's display name is made of it) */
+static void legacy_file(const char *path, char *out, size_t size)
+{
+	const char *base = strrchr(path, '/');
+	(void)kp_text_to_legacy(base ? base + 1 : path, out, size);
+}
+
+/* A saved game's file (its size bounded by KP_NETSAVE_FILE_MAX): its bytes (malloc'd), NULL when it does not read */
+static uint8_t *read_save_file(const char *path, size_t *size)
+{
+	FILE *fp = fopen(path, "rb");
+	long at;
+	if (!fp) return NULL;
+	at = fseek(fp, 0, SEEK_END) == 0 ? ftell(fp) : -1;
+	fclose(fp);
+	if (at < 0 || (unsigned long)at > KP_NETSAVE_FILE_MAX) return NULL;
+	return kp_read_file(path, size);
+}
+
+/* LoadSaveEntryInfo 0x45d5e0 of the saved game entry e at path (NULL: its path too long): its status, title and the
+ * gluAll text of an unreadable one (66 missing or unreadable, 65 its name too long, 67 another version), else the
+ * header's information */
+static void load_save_entry(KpUiMapEntry *e, const char *path)
+{
+	KpNetGameHeader h;
+	char name[KP_NETSAVE_NAME], file[KP_UI_MAP_FILE];
+	uint8_t *bytes;
+	size_t size = 0;
+	int rc;
+	FILE *probe;
+	e->status = 1;
+	e->save_title = STR_INVALID_SAVE;
+	e->description = STR_MISSING;
+	if (path && !(probe = fopen(path, "rb"))) return;
+	if (path) fclose(probe);
+	e->save_title = STR_SAVED_GAME;
+	if (!path || !entry_name_fits(path)) {
+		e->description = STR_SAVE_NAME_TOO_LONG;
+		return;
+	}
+	legacy_file(path, file, sizeof file);
+	rc = (bytes = read_save_file(path, &size)) != NULL ? kp_netsave_probe(bytes, size, file, &h, name) : KP_NETSAVE_UNREADABLE;
+	free(bytes);
+	if (rc != KP_NETSAVE_VALID) {
+		e->description = rc == KP_NETSAVE_OTHER_VERSION ? STR_SAVE_VERSION : STR_MISSING;
+		return;
+	}
+	(void)kp_text_from_legacy(h.title, e->map, sizeof e->map);
+	(void)kp_text_from_legacy(name, e->text, sizeof e->text);
+	e->game_players = h.players;
+	e->players = h.max_players;
+	e->width = h.width;
+	e->height = h.height;
+	e->tileset = h.tileset;
+	e->status = 0;
+}
+
 /* LoadMapEntryInfo 0x45d870 of the map entry index: its status and the gluAll text of an unreadable one (66 missing,
- * 62 its name too long, 60 a later version's, 63 another refusal), else the header's information. */
+ * 62 its name too long, 60 a later version's, 63 another refusal), else the header's information; a saved game's by
+ * load_save_entry. */
 static void load_entry(void *host, KpUi *ui, int index)
 {
 	KpFlow *f = (KpFlow *)host;
@@ -947,6 +1156,10 @@ static void load_entry(void *host, KpUi *ui, int index)
 	KpMapHeader h;
 	char path[ENTRY_PATH], why[KP_ERROR_SIZE], title[KP_UI_MAP_NAME];
 	FILE *probe;
+	if (index >= 0 && index < m->entry_count && m->entries[index].kind == KP_UI_ENTRY_SAVE) {
+		load_save_entry(&m->entries[index], entry_path(f, m, index, path, sizeof path) ? path : NULL);
+		return;
+	}
 	if (index < 0 || index >= m->entry_count || m->entries[index].kind != KP_UI_ENTRY_MAP) return;
 	e = &m->entries[index];
 	e->status = 1;
@@ -982,6 +1195,96 @@ static void load_entry(void *host, KpUi *ui, int index)
 	memcpy(e->user_select, h.user_select, sizeof e->user_select);
 	e->first_human = h.first_human;
 	e->status = 0;
+}
+
+int kp_flow_entry_map(KpFlow *f, int index, KpMapHeader *h, char *path, size_t size)
+{
+	const KpUiMenus *m = &f->ui->menus;
+	char why[KP_ERROR_SIZE];
+	if (index < 0 || index >= m->entry_count || m->entries[index].kind != KP_UI_ENTRY_MAP) return 0;
+	if (!entry_path(f, m, index, path, size)) return 0;
+	if (map_header_at(f, path, h, why, sizeof why) != 0) {
+		say(f, "map %s: %s", m->entries[index].file, why);
+		return 0;
+	}
+	return 1;
+}
+
+int kp_flow_entry_save(KpFlow *f, int index, KpNetGameHeader *h)
+{
+	const KpUiMenus *m = &f->ui->menus;
+	char path[ENTRY_PATH], file[KP_UI_MAP_FILE];
+	uint8_t *bytes;
+	size_t size = 0;
+	int rc;
+	if (index < 0 || index >= m->entry_count || m->entries[index].kind != KP_UI_ENTRY_SAVE) return 0;
+	if (!entry_path(f, m, index, path, sizeof path) || !(bytes = read_save_file(path, &size))) return 0;
+	legacy_file(path, file, sizeof file);
+	rc = kp_netsave_probe(bytes, size, file, h, NULL);
+	free(bytes);
+	return rc == KP_NETSAVE_VALID;
+}
+
+typedef struct {
+	const char *ext;
+	uint32_t id;
+	char name[KP_NETSAVE_NAME]; /* the display name of the save found */
+} SaveMatch;
+
+/* MatchSaveIdCallback 0x499690: a save of the extension whose header (ValidateSaveFile 0x499750) has the ID */
+static int save_id_match(void *ctx, const char *path, const char *name)
+{
+	SaveMatch *s = (SaveMatch *)ctx;
+	KpNetGameHeader h;
+	char file[KP_UI_MAP_FILE];
+	uint8_t *bytes;
+	size_t size = 0;
+	int rc;
+	if (!has_ext(name, s->ext) || !(bytes = read_save_file(path, &size))) return 0;
+	legacy_file(path, file, sizeof file);
+	rc = kp_netsave_probe(bytes, size, file, &h, s->name);
+	free(bytes);
+	return rc == KP_NETSAVE_VALID && h.save_id == s->id;
+}
+
+/* LoadSavedGameByName 0x498bd0's callback 0x4994b0: a file named the target (without case, in the original's
+ * encoding) */
+static int save_name_match(void *ctx, const char *path, const char *name)
+{
+	char file[KP_UI_MAP_FILE];
+	(void)name;
+	legacy_file(path, file, sizeof file);
+	return kp_compare_nocase(file, (const char *)ctx) == 0;
+}
+
+int kp_flow_find_save(KpFlow *f, uint32_t id, KpNetGameSave *out)
+{
+	const KpUiMenus *m = &f->ui->menus;
+	SaveMatch match;
+	char dir[ENTRY_PATH], path[ENTRY_PATH], target[KP_NETSAVE_NAME + 8];
+	uint8_t *bytes;
+	size_t size = 0;
+	int ok;
+	if (!listed_saves(f, m)) return 0;
+	memset(&match, 0, sizeof match);
+	match.ext = save_ext(m);
+	match.id = id;
+	pref_path(f, MAP_DIR, dir, sizeof dir);
+	if (!find_below(dir, save_id_match, &match, 0, path, sizeof path)) {
+		say(f, "network: no saved game %08x below %s", (unsigned)id, dir);
+		return 0;
+	}
+	/* the name and the extension, 31 characters at most (0x4995a0) */
+	snprintf(target, sizeof target, "%s%s", match.name, match.ext);
+	target[SAVE_TARGET_MAX] = 0;
+	if (!find_below(dir, save_name_match, target, 0, path, sizeof path) || !(bytes = read_save_file(path, &size))) {
+		say(f, "network: the saved game %s does not open", target);
+		return 0;
+	}
+	ok = kp_netsave_read(bytes, size, m->expansion, out);
+	free(bytes);
+	if (!ok) say(f, "network: the saved game %s does not read", path);
+	return ok;
 }
 
 /* The maps' signature key, read from the 1.17 install's executable at its first need (kp_data_map_key; the reason
@@ -1026,7 +1329,8 @@ static uint16_t check_map(void *host, int index, int *local_slot)
 		say(f, "map %s: %s", m->entries[index].file, why);
 		return h.version > MAP_ORIGINAL_VERSION ? STR_EXPANSION : STR_NOT_VALID;
 	}
-	if (h.first_human < 0) return STR_NOT_VALID; /* PlaceLocalHumanForCustomGame 0x4bb550's 0x80000007 */
+	/* PlaceLocalHumanForCustomGame 0x4bb550's 0x80000007 (offline only: a network game's lobby places its players) */
+	if (h.first_human < 0 && !m->multiplayer) return STR_NOT_VALID;
 	if (kp_data_map_open(&map, &f->data->files, path, &e) != 0) {
 		say(f, "map %s: %s", m->entries[index].file, e.msg);
 		return STR_NOT_VALID;
@@ -1106,16 +1410,6 @@ static int start_replay_game(KpFlow *f, int index, char *why, size_t why_size)
 	}
 	return start_replay_file(f, path, why, why_size);
 }
-
-/* Whether the name ends in ext, the ASCII letters folded. */
-static int has_ext(const char *name, const char *ext)
-{
-	size_t n = strlen(name), e = strlen(ext);
-	return n >= e && kp_compare_nocase(name + n - e, ext) == 0;
-}
-
-/* Whether the name ends in .rep, in any case. */
-static int has_replay_ext(const char *name) { return has_ext(name, REPLAY_EXT); }
 
 int kp_flow_play_replay(KpFlow *f, const char *name, char *why, size_t why_size)
 {
@@ -1467,7 +1761,7 @@ static int delete_replay(void *host, const char *name)
 	return 1;
 }
 
-static void interface_host(KpFlow *f, KpUi *ui)
+void kp_flow_interface_host(KpFlow *f, KpUi *ui)
 {
 	ui->list_entries = list_entries;
 	ui->load_entry = load_entry;
@@ -1555,7 +1849,7 @@ static KpUi *game_interface(KpFlow *f, char *err, size_t err_size)
 		return NULL;
 	}
 	console_art(f, ui);
-	interface_host(f, ui);
+	kp_flow_interface_host(f, ui);
 	kp_flow_video_to_ui(f, ui);
 	options_to_ui(f, ui);
 	return ui;
@@ -2806,6 +3100,13 @@ static void glue_frame(KpFlow *f)
 		}
 		break;
 	}
+	case KP_GLUE_NETWORK:
+		/* TODO: stage N4 plays the network's game (KP_TURNS_NET): until then the game is left (AbortNetworkGame
+		 * 0x474e60) and the provider's game list shows again */
+		say(f, "glue: the network's game (ready room state %d) is stage N4's: left", ev.state);
+		if (f->netplay) kp_netplay_leave(f->netplay);
+		kp_glue_menus(&f->glue, kp_ui_menus_provider_state(f->ui));
+		break;
 	case KP_GLUE_ROOM_START: { /* the game with the same interface's console */
 		char err[256];
 		if (start_hud(f, 0, err, sizeof err) != 0) {
@@ -2937,6 +3238,7 @@ void kp_flow_frame(KpFlow *f)
 	if (f->after_game) glue_after_game(f);
 	f->fixed_screen = kp_flow_glue_active(f); /* a glue screen keeps the original's 640 x 480 */
 	layout(f);
+	if (f->netplay) kp_netplay_pump(f->netplay); /* what arrived, before the chat room's pass reads it */
 	if (f->fixed_screen) {
 		glue_frame(f);
 		cursor(f, 1);
@@ -3285,6 +3587,75 @@ int kp_flow_languages_ready(KpFlow *f)
 	return 0;
 }
 
+/* --- the multiplayer screens' network (kp_netplay.h) --- */
+
+#ifndef __EMSCRIPTEN__ /* the web has no provider until the relay (stage N5) */
+static void netplay_log(void *ctx, const char *line) { say((KpFlow *)ctx, "%s", line); }
+
+static int netplay_entry_map(void *ctx, KpUi *ui, int index, KpMapHeader *h, char *path, size_t size)
+{
+	(void)ui;
+	return kp_flow_entry_map((KpFlow *)ctx, index, h, path, size);
+}
+
+static int netplay_entry_save(void *ctx, KpUi *ui, int index, KpNetGameHeader *h)
+{
+	(void)ui;
+	return kp_flow_entry_save((KpFlow *)ctx, index, h);
+}
+
+static int netplay_find_save(void *ctx, uint32_t id, KpNetGameSave *out) { return kp_flow_find_save((KpFlow *)ctx, id, out); }
+#endif
+
+/* The glue's network over the system's sockets (none on the web: its relay is stage N5's) */
+static void netplay_open(KpFlow *f)
+{
+#ifndef __EMSCRIPTEN__
+	KpNetPlayConfig c;
+	memset(&c, 0, sizeof c);
+	if (f->flags->lan_port >= 0 && f->flags->lan_port <= 0xffff)
+		c.sock.port = (uint16_t)f->flags->lan_port;
+	else
+		say(f, "flow: --lan-port %d is not a port (0..65535): the default", f->flags->lan_port);
+	c.sock.map_self = -1;
+	if (f->flags->lan_map[0]) {
+		unsigned base = 0;
+		int hosts = 0, self = -1;
+		if (sscanf(f->flags->lan_map, "%u:%d:%d", &base, &hosts, &self) < 2 || base == 0 || base > 0xffffu || hosts < 1
+			|| self >= hosts || self < -1) {
+			say(f, "flow: --lan-map %s is not BASE:HOSTS:SELF", f->flags->lan_map);
+		} else {
+			c.sock.map_base = (uint16_t)base;
+			c.sock.map_hosts = hosts;
+			c.sock.map_self = self;
+		}
+	}
+	c.templates = &f->data->templates;
+	c.transfer = kp_flow_transfer_io(f);
+	c.entry_map = netplay_entry_map;
+	c.entry_save = netplay_entry_save;
+	c.find_save = netplay_find_save;
+	c.log = netplay_log;
+	c.ctx = f;
+	if (!(f->netplay = (KpNetPlay *)malloc(sizeof *f->netplay))) {
+		say(f, "flow: no network: out of memory");
+		return;
+	}
+	kp_netplay_init(f->netplay, f->ui, &c);
+#else
+	(void)f;
+#endif
+}
+
+static void netplay_close(KpFlow *f)
+{
+	if (!f->netplay) return;
+	kp_netplay_free(f->netplay);
+	free(f->netplay);
+	f->netplay = NULL;
+	if (f->ui) f->ui->net = NULL;
+}
+
 int kp_flow_init(KpFlow *f, char *err, size_t err_size)
 {
 	char why[256];
@@ -3303,7 +3674,7 @@ int kp_flow_init(KpFlow *f, char *err, size_t err_size)
 	languages_to_ui(f, f->ui);
 	console_art(f, f->ui);
 	f->host.interface(f->host.ctx, f->ui);
-	interface_host(f, f->ui);
+	kp_flow_interface_host(f, f->ui);
 	video_from_profile(f);
 	kp_flow_video_to_ui(f, f->ui);
 	/* the check boxes: the profile's or the originals', --subtitles over them */
@@ -3337,6 +3708,7 @@ int kp_flow_init(KpFlow *f, char *err, size_t err_size)
 	if (f->flags->autotest) return 0; /* the autotest starts its games itself */
 	kp_glue_init(&f->glue, f->ui, f->profile, now_ms(f));
 	f->glue_on = 1;
+	netplay_open(f);
 	/* View Intro plays the logo and the intro the pack has */
 	f->glue.cinematics = f->host.cine_has(f->host.ctx, KP_APP_CINE_LOGO)
 		|| f->host.cine_has(f->host.ctx, KP_APP_CINE_EXPANSION_INTRO);
@@ -3350,6 +3722,7 @@ int kp_flow_init(KpFlow *f, char *err, size_t err_size)
 void kp_flow_free(KpFlow *f)
 {
 	destroy_scene(f);
+	netplay_close(f);
 	if (f->glue_on) kp_glue_free(&f->glue);
 	f->glue_on = 0;
 	if (f->ui) kp_ui_free(f->ui);

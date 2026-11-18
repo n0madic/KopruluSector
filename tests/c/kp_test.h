@@ -102,6 +102,8 @@ const unsigned char *kp_t_mine_goldens(KpT *T, const KpJson *index, const char *
 
 /* Ends the test as failed with the message. */
 KP_T_NORETURN KP_T_PRINTF(2, 3) void kp_t_fail(KpT *T, const char *fmt, ...);
+/* kp_t_fail of a text, as a module's failure callback takes it (ud: the KpT). */
+KP_T_NORETURN void kp_t_fail_text(void *ud, const char *text);
 /* Ends the test as skipped (a "SKIP suite.test: reason" line; it counts as passed). */
 KP_T_NORETURN KP_T_PRINTF(2, 3) void kp_t_skip(KpT *T, const char *fmt, ...);
 /* T.ok, T.eq: the check fails with "msg: expected E, got A". */
@@ -165,6 +167,9 @@ KpBuf *kp_t_buf(KpT *T);
 const char *kp_t_temp_dir(KpT *T, const char *parent);
 /* A folder made (mode 0700 where there are modes): 0, or -1 with errno. */
 int kp_t_mkdir(const char *path);
+/* A file or folder hidden as the platform's listings leave it out: on Windows its hidden attribute set, elsewhere
+ * nothing (a name starting with '.' is hidden there). 0, or -1. */
+int kp_t_hide(const char *path);
 /* The resources registered so far, and the release of those registered after a mark (a loop's games and goldens). */
 int kp_t_mark(const KpT *T);
 void kp_t_release(KpT *T, int mark);
@@ -206,7 +211,7 @@ extern const KpSuite kp_suite_rng, kp_suite_initial_state, kp_suite_scenarios, k
 	kp_suite_locale, kp_suite_speech, kp_suite_script, kp_suite_res, kp_suite_formats, kp_suite_original,
 	kp_suite_chk, kp_suite_cine, kp_suite_scr, kp_suite_movies, kp_suite_encoders, kp_suite_convert,
 	kp_suite_hd, kp_suite_rep, kp_suite_gametype, kp_suite_multiplayer, kp_suite_seats, kp_suite_snet,
-	kp_suite_net_trace;
+	kp_suite_net_trace, kp_suite_lobby_trace, kp_suite_netgame, kp_suite_net_live;
 
 #define KP_SUITE(var, label, tests) const KpSuite var = { label, tests, (int)(sizeof tests / sizeof tests[0]), 0 }
 /* A suite whose tests a parallel run gives a job each: one process for the whole would be the run's longest job. */

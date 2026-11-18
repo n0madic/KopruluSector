@@ -516,9 +516,9 @@ if [ -n "$LLVM_CLANG" ]; then
     KP_TEST_GLSLANG=1 KP_TEST_LOGS=build/c-tests-asan-llvm "$RES_ORIGINAL" "$RES_SCR"
   build/cmake-asan-llvm/kp_hd_phone --selftest | tail -1 # the codecs without the ASTC encoder
 fi
-# The fuzzing (ADR 0022, stage T2): the full mode's, libFuzzer's four targets KOPRULU_FUZZ_TIME seconds each (default
-# 60) under ASan and UBSan with the LLVM clang. Never remembered: each run searches on from the corpus it left in
-# build/fuzz/corpus. A finding stops the run (build/fuzz/<target>/, tools/fuzz.sh tells what to do with it).
+# The fuzzing (ADR 0022, stage T2): the full mode's, every libFuzzer target of tools/fuzz.sh KOPRULU_FUZZ_TIME seconds
+# each (default 60) under ASan and UBSan with the LLVM clang. Never remembered: each run searches on from the corpus it
+# left in build/fuzz/corpus. A finding stops the run (build/fuzz/<target>/, tools/fuzz.sh tells what to do with it).
 if [ "$CI_MODE" = full ] && [ -n "$LLVM_CLANG" ]; then
   step "libFuzzer's targets, ${KOPRULU_FUZZ_TIME:-60}s each, with $LLVM_CLANG (tools/fuzz.sh)"
   fuzz_status=0

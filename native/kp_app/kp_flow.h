@@ -11,8 +11,10 @@
 #include "kp_data.h"
 #include "kp_hud.h"
 #include "kp_locale.h"
+#include "kp_netgame.h"
 #include "kp_seats.h"
 #include "kp_session.h"
+#include "kp_transfer.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -41,6 +43,14 @@ typedef struct {
 	char map[KP_FLOW_MAP_PATH]; /* --map PATH: a custom map's game at once (no glue; ADR 0024) */
 	char map_template[32]; /* --map-template NAME: its game type, a templates.lst name ("": Melee) */
 	int seats;             /* --seats N: --map's game as a network game of N seats in one process (kp_seats.h), 0 none */
+	/* --lan-port PORT: the LAN provider's socket A (B the next port; 0, or outside 0..65535 with a log line: 6111);
+	 * --lan-map BASE:HOSTS:SELF: Koprulu's games on one machine (kp_net_sock.h's map: host SELF of 10.0.0.1..HOSTS on
+	 * 127.0.0.1's ports from BASE, -1 a program the map does not hold, on --lan-port) */
+	int lan_port;
+	char lan_map[32];
+	/* Create Game lists StarCraft 1.17's saved network games (.mlt, .mlx; kp_netsave.h) and a resumed lobby finds them:
+	 * the network oracle's runs only (no option sets it; the product's own network saves are stage N4's) */
+	int original_saves;
 	int play;              /* the mission in play mode (with the console) */
 	int scale_mode;        /* --scale-mode auto|integer|sharp */
 	int font_mode;         /* --font original|vector|auto (KP_VTEXT_*, KP_VIDEO_AUTO): the vector text of large scales */
@@ -143,6 +153,8 @@ typedef struct {
 /* The kinds of file Import picks: Load Replay's replays, Play Custom's maps. */
 enum { KP_FLOW_PICK_REPLAY = 1, KP_FLOW_PICK_MAP = 2 };
 
+struct KpNetPlay;
+
 typedef struct KpFlow {
 	KpFlowHost host;
 	/* what the product loaded for every game (not owned; set before kp_flow_init): the original data (ADR 0018: the
@@ -182,6 +194,7 @@ typedef struct KpFlow {
 	KpUi *ui;
 	KpGlue glue;
 	int glue_on;
+	struct KpNetPlay *netplay; /* the multiplayer screens' network (kp_netplay.h; ui->net), NULL none: the web, no glue */
 	uint32_t options_seen; /* the interface's KP_UI_OPTIONS_KEPT as last kept (the profile's, a flag's over them) */
 	KpHud hud;
 	int hud_on;
@@ -340,6 +353,27 @@ int kp_flow_scripted(const KpAppFlags *fl);
 int kp_flow_match_language(const KpUiLanguages *languages, const char *wanted);
 /* A new interface takes the video options (its dialog shows them; the gamma and the portraits are its own). */
 void kp_flow_video_to_ui(KpFlow *f, KpUi *ui);
+/* The interface's host hooks over the flow's files (ui->host = f): the map lists (Play Custom's, Create Game's, Load
+ * Replay's), the saves, the replays, Import and Export. They read f's data, flags (its data folders' Maps), pref,
+ * identity, ui and host (log; the deletes' sync_files, Import's pick_file and export_replay): the menus oracle
+ * installs them over a flow of only those (kp_oracle menus_replay). */
+void kp_flow_interface_host(KpFlow *f, KpUi *ui);
+/* The map of the map list's entry index (LoadMapHeader 0x46b5c0 of its file): its header and the file's path, 1, or 0
+ * when it is not a readable map (KpNetUi.entry_map: Create Game's network game). */
+int kp_flow_entry_map(KpFlow *f, int index, KpMapHeader *h, char *path, size_t size);
+/* The saved network game of the map list's entry index (ValidateSaveFile 0x499750 of its file): its game header, 1, or
+ * 0 when it is not a readable save (KpNetUi.entry_save: Create Game's game resuming it). */
+int kp_flow_entry_save(KpFlow *f, int index, KpNetGameHeader *h);
+/* FindMultiplayerSaveById 0x4995e0 (the user's maps folder: its saves of this game's extension, then its subfolders',
+ * in FindFirstFileA's order; the first whose header has the ID names the save), LoadSavedGameByName 0x498bd0 (the
+ * first file of that name and extension below the folder, in the same order) and ReadSaveHeaderAndGameBlock 0x499c50
+ * (KpNetGameHooks.find_save): 1 with out read, 0 none (always without KpAppFlags.original_saves). */
+int kp_flow_find_save(KpFlow *f, uint32_t id, KpNetGameSave *out);
+/* The map transfer's files over the flow's folders (KpNetGameConfig.transfer; its send is the game's): read a disk
+ * file, find a local copy of an offered file (FindLocalCopy 0x441080: the user's maps folder, its download folder
+ * included, then each data folder's Maps, recursively) and write a finished download into <user>maps/download/
+ * (SaveDownloadedFile 0x4418c0). */
+KpTransferIo kp_flow_transfer_io(KpFlow *f);
 
 #ifdef __cplusplus
 }

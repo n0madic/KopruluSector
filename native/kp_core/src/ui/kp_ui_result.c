@@ -195,12 +195,9 @@ int32_t kp_ui_open_modeless(KpUi *ui, const char *bin, KpUiInteract proc)
 	/* OpenModelessDialog 0x46ecc0: a single player's game paused under it, the placement (IsPlacementActive
 	 * 0x47d070, EndPlacement 0x47d300) and the targeting (0x4b2900) cancelled */
 	int32_t d;
-	int k;
 	kp_ui_unpause_game(ui, 1);
 	kp_ui_close_modeless(ui, 1);
-	for (k = 0; k < KP_UI_EVENT_TYPES; k++) {
-		if (ui->capture[k] >= 0) kp_ui_set_capture(ui, -1, k); /* ReleaseAllCaptures 0x4c2c40 */
-	}
+	kp_ui_release_captures(ui); /* ReleaseAllCaptures 0x4c2c40 */
 	kp_ui_cancel_drag_box(ui);
 	kp_ui_cursor_set(ui, 0);
 	kp_ui_pause_game(ui);

@@ -19,7 +19,15 @@ entry (`seq`) and a call with the order at its return (`end`). Each player becom
   them inside the instance. One of port 6112 has `pass`: the index of the pass that took it among all the passes
   (the provider's threads had queued it by then, as the emulator's scheduler decided, and the replay queues it
   there), -1 for one no pass took; the provider answers port 6111's itself, at once;
-- sends: the datagrams the player sent, at their send time, by socket, to the address given.
+- sends: the datagrams the player sent, at their send time, by socket, to the address given;
+- has_map: whether the player had the map (the others download it), actions: the driver's inputs (net.py's Action:
+  `at` "lobby" for the chat room's, a frame number for the game's; `kind`, `value`);
+- preload: the files the driver put in the player's folders before the game, each `guest` (its Windows path) and
+  `file` (relative to the repository's root, "" outside it): a resumed game's save (stage N3's lobby replay finds the
+  game's save among them, FindMultiplayerSaveById 0x4995e0).
+
+A game has its map (`map`: the file the host played, relative to the repository's root) and `expansion`; stage N3's
+lobby replay (test_lobby_trace) reads the map's header and the transfer's bytes from it.
 
 The replay (test_net_trace) plays one player: Koprulu's SNet and UDP provider get the arrivals and the calls at their
 times, on the emulator's clock (each GetTickCount charges TIME_QUERY_COST_US first), its pump runs at the original's
@@ -41,7 +49,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_RECORDINGS = ROOT / "koprulu-private" / "emu" / "net-n2"
 GOLDEN = ROOT / "tests" / "golden" / "oracle" / "net"
-GOLDEN_VERSION = 5
+GOLDEN_VERSION = 7
 PCAP_MAGIC, PCAP_LINKTYPE_IPV4 = 0xA1B2C3D4, 228
 PCAP_HEADER, PCAP_RECORD, IPV4_UDP_HEADERS = 24, 16, 28
 LIST_PORT, GAME_PORT = 6111, 6112
@@ -113,7 +121,8 @@ def call_entry(rec: dict) -> dict:
     return out
 
 
-def player_golden(d: Path, name: str, ip: str, datagrams: list[dict], payloads: list[bytes]) -> dict:
+def player_golden(d: Path, spec_player: dict, datagrams: list[dict], payloads: list[bytes]) -> dict:
+    name, ip = spec_player["name"], spec_player["ip"]
     who = f"{d.name}/{name}"
     recs = [json.loads(line) for line in (d / name / "snet.jsonl").read_text().splitlines()]
     if any("seq" not in r for r in recs):
@@ -139,7 +148,25 @@ def player_golden(d: Path, name: str, ip: str, datagrams: list[dict], payloads: 
                 arrivals.append({"t": to["at"], "socket": socket_of(rec["dst"]), "from": rec["src"], "data": hexdata})
     arrivals.sort(key=lambda a: a["t"])  # stable: by arrival, then by send order
     taken_by(who, passes, arrivals)
-    return {"name": name, "ip": ip, "program": program, "calls": calls, "arrivals": arrivals, "sends": sends}
+    return {"name": name, "ip": ip, "program": program, "calls": calls, "arrivals": arrivals, "sends": sends,
+            "has_map": bool(spec_player.get("has_map", True)), "actions": spec_player.get("actions", []),
+            "preload": [{"guest": guest, "file": repo_path(host)} for guest, host in spec_player.get("preload", [])]}
+
+
+def repo_path(path: str) -> str:
+    """A file of net.py's (relative to tools/research, where it ran) relative to the repository's root, "" outside it."""
+    p = Path(path)
+    if not p.is_absolute():
+        p = ROOT / "tools" / "research" / p
+    try:
+        return p.resolve().relative_to(ROOT).as_posix()
+    except ValueError:
+        return ""
+
+
+def map_path(spec: dict) -> str:
+    """The game's map relative to the repository's root, "" outside it."""
+    return repo_path(spec["map_path"])
 
 
 def tree(who: str, recs: list[dict]) -> tuple[list[dict], list[dict], str]:
@@ -234,9 +261,10 @@ def game_golden(d: Path) -> dict:
     if len(datagrams) != len(payloads):
         raise ValueError(f"{d.name}: {len(datagrams)} datagrams in lan.jsonl, {len(payloads)} in lan.pcap")
     result = json.loads((d / "net.json").read_text())
-    players = [player_golden(d, p["name"], p["ip"], datagrams, payloads) for p in spec["players"]]
+    players = [player_golden(d, p, datagrams, payloads) for p in spec["players"]]
     return {"version": GOLDEN_VERSION, "game": d.name, "loss": spec.get("loss", 0.0), "seed": spec.get("seed", 1),
-            "reason": result.get("reason", ""), "players": players}
+            "reason": result.get("reason", ""), "map": map_path(spec), "expansion": bool(spec.get("expansion", True)),
+            "players": players}
 
 
 def main(argv: list[str] | None = None) -> int:

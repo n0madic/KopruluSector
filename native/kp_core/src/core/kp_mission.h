@@ -110,6 +110,8 @@ int kp_mission_from_map(KpMission *m, const KpFiles *f, uint8_t *chk, size_t chk
 #define KP_MAP_HEADER_TITLE 32       /* the entry's title +0x49 */
 #define KP_MAP_HEADER_DESCRIPTION 256 /* its description +0x69 */
 #define KP_MAP_RACE_USER_SELECT 5
+#define KP_MAP_HEADER_FORCES 4
+#define KP_MAP_FORCE_NAME 30          /* LoadForceChunk 0x443320's SStrCopy bound */
 typedef struct {
 	uint16_t version;             /* VER, also when the read failed (0: none): a later one is the expansion's (> 59) */
 	uint16_t width, height, tileset; /* DIM, ERA & 7 (0x5264b4, 0x5264b6, 0x5264bc) */
@@ -118,6 +120,11 @@ typedef struct {
 	uint8_t players, computers, humans; /* 0x478e70 (types 3..7), 0x478ea0 (1 and 5), 0x479550 (6) */
 	int8_t first_human;           /* the first open slot (type 6), -1 none */
 	char title[KP_MAP_HEADER_TITLE], description[KP_MAP_HEADER_DESCRIPTION];
+	/* FORC (LoadForceChunk 0x443320; a short chunk zero-filled): each slot's force as the chunk holds it (0-based), the
+	 * 4 force flags, and the force names of the map's strings (force_named[f] 0: the string is null, the lobby shows
+	 * network.tbl's "Force n" instead) */
+	uint8_t forces[KP_MAP_HEADER_SLOTS], force_flags[KP_MAP_HEADER_FORCES], force_named[KP_MAP_HEADER_FORCES];
+	char force_names[KP_MAP_HEADER_FORCES][KP_MAP_FORCE_NAME];
 } KpMapHeader;
 /* 0, or -1 with err (h->version still the VER read). */
 int kp_map_header(KpMapHeader *h, const uint8_t *chk, size_t size, const KpDefsProfile *profile, int expansion,

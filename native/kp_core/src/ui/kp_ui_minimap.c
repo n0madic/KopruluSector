@@ -1107,3 +1107,64 @@ int kp_ui_minimap_create(KpUi *ui)
 	kp_ui_init_dialog(ui, d, dialog_interact);
 	return m->control >= 0 ? 0 : -1;
 }
+
+/* --- the chat room's map preview (OpenMinimapPreview 0x46eb60: MinimapDialogInit 0x46db30 with the preview flag) --- */
+
+/* DrawMinimapFrame 0x46dcf0 in a preview: the full frame around the shown image (128 x 128 without a preview world) */
+static void preview_frame(KpUi *ui, KpUiControl *d, int32_t x, int32_t y, const int16_t clip[4])
+{
+	KpUiDraw stock = kp_ui_type_draw(d->type);
+	KpUiSurface *t = ui->text.target;
+	int32_t k = kp_ui_find_control(ui, (int32_t)(d - ui->controls), C_IMAGE), i;
+	const KpUiControl *c;
+	if (stock) stock(ui, d, x, y, clip);
+	if (k < 0 || t == NULL || !(ui->controls[k].flags & KP_UI_VISIBLE)) return;
+	c = &ui->controls[k];
+#define PUT(px, py, n) do { if ((px) >= 0 && (px) < t->w && (py) >= 0 && (py) < t->h) t->pixels[(int64_t)(py) * t->w + (px)] = colour(ui, n); } while (0)
+	for (i = 0; i < IMAGE_SIDE + 2; i++) PUT(c->right + 1, c->top - 1 + i, UI_FRAME_LIGHT);
+	for (i = 0; i < IMAGE_SIDE + 2; i++) PUT(c->left - 1 + i, c->top - 1, UI_FRAME_LIGHT);
+	for (i = 0; i < IMAGE_SIDE + 2; i++) PUT(c->left - 1, c->top - 1 + i, UI_FRAME_DARK);
+	for (i = 0; i < IMAGE_SIDE + 2; i++) PUT(c->left - 1 + i, c->bottom + 1, UI_FRAME_DARK);
+#undef PUT
+}
+
+static int preview_interact(KpUi *ui, KpUiControl *d, KpUiEvent *e)
+{
+	/* MinimapDialogProc 0x46de70 of a preview: no keys, no timers, no camera; the image (child 1) stays hidden until
+	 * ShowLobbyControls 0x4507b0 shows it */
+	KpUiInteract stock = kp_ui_type_interact(0);
+	switch (e->type) {
+	case KP_UI_KEY_DOWN: case KP_UI_KEY_REPEAT:
+		return 0;
+	case KP_UI_LEFT_DOWN: case KP_UI_LEFT_DOUBLE: case KP_UI_LEFT_UP: case KP_UI_RIGHT_DOWN:
+		/* TODO: the preview's image procedure (0x508c50) over the preview world */
+		return kp_ui_hit_test(ui, (int32_t)(d - ui->controls), e) >= 0;
+	case KP_UI_USER:
+		if (e->code == KP_UI_CREATE) {
+			d->flags |= 0x20000000u | KP_UI_TRANSPARENT;
+			d->draw = preview_frame;
+			{
+				int32_t k = kp_ui_find_control(ui, (int32_t)(d - ui->controls), C_IMAGE);
+				if (k >= 0) kp_ui_mark_dirty(ui, k);
+			}
+		}
+		break;
+	default:
+		break;
+	}
+	return stock(ui, d, e);
+}
+
+int32_t kp_ui_minimap_preview_open(KpUi *ui)
+{
+	int32_t d = kp_ui_load_dialog(ui, "rez\\minimappreview.bin");
+	if (d < 0) return -1;
+	kp_ui_init_dialog(ui, d, preview_interact);
+	return d;
+}
+
+void kp_ui_minimap_preview_close(KpUi *ui, int32_t dialog)
+{
+	/* FreeMinimap 0x46e1a0 of the preview */
+	if (dialog >= 0 && ui->controls[dialog].used) kp_ui_end_dialog(ui, dialog);
+}

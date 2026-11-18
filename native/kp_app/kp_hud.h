@@ -180,14 +180,16 @@ enum { KP_GLUE_NONE, KP_GLUE_MENUS, KP_GLUE_ROOM, KP_GLUE_SCORE, KP_GLUE_CREDITS
 
 /* What a glue screen ended with. */
 enum { KP_GLUE_GOES_ON, KP_GLUE_PROFILE, KP_GLUE_MISSION, KP_GLUE_EXIT, KP_GLUE_LOAD, KP_GLUE_ROOM_START,
-	KP_GLUE_ROOM_CANCEL, KP_GLUE_SCORE_DONE, KP_GLUE_INTRO, KP_GLUE_LANGUAGE, KP_GLUE_REPLAY, KP_GLUE_CUSTOM };
+	KP_GLUE_ROOM_CANCEL, KP_GLUE_SCORE_DONE, KP_GLUE_INTRO, KP_GLUE_LANGUAGE, KP_GLUE_REPLAY, KP_GLUE_CUSTOM,
+	KP_GLUE_NETWORK };
 typedef struct {
 	int kind;
 	int profile_changed;
 	int64_t mission;
 	int state, expansion;
 	int32_t save; /* KP_GLUE_LOAD: the load screen's saved game, 0-based in the profile's list; KP_GLUE_REPLAY: Load
-	               * Replay's file, KP_GLUE_CUSTOM: Play Custom's map, an index of the interface's menus.entries */
+	               * Replay's file, KP_GLUE_CUSTOM: Play Custom's map, an index of the interface's menus.entries;
+	               * KP_GLUE_NETWORK (the chat room's start): `state` is the race ready room (7..9) or 3 */
 	int cinematic; /* KP_GLUE_MISSION: the cinematic the mission history's row plays first (with its prelude), 0 none */
 } KpGlueEvent;
 

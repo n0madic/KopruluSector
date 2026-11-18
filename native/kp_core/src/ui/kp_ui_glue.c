@@ -372,6 +372,24 @@ void kp_ui_glue_slide_out(KpUi *ui, int32_t dialog)
 	}
 }
 
+void kp_ui_glue_slide_control(KpUi *ui, int32_t dialog, int index, int in)
+{
+	/* SlideGlueControl 0x4583c0: entry index of the slide-in's table (StartGlueSlideIn's) slides in or out again */
+	KpUiGlue *g = gl(ui);
+	KpUiControl *c;
+	if (index < 0 || index >= g->desc_count || g->slide_control[index] < 0) return;
+	c = &ui->controls[g->slide_control[index]];
+	g->slide_active[index] = 1;
+	if (in) {
+		c->wuser = (uint16_t)(g->slide_distance[index] - c->right);
+		(void)kp_ui_set_timer(&ui->timers, dialog, SLIDE_TIMER, SLIDE_PERIOD, kp_ui_callback(ui, slide_in_step), ui->now);
+	} else {
+		c->wuser = 1;
+		(void)kp_ui_play_sound(ui, SOUND_SLIDE_OUT);
+		(void)kp_ui_set_timer(&ui->timers, dialog, SLIDE_TIMER, SLIDE_PERIOD, kp_ui_callback(ui, slide_out_step), ui->now);
+	}
+}
+
 const uint8_t *kp_ui_glue_palette(KpUi *ui, uint32_t *serial)
 {
 	if (serial != NULL) *serial = gl(ui)->palette_serial;

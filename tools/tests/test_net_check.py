@@ -125,7 +125,10 @@ def write_join(game):
     recs = [call(1, 1, "SNetInitializeProvider", program="ab" * 20),
             pump(40, [{"from": f"{JOINER}:6112", "data": CONNECT.hex()}])]
     (game / "Alpha").mkdir(parents=True)
-    (game / "spec.json").write_text(json.dumps({"players": [{"name": "Alpha", "ip": HOST}], "loss": 0.02, "seed": 7}))
+    preload = [["C:\\Starcraft\\maps\\netsave.mlt", "saves/netsave.mlt"]]
+    (game / "spec.json").write_text(json.dumps({"players": [{"name": "Alpha", "ip": HOST, "preload": preload}],
+                                                "loss": 0.02, "seed": 7,
+                                                "map_path": "maps/Test Map.scm", "expansion": False}))
     (game / "lan.jsonl").write_text("".join(json.dumps(d) + "\n" for d in datagrams))
     (game / "lan.pcap").write_bytes(pcap([CONNECT, ANSWER]))
     (game / "net.json").write_text(json.dumps({"reason": "every driver finished"}))
@@ -145,8 +148,14 @@ class GameTest(unittest.TestCase):
             golden = json.loads((out / "join.json").read_text())
         self.assertEqual(index, {"version": net_check.GOLDEN_VERSION, "games": ["join"]})  # "gone" has no golden
         self.assertEqual((golden["version"], golden["loss"], golden["seed"]), (net_check.GOLDEN_VERSION, 0.02, 7))
+        # net.py's map path is relative to tools/research, the golden's to the repository's root
+        self.assertEqual((golden["map"], golden["expansion"]), ("tools/research/maps/Test Map.scm", False))
         alpha = golden["players"][0]
         self.assertEqual(alpha["program"], "ab" * 20)
+        self.assertEqual((alpha["has_map"], alpha["actions"]), (True, []))  # a spec without them: the map, no inputs
+        # a preloaded file: its guest path as given, its file relative to the repository's root
+        self.assertEqual(alpha["preload"], [{"guest": "C:\\Starcraft\\maps\\netsave.mlt",
+                                             "file": "tools/research/saves/netsave.mlt"}])
         self.assertEqual(alpha["sends"], [{"t": 4000, "socket": 0, "to": "255.255.255.255:6111",
                                            "data": ANSWER.hex()}])
         # the connect at its delivery, the host's own broadcast at once

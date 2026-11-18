@@ -878,14 +878,15 @@ typedef struct {
 	uint32_t progress[6];            /* +0x28: the highest mission of original Zerg, Terran, Protoss, then expansion */
 } KpUiProfile;
 enum { KP_UI_MENU_NONE, KP_UI_MENU_STATE, KP_UI_MENU_EXIT, KP_UI_MENU_INTRO, KP_UI_MENU_CREDITS, KP_UI_MENU_MISSION,
-	KP_UI_MENU_CINEMATIC, KP_UI_MENU_LOAD_SAVE, KP_UI_MENU_LANGUAGE, KP_UI_MENU_REPLAY, KP_UI_MENU_CUSTOM };
+	KP_UI_MENU_CINEMATIC, KP_UI_MENU_LOAD_SAVE, KP_UI_MENU_LANGUAGE, KP_UI_MENU_REPLAY, KP_UI_MENU_CUSTOM,
+	KP_UI_MENU_NETWORK };
 #define KP_UI_MAP_ENTRIES 254
 #define KP_UI_MAP_FILE 128   /* an entry's file name, UTF-8 (the original's names below 32 bytes) */
 #define KP_UI_MAP_NAME 132    /* a replay header's map name, a map's title: UTF-8 (32 bytes of the map's encoding) */
 #define KP_UI_MAP_DIR 260    /* the listed folder under the screen's root, '/' between its names ("" the root) */
 /* An entry's kind (entry +0x268: 0x80 a replay, 8 a folder, AddFolderEntry 0x45b080's ".." the folder above, 4 a
- * map: ScanMapDirectory 0x45c9a0's .scm, and .scx with Brood War) */
-enum { KP_UI_ENTRY_REPLAY = 0, KP_UI_ENTRY_FOLDER, KP_UI_ENTRY_UP, KP_UI_ENTRY_MAP };
+ * map: ScanMapDirectory 0x45c9a0's .scm, and .scx with Brood War; 1 a saved network game, listed in multiplayer) */
+enum { KP_UI_ENTRY_REPLAY = 0, KP_UI_ENTRY_FOLDER, KP_UI_ENTRY_UP, KP_UI_ENTRY_MAP, KP_UI_ENTRY_SAVE };
 /* Why a replay's playback is unverified (Koprulu's label in Load Replay's information fields, decision 4) */
 enum {
 	KP_UI_REPLAY_VERIFIED = 0,
@@ -897,8 +898,9 @@ enum {
 #define KP_UI_MAP_DESCRIPTION 600 /* its description: the original's 300 bytes in UTF-8 */
 #define KP_UI_MAP_TITLE_CHARS 31
 /* An entry of the gluCustm screen's list (Load Replay's, Play Custom's; glumap.cpp's 0x544-byte entry): a replay as
- * LoadReplayEntryInfo 0x45d250 reads it (the host's list_entries), a map as LoadMapEntryInfo 0x45d870 reads it (the
- * host's load_entry, when the screen first shows its information or takes it at Ok). */
+ * LoadReplayEntryInfo 0x45d250 reads it (the host's list_entries), a map as LoadMapEntryInfo 0x45d870 and a saved game
+ * as LoadSaveEntryInfo 0x45d5e0 read them (the host's load_entry, when the screen first shows its information or takes
+ * it at Ok). */
 #define KP_UI_SLOT_FLAGS 8
 typedef struct {
 	char file[KP_UI_MAP_FILE];    /* the name in the listed folder (a file's: the list's text; "" for the folder above) */
@@ -907,11 +909,18 @@ typedef struct {
 	char label[KP_UI_MAP_FILE + 2]; /* entry +0x08: the list's text (the file, "[folder]", "[Up One Level]"), set by
 	                                    * the screen; the list keeps a pointer to it */
 	uint8_t status;                  /* entry +0x25c: 0 read, 1 unreadable, 2 a Brood War replay without Brood War */
-	uint16_t description;            /* an unreadable file's gluAll text (66 missing, 62 its name too long, 60, 63) */
-	char map[KP_UI_MAP_NAME];      /* a replay's game header +0x4d; a map's title +0x49 (its string, else the file) */
-	char text[KP_UI_MAP_DESCRIPTION]; /* a map's description +0x69 (its string; "" none) */
+	uint16_t description;            /* an unreadable file's gluAll text (66 missing, 62 its name too long, 60, 63; a
+	                                    * saved game's 66, 65, 67) */
+	uint16_t save_title;             /* a saved game's gluAll title: 64 "Invalid Saved Game" until its file is found,
+	                                    * then 47 "Saved Game" (also when it does not read) */
+	char map[KP_UI_MAP_NAME];      /* a replay's or a saved game's game header +0x4d; a map's title +0x49 (its string,
+	                                  * else the file) */
+	char text[KP_UI_MAP_DESCRIPTION]; /* a map's description +0x69 (its string; "" none); a saved game's display name
+	                                     * (its header +0x99) */
 	uint16_t width, height, tileset; /* +0x472, +0x474, +0x476 */
-	uint8_t players, computers, humans; /* +0x479 (a map's slots of owner types 3..7), +0x47a, +0x47b */
+	uint8_t players, computers, humans; /* +0x479 (a map's slots of owner types 3..7, a saved game's header +0x25),
+	                                       * +0x47a, +0x47b */
+	uint8_t game_players;            /* +0x478: a saved game's header +0x24, its players line */
 	uint8_t slots;                   /* a replay's game header +0x25 (0x67ccd9 once its header is read: the slot count
 	                                    * PublishMapInfo 0x45dfc0 gives the screen while a replay was read) */
 	uint8_t user_select[KP_UI_SLOT_FLAGS]; /* +0x535: a map's slots whose race is User Select (0x673f08) */
@@ -924,6 +933,7 @@ typedef struct {
 /* Play Custom's state on the gluCustm screen (glucreat.cpp, atlas P18, P19): the game type and subtype lists, the
  * selected template, the remembered folder and map, the registry's choices, and what Ok leaves the host. */
 #define KP_UI_TEMPLATE_TEXT 32           /* a template's name, label, subtype text (SRegLoadString's 32 bytes) */
+#define KP_UI_SPEED_TEXT 64              /* a speed's name (SRegLoadString's 128 bytes; UTF-8) */
 #define KP_UI_TEMPLATE_RECORD 32         /* the game template record 0x67293d..0x67295c (KP_TEMPLATE_SIZE) */
 #define KP_UI_CUSTOM_RACES 8             /* the opponents' races 0x526547.. (KP_CUSTOM_RACES) */
 typedef struct {
@@ -947,6 +957,11 @@ typedef struct {
 	/* the registry's "Custom Type" and "Game Subtype" (SRegLoadString/SRegSaveString under "Starcraft"): the host
 	 * keeps them between runs; changed is set when the screen saved one */
 	char custom_type[KP_UI_TEMPLATE_TEXT], game_subtype[KP_UI_TEMPLATE_TEXT];
+	/* multiplayer's: "Game Type" in place of "Custom Type", "Game Speed" (the speed's gluAll name: another language's
+	 * reads as Normal) and the speed the game asks (0x668a64: the slider's, UpdateGameSpeedLabel 0x456680) */
+	char net_type[KP_UI_TEMPLATE_TEXT], game_speed[KP_UI_SPEED_TEXT];
+	uint8_t speed;
+	uint8_t speed_text[2 * KP_UI_SPEED_TEXT]; /* 0x669330: the speed label's text */
 	uint8_t registry_changed;
 	/* Ok's game (KP_UI_MENU_CUSTOM): the entry, ApplyCustomGameRaces 0x455020's races (a melee template's local race
 	 * and opponents', KP_UI_RACE_NONE for none; another template's local race, KP_UI_RACE_NONE when its list is
@@ -958,6 +973,236 @@ typedef struct {
 	int64_t local_race, races[KP_UI_CUSTOM_RACES];
 } KpUiCreate;
 #define KP_UI_RACE_NONE 7                /* KP_RACE_NONE: no race chosen */
+/* The multiplayer screens' network (phase N, stage N3): Storm's providers and, behind them, the host's game code
+ * (kp_app's KpNetGame). The screens call these hooks where the original calls Storm and its network glue (net_glue.cpp);
+ * ui->net NULL (the oracles of the single-player path) leaves the main menu's Multiplayer unsupported. Texts are UTF-8. */
+#define KP_UI_PROVIDERS 8
+#define KP_UI_PROVIDER_TEXT 128
+typedef struct {
+	uint32_t id;                         /* node +0xc: 'UDPN' (Storm's provider identifier) */
+	uint32_t flags;                      /* +8: the caps' flags & 2 */
+	uint32_t max_players;                /* +0x10: min(the caps' maximum players, 8) */
+	char name[KP_UI_PROVIDER_TEXT];      /* +0x14 */
+	char description[KP_UI_PROVIDER_TEXT]; /* +0x94 */
+} KpUiProvider;
+/* A game of the provider's list (the fields of its game header the join screen reads: EnumNetworkGames 0x475570's
+ * records, atlas P19 and P26) */
+#define KP_UI_GAMES 64
+#define KP_UI_GAME_NAME 72   /* the header's 24 bytes as UTF-8 */
+#define KP_UI_GAME_TITLE 96  /* the map title's 32 bytes as UTF-8 */
+typedef struct {
+	uint32_t id;                         /* +0: Storm's game ID */
+	char name[KP_UI_GAME_NAME];          /* +4 */
+	uint16_t width, height;              /* +0x20, +0x22 */
+	uint8_t players, max_players, speed; /* +0x24, +0x25, +0x26 */
+	uint8_t type, sub;                   /* +0x28, +0x29: the template's type and sub-byte */
+	uint16_t subtype;                    /* +0x2a */
+	uint8_t replay;                      /* +0x32 */
+	char title[KP_UI_GAME_TITLE];        /* +0x4d */
+} KpUiGame;
+struct KpUiLobby;
+typedef struct KpUiNet {
+	/* SNetEnumProviders (Storm 105): the providers in Storm's order (out[k]'s id, flags, maximum players, name and
+	 * description as Storm gives them); their count */
+	int (*providers)(void *host, KpUiProvider *out, int max);
+	/* InitializeSelectedProvider 0x4bafa0 (InitNetworkProvider 0x4757e0): 1, or 0 when it failed (its network.tbl
+	 * error is the host's to report: kp_ui_menus_net_error) */
+	int (*select_provider)(void *host, uint32_t id);
+	/* ResetNetworkProvider 0x475a20 (the connection screen's open) and ShutdownNetwork 0x477f60 (the login screen's
+	 * Cancel in multiplayer) */
+	void (*reset_provider)(void *host);
+	void (*shutdown)(void *host);
+	/* EnumNetworkGames 0x475570 (SNetEnumGamesEx): the provider's games now, in the order Storm lists them; their
+	 * count */
+	int (*games)(void *host, KpUiGame *out, int max);
+	/* JoinNetworkGame 0x475610 of a game the last games() listed: 1 joined (the chat room follows), 0 not (the host
+	 * reported why) */
+	int (*join)(void *host, const KpUiGame *game);
+	/* ClearGameList 0x475370: the listed games freed; with unhost, ClearGameListAndFlag 0x4755f0 (the host flag
+	 * 0x672970 cleared too) */
+	void (*clear_games)(void *host, int unhost);
+	/* CreateGameFromEntry 0x45bfc0's multiplayer game of the Create Game screen's entry index (a map read and checked:
+	 * the host builds the header from it, the player's name, the screen's template, its class and the speed) through
+	 * CreateMultiplayerGame 0x475040: 0 created (the chat room follows), else Storm's error (SErrGetLastError; the
+	 * screen's message by OnCreateGameOk 0x455240: 0x44 too many games, 0x4c6 the provider, any other) */
+	uint32_t (*create_game)(void *host, struct KpUi *ui, int index, uint8_t speed);
+	/* The chat room's lobby (glue state 3, kp_ui_lobby.c). InitJoinedLobby 0x474c60 when the room has started: 1, 0
+	 * aborted (the room closes as Cancel's leave) */
+	int (*lobby_enter)(void *host);
+	/* PollLobby 0x474f00, one pass of the room's idle callback: KP_UI_LOBBY_REFRESH, KP_UI_LOBBY_START, or 0 */
+	int (*lobby_poll)(void *host);
+	/* The lobby as the rows and labels read it now (the network glue's globals) */
+	void (*lobby_view)(void *host, struct KpUiLobby *out);
+	void (*lobby_abort)(void *host);   /* AbortNetworkGame 0x474e60 */
+	void (*lobby_cancel)(void *host);  /* CancelLobby 0x4baf60 */
+	void (*lobby_release)(void *host); /* ReleaseLobbySession 0x474c30: the room closed */
+	/* LobbyCommand 0x4509d0's Start checks: 0 ready, else the gluAll string of the refusal; then StartLobbyGame
+	 * 0x4baed0 */
+	int (*lobby_start_check)(void *host);
+	int (*lobby_start)(void *host);
+	void (*lobby_chat)(void *host, const char *text); /* SendLobbyChatThunk 0x474fb0 (UTF-8) */
+	/* The slot menus' requests (OnSlotTypeMenuSelect 0x4537c0): KP_UI_SLOT_* of a slot (a swap's target setup slot
+	 * in target): 1 sent or queued, 0 refused */
+	int (*lobby_slot)(void *host, int action, int slot, int target);
+	/* The checks of BanLobbySlot 0x4bb000, CloseLobbySlot 0x4bb080, SetLobbySlotComputer 0x4bb0e0 and OpenLobbySlot
+	 * 0x4bb290 before their confirmation: 0 refused, 1 to do, 2 to do once the player confirms the boot of the names
+	 * written to names (ConfirmLobbySlotAction 0x451640's "%s": the humans' names separated by "\n\t", UTF-8) */
+	int (*lobby_slot_check)(void *host, int action, int slot, char *names, size_t size);
+	/* RequestLobbyRaceChange 0x453a00's CanSetSlotRace 0x447500 and RequestRaceChange 0x4baea0: 1 sent, 0 refused */
+	int (*lobby_race)(void *host, int slot, int race);
+	/* ForceHeaderInteract 0x453bc0: RequestTeamChange 0x4baeb0 (kind 1) or RequestForceChange 0x4bae80 (kind 2) */
+	void (*lobby_force)(void *host, int kind, int force);
+	/* SNetGetPlayerCaps (Storm 112) of a Storm ID: 1 with its latency in ms, 0 failed */
+	int (*lobby_latency)(void *host, int storm, uint32_t *ms);
+	/* SNetGetGameInfo (Storm 107) type 2: the game's password (UTF-8, "" none) */
+	void (*lobby_password)(void *host, char *out, size_t size);
+	/* The race ready room of a network game (kp_ui_briefing.c). PollLobby 0x474f00's step 3 once the room started the
+	 * game: the room's glue state (8 Zerg, 9 Protoss, 7 another race) of a Use Map Settings game that resumes no save
+	 * and plays no replay, 0 when the game starts at once */
+	int (*ready_room)(void *host);
+	void (*briefing_arm)(void *host);              /* ArmBriefingReady 0x475d10 (ReadyRoomPostLoad 0x460c80) */
+	void (*briefing_start)(void *host, int abort); /* SendBriefingStart 0x475cc0: the 0x54, or Storm left */
+	/* PollBriefingTurn 0x476b20: a turn step at most every 250 ms; 1 once every present player's 0x54 arrived */
+	int (*briefing_poll)(void *host);
+	void *host;
+} KpUiNet;
+/* PollLobby's results (ReceiveChatRoomMessage 0x471860's 0x4b: the rows changed; 0x53: the game starts) */
+#define KP_UI_LOBBY_REFRESH 0x4b
+#define KP_UI_LOBBY_START 0x53
+/* The slot menus' actions (the table 0x503b68's) */
+enum { KP_UI_SLOT_NAME, KP_UI_SLOT_PUBLIC, KP_UI_SLOT_OPEN, KP_UI_SLOT_CLOSE, KP_UI_SLOT_COMPUTER, KP_UI_SLOT_BAN,
+	KP_UI_SLOT_SWAP };
+/* The lobby the chat room reads (the network glue's globals: the slots 0x6726c8, the setup records' types 0x673d50,
+ * the forces 0x534890 and their names, the game header 0x6728d0, the local player's slot and Storm ID, the game's
+ * template predicates). Names are UTF-8. */
+#define KP_UI_LOBBY_SLOTS 12
+#define KP_UI_LOBBY_PLAYERS 8
+#define KP_UI_LOBBY_NAME 80  /* a player's 25 bytes */
+#define KP_UI_LOBBY_FORCE_NAME 96 /* a force's 30 bytes */
+typedef struct {
+	int32_t storm;                       /* +4: -1 none */
+	uint8_t type, race, force;           /* +8, +9, +0xa (KP_CTRL_*: the lobby's 5 computer, 6 open, 8 closed) */
+	char name[KP_UI_LOBBY_NAME];         /* +0xb */
+} KpUiLobbySlot;
+typedef struct KpUiLobby {
+	KpUiLobbySlot slots[KP_UI_LOBBY_SLOTS];
+	uint8_t setup_types[KP_UI_LOBBY_SLOTS];   /* 0x673d50 + 36j */
+	uint8_t forces[KP_UI_LOBBY_SLOTS];        /* 0x534890: the slots' forces, then the 4 force flags */
+	char force_names[4][KP_UI_LOBBY_FORCE_NAME]; /* 0x53489c */
+	uint8_t user_select[KP_UI_LOBBY_PLAYERS]; /* 0x673f08 */
+	char game_name[KP_UI_GAME_NAME];          /* 0x6728d4 */
+	char title[KP_UI_GAME_TITLE];             /* 0x67291d */
+	uint16_t width, height;                   /* 0x6728f0, 0x6728f2 */
+	uint8_t max_players, save_players, speed; /* 0x6728f5, 0x672903, 0x6728f6 */
+	uint8_t type, sub;                        /* 0x6728f8, 0x6728f9: the template's key */
+	uint16_t subtype;                         /* 0x6728fa */
+	uint32_t save_id;                         /* 0x6728ec */
+	int host;                                 /* 0x672970 */
+	int local_slot, local_storm;              /* 0x508d50, 0x508d58 */
+	int replay, save_open;                    /* 0x67cc90, 0x6a5e34 */
+	int ums, team, top_vs_bottom, computers;  /* IsUseMapSettings 0x447db0, IsTeamGame 0x4b2d90, IsTopVsBottom
+	                                           * 0x447e70, IsRestrictionMode1Or3 0x4476b0 */
+	int top_size;                             /* GetTemplateSubtype 0x447c90: the top team's slots */
+	uint8_t lobby_state;                      /* 0x672600 */
+	uint32_t turn, transit;                   /* 0x672658, 0x672660: a request's deadline is turn + 4 transit */
+	int map_ready;                            /* 0x666564: the map's header is the lobby's (a joiner's once loaded) */
+	int transfer_done;                        /* 0x672960 = 0 or AllPeersHaveFile 0x440ba0 */
+} KpUiLobby;
+/* The connection screen's state (gluconn.cpp, atlas P18): the provider list 0x503d8c from its head (the reverse of
+ * Storm's order), the selected provider and the state its OK leads to. */
+typedef struct {
+	KpUiProvider list[KP_UI_PROVIDERS];
+	int count;
+	uint32_t provider, previous;         /* 0x668a3c, 0x668a40 */
+	int next_state;                      /* 0x668a48 */
+	int32_t dialog;                      /* 0x668a38 (-1 none) */
+	uint8_t name[KP_UI_PROVIDER_TEXT], players[KP_UI_PROVIDER_TEXT], hint[256]; /* controls 6, 7 and 13's buffers */
+	uint8_t gateways;                    /* Koprulu's: the list has Battle.net, whose gateway panel the screen shows */
+} KpUiConn;
+/* The join screen's state (glujoin.cpp, atlas P19): the listed games (0x508d5c, the last enumeration's), the list's
+ * nodes 0x508114 from its head (each game's text, its item and whether the last refresh saw it), the games appended
+ * 0x66a8b4, the selected game's record 0x66a8b8 and the detail labels' buffers. */
+#define KP_UI_GAME_TEXT 0x41
+#define KP_UI_GAME_DETAIL 128
+typedef struct {
+	uint32_t id;                         /* +0x4c */
+	char text[KP_UI_GAME_TEXT + KP_UI_GAME_NAME]; /* +8: the item's text (SStrPrintf of 0x41 bytes, here UTF-8) */
+	uint8_t item;                        /* +0x54 */
+	uint8_t seen;                        /* +0x50 */
+} KpUiJoinNode;
+typedef struct {
+	KpUiGame games[KP_UI_GAMES];
+	int game_count;
+	KpUiJoinNode nodes[KP_UI_GAMES];
+	int node_count;
+	int appended;                        /* 0x66a8b4 */
+	KpUiGame selected;                   /* 0x66a8b8 (zeroed: none) */
+	int32_t dialog;                      /* 0x66a8b0 (-1 none) */
+	uint8_t size[35];                    /* 0x66a948: "%ux%u" */
+	uint8_t type_name[KP_UI_GAME_DETAIL], type_label[KP_UI_GAME_DETAIL], subtype[KP_UI_GAME_DETAIL];
+} KpUiJoin;
+/* The chat room (glue state 3; gluchat.cpp and gluchatslot.cpp, kp_ui_lobby.c, atlas P17 and P18): a row record of
+ * the twelve at 0x6681b0 (0xb0 bytes each), then the room's state. */
+#define KP_UI_CHAT_ROWS 12
+#define KP_UI_CHAT_PERCENT 32
+#define KP_UI_CHAT_SWAP_LABEL 160
+#define KP_UI_CHAT_TEXT 512 /* a chat line's text (AddLobbyChatMessage's 152 bytes as UTF-8) */
+/* AppendLobbyChatLine 0x451140's kinds: the own message, another player's, the system's (Storm ID 8) and a plain text
+ * (-1) */
+enum { KP_UI_CHAT_OWN, KP_UI_CHAT_PLAYER, KP_UI_CHAT_SYSTEM, KP_UI_CHAT_PLAIN };
+typedef struct {
+	uint8_t kind, before;                /* +0 (KP_UI_ROW_*), +4: the kind before a pending change */
+	char name[KP_UI_LOBBY_FORCE_NAME];   /* +8 (65 bytes) */
+	int32_t slot, storm;                 /* +0x4c, +0x50 */
+	int32_t header_force;                /* +0x54 */
+	uint8_t local_force;                 /* +0x58: +0x54 is the local player's force */
+	uint8_t ums_force;                   /* +0x5c */
+	uint8_t pending_kind, pending_swap;  /* +0x64, +0x68 */
+	uint32_t deadline;                   /* +0x6c */
+	uint8_t race, previous_race;         /* +0x70 (a header's force), +0x71 */
+	uint8_t pending_race;                /* +0x74 (a header: joinable) */
+	uint8_t percent;                     /* +0x78 */
+	uint8_t percent_text[KP_UI_CHAT_PERCENT]; /* +0x79 */
+	uint32_t latency;                    /* +0x9c */
+	uint32_t bits;                       /* +0xa8 */
+	int32_t control;                     /* +0xac: the row's first control */
+} KpUiChatRow;
+enum { KP_UI_ROW_NONE, KP_UI_ROW_TEAM, KP_UI_ROW_FORCE, KP_UI_ROW_3, KP_UI_ROW_REMOTE, KP_UI_ROW_LOCAL,
+	KP_UI_ROW_COMPUTER, KP_UI_ROW_7, KP_UI_ROW_OPEN, KP_UI_ROW_CLOSED };
+typedef struct {
+	KpUiChatRow rows[KP_UI_CHAT_ROWS];
+	uint8_t percents[KP_UI_LOBBY_PLAYERS]; /* 0x6689f4: by Storm ID */
+	int32_t dialog, edit, list;          /* 0x667c04, 0x667c10, 0x667c14 (-1 none) */
+	int32_t preview;                     /* 0x671a8c: the minimap preview's dialog (-1 none) */
+	int polling;                         /* the idle callback +0x4a is LobbyUpdate 0x450d80 */
+	int destroyed;                       /* 0x667c0c */
+	int host_controls;                   /* 0x667c18: the Start controls show */
+	int refresh;                         /* 0x667c1c */
+	int leave;                           /* 0x667c20 */
+	uint16_t leave_text;                 /* 0x667c24: its gluAll string */
+	int32_t leave_result;                /* LeaveLobby 0x450980's dialog result, given once its popup ends */
+	int password_refresh;                /* 0x667c28 */
+	int slid_in;                         /* 0x667c2c */
+	int preview_shown;                   /* 0x667c30 */
+	int preview_state;                   /* 0x666560 */
+	int disable_headers;                 /* 0x5039f8 */
+	int hide_rows, locked;               /* 0x668a14, 0x668a18 */
+	uint32_t header_deadline;            /* 0x668a1c */
+	int local_force;                     /* 0x668a20 */
+	int full_refresh, tvb_refresh;       /* 0x668a24, 0x668a28 */
+	int countdown;                       /* 0x673f19: the count the Win32 timer 0x673f14 shows next */
+	int countdown_timer;                 /* 0x673f14 */
+	uint32_t countdown_due;
+	KpUiLobby view;                      /* the lobby as the last refresh read it */
+	uint8_t size[35];                    /* 0x667c4c */
+	uint8_t label[KP_UI_GAME_DETAIL];    /* 0x667c70 */
+	uint8_t subtype[KP_UI_GAME_DETAIL];  /* 0x667c90 */
+	uint8_t type_name[KP_UI_GAME_DETAIL];
+	uint8_t password[KP_UI_GAME_NAME];   /* 0x667c34 */
+	uint8_t countdown_text[64];          /* 0x668090 */
+	uint8_t swap_labels[KP_UI_LOBBY_PLAYERS][KP_UI_CHAT_SWAP_LABEL]; /* 0x668190 */
+	int confirm_row, confirm_action;     /* the slot action ConfirmLobbySlotAction's popup asks for (-1 none) */
+} KpUiChat;
 #define KP_UI_LANGUAGES 16
 #define KP_UI_LANGUAGE_ID 8      /* "ruRU" and its NUL */
 #define KP_UI_LANGUAGE_NAME 64   /* a language's own name, UTF-8 */
@@ -975,7 +1220,10 @@ typedef struct {
 	int action;                      /* what the ended screen leaves the host (KP_UI_MENU_*) */
 	uint16_t mission, cinematic;     /* KP_UI_MENU_MISSION's, KP_UI_MENU_CINEMATIC's (0x526524, 0x50e0d0) */
 	int32_t screen;                  /* the screen's dialog (-1 none) */
-	struct { int32_t dialog; KpUiModalDone done; int suspended; } modal[KP_UI_MODALS];
+	/* the open modal runs: their dialog, continuation, interrupted pass, and the rest of the handler that opened one
+	 * (kp_ui_modal_then) */
+	struct { int32_t dialog; KpUiModalDone done; int suspended; KpUiCallback then; int32_t then_control; }
+		modal[KP_UI_MODALS];
 	int modal_count;
 	int32_t popup;                   /* 0x66b0d8 */
 	KpUiInteract popup_procs[8];     /* the popups' procedure arrays (0x508288, 0x5082b0, 0x5082a4, 0x5082b8, 0x5082dc) */
@@ -1000,11 +1248,16 @@ typedef struct {
 	int entry_count;
 	int32_t replay_choice;           /* the replay Ok started (an index of entries) */
 	KpUiCreate create;               /* Play Custom's */
+	KpUiConn conn;                   /* the connection screen's */
+	KpUiJoin join;                   /* the join screen's */
+	KpUiChat chat;                   /* the chat room's */
 	uint16_t refusal;                /* gluAll's string the load or Load Replay screen shows once it stood (0 none) */
 	uint16_t net_error;              /* 0x6728bc: the deferred network.tbl report (StoreDeferredNetError 0x4748d0; 0 none) */
 	char map_dir[KP_UI_MAP_DIR]; /* 0x668a68 under the root 0x668b70 (maps\replays, Play Custom's maps): the listed
 	                              * folder */
 	int32_t map_preview;          /* 0x66aef4: the entry whose information the 100 ms timer shows (-1 none) */
+	uint32_t map_preview_due;     /* that timer's (PreviewMapEntry 0x45b970's Win32 timer 12 on the main window, not a
+	                               * UI timer: kp_ui_menus_tick) */
 	/* the shown entry's title +0x49 (32 bytes), description +0x69 and lines 0x669128, 0x6690a8..: UTF-8 (ADR 0016) */
 	uint8_t map_title[KP_UI_MAP_TITLE], map_description[KP_UI_MAP_DESCRIPTION], map_lines[5][128];
 	KpUiLanguages languages;         /* the host's (ours) */
@@ -1329,6 +1582,7 @@ struct KpUi {
 	int (*delete_replay)(void *host, const char *name);
 	void *host;                      /* delete_save's, delete_profile_saves', list_entries', check_replay's, check_save's,
 	                                  * import_file's, export_replay's and the replays' */
+	const KpUiNet *net;              /* the multiplayer screens' network (NULL: none) */
 #define KP_UI_SLOT_NAMES 8
 	uint8_t slot_names[KP_UI_SLOT_NAMES][25]; /* a replay's player records' names (0x6726c8 +0x0b), the host's */
 	struct {
@@ -1728,6 +1982,10 @@ int kp_ui_minimap_create(KpUi *ui);
 /* The minimap of the game that replaced the one it showed (a load): the view's tile and no pings (InitMinimap 0x46e260),
  * the terrain built and the image drawn again (MinimapImageInit 0x46d7e0). */
 void kp_ui_minimap_reset(KpUi *ui);
+/* The chat room's map preview (OpenMinimapPreview 0x46eb60: rez\minimappreview.bin, its image hidden until the cursor is
+ * over Map Preview) and its close (FreeMinimap 0x46e1a0). */
+int32_t kp_ui_minimap_preview_open(KpUi *ui);
+void kp_ui_minimap_preview_close(KpUi *ui, int32_t dialog);
 /* The resource panel's animated values from 0 (CreateResourceDialog 0x4a78f0), as a console made anew starts them. */
 void kp_ui_resources_reset(KpUi *ui);
 void kp_ui_minimap_ping(KpUi *ui, uint32_t x, uint32_t y, uint8_t colour_row);
@@ -1864,6 +2122,9 @@ const char *kp_ui_default_player_name(KpUi *ui, int expansion, int64_t mission, 
  * kp_ui_menus_poll returns 1 with menus.state the next state and menus.action the host's work. */
 int32_t kp_ui_menus_enter(KpUi *ui, int state);
 int kp_ui_menus_poll(KpUi *ui);
+/* The glue's Win32 timer of the main window (kp_ui_tick, after the UI timers): Create Game's deferred information
+ * (DeferredPreviewTimer 0x45d1e0, 100 ms after PreviewMapEntry 0x45b970). */
+void kp_ui_menus_tick(KpUi *ui);
 /* ParseMissionWarpNumber 0x4bbb60: a "5" or "5b" after a campaign's warp prefix as the row's mission (*mission), 1 or 0;
  * SetPendingGlueMission 0x457e10 records it for the glue's next entry (kp_ui_menus_enter). */
 int kp_ui_warp_mission(KpUi *ui, const char *text, int race, int base, int expansion, uint16_t *mission);
@@ -1882,14 +2143,61 @@ void kp_ui_menus_refused(KpUi *ui, uint16_t gluall);
  * StoreDeferredNetError 0x4748d0): network.tbl's string index (1-based) shown in an OK popup by the next glue screen,
  * 100 ms after it is activated (ActivateGlueScreen 0x4579b0's timer, FlushDeferredNetError 0x474980). */
 void kp_ui_menus_net_error(KpUi *ui, uint16_t network);
+/* SetGlueStateFromProvider 0x457e50: the glue state a network game's ready room or score screen goes back to, by the
+ * provider (Battle.net 4, a modem 20, the cable 21, the LAN's IPX, AppleTalk and UDP 10, any other the main menu 0). */
+int kp_ui_menus_provider_state(const KpUi *ui);
 /* FlushDeferredNetError 0x474980: the deferred report in an OK popup, then none (the glue's timer). */
 void kp_ui_menus_flush_net_error(KpUi *ui);
 /* CreateCampaignMissionGame 0x4bb6c0's draws of the glue's generator (FillProgramInfo 0x46f330's key and name): the
  * host's, once a mission history's cinematic row leads to a mission. */
 void kp_ui_menus_mission_draws(KpUi *ui);
-/* RunModal 0x4c35c0 of a loaded dialog with its procedure; done(result) runs once the dialog is destroyed. */
+/* The glue screens' shared steps for the screens of other files (kp_ui_menus.c): a state's screen run modally (prepare:
+ * the step between LoadDialog and the run, NULL none), EndGlueScreen 0x457b50 with the next state and the host's work,
+ * the popups (ShowOkPopup 0x460230, ShowOkCancelPopup 0x460330, CloseGluePopup 0x45fd20) and DecodeSpawnResources
+ * 0x4635d0's draws of the font key (decodes of them). */
+int32_t kp_ui_menus_open(KpUi *ui, const char *bin, KpUiInteract proc, KpUiModalDone done,
+	void (*prepare)(KpUi *ui, int32_t dialog));
+void kp_ui_menus_end(KpUi *ui, int next, int action);
+void kp_ui_menus_ok_popup(KpUi *ui, const uint8_t *text, KpUiModalDone done);
+void kp_ui_menus_ok_cancel_popup(KpUi *ui, const uint8_t *text, KpUiModalDone done);
+void kp_ui_menus_close_popup(KpUi *ui);
+void kp_ui_menus_key_draws(KpUi *ui, int decodes);
+/* FormatLobbyGameDescription 0x450ef0's and ShowGameDetails 0x459310's texts of a game's template (UTF-8, each of
+ * KP_UI_GAME_DETAIL bytes): its name (FindTemplateName 0x447a40), its label with ':' (FindTemplateLabel 0x447ac0) and its
+ * subtype (FormatTemplateSubtype 0x447bb0; total: the players Top vs Bottom divides); a replay's label empty and its
+ * subtype gluAll "Replay". 1, or 0 when no template has the type (the texts empty). */
+int kp_ui_game_texts(KpUi *ui, uint8_t type, uint8_t sub, uint16_t subtype, uint32_t total, int replay, uint8_t *name,
+	uint8_t *label, uint8_t *subtext);
+/* The chat room (glue state 3, kp_ui_lobby.c): its screen (RunLobbyScreen 0x451470; it ends with KP_UI_MENU_NETWORK
+ * when the game starts, in a race ready room's state 7..9 when a Use Map Settings game briefs first: the host opens the
+ * room over the game, kp_ui_ready_room_open) and its idle pass (LobbyUpdate 0x450d80, while it polls, a popup over it or not: the host
+ * calls it each frame, the oracle at the run's idle events and turns). The network glue's calls into it (the
+ * KpNetGame hooks): AppendLobbyChatLine 0x451140 of a formatted line (KP_UI_CHAT_*), RequestLobbyRefresh 0x451790,
+ * RequestLobbyPasswordRefresh 0x451780, SetLobbyLeaveReason 0x4506b0 (the reasons 0 booted .. 9 the map's
+ * authentication: the room closes with its text at the next pass), SetSlotDownloadPercent 0x4523a0 of a Storm ID,
+ * StartLobbyCountdown 0x47a160's display (seconds 5) and StopLobbyCountdown 0x47a210 (-1), OnLobbySwapSlots
+ * 0x471150's closing of the two slots' open drop-downs, LockLobbySlotsThunk 0x451770 (the countdown's lock). kp_ui_lobby_tick is the countdown's Win32 timer
+ * (LobbyCountdownTimerProc 0x47a1a0, kp_ui_menus_tick). */
+int32_t kp_ui_lobby_open(KpUi *ui);
+void kp_ui_lobby_idle(KpUi *ui);
+void kp_ui_lobby_line(KpUi *ui, int kind, const char *text);
+void kp_ui_lobby_refresh(KpUi *ui);
+void kp_ui_lobby_password_refresh(KpUi *ui);
+void kp_ui_lobby_leave(KpUi *ui, int reason);
+void kp_ui_lobby_download(KpUi *ui, int storm, int pct);
+void kp_ui_lobby_countdown(KpUi *ui, int seconds);
+void kp_ui_lobby_tick(KpUi *ui);
+void kp_ui_lobby_swap(KpUi *ui, int a, int b);
+void kp_ui_lobby_lock(KpUi *ui);
+/* RunModal 0x4c35c0 of a loaded dialog with its procedure (every capture released first); done(result) runs once the
+ * dialog is destroyed. */
 int32_t kp_ui_modal(KpUi *ui, const char *bin, KpUiInteract proc, KpUiModalDone done);
 void kp_ui_modal_destroyed(KpUi *ui, int32_t dialog);
+/* The open modal runs (a handler that may open one compares the count around the call). */
+int kp_ui_modal_count(const KpUi *ui);
+/* The rest of the handler that opened the topmost modal run (the original's code after its RunModal returns):
+ * then(ui, control) runs at the run's end, after its continuation. */
+void kp_ui_modal_then(KpUi *ui, KpUiCallback then, int32_t control);
 /* CenterGlueDialog 0x46c8a0 at a dialog's RECENTRE (its right and bottom still its size): on the 640x480 screen. */
 void kp_ui_centre_glue_dialog(KpUiControl *d);
 /* RunUiTimers 0x4c5a20's callbacks (kp_ui_tick) and the resumption of a pass a modal loop interrupted. */
@@ -2000,6 +2308,8 @@ void kp_ui_glue_activate(KpUi *ui, int32_t dialog, int theme);
 void kp_ui_glue_end(KpUi *ui, int next_theme);
 void kp_ui_glue_slide_in(KpUi *ui, int32_t dialog, const uint16_t *table, int count, uint16_t delay);
 void kp_ui_glue_slide_out(KpUi *ui, int32_t dialog);
+/* SlideGlueControl 0x4583c0: entry `index` of the last slide-in's table slides in (1) or out (0) again. */
+void kp_ui_glue_slide_control(KpUi *ui, int32_t dialog, int index, int in);
 /* The menus' CRT rand 0x4d14d4 (logged for the oracle). */
 uint32_t kp_ui_glue_rand(KpUi *ui);
 void kp_ui_glue_sounds(KpUi *ui);
@@ -2122,11 +2432,17 @@ void kp_ui_edit_set_margin(KpUi *ui, int32_t control, uint8_t x);
  * 0x481450 after SetEditText 0x4c8110). */
 size_t kp_ui_edit_cursor(KpUi *ui, int32_t control);
 void kp_ui_edit_scroll_home(KpUi *ui, int32_t control);
+/* SetEditColor 0x4c8100: an edit box's colour style (the mode's high nibble; style 1 is the insert mode). The chat
+ * line's clear after its Send (LobbyCommand 0x4509d0): no text, the cursor at its start. */
+void kp_ui_edit_set_colour(KpUi *ui, int32_t control, uint8_t style);
+void kp_ui_edit_clear(KpUi *ui, int32_t control);
 /* HitTestDialog 0x4c2090: the control under the event's cursor, the dialog itself, or -1. */
 int32_t kp_ui_hit_test(KpUi *ui, int32_t dialog, const KpUiEvent *e);
-/* SetEventCapture 0x4c3370 (control or -1 for an event type) and ReleaseControlReferences 0x4c3770. */
+/* SetEventCapture 0x4c3370 (control or -1 for an event type), ReleaseControlReferences 0x4c3770 and
+ * ReleaseAllCaptures 0x4c2c40 (each held capture's control gets user code 6). */
 void kp_ui_set_capture(KpUi *ui, int32_t control, int type);
 void kp_ui_release_refs(KpUi *ui, int32_t control);
+void kp_ui_release_captures(KpUi *ui);
 /* The minimap's orders (kp_ui_input.c): MinimapTargetClick 0x46d3a0 and RightClickOnMinimap 0x47f8d0 at a map point. */
 void kp_ui_minimap_target(KpUi *ui, int32_t x, int32_t y);
 /* PickUnitAtPoint 0x4bcd00: the unit a click at map (x, y) takes, or 0. */

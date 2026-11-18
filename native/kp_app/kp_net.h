@@ -67,6 +67,27 @@ static inline void kp_net_put32(uint8_t *p, uint32_t v)
 	kp_net_put16(p, v);
 	kp_net_put16(p + 2, v >> 16);
 }
+/* A fixed field's string length: its bytes up to the first NUL, at most max (strnlen is POSIX, not C99: the web build
+ * has none) */
+static inline size_t kp_net_text_len(const char *s, size_t max)
+{
+	size_t n = 0;
+	while (n < max && s[n] != 0) n++;
+	return n;
+}
+/* An ASCII letter's lower case (the C locale's tolower) */
+static inline int kp_net_lower(int c) { return c >= 'A' && c <= 'Z' ? c + ('a' - 'A') : c; }
+/* _strnicmp and _stricmp in the C locale (Storm's and the exe's name compares): <0, 0, >0 */
+static inline int kp_net_ncasecmp(const char *a, const char *b, size_t n)
+{
+	size_t k;
+	for (k = 0; k < n; k++) {
+		int x = kp_net_lower((unsigned char)a[k]), y = kp_net_lower((unsigned char)b[k]);
+		if (x != y || !x) return x - y;
+	}
+	return 0;
+}
+static inline int kp_net_casecmp(const char *a, const char *b) { return kp_net_ncasecmp(a, b, (size_t)-1); }
 
 #ifdef __cplusplus
 }

@@ -50,6 +50,7 @@ PLAYERS = 0x6726C8              # 12 player records of 36 bytes (custom.py)
 MULTIPLAYER = 0x672664
 LOBBY_ROWS, LOBBY_ROW_SIZE = 0x6681B0, 0xB0   # the chat room's 12 rows: +0 kind (5 the local human), +0x50 Storm ID
 ROW_REMOTE_HUMAN, ROW_LOCAL_HUMAN = 4, 5
+INITIAL_SEED = 0x673934         # SetInitialSeed 0x4781f0: the game's seed (a network game's from the host's 0x48)
 STORM_STATUS = 0x672670         # 8 Storm status words: bit 0x10000 present, 0x40000 in sync (ResolveDesync)
 RESOLVE_DESYNC = 0x47A630       # drops the minority after a sync mismatch or the timeout dialog's Drop Players
 TIMEOUT_DIALOG = 0x675010       # rez\timeout.bin while the game waits for lagging players (0 otherwise)
@@ -134,7 +135,8 @@ class Action:
 class Player:
     name: str                         # the ID (profile) name, also the host name
     ip: str
-    role: str = "join"                # host | join
+    role: str = "join"                # host | join | external (a live peer the emulator does not run, over --bridge:
+                                      # Koprulu; an external player hosts when no player is the host)
     has_map: bool = True              # the map is in its overlay (False: the host must send it)
     auto_drop: bool = False           # presses Drop Players once the timeout dialog's countdown ended
     actions: list[Action] = field(default_factory=list)
@@ -564,6 +566,7 @@ class Driver:
         from .custom import _setup_snapshot
         if "start_game" not in self.setup:
             self.setup["start_game"] = _setup_snapshot(self.m)
+            self.setup["start_game"]["seed"] = self.m.r32(INITIAL_SEED)
             self.setup["multiplayer"] = self.m.r8(MULTIPLAYER)
 
     def capture(self, label: str):
@@ -804,7 +807,8 @@ class Driver:
     def join(self):
         spec = self.spec
         self.to_join_screen()
-        host = next(p for p in spec.players if p.role == "host")
+        host = next((p for p in spec.players if p.role == "host"), None) or \
+            next(p for p in spec.players if p.role == "external")
 
         def listed():
             return any(t.startswith(host.name) for t in self.list_items(JOIN_LIST))
@@ -1001,6 +1005,8 @@ def run_game(spec: GameSpec, out: Path) -> dict:
     lan_ = lan.VirtualLan(spec.seed, spec.delay_us, spec.jitter_us, spec.loss, out)
     events: list = []
     for p in spec.players:
+        if p.role == "external":  # the bridge adds its peer when it first sends
+            continue
         lan_.add_host(p.name, lan.ip_int(p.ip))
         for a in p.actions:
             if a.kind == "cut":  # exact: the switch compares each datagram's send time with it
@@ -1012,6 +1018,8 @@ def run_game(spec: GameSpec, out: Path) -> dict:
     try:
         bridge = lan.LoopbackBridge(lan_, spec.bridge_base) if spec.bridge_base else None
         for i, p in enumerate(spec.players):
+            if p.role == "external":
+                continue
             parent, child = ctx.Pipe()
             proc = ctx.Process(target=instance_main, args=(child, spec.to_json(), i, str(out)), name=f"sc-{p.name}")
             proc.start()
@@ -1045,16 +1053,16 @@ def run_game(spec: GameSpec, out: Path) -> dict:
 def compare(out: Path, spec: GameSpec) -> dict:
     """The players' frame digests (trace.jsonl) frame by frame and their state dumps by the decoder's categories."""
     traces = {}
-    for p in spec.players:
-        path = out / p.name / "trace.jsonl"
+    names = [p.name for p in spec.players if p.role != "external"]
+    for name in names:
+        path = out / name / "trace.jsonl"
         rows = {}
         if path.exists():
             for line in path.read_text().splitlines():
                 r = json.loads(line)
                 r.pop("t", None)
                 rows[r["f"]] = r
-        traces[p.name] = rows
-    names = [p.name for p in spec.players]
+        traces[name] = rows
     common = sorted(set.intersection(*(set(t) for t in traces.values()))) if traces else []
     first_diff = next((f for f in common if any(traces[n][f] != traces[names[0]][f] for n in names[1:])), None)
     res = {"frames_compared": len(common), "last_common_frame": common[-1] if common else None,

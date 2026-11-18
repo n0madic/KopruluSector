@@ -901,7 +901,8 @@ int kp_ui_tick(KpUi *ui, uint32_t now)
 	int fired;
 	ui->now = now;
 	fired = kp_ui_run_timers(&ui->timers, now, fire_timer, ui);
-	kp_ui_music_tick(ui); /* the pump's Win32 timer and idle work of the music */
+	kp_ui_music_tick(ui); /* the pump's Win32 timers and idle work: the music's, the glue's */
+	kp_ui_menus_tick(ui);
 	return fired;
 }
 
@@ -1071,6 +1072,14 @@ void kp_ui_release_refs(KpUi *ui, int32_t c)
 	}
 	for (k = 0; k < 4; k++) {
 		if (ui->press[k].control == c) ui->press[k].control = -1;
+	}
+}
+
+void kp_ui_release_captures(KpUi *ui)
+{
+	int k;
+	for (k = 0; k < KP_UI_EVENT_TYPES; k++) {
+		if (ui->capture[k] >= 0) kp_ui_set_capture(ui, -1, k);
 	}
 }
 

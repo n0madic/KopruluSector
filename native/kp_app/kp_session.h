@@ -271,6 +271,10 @@ int kp_compare_ntfs(const char *a, const char *b);
 /* The .rep files of dir as EnumerateReplayFiles 0x4803d0 finds them: on Windows none hidden or of the system, elsewhere
  * none starting with '.'; in NTFS's order (kp_compare_ntfs). NULL with count 0 as kp_list_files'. */
 char **kp_list_replays(const char *dir, int *count);
+/* Every file (folders 0) or every folder (1) of dir, hidden ones left out as kp_list_files', in NTFS's order
+ * (kp_compare_ntfs): a folder as FindFirstFileA enumerates it (EnumerateFiles 0x49aa20). NULL with count 0 as
+ * kp_list_files'. */
+char **kp_list_ntfs(const char *dir, int folders, int *count);
 void kp_list_files_free(char **names, int count);
 
 /* --- the profile: the login's IDs with their campaign progress, the logged-in ID, the saved games, the video options,
@@ -282,6 +286,7 @@ void kp_list_files_free(char **names, int count);
 #define KP_PROFILE_SAVE_NAME KP_UI_SAVE_NAME
 #define KP_PROFILE_LOCALE 8 /* a language's ID ("ruRU", ASCII) and its NUL */
 #define KP_PROFILE_CUSTOM 32 /* a Play Custom registry value (SRegLoadString's 32 bytes) and its NUL */
+#define KP_PROFILE_SPEED 64  /* the speed's registry value (a gluAll name in UTF-8; KP_UI_SPEED_TEXT) */
 /* A saved game: its ID (the original's save\<name>\ folder, BuildSaveDirectory 0x499e80; "" a run's without a login)
  * and its name. */
 typedef struct {
@@ -335,8 +340,11 @@ typedef struct {
 	                                        * the system's, else the base's; "" in one older than schema 8 */
 	char speech_locale[KP_PROFILE_LOCALE]; /* and for the speech */
 	/* Play Custom's registry values (the game type list's "Custom Type", the subtype list's "Game Subtype": their
-	 * selected texts when the screen closed, UTF-8), "" none and in one older than schema 9 */
+	 * selected texts when the screen closed, UTF-8), "" none and in one older than schema 9; the multiplayer Create
+	 * Game's ("Game Type" and the speed slider's "Game Speed", its gluAll name), "" none and in one older than schema
+	 * 10 */
 	char custom_type[KP_PROFILE_CUSTOM], game_subtype[KP_PROFILE_CUSTOM];
+	char net_type[KP_PROFILE_CUSTOM], game_speed[KP_PROFILE_SPEED];
 } KpProfile;
 
 void kp_profile_init(KpProfile *p);

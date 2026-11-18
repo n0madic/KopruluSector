@@ -16,6 +16,8 @@
 #ifdef _WIN32
 #include <direct.h>
 #include <io.h>
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
 #else
 #include <dirent.h>
 #include <sys/stat.h>
@@ -30,7 +32,7 @@ static const KpSuite *const SUITES[] = {
 	&kp_suite_flow, &kp_suite_locale, &kp_suite_speech, &kp_suite_script, &kp_suite_res, &kp_suite_formats,
 	&kp_suite_original, &kp_suite_chk, &kp_suite_cine, &kp_suite_scr, &kp_suite_movies, &kp_suite_encoders,
 	&kp_suite_convert, &kp_suite_hd, &kp_suite_rep, &kp_suite_gametype, &kp_suite_multiplayer, &kp_suite_seats,
-	&kp_suite_snet, &kp_suite_net_trace,
+	&kp_suite_snet, &kp_suite_net_trace, &kp_suite_lobby_trace, &kp_suite_netgame, &kp_suite_net_live,
 };
 #define SUITE_COUNT ((int)(sizeof SUITES / sizeof SUITES[0]))
 #define DEFAULT_LOGS "build/c-tests"
@@ -173,6 +175,8 @@ void kp_t_fail(KpT *T, const char *fmt, ...)
 	if (!T->message[0]) snprintf(T->message, sizeof T->message, "assertion failed");
 	longjmp(T->catch_.buf, 1);
 }
+
+void kp_t_fail_text(void *ud, const char *text) { kp_t_fail((KpT *)ud, "%s", text); }
 
 void kp_t_skip(KpT *T, const char *fmt, ...)
 {
@@ -496,6 +500,17 @@ int kp_t_mkdir(const char *path)
 	return _mkdir(path);
 #else
 	return mkdir(path, 0700);
+#endif
+}
+
+int kp_t_hide(const char *path)
+{
+#ifdef _WIN32
+	DWORD a = GetFileAttributesA(path);
+	return a != INVALID_FILE_ATTRIBUTES && SetFileAttributesA(path, a | FILE_ATTRIBUTE_HIDDEN) ? 0 : -1;
+#else
+	const char *slash = strrchr(path, '/');
+	return (slash ? slash[1] : path[0]) == '.' ? 0 : -1;
 #endif
 }
 

@@ -15,12 +15,13 @@
 
 #include "kp_json.h"
 #include "kp_net.h"
+#include "kp_oracle_net.h"
 #include "kp_sha256.h"
 #include "kp_snet.h"
 #include "kp_snp_udp.h"
 
 #define INDEX "tests/golden/oracle/net/index.json"
-#define GOLDEN_VERSION 5 /* tools/net_check.py's */
+#define GOLDEN_VERSION KP_ORACLE_NET_VERSION
 #define GOLDEN_DIR "tests/golden/oracle/net/"
 #define TICK_BASE 3600000u      /* the emulator's GetTickCount at virtual time 0 (hle/kernel32.py) */
 #define TIME_QUERY_COST_US 50 /* what the emulator's GetTickCount charges the clock before it reads it */

@@ -1,23 +1,19 @@
 /* test_snet: Storm's SNet (kp_snet.h) and the UDP provider (kp_snp_udp.h) over the in-process LAN (kp_net_lan.h)
- * and over the system's sockets (kp_net_sock.h); phase N, stage N2. Seats are whole SNet stacks on hosts 10.0.0.1 and
- * up; the world pumps each one as Storm's pump thread does (when a datagram arrived or a send signalled it, and when
- * its timer ran out) and plays StarCraft's lockstep: two turns in transit, a turn sent for each turn received. */
+ * and over the system's sockets (kp_net_sock.h); phase N, stage N2. Seats are whole SNet stacks in the network tests'
+ * world (kp_net_world.h), which pumps each one as Storm's pump thread does; each seat's frame plays StarCraft's
+ * lockstep: two turns in transit, a turn sent for each turn received. */
 #include "kp_test.h"
 
-#include "kp_net.h"
-#include "kp_net_lan.h"
-#include "kp_net_sock.h"
-#include "kp_snet.h"
-#include "kp_snp_udp.h"
+#include "kp_net_world.h"
 
-#define PROGRAM 0x53544152u /* 'STAR' */
-#define VERSION 0xd5u
-#define START 1000000u /* the clock at the start: GetTickCount of a running machine */
-#define SEATS 8
-#define IP(k) (0x0a000001u + (uint32_t)(k))
+#define PROGRAM KP_NET_WORLD_PROGRAM
+#define VERSION KP_NET_WORLD_VERSION
+#define START KP_NET_WORLD_START
+#define SEATS KP_NET_WORLD_SEATS
+#define IP(k) KP_NET_WORLD_IP(k)
 #define TURN_SIZE 8
 #define IN_TRANSIT 2
-#define STEP 10 /* ms between two game frames of the world */
+#define STEP KP_NET_WORLD_STEP
 #define MAX_TURNS 1024
 #define REASON_LEAVE 3u
 #define REASON_DROP 0x40000006u
@@ -31,14 +27,8 @@
 typedef struct World World;
 
 typedef struct {
-	World *w;
-	int index, host;
-	KpSnpUdp snp;
-	KpSnet *net;
-	KpNetSock *sock; /* a world of sockets: the seat's */
-	uint32_t wake;
-	int signalled;
-	int id; /* the seat's SNet id, -1 outside a game */
+	KpNetSeat n; /* first: the world's callbacks cast it back */
+	int id;      /* the seat's SNet id, -1 outside a game */
 	int playing;
 	uint32_t sent;              /* turns sent */
 	uint32_t received;          /* turns received (successful kp_snet_receive_turns) */
@@ -54,136 +44,28 @@ typedef struct {
 } Seat;
 
 struct World {
-	KpT *T;
-	KpNetLan *lan; /* NULL: a world of sockets, on the system's clock */
+	KpNetWorld n; /* its seats are seat[k].n */
 	Seat seat[SEATS];
-	int count;
-	int in_join; /* the seat inside kp_snet_join_game, -1 */
-	uint64_t trace; /* FNV-1a of every datagram sent: time, host, socket, destination, bytes */
-	long datagrams;
 };
 
-static uint64_t fnv(uint64_t h, const void *p, size_t n)
-{
-	const uint8_t *b = (const uint8_t *)p;
-	while (n--) h = (h ^ *b++) * 0x100000001b3ull;
-	return h;
-}
+#define fnv kp_net_world_fnv
 
-static void tap(void *ud, uint32_t at, int host, int socket, const KpNetAddr *to, const uint8_t *data, size_t size)
-{
-	World *w = (World *)ud;
-	w->trace = fnv(w->trace, &at, sizeof at);
-	w->trace = fnv(w->trace, &host, sizeof host);
-	w->trace = fnv(w->trace, &socket, sizeof socket);
-	w->trace = fnv(w->trace, to->b, sizeof to->b);
-	w->trace = fnv(w->trace, data, size);
-	w->datagrams++;
-}
-
-static void seat_deliver(void *ud, int socket, const KpNetAddr *from, const uint8_t *data, size_t size)
-{
-	Seat *st = (Seat *)ud;
-	if (kp_snp_udp_input(&st->snp, socket, from, data, size)) st->signalled = 1;
-}
-
-static uint32_t now_of(World *w) { return w->lan ? kp_net_lan_now(w->lan) : kp_net_sock_now(); }
-
-static uint32_t seat_now(void *ud) { return now_of(((Seat *)ud)->w); }
-
-/* The pump thread's passes of the seats that are due: signalled, or their timer ran out. */
-static void pump_due(World *w)
-{
-	int k;
-	for (k = 0; k < w->count; k++) {
-		Seat *st = &w->seat[k];
-		uint32_t now = now_of(w), t;
-		int sig;
-		if (k == w->in_join) continue; /* SNetJoinGame holds the lock and pumps itself */
-		sig = st->signalled | kp_snet_take_signal(st->net);
-		if (!sig && (st->wake == KP_SNET_INFINITE || (int32_t)(now - st->wake) < 0)) continue;
-		st->signalled = 0;
-		t = kp_snet_pump(st->net, sig);
-		st->wake = t == KP_SNET_INFINITE ? KP_SNET_INFINITE : now + t;
-	}
-}
+static uint32_t now_of(World *w) { return kp_net_world_now(&w->n); }
+static void pump_due(World *w) { kp_net_world_pump(&w->n); }
+static void network(World *w, uint32_t to) { kp_net_world_network(&w->n, to); }
+static void advance(World *w, uint32_t to) { kp_net_world_advance(&w->n, to); }
 
 static int frame(Seat *st);
 
-/* A world of sockets until `to` on the system's clock: what arrived at each seat (the joining one too: its provider
- * keeps what arrives for its pump), the passes due, a millisecond's wait while nothing comes. */
-static void sockets(World *w, uint32_t to)
-{
-	int turn = 0;
-	for (;;) {
-		int k, got = 0, n;
-		for (k = 0; k < w->count; k++) {
-			n = kp_net_sock_wait(w->seat[k].sock, 0, seat_deliver, &w->seat[k]);
-			kp_t_ok(w->T, n >= 0, "seat %d's sockets fail", k);
-			got += n;
-		}
-		pump_due(w);
-		if ((int32_t)(kp_net_sock_now() - to) >= 0) return;
-		if (!got) {
-			turn = (turn + 1) % w->count;
-			n = kp_net_sock_wait(w->seat[turn].sock, 1, seat_deliver, &w->seat[turn]);
-			kp_t_ok(w->T, n >= 0, "seat %d's sockets fail", turn);
-		}
-	}
-}
+static void world_frame(KpNetSeat *s) { frame((Seat *)s); }
 
-/* Runs the network until `to`: deliveries and timers in time order, no game frames. */
-static void network(World *w, uint32_t to)
+static void world_event(KpNetSeat *s, const KpSnetEvent *e)
 {
-	if (!w->lan) {
-		sockets(w, to);
-		return;
-	}
-	for (;;) {
-		uint32_t next = kp_net_lan_next(w->lan);
-		int k;
-		pump_due(w);
-		for (k = 0; k < w->count; k++) {
-			uint32_t wake = w->seat[k].wake;
-			if (k != w->in_join && wake != KP_SNET_INFINITE && (next == KP_NET_LAN_IDLE || (int32_t)(wake - next) < 0))
-				next = wake;
-		}
-		if (next == KP_NET_LAN_IDLE || (int32_t)(next - to) > 0) break;
-		if ((int32_t)(next - kp_net_lan_now(w->lan)) < 0) next = kp_net_lan_now(w->lan);
-		kp_net_lan_run(w->lan, next);
-	}
-	kp_net_lan_run(w->lan, to);
-	pump_due(w);
-}
-
-/* Time until `to`: every STEP ms each playing seat's frame, then the network. StarCraft's turn loop runs in the lobby
- * too, and the turn it sends each frame wakes Storm's pump thread: after a retransmission Storm's timers leave the
- * thread waiting for that signal (RunNetTimers puts no time for it in its result). */
-static void advance(World *w, uint32_t to)
-{
-	while ((int32_t)(now_of(w) - to) < 0) {
-		uint32_t next = now_of(w) + STEP;
-		int k;
-		for (k = 0; k < w->count; k++)
-			if (k != w->in_join) frame(&w->seat[k]);
-		if ((int32_t)(next - to) > 0) next = to;
-		network(w, next);
-	}
-}
-
-static void seat_sleep(void *ud, uint32_t ms)
-{
-	Seat *st = (Seat *)ud;
-	advance(st->w, now_of(st->w) + ms);
-}
-
-static void seat_event(void *ud, const KpSnetEvent *e)
-{
-	Seat *st = (Seat *)ud;
+	Seat *st = (Seat *)s;
 	if (e->id == KP_SNET_EVENT_TEMPLATE) st->templates++;
 	else if (e->id == KP_SNET_EVENT_PLAYER) st->players++;
 	else if (e->id == KP_SNET_EVENT_REMOVED && e->player >= 0 && e->player < SEATS) {
-		st->removed[e->player] = (int)kp_snet_local_turn(st->net) + 1;
+		st->removed[e->player] = (int)kp_snet_local_turn(st->n.net) + 1;
 		st->reason[e->player] = e->size == 4 ? kp_net_get32(e->data) : 0xdeadu;
 	}
 }
@@ -192,12 +74,8 @@ static void world_free(void *p)
 {
 	World *w = (World *)p;
 	int k;
-	for (k = 0; k < w->count; k++) {
-		kp_snet_free(w->seat[k].net);
-		kp_snp_udp_free(&w->seat[k].snp);
-	}
-	for (k = 0; k < SEATS; k++) kp_net_sock_close(w->seat[k].sock);
-	kp_net_lan_free(w->lan);
+	kp_net_world_release(&w->n);
+	for (k = 0; k < SEATS; k++) kp_net_sock_close(w->seat[k].n.sock);
 	free(w);
 }
 
@@ -206,30 +84,18 @@ static World *world_alloc(KpT *T)
 	World *w = (World *)calloc(1, sizeof *w);
 	kp_t_ok(T, w != NULL, "out of memory");
 	kp_t_defer(T, world_free, w);
-	w->T = T;
-	w->in_join = -1;
-	w->trace = 0xcbf29ce484222325ull;
+	kp_net_world_init(&w->n, T, kp_t_fail_text, T);
+	w->n.frame = world_frame;
+	w->n.event = world_event;
 	return w;
 }
 
 /* The next seat's SNet stack over `io`. */
 static Seat *seat_add(World *w, const KpNetIo *io)
 {
-	Seat *st = &w->seat[w->count];
-	KpSnetHooks h;
-	st->w = w;
-	st->index = w->count;
+	Seat *st = &w->seat[w->n.count];
 	st->id = -1;
-	st->wake = KP_SNET_INFINITE;
-	kp_snp_udp_init(&st->snp, io, PROGRAM, VERSION, 8);
-	memset(&h, 0, sizeof h);
-	h.now = seat_now;
-	h.sleep = seat_sleep;
-	h.event = seat_event;
-	h.ud = st;
-	st->net = kp_snet_new(&st->snp, &h, PROGRAM, VERSION);
-	kp_t_ok(w->T, st->net != NULL, "out of memory");
-	w->count++;
+	kp_net_world_add(&w->n, &st->n, io);
 	return st;
 }
 
@@ -237,15 +103,10 @@ static World *world_new(KpT *T, uint64_t seed, int seats)
 {
 	World *w = world_alloc(T);
 	int k;
-	w->lan = kp_net_lan_new(seed, START);
-	kp_t_ok(T, w->lan != NULL, "out of memory");
-	kp_net_lan_tap(w->lan, tap, w);
+	kp_net_world_lan(&w->n, seed);
 	for (k = 0; k < seats; k++) {
-		Seat *st = &w->seat[k];
-		KpNetIo io;
-		st->host = kp_net_lan_add(w->lan, IP(k), seat_deliver, st);
-		io = kp_net_lan_io(w->lan, st->host);
-		seat_add(w, &io);
+		w->seat[k].id = -1;
+		kp_net_world_add_lan(&w->n, &w->seat[k].n);
 	}
 	return w;
 }
@@ -255,9 +116,9 @@ static void host(World *w, int k, const char *name, const char *password, uint32
 	static const uint8_t tmpl[32] = {2, 0, 1, 0, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 		0, 0, 0, 0};
 	Seat *st = &w->seat[k];
-	int ok = kp_snet_create_game(st->net, name, password, "stats", 0x10002, 0, 0, tmpl, sizeof tmpl, max_players,
+	int ok = kp_snet_create_game(st->n.net, name, password, "stats", 0x10002, 0, 0, tmpl, sizeof tmpl, max_players,
 		"Host", "", &st->id);
-	kp_t_ok(w->T, ok, "create game: error %#x", kp_snet_error(st->net));
+	kp_t_ok(w->n.T, ok, "create game: error %#x", kp_snet_error(st->n.net));
 	pump_due(w);
 }
 
@@ -268,10 +129,10 @@ static int enter(World *w, int k, const char *name, const char *password, uint32
 	char player[16];
 	int ok;
 	snprintf(player, sizeof player, "Seat %d", k);
-	w->in_join = k;
-	ok = kp_snet_join_game(st->net, 0, name, password, player, "", &st->id);
-	w->in_join = -1;
-	if (error) *error = ok ? 0 : kp_snet_error(st->net);
+	w->n.in_join = k;
+	ok = kp_snet_join_game(st->n.net, 0, name, password, player, "", &st->id);
+	w->n.in_join = -1;
+	if (error) *error = ok ? 0 : kp_snet_error(st->n.net);
 	pump_due(w);
 	return ok;
 }
@@ -288,20 +149,20 @@ static void join(World *w, int k, const char *name)
 {
 	uint32_t error;
 	int ok = try_join(w, k, name, "", &error); /* before the message reads error: arguments have no order */
-	kp_t_ok(w->T, ok, "seat %d's join: error %#x", k, error);
+	kp_t_ok(w->n.T, ok, "seat %d's join: error %#x", k, error);
 }
 
 static void send_turn(Seat *st)
 {
 	uint8_t t[TURN_SIZE];
 	int ok;
-	t[0] = (uint8_t)st->index;
+	t[0] = (uint8_t)st->n.index;
 	t[1] = 0x05;
 	kp_net_put32(t + 2, st->sent);
 	t[6] = 0xab;
 	t[7] = 0xcd;
-	ok = kp_snet_send_turn(st->net, t, sizeof t); /* before the message reads the error */
-	kp_t_ok(st->w->T, ok, "seat %d sends: error %#x", st->index, kp_snet_error(st->net));
+	ok = kp_snet_send_turn(st->n.net, t, sizeof t); /* before the message reads the error */
+	kp_t_ok(st->n.w->T, ok, "seat %d sends: error %#x", st->n.index, kp_snet_error(st->n.net));
 	st->sent++;
 }
 
@@ -319,18 +180,18 @@ static int frame(Seat *st)
 	uint32_t sizes[SEATS], status[SEATS];
 	int k;
 	if (!st->playing) return 0;
-	if (!kp_snet_receive_turns(st->net, 0, SEATS, data, sizes, status)) {
-		uint32_t e = kp_snet_error(st->net);
-		kp_t_ok(st->w->T, e == KP_SNET_ERROR_NO_DATA, "seat %d receives: error %#x", st->index, e);
+	if (!kp_snet_receive_turns(st->n.net, 0, SEATS, data, sizes, status)) {
+		uint32_t e = kp_snet_error(st->n.net);
+		kp_t_ok(st->n.w->T, e == KP_SNET_ERROR_NO_DATA, "seat %d receives: error %#x", st->n.index, e);
 		return 0;
 	}
 	for (k = 0; k < SEATS; k++) {
 		if (!data[k]) continue;
-		kp_t_ok(st->w->T, sizes[k] == TURN_SIZE && data[k][6] == 0xab, "seat %d: slot %d's turn is %u bytes", st->index, k,
-			sizes[k]);
+		kp_t_ok(st->n.w->T, sizes[k] == TURN_SIZE && data[k][6] == 0xab, "seat %d: slot %d's turn is %u bytes",
+			st->n.index, k, sizes[k]);
 		if (st->last[k])
-			kp_t_ok(st->w->T, kp_net_get32(data[k] + 2) == st->last[k], "seat %d: slot %d's turn %u after %u", st->index,
-				k, kp_net_get32(data[k] + 2), st->last[k] - 1);
+			kp_t_ok(st->n.w->T, kp_net_get32(data[k] + 2) == st->last[k], "seat %d: slot %d's turn %u after %u",
+				st->n.index, k, kp_net_get32(data[k] + 2), st->last[k] - 1);
 		st->last[k] = kp_net_get32(data[k] + 2) + 1;
 		st->turns = fnv(st->turns, &k, sizeof k);
 		st->turns = fnv(st->turns, data[k], sizes[k]);
@@ -386,8 +247,8 @@ static Listing listing(World *w, int k)
 	Listing l;
 	uint32_t hint = 0;
 	memset(&l, 0, sizeof l);
-	kp_t_ok(w->T, kp_snet_enum_games(w->seat[k].net, list_game, &l, &hint), "enum");
-	kp_t_ok(w->T, hint == KP_SNP_ENUM_HINT, "the hint %u", hint);
+	kp_t_ok(w->n.T, kp_snet_enum_games(w->seat[k].n.net, list_game, &l, &hint), "enum");
+	kp_t_ok(w->n.T, hint == KP_SNP_ENUM_HINT, "the hint %u", hint);
 	return l;
 }
 
@@ -415,14 +276,14 @@ static void game_list_follows_the_advertisements(KpT *T)
 	advance(w, now_of(w) + 100);
 	kp_t_ok(T, listing(w, 2).count == 1, "the game listed again after the request");
 	/* a full or closed game is not listed */
-	kp_t_ok(T, kp_snet_set_game_mode(w->seat[0].net, KP_SNET_MODE_CLOSED | KP_SNET_MODE_ADVERTISED, 0), "set mode");
+	kp_t_ok(T, kp_snet_set_game_mode(w->seat[0].n.net, KP_SNET_MODE_CLOSED | KP_SNET_MODE_ADVERTISED, 0), "set mode");
 	advance(w, now_of(w) + 100);
 	kp_t_ok(T, listing(w, 2).count == 0, "a closed game is listed");
 	/* leaving stops the advertisement */
-	kp_t_ok(T, kp_snet_set_game_mode(w->seat[0].net, KP_SNET_MODE_ADVERTISED, 0), "set mode");
+	kp_t_ok(T, kp_snet_set_game_mode(w->seat[0].n.net, KP_SNET_MODE_ADVERTISED, 0), "set mode");
 	advance(w, now_of(w) + 100);
 	kp_t_ok(T, listing(w, 2).count == 1, "the reopened game is listed");
-	kp_t_ok(T, kp_snet_leave_game(w->seat[0].net, REASON_LEAVE), "leave");
+	kp_t_ok(T, kp_snet_leave_game(w->seat[0].n.net, REASON_LEAVE), "leave");
 	advance(w, now_of(w) + 100);
 	kp_t_ok(T, listing(w, 2).count == 0, "the left game is listed");
 }
@@ -519,7 +380,7 @@ static uint64_t lossy_game(KpT *T, uint64_t seed, int n, uint64_t *turns)
 	KpNetLanStats st;
 	uint32_t least;
 	int k;
-	kp_net_lan_link(w->lan, 2, 6, 100);
+	kp_net_lan_link(w->n.lan, 2, 6, 100);
 	host(w, 0, "Koprulu", "", (uint32_t)n);
 	for (k = 1; k < n; k++) join(w, k, "Koprulu");
 	for (k = 0; k < n; k++) start_playing(&w->seat[k]);
@@ -533,10 +394,10 @@ static uint64_t lossy_game(KpT *T, uint64_t seed, int n, uint64_t *turns)
 	for (k = 1; k < n; k++)
 		kp_t_ok(T, w->seat[k].by_turn[least - 1] == w->seat[0].by_turn[least - 1], "seat %d's turns differ from seat 0's",
 			k);
-	st = kp_net_lan_stats(w->lan);
+	st = kp_net_lan_stats(w->n.lan);
 	kp_t_ok(T, st.lost > 50, "only %ld datagrams lost", st.lost);
 	*turns = w->seat[0].by_turn[least - 1];
-	return w->trace;
+	return w->n.trace;
 }
 
 static void four_seats_with_loss_are_deterministic(KpT *T)
@@ -577,7 +438,7 @@ static void messages_keep_their_order(KpT *T)
 	int k, from;
 	const uint8_t *data;
 	uint32_t size;
-	kp_net_lan_link(w->lan, 2, 8, 150);
+	kp_net_lan_link(w->n.lan, 2, 8, 150);
 	host(w, 0, "Koprulu", "", 3);
 	start_playing(&w->seat[0]);
 	join(w, 1, "Koprulu");
@@ -586,32 +447,32 @@ static void messages_keep_their_order(KpT *T)
 	start_playing(&w->seat[2]);
 	for (k = 0; k < 20; k++) {
 		snprintf(text, sizeof text, "m%d", k);
-		kp_t_ok(T, kp_snet_send_message(w->seat[0].net, k % 2 ? -1 : -2, text, (uint32_t)strlen(text) + 1),
+		kp_t_ok(T, kp_snet_send_message(w->seat[0].n.net, k % 2 ? -1 : -2, text, (uint32_t)strlen(text) + 1),
 			"send message");
 	}
 	snprintf(text, sizeof text, "direct");
-	kp_t_ok(T, kp_snet_send_message(w->seat[1].net, 2, text, (uint32_t)strlen(text) + 1), "send to 2");
-	kp_t_ok(T, !kp_snet_send_message(w->seat[1].net, 5, text, 1) && kp_snet_error(w->seat[1].net) ==
+	kp_t_ok(T, kp_snet_send_message(w->seat[1].n.net, 2, text, (uint32_t)strlen(text) + 1), "send to 2");
+	kp_t_ok(T, !kp_snet_send_message(w->seat[1].n.net, 5, text, 1) && kp_snet_error(w->seat[1].n.net) ==
 		KP_SNET_ERROR_BAD_PLAYER, "send to an unknown player");
 	advance(w, now_of(w) + 5000);
 	for (k = 0; k < 20; k++) {
-		kp_t_ok(T, kp_snet_receive_message(w->seat[1].net, &from, &data, &size), "seat 1's message %d", k);
+		kp_t_ok(T, kp_snet_receive_message(w->seat[1].n.net, &from, &data, &size), "seat 1's message %d", k);
 		snprintf(text, sizeof text, "m%d", k);
 		kp_t_ok(T, from == 0 && strcmp((const char *)data, text) == 0, "seat 1's message %d: \"%s\" from %d", k,
 			(const char *)data, from);
 	}
-	kp_t_ok(T, !kp_snet_receive_message(w->seat[1].net, &from, &data, &size) &&
-		kp_snet_error(w->seat[1].net) == KP_SNET_ERROR_NO_DATA, "seat 1 has more messages");
+	kp_t_ok(T, !kp_snet_receive_message(w->seat[1].n.net, &from, &data, &size) &&
+		kp_snet_error(w->seat[1].n.net) == KP_SNET_ERROR_NO_DATA, "seat 1 has more messages");
 	/* the loopback ones: odd messages went to the host too */
 	for (k = 1; k < 20; k += 2) {
-		kp_t_ok(T, kp_snet_receive_message(w->seat[0].net, &from, &data, &size), "the host's message %d", k);
+		kp_t_ok(T, kp_snet_receive_message(w->seat[0].n.net, &from, &data, &size), "the host's message %d", k);
 		snprintf(text, sizeof text, "m%d", k);
 		kp_t_ok(T, from == 0 && strcmp((const char *)data, text) == 0, "the host's message: \"%s\"", (const char *)data);
 	}
 	/* seat 2: the host's twenty and seat 1's one, each sender's in order */
 	{
 		int host_n = 0, direct = 0;
-		while (kp_snet_receive_message(w->seat[2].net, &from, &data, &size)) {
+		while (kp_snet_receive_message(w->seat[2].n.net, &from, &data, &size)) {
 			if (from == 1) {
 				direct++;
 				kp_t_ok(T, strcmp((const char *)data, "direct") == 0, "seat 1's message");
@@ -629,13 +490,13 @@ static void leave_is_seen_at_the_same_turn(KpT *T)
 {
 	World *w = world_new(T, 5, 4);
 	int k, at = 0;
-	kp_net_lan_link(w->lan, 2, 10, 50);
+	kp_net_lan_link(w->n.lan, 2, 10, 50);
 	host(w, 0, "Koprulu", "", 4);
 	for (k = 1; k < 4; k++) join(w, k, "Koprulu");
 	for (k = 0; k < 4; k++) start_playing(&w->seat[k]);
 	play(w, 1500);
 	w->seat[2].playing = 0;
-	kp_t_ok(T, kp_snet_leave_game(w->seat[2].net, REASON_LEAVE), "leave");
+	kp_t_ok(T, kp_snet_leave_game(w->seat[2].n.net, REASON_LEAVE), "leave");
 	play(w, 3000);
 	for (k = 0; k < 4; k++) {
 		if (k == 2) continue;
@@ -665,12 +526,12 @@ static void host_leaves_and_the_lowest_id_hosts(KpT *T)
 	for (k = 0; k < 3; k++) start_playing(&w->seat[k]);
 	play(w, 1000);
 	w->seat[0].playing = 0;
-	kp_t_ok(T, kp_snet_leave_game(w->seat[0].net, REASON_LEAVE), "leave");
+	kp_t_ok(T, kp_snet_leave_game(w->seat[0].n.net, REASON_LEAVE), "leave");
 	play(w, 2000);
-	kp_t_ok(T, kp_snet_is_host(w->seat[1].net, 1) == 1 && kp_snet_is_host(w->seat[2].net, 1) == 1 &&
-			kp_snet_is_host(w->seat[2].net, 2) == 0,
-		"host flags after the host left: %d %d %d", kp_snet_is_host(w->seat[1].net, 1),
-		kp_snet_is_host(w->seat[2].net, 1), kp_snet_is_host(w->seat[2].net, 2));
+	kp_t_ok(T, kp_snet_is_host(w->seat[1].n.net, 1) == 1 && kp_snet_is_host(w->seat[2].n.net, 1) == 1 &&
+			kp_snet_is_host(w->seat[2].n.net, 2) == 0,
+		"host flags after the host left: %d %d %d", kp_snet_is_host(w->seat[1].n.net, 1),
+		kp_snet_is_host(w->seat[2].n.net, 1), kp_snet_is_host(w->seat[2].n.net, 2));
 	/* the new host advertises the game: a fourth player could find it */
 	advance(w, now_of(w) + 200);
 	l = listing(w, 2);
@@ -698,21 +559,21 @@ static void joins_are_refused(KpT *T)
 		World *v = world_new(T, 8, 2);
 		host(v, 0, "Open", "", 2);
 		advance(v, now_of(v) + 500);
-		kp_net_lan_cut(v->lan, 0, 1);
+		kp_net_lan_cut(v->n.lan, 0, 1);
 		before = now_of(v);
-		v->in_join = 1;
-		ok = kp_snet_join_game(v->seat[1].net, 0, "Open", "", "Seat", "", &v->seat[1].id);
-		v->in_join = -1;
-		error = kp_snet_error(v->seat[1].net);
+		v->n.in_join = 1;
+		ok = kp_snet_join_game(v->seat[1].n.net, 0, "Open", "", "Seat", "", &v->seat[1].id);
+		v->n.in_join = -1;
+		error = kp_snet_error(v->seat[1].n.net);
 		kp_t_ok(T, !ok && error == KP_SNET_ERROR_UNREACHABLE, "an unreachable host: error %#x", error);
 		kp_t_ok(T, now_of(v) - before >= 5000 && now_of(v) - before < 5100, "the join waited %u ms", now_of(v) - before);
-		kp_t_ok(T, kp_snet_local_id(v->seat[1].net) == KP_SNET_NO_ID, "the failed joiner has an id");
+		kp_t_ok(T, kp_snet_local_id(v->seat[1].n.net) == KP_SNET_NO_ID, "the failed joiner has an id");
 	}
 	/* a closed game refuses */
 	{
 		World *v = world_new(T, 9, 2);
 		host(v, 0, "Closed", "", 4);
-		kp_t_ok(T, kp_snet_set_game_mode(v->seat[0].net, KP_SNET_MODE_CLOSED | KP_SNET_MODE_ADVERTISED, 0), "close");
+		kp_t_ok(T, kp_snet_set_game_mode(v->seat[0].n.net, KP_SNET_MODE_CLOSED | KP_SNET_MODE_ADVERTISED, 0), "close");
 		ok = try_join(v, 1, "Closed", "", &error);
 		kp_t_ok(T, !ok && error == KP_SNET_ERROR_REJECTED, "a closed game: error %#x", error);
 	}
@@ -729,18 +590,18 @@ static void a_silent_seat_is_dropped(KpT *T)
 	join(w, 2, "Koprulu");
 	for (k = 0; k < 3; k++) start_playing(&w->seat[k]);
 	play(w, 1000);
-	kp_net_lan_cut(w->lan, w->seat[2].host, 1);
+	kp_net_lan_cut(w->n.lan, w->seat[2].n.host, 1);
 	w->seat[2].playing = 0;
 	play(w, 2000);
 	/* the others wait: seat 2 is present, without its turn, not heard for a second */
-	kp_t_ok(T, !kp_snet_receive_turns(w->seat[0].net, 0, SEATS, data, sizes, status), "the host has its turn");
+	kp_t_ok(T, !kp_snet_receive_turns(w->seat[0].n.net, 0, SEATS, data, sizes, status), "the host has its turn");
 	kp_t_ok(T, (status[2] & (KP_SNET_PRESENT | KP_SNET_HAS_TURN | KP_SNET_RESPONDING)) == KP_SNET_PRESENT,
 		"seat 2's status %#x", status[2]);
 	kp_t_ok(T, (status[1] & KP_SNET_RESPONDING) && (status[0] & KP_SNET_RESPONDING), "the others' status");
-	ok = kp_snet_drop_player(w->seat[0].net, 2, REASON_DROP);
-	kp_t_ok(T, ok, "drop: error %#x", kp_snet_error(w->seat[0].net));
-	kp_t_ok(T, !kp_snet_drop_player(w->seat[0].net, 0, REASON_DROP) &&
-		kp_snet_error(w->seat[0].net) == KP_SNET_ERROR_PARAMETER, "the local seat dropped");
+	ok = kp_snet_drop_player(w->seat[0].n.net, 2, REASON_DROP);
+	kp_t_ok(T, ok, "drop: error %#x", kp_snet_error(w->seat[0].n.net));
+	kp_t_ok(T, !kp_snet_drop_player(w->seat[0].n.net, 0, REASON_DROP) &&
+		kp_snet_error(w->seat[0].n.net) == KP_SNET_ERROR_PARAMETER, "the local seat dropped");
 	play(w, 2000);
 	for (k = 0; k < 2; k++)
 		kp_t_ok(T, w->seat[k].removed[2] && w->seat[k].reason[2] == REASON_DROP, "seat %d: removal %d, reason %#x", k,
@@ -780,36 +641,36 @@ static void timers_are_storms(KpT *T)
 	join(w, 1, "Koprulu");
 	advance(w, now_of(w) + 1000);
 	memset(&sends, 0, sizeof sends);
-	sends.host = w->seat[0].host;
+	sends.host = w->seat[0].n.host;
 	sends.cls = 1;
-	kp_net_lan_tap(w->lan, record_sends, &sends);
-	kp_net_lan_cut(w->lan, w->seat[1].host, 1);
-	kp_t_ok(T, kp_snet_send_message(w->seat[0].net, 1, text, sizeof text), "send");
+	kp_net_lan_tap(w->n.lan, record_sends, &sends);
+	kp_net_lan_cut(w->n.lan, w->seat[1].n.host, 1);
+	kp_t_ok(T, kp_snet_send_message(w->seat[0].n.net, 1, text, sizeof text), "send");
 	network(w, now_of(w) + 2000);
 	kp_t_ok(T, sends.count == 2, "%d sends of the message in 2 s without wake-ups", sends.count);
 	sends.count = 0;
 	for (k = 0; k < 2000; k++) {
-		w->seat[0].signalled = 1;
+		w->seat[0].n.signalled = 1;
 		network(w, now_of(w) + 1);
 	}
 	kp_t_ok(T, sends.count >= 6, "%d sends of the message in 2 s", sends.count);
 	for (k = 1; k < sends.count; k++)
 		kp_t_ok(T, sends.at[k] - sends.at[k - 1] == interval, "resend %d after %u ms, not %u", k,
 			sends.at[k] - sends.at[k - 1], interval);
-	kp_net_lan_cut(w->lan, w->seat[1].host, 0);
+	kp_net_lan_cut(w->n.lan, w->seat[1].n.host, 0);
 	advance(w, now_of(w) + 1000);
 	{
 		int from;
 		const uint8_t *data;
 		uint32_t size;
-		kp_t_ok(T, kp_snet_receive_message(w->seat[1].net, &from, &data, &size) && from == 0 && size == sizeof text,
+		kp_t_ok(T, kp_snet_receive_message(w->seat[1].n.net, &from, &data, &size) && from == 0 && size == sizeof text,
 			"the message arrived after the cable came back");
 	}
 	/* acknowledged: no more resends */
 	sends.count = 0;
 	advance(w, now_of(w) + 2000);
 	kp_t_ok(T, sends.count == 0, "%d resends after the ack", sends.count);
-	kp_net_lan_tap(w->lan, tap, w);
+	kp_net_lan_tap(w->n.lan, kp_net_world_tap, &w->n);
 }
 
 /* Garbage on port 6112 (short, bad lengths, bad sums, unknown classes, spoofed senders) changes nothing. */
@@ -840,13 +701,13 @@ static void garbage_is_ignored(KpT *T)
 			d[11] &= 7;
 			kp_net_checksum(d, n);
 		}
-		seat_deliver(&w->seat[0], KP_NET_SOCKET_GAME, &from, d, n);
+		kp_net_world_deliver(&w->seat[0].n, KP_NET_SOCKET_GAME, &from, d, n);
 		if (k % 50 == 0) play(w, STEP);
 	}
 	play(w, 2000);
 	kp_t_ok(T, w->seat[0].received > 100 && w->seat[1].received > 100, "turns received: %u and %u",
 		w->seat[0].received, w->seat[1].received);
-	kp_t_ok(T, kp_snet_remote_count(w->seat[0].net) <= KP_SNET_RECORDS, "%d records", kp_snet_remote_count(w->seat[0].net));
+	kp_t_ok(T, kp_snet_remote_count(w->seat[0].n.net) <= KP_SNET_RECORDS, "%d records", kp_snet_remote_count(w->seat[0].n.net));
 }
 
 /* Three seats on the system's sockets over 127.0.0.1: the two hosts of a map (Koprulu's own games on one machine) and
@@ -871,19 +732,19 @@ static void sockets_carry_a_game(KpT *T)
 		for (k = 0; k < 3; k++) {
 			c.map_self = k < 2 ? k : -1;
 			c.port = k < 2 ? 0 : (uint16_t)(base + 4);
-			if (!(w->seat[k].sock = kp_net_sock_open(&c, error, sizeof error))) break;
-			kp_t_ok(T, kp_net_sock_port(w->seat[k].sock, KP_NET_SOCKET_GAME) == base + 2u * (uint32_t)k + 1u,
-				"seat %d's socket B at %u", k, kp_net_sock_port(w->seat[k].sock, KP_NET_SOCKET_GAME));
+			if (!(w->seat[k].n.sock = kp_net_sock_open(&c, error, sizeof error))) break;
+			kp_t_ok(T, kp_net_sock_port(w->seat[k].n.sock, KP_NET_SOCKET_GAME) == base + 2u * (uint32_t)k + 1u,
+				"seat %d's socket B at %u", k, kp_net_sock_port(w->seat[k].n.sock, KP_NET_SOCKET_GAME));
 		}
 		if (k == 3) break;
 		while (k--) {
-			kp_net_sock_close(w->seat[k].sock);
-			w->seat[k].sock = NULL;
+			kp_net_sock_close(w->seat[k].n.sock);
+			w->seat[k].n.sock = NULL;
 		}
 	}
 	kp_t_ok(T, attempt < 32, "no six free ports: %s", error);
 	for (k = 0; k < 3; k++) {
-		KpNetIo io = kp_net_sock_io(w->seat[k].sock);
+		KpNetIo io = kp_net_sock_io(w->seat[k].n.sock);
 		seat_add(w, &io);
 	}
 	host(w, 0, "Koprulu", "", 3);
@@ -899,7 +760,7 @@ static void sockets_carry_a_game(KpT *T)
 	play(w, 1000);
 	for (k = 0; k < 3; k++) kp_t_ok(T, w->seat[k].received > 20, "seat %d received %u turns", k, w->seat[k].received);
 	w->seat[2].playing = 0;
-	kp_t_ok(T, kp_snet_leave_game(w->seat[2].net, REASON_LEAVE), "leave");
+	kp_t_ok(T, kp_snet_leave_game(w->seat[2].n.net, REASON_LEAVE), "leave");
 	play(w, 1000);
 	for (k = 0; k < 2; k++) {
 		kp_t_ok(T, w->seat[k].removed[2] > 0 && w->seat[k].reason[2] == REASON_LEAVE, "seat %d: removal at %d, reason %#x",
@@ -916,8 +777,8 @@ static void sockets_carry_a_game(KpT *T)
 		kp_t_ok(T, w->seat[0].by_turn[least - 1] == w->seat[1].by_turn[least - 1], "the seats' turns differ");
 	}
 	for (k = 0; k < 3; k++)
-		kp_t_ok(T, kp_net_sock_send_errors(w->seat[k].sock) == 0, "seat %d: %ld datagrams refused", k,
-			kp_net_sock_send_errors(w->seat[k].sock));
+		kp_t_ok(T, kp_net_sock_send_errors(w->seat[k].n.sock) == 0, "seat %d: %ld datagrams refused", k,
+			kp_net_sock_send_errors(w->seat[k].n.sock));
 }
 
 /* Koprulu against the original (phase N, stage N2): the network oracle's emulated StarCraft 1.17 hosts a game on
@@ -931,35 +792,27 @@ static void sockets_carry_a_game(KpT *T)
 static void keep_alive(KpT *T, Seat *st)
 {
 	static const uint8_t turn = KEEP_ALIVE;
-	int ok = kp_snet_send_turn(st->net, &turn, 1); /* before the message reads the error */
-	kp_t_ok(T, ok, "a turn: error %#x", kp_snet_error(st->net));
+	int ok = kp_snet_send_turn(st->n.net, &turn, 1); /* before the message reads the error */
+	kp_t_ok(T, ok, "a turn: error %#x", kp_snet_error(st->n.net));
 }
 
 static void live_bridge_join(KpT *T)
 {
-	const char *env = getenv(LIVE_ENV), *colon;
+	const char *env = getenv(LIVE_ENV);
 	World *w;
 	Seat *st;
-	KpNetSockConfig c;
 	KpNetIo io;
 	Listing l;
 	char error[128] = "";
 	uint32_t until, e = 0, host_turns = 0, sets = 0;
 	uint8_t first[64];
 	size_t first_size = 0;
-	int attempt, k, ok;
+	int k, ok;
 	if (!env || !*env) kp_t_skip(T, "no " LIVE_ENV " (the emulator's --bridge base port)");
 	w = world_alloc(T);
-	memset(&c, 0, sizeof c);
-	c.map_base = (uint16_t)strtoul(env, NULL, 10);
-	c.map_hosts = (colon = strchr(env, ':')) ? atoi(colon + 1) : 1;
-	c.map_self = -1;
-	for (attempt = 0; attempt < 16 && !w->seat[0].sock; attempt++) { /* two ports of its own above the bridge's */
-		c.port = (uint16_t)(c.map_base + 2 * c.map_hosts + 16 + 2 * attempt);
-		w->seat[0].sock = kp_net_sock_open(&c, error, sizeof error);
-	}
-	kp_t_ok(T, w->seat[0].sock != NULL, "the seat's sockets: %s", error);
-	io = kp_net_sock_io(w->seat[0].sock);
+	w->seat[0].n.sock = kp_net_world_bridge_open(env, error, sizeof error);
+	kp_t_ok(T, w->seat[0].n.sock != NULL, "the seat's sockets: %s", error);
+	io = kp_net_sock_io(w->seat[0].n.sock);
 	st = seat_add(w, &io);
 	until = now_of(w) + LIVE_LIST_MS;
 	do {
@@ -979,8 +832,8 @@ static void live_bridge_join(KpT *T)
 		const uint8_t *data[SEATS];
 		uint32_t sizes[SEATS], status[SEATS];
 		network(w, now_of(w) + STEP);
-		if (!kp_snet_receive_turns(st->net, 0, SEATS, data, sizes, status)) {
-			kp_t_ok(T, kp_snet_error(st->net) == KP_SNET_ERROR_NO_DATA, "receive: error %#x", kp_snet_error(st->net));
+		if (!kp_snet_receive_turns(st->n.net, 0, SEATS, data, sizes, status)) {
+			kp_t_ok(T, kp_snet_error(st->n.net) == KP_SNET_ERROR_NO_DATA, "receive: error %#x", kp_snet_error(st->n.net));
 			continue;
 		}
 		sets++;
@@ -998,17 +851,17 @@ static void live_bridge_join(KpT *T)
 		kp_t_log(T, "%u turn sets, %u of the host's turns (the first: %s)", sets, host_turns, hex);
 	}
 	kp_t_ok(T, host_turns >= LIVE_TURNS, "%u of the host's turns in %d s", host_turns, LIVE_PLAY_MS / 1000);
-	ok = kp_snet_leave_game(st->net, REASON_LEAVE);
-	kp_t_ok(T, ok, "leave: error %#x", kp_snet_error(st->net));
+	ok = kp_snet_leave_game(st->n.net, REASON_LEAVE);
+	kp_t_ok(T, ok, "leave: error %#x", kp_snet_error(st->n.net));
 	network(w, now_of(w) + 500);
-	kp_t_ok(T, kp_net_sock_send_errors(w->seat[0].sock) == 0, "%ld datagrams refused",
-		kp_net_sock_send_errors(w->seat[0].sock));
+	kp_t_ok(T, kp_net_sock_send_errors(w->seat[0].n.sock) == 0, "%ld datagrams refused",
+		kp_net_sock_send_errors(w->seat[0].n.sock));
 }
 
 static void api_errors(KpT *T)
 {
 	World *w = world_new(T, 13, 1);
-	KpSnet *s = w->seat[0].net;
+	KpSnet *s = w->seat[0].n.net;
 	KpSnetCaps caps;
 	char name[32];
 	uint32_t n = 0;

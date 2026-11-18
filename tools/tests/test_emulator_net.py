@@ -335,6 +335,24 @@ class NetDriverTest(unittest.TestCase):
         self.assertEqual(net.GameSpec.from_json(json.loads(json.dumps(spec.to_json()))), spec)
         self.assertEqual(spec.map_name, "x.scm")
 
+    def test_compare_leaves_the_external_players_out(self):
+        """A live peer over the bridge (role external: Koprulu) has no recording; the emulated players' digests are
+        compared without it."""
+        net = self.net
+        spec = net.GameSpec("g", "/maps/x.scm", [net.Player("Alpha", "10.0.0.1", "host"),
+                                                 net.Player("Beta", "10.0.1.1", "external"),
+                                                 net.Player("Gamma", "10.0.0.2")])
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp)
+            for name, digest in (("Alpha", 7), ("Gamma", 7)):
+                (out / name).mkdir()
+                (out / name / "trace.jsonl").write_text("".join(
+                    json.dumps({"f": f, "t": f * 42, "d": digest + (f == 3 and name == "Gamma")}) + "\n"
+                    for f in range(1, 5)))
+            r = net.compare(out, spec)
+        self.assertEqual((r["frames_compared"], r["last_common_frame"], r["first_digest_difference"]), (4, 4, 3))
+        self.assertEqual(sorted(r["digests_at_difference"]), ["Alpha", "Gamma"])
+
     def test_shared_model(self):
         """Two players' dumps compare equal when only their viewers' data differ; anything else stays a
         difference (the menus' leftovers only in a game's first dump)."""

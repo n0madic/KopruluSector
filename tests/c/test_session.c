@@ -928,7 +928,7 @@ static void session_profile_options(KpT *T)
 	kp_t_ok(T, kp_profile_decode(&q, bytes, size, &err) == 0, "%s", err.msg);
 	free(bytes);
 	kp_t_eq(T, q.options, KP_UI_OPTION_EXPANSION_INTRO | KP_UI_OPTIONS_DEFAULT, "its intro to play kept");
-	kp_t_ok(T, kp_kpf_build("PROF", 10, 0, "koprulu", NULL, old, 3, &bytes, &size) == 0, "a later schema's profile");
+	kp_t_ok(T, kp_kpf_build("PROF", 11, 0, "koprulu", NULL, old, 3, &bytes, &size) == 0, "a later schema's profile");
 	kp_t_ok(T, kp_profile_decode(&q, bytes, size, &err) != 0, "is not read");
 	free(bytes);
 }
@@ -1091,14 +1091,17 @@ static void session_profile_language(KpT *T)
 	kp_t_ok(T, q.text_locale[0] == 0 && q.speech_locale[0] == 0, "damaged: none");
 }
 
-/* Play Custom's registry values (CUST, schema 9): the round trip; none before the section, for a value that is not
- * UTF-8 or past the original's 32 bytes, and for a damaged section. */
+/* Create Game's registry values (CUST: Play Custom's since schema 9, multiplayer's since 10): the round trip; none
+ * before the section or the schema, for a value that is not UTF-8 or past the original's 32 bytes, and for a damaged
+ * section. */
 static void session_profile_custom_choices(KpT *T)
 {
 	static const uint8_t CHARS[2] = { 0, 0 };
 	static const uint8_t SAVES[2] = { 0, 0 };
 	static const uint8_t NOT_UTF8[] = { 2, 0xc3, 0x28, 5, 'T', 'e', 'a', 'm', 's' };
 	static const uint8_t PAST_ITS_END[] = { 5, 'M', 'e', 'l', 'e', 'e', 9, '1' };
+	static const uint8_t SCHEMA_10[] = { 1, 'X', 0, 5, 'M', 'e', 'l', 'e', 'e', 4, 'F', 'a', 's', 't' };
+	static const uint8_t SPEED_PAST_ITS_END[] = { 1, 'X', 0, 5, 'M', 'e', 'l', 'e', 'e', 7, 'F' };
 	uint8_t too_long[1 + KP_PROFILE_CUSTOM + 1];
 	KpProfile p, q;
 	KpKpfOut old[4];
@@ -1110,11 +1113,15 @@ static void session_profile_custom_choices(KpT *T)
 	kp_t_ok(T, p.custom_type[0] == 0 && p.game_subtype[0] == 0, "a new profile: none");
 	snprintf(p.custom_type, sizeof p.custom_type, "Top vs Bottom");
 	snprintf(p.game_subtype, sizeof p.game_subtype, "3 vs 1");
+	snprintf(p.net_type, sizeof p.net_type, "Melee");
+	snprintf(p.game_speed, sizeof p.game_speed, "Fastest");
 	kp_t_ok(T, kp_profile_encode(&p, &bytes, &size) == 0, "encoded");
 	kp_t_ok(T, kp_profile_decode(&q, bytes, size, &err) == 0, "%s", err.msg);
 	free(bytes);
 	kp_t_eq_str(T, q.custom_type, "Top vs Bottom", "the round trip");
 	kp_t_eq_str(T, q.game_subtype, "3 vs 1", NULL);
+	kp_t_eq_str(T, q.net_type, "Melee", NULL);
+	kp_t_eq_str(T, q.game_speed, "Fastest", NULL);
 	memset(old, 0, sizeof old);
 	old[0].fourcc = "NAME";
 	old[0].payload = (const uint8_t *)"";
@@ -1137,6 +1144,21 @@ static void session_profile_custom_choices(KpT *T)
 	free(bytes);
 	kp_t_eq_str(T, q.custom_type, "", "not UTF-8: none");
 	kp_t_eq_str(T, q.game_subtype, "Teams", "the other read");
+	kp_t_ok(T, q.net_type[0] == 0 && q.game_speed[0] == 0, "schema 9: no multiplayer values");
+	old[3].payload = SCHEMA_10;
+	old[3].size = sizeof SCHEMA_10;
+	kp_t_ok(T, kp_kpf_build("PROF", 10, 0, "koprulu", NULL, old, 4, &bytes, &size) == 0, "a schema 10 profile");
+	kp_t_ok(T, kp_profile_decode(&q, bytes, size, &err) == 0, "%s", err.msg);
+	free(bytes);
+	kp_t_eq_str(T, q.net_type, "Melee", "schema 10: the game type");
+	kp_t_eq_str(T, q.game_speed, "Fast", "and the speed");
+	old[3].payload = SPEED_PAST_ITS_END;
+	old[3].size = sizeof SPEED_PAST_ITS_END;
+	kp_t_ok(T, kp_kpf_build("PROF", 10, 0, "koprulu", NULL, old, 4, &bytes, &size) == 0, "a damaged speed");
+	kp_t_ok(T, kp_profile_decode(&q, bytes, size, &err) == 0, "%s", err.msg);
+	free(bytes);
+	kp_t_eq_str(T, q.custom_type, "X", "Play Custom's kept");
+	kp_t_ok(T, q.net_type[0] == 0 && q.game_speed[0] == 0, "the multiplayer values damaged: none");
 	memset(too_long, 'x', sizeof too_long);
 	too_long[0] = KP_PROFILE_CUSTOM;
 	too_long[1 + KP_PROFILE_CUSTOM] = 0; /* the subtype's length: "" */

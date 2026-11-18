@@ -746,22 +746,24 @@ int kp_mission_from_map(KpMission *m, const KpFiles *f, uint8_t *chk_bytes, size
 	return build(m, f, chk_bytes, chk_size, name, "", packs, pack_size, load, err);
 }
 
-/* A map string's bytes into out (at most size - 1 of them, NUL-terminated; "" for none) */
-static void map_string_copy(const KpChkSection *strs, uint32_t index, char *out, size_t size)
+/* A map string's bytes into out (at most size - 1 of them, NUL-terminated; "" for none): 1, or 0 for a null string */
+static int map_string_copy(const KpChkSection *strs, uint32_t index, char *out, size_t size)
 {
 	const uint8_t *text;
 	size_t n;
 	out[0] = 0;
-	if (strs == NULL || !map_string(strs, index, &text, &n)) return;
+	if (strs == NULL || !map_string(strs, index, &text, &n)) return 0;
 	if (n >= size) n = size - 1;
 	memcpy(out, text, n);
 	out[n] = 0;
+	return 1;
 }
 
 int kp_map_header(KpMapHeader *h, const uint8_t *chk, size_t size, const KpDefsProfile *profile, int expansion,
 	char *err, size_t err_size)
 {
-	const KpChkSection *dim, *era, *ownr, *side, *sprp, *strs;
+	const KpChkSection *dim, *era, *ownr, *side, *sprp, *strs, *forc;
+	uint8_t force_chunk[20] = {0};
 	KpChk c;
 	int p;
 	memset(h, 0, sizeof *h);
@@ -777,6 +779,7 @@ int kp_map_header(KpMapHeader *h, const uint8_t *chk, size_t size, const KpDefsP
 	side = kp_chk_section(&c, "SIDE");
 	sprp = kp_chk_section(&c, "SPRP");
 	strs = kp_chk_section(&c, "STR ");
+	forc = kp_chk_section(&c, "FORC");
 	if (dim == NULL || dim->size < 4 || era == NULL || ownr == NULL || ownr->size < KP_MAP_HEADER_SLOTS || side == NULL
 		|| side->size < KP_MAP_HEADER_SLOTS) {
 		snprintf(err, err_size, "the map's header has no DIM, ERA, OWNR or SIDE");
@@ -804,6 +807,13 @@ int kp_map_header(KpMapHeader *h, const uint8_t *chk, size_t size, const KpDefsP
 		map_string_copy(strs, kp_le_u16(sprp->data), h->title, sizeof h->title);
 		map_string_copy(strs, kp_le_u16(sprp->data + 2), h->description, sizeof h->description);
 	}
+	/* FORC: 8 slot forces, 4 WORD name string ids, 4 flags */
+	if (forc != NULL) memcpy(force_chunk, forc->data, forc->size < sizeof force_chunk ? forc->size : sizeof force_chunk);
+	memcpy(h->forces, force_chunk, KP_MAP_HEADER_SLOTS);
+	memcpy(h->force_flags, force_chunk + 16, KP_MAP_HEADER_FORCES);
+	for (p = 0; p < KP_MAP_HEADER_FORCES; p++)
+		h->force_named[p] = (uint8_t)map_string_copy(strs, kp_le_u16(force_chunk + 8 + 2 * p), h->force_names[p],
+			sizeof h->force_names[p]);
 	kp_chk_free(&c);
 	return 0;
 }
