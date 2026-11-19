@@ -52,7 +52,7 @@ EPOCH_UNIX = 946_684_800              # the emulator's virtual time 0 (hle/kerne
 PCAP_LINKTYPE_IPV4 = 228
 DEFAULT_DELAY_US = 2000               # a datagram's minimum delay: also the coordinator's lookahead
 DEFAULT_JITTER_US = 1000
-SOLO_QUANTUM_US = 50_000              # a round's length when one instance is left
+SOLO_QUANTUM_US = 50_000              # a round's length when nothing holds an instance back (see Coordinator.horizon)
 
 
 def ip_str(ip: int) -> str:
@@ -364,6 +364,23 @@ class Coordinator:
     def member(self, name: str) -> Member:
         return next(x for x in self.members if x.name == name)
 
+    def horizon(self, x: Member, live: list[Member]) -> int:
+        """The clock `x` may run to this round: the smallest clock of the instances that can still send it something
+        plus the lookahead. An instance whose datagrams are cut off from `x` for good (its clock has reached its own
+        or `x`'s cut time, from which nothing leaves or reaches the host: VirtualLan.route compares the send time)
+        holds `x` back no more, and with nobody left to hold it back `x` runs a quantum on its own: after a cable is
+        pulled the two sides are independent, and run in parallel instead of one waiting for the other's clock."""
+        cut_x = self.lan.cuts.get(x.name)
+        limits = []
+        for y in live:
+            if y is x:
+                continue
+            cuts = [c for c in (cut_x, self.lan.cuts.get(y.name)) if c is not None]
+            if cuts and y.clock >= min(cuts):
+                continue
+            limits.append(y.clock + self.lan.delay_us)
+        return min(limits) if limits else x.clock + SOLO_QUANTUM_US
+
     def _receive(self, x: Member) -> None:
         msg = x.endpoint.recv()
         if msg[0] == "sync":
@@ -414,8 +431,7 @@ class Coordinator:
                 break
             granted = []
             for x in live:
-                others = [y.clock for y in live if y is not x]
-                horizon = (min(others) + self.lan.delay_us) if others else x.clock + SOLO_QUANTUM_US
+                horizon = self.horizon(x, live)
                 if x.clock < horizon:
                     granted.append((x, horizon))
             if self.realtime:

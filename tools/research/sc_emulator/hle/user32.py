@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import re
 import struct
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from ..machine import Call, Wait
@@ -89,6 +90,8 @@ class WindowManager:
         self.quit = False
         self.posted_log: list = []
         self.idle_quantum_us = 1000   # virtual time charged when the UI thread polls an empty queue
+        # an override per poll (0: none): net games charge the passes of a stalled loop more (net.STALL_POLL_US)
+        self.idle_quantum_fn: Callable[[], int] | None = None
         self.idle_polls = 0
 
     # -- queue ------------------------------------------------------------------
@@ -364,7 +367,7 @@ def PeekMessageA(m, msgp, hwnd, lo, hi, flags):
     if e is None:
         w = wm(m)
         w.idle_polls += 1
-        m.clock_us += w.idle_quantum_us
+        m.clock_us += (w.idle_quantum_fn() if w.idle_quantum_fn else 0) or w.idle_quantum_us
         return 0
     return 1
 

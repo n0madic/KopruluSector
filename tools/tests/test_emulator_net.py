@@ -212,6 +212,56 @@ class CoordinatorTest(unittest.TestCase):
             self.assertEqual((Path(t1) / "lan.pcap").read_bytes(), (Path(t2) / "lan.pcap").read_bytes())
         self.assertEqual([h.got for h in first], [h.got for h in again])
 
+    def test_horizon_after_a_cut(self):
+        v = lan.VirtualLan(1, delay_us=2000)
+        hosts = [FakeHost("a", A, [], 10**9), FakeHost("b", B, [], 10**9), FakeHost("c", C, [], 10**9)]
+        for h in hosts:
+            v.add_host(h.name, h.stack.ip)
+        v.cut("b", 20_000)
+        coord = lan.Coordinator(v, [lan.Member(h.name, h) for h in hosts])
+        a, b, c = coord.members
+        for x, clock in ((a, 10_000), (b, 19_000), (c, 15_000)):
+            x.clock = clock
+        # before the cut b is a sender like the others: each instance waits for the slowest other
+        self.assertEqual(coord.horizon(a, coord.members), 17_000)
+        self.assertEqual(coord.horizon(b, coord.members), 12_000)
+        self.assertEqual(coord.horizon(c, coord.members), 12_000)
+        # b's clock reached the cut: nothing it sends reaches anyone, so a and c wait only for each other
+        b.clock = 20_500
+        self.assertEqual(coord.horizon(a, coord.members), 17_000)
+        self.assertEqual(coord.horizon(c, coord.members), 12_000)
+        c.clock = 40_000
+        self.assertEqual(coord.horizon(a, coord.members), 42_000)
+        # b is cut itself: what a and c sent before 20 ms still reaches it, so it waits for them to get there
+        self.assertEqual(coord.horizon(b, coord.members), 12_000)
+        a.clock = 25_000
+        self.assertEqual(coord.horizon(b, coord.members), 20_500 + lan.SOLO_QUANTUM_US)
+        # with both sides cut from each other, each runs a quantum on its own
+        self.assertEqual(coord.horizon(a, [a, b]), 25_000 + lan.SOLO_QUANTUM_US)
+
+    def test_cut_game_runs_in_few_rounds(self):
+        def play(cut):
+            v = lan.VirtualLan(3, delay_us=2000, jitter_us=1000)
+            hosts = [FakeHost("a", A, [(1000 * k, B, b"a%d" % k) for k in range(1, 400)], 400_000),
+                     FakeHost("b", B, [(1300 * k, A, b"b%d" % k) for k in range(1, 300)], 400_000)]
+            for h in hosts:
+                v.add_host(h.name, h.stack.ip)
+            if cut:
+                v.cut("b", 50_000)
+            coord = lan.Coordinator(v, [lan.Member(h.name, h) for h in hosts])
+            coord.run()
+            return hosts, coord, v.stats
+
+        free, free_coord, _ = play(False)
+        cut, cut_coord, stats = play(True)
+        for h in cut:
+            self.assertEqual(h.late, [], h.name)
+        # the datagrams sent before the cut came through, none after it, and the isolated instances took long rounds
+        self.assertTrue(any(data == b"a40" for _, _, data in cut[1].got))
+        self.assertFalse(any(data == b"a60" for _, _, data in cut[1].got))
+        self.assertGreater(stats["cut"], 0)
+        self.assertLess(cut_coord.rounds, free_coord.rounds // 2)
+
     def test_exit_stops_the_others(self):
         class Quitter(FakeHost):
             def send(self, msg):
@@ -324,6 +374,40 @@ class NetDriverTest(unittest.TestCase):
         cmds, rest = self.net.turn_commands(sync + bytes([0xFF, 1, 2]))
         self.assertEqual((cmds, rest), ([sync], bytes([0xFF, 1, 2])))
         self.assertEqual(self.net.turn_commands(sync[:4]), ([], sync[:4]))   # cut short
+
+    def test_every_turn_send_is_logged(self):
+        # SendTurns calls SNetGetTurnsInTransit before each turn it sends; the lobby replay needs every such call, so
+        # the log's dedup of unchanged polls must not take it (a recording made so failed test_lobby_trace)
+        net = self.net
+        in_transit = next(o for o, (name, _) in net.SNET.items() if name == "SNetGetTurnsInTransit")
+        self.assertNotIn(in_transit, net.SNET_POLLED)
+        self.assertLessEqual(net.SNET_POLLED, set(net.SNET))
+        self.assertLessEqual(net.SNET_FAILURES, net.SNET_POLLED)
+
+    def test_stall_polls(self):
+        net = self.net
+
+        class Fake:
+            clock_us = 0
+            guard = 0
+
+            def r32(self, a):
+                assert a == net.WAIT_GUARD
+                return self.guard
+
+        m = Fake()
+        polls = net.StallPolls(m)
+        self.assertEqual(polls(), 0)                       # not in the loop
+        m.guard, m.clock_us = 1, 5_000_000
+        self.assertEqual(polls(), 0)                       # it just began
+        m.clock_us += net.STALL_AFTER_US - 1
+        self.assertEqual(polls(), 0)                       # a turn that is only a little late keeps the 1 ms passes
+        m.clock_us += 1
+        self.assertEqual(polls(), net.STALL_POLL_US)       # a stall
+        m.guard = 0
+        self.assertEqual(polls(), 0)                       # the loop ended
+        m.guard, m.clock_us = 1, m.clock_us + 10
+        self.assertEqual(polls(), 0)                       # the next one begins again
 
     def test_spec_round_trip(self):
         net = self.net
@@ -469,6 +553,23 @@ class WinsockHleTest(unittest.TestCase):
         self.assertEqual(self.call("setsockopt", s, 0xFFFF, 0x20, one, 4), 0)
         self.assertEqual(self.call("bind", s, self.sockaddr(0, port), 16), 0)
         return s
+
+    def test_idle_poll_quantum(self):
+        from sc_emulator.hle.user32 import WindowManager
+        self.m.services["wm"] = w = WindowManager(self.m)
+        msg = self.m.alloc(28)
+
+        def poll():
+            before = self.m.clock_us
+            self.assertEqual(self.call("PeekMessageA", msg, 0, 0, 0, 1, dll="user32.dll"), 0)
+            return self.m.clock_us - before
+
+        self.assertEqual(poll(), 1000)                      # an empty poll costs a millisecond
+        w.idle_quantum_fn = lambda: 10_000
+        self.assertEqual(poll(), 10_000)                    # the override's
+        w.idle_quantum_fn = lambda: 0
+        self.assertEqual(poll(), 1000)                      # 0: none
+        self.assertEqual(w.idle_polls, 3)
 
     def test_wsock32_ordinals(self):
         r = self.REGISTRY

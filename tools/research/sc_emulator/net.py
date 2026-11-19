@@ -56,6 +56,14 @@ RESOLVE_DESYNC = 0x47A630       # drops the minority after a sync mismatch or th
 TIMEOUT_DIALOG = 0x675010       # rez\timeout.bin while the game waits for lagging players (0 otherwise)
 TIMEOUT_SECONDS = 0x675020      # its countdown: Drop Players (control 2) is disabled until it reached 0
 TIMEOUT_DROP = 2
+WAIT_GUARD = 0x67500C           # WaitForLaggingPlayers 0x47a810's re-entry guard: non-zero while its loop runs
+# Virtual time an empty message poll takes in that loop once it has run STALL_AFTER_US (1 ms elsewhere and before,
+# hle/user32.py). The loop is a busy loop (atlas P27: receive, pump, repaint the dialog's player list, present, with
+# no wait of its own), so how long a pass takes is the machine's, and its repaint costs the emulator tens of
+# milliseconds of wall time a pass; a game waits 45 s in it for the countdown, which at 1 ms a pass would be 45 000
+# of them (36 minutes). A turn that is only a little late ends the loop long before and keeps its 1 ms passes.
+STALL_AFTER_US = 1_000_000
+STALL_POLL_US = 10_000
 GLUE_MAIN, GLUE_CONN, GLUE_LOGIN, GLUE_JOIN, GLUE_CREATE, GLUE_CHAT = 0, 2, 5, 10, 11, 3
 GLUE_READY_ROOMS = (7, 8, 9)    # a Use Map Settings game's briefing (custom.py)
 CONN_LIST, CONN_OK = 5, 9
@@ -92,8 +100,10 @@ SNET = {
     137: ("SNetDisconnectAll", 1), 138: ("SNetCreateLadderGame", 12), 139: ("SNetReportGameResult", 5),
     144: ("SNetGetPlayerNames", 1),
 }
-# polled every loop: logged only when they succeed and their record changed
-SNET_POLLED = {107, 109, 112, 113, 114, 115, 121, 122, 144}
+# polled every loop: logged only when they succeed and their record changed. SNetGetTurnsInTransit (115) is not among
+# them: SendTurns 0x476500 calls it before every turn it sends, and the lobby's replay (test_lobby_trace) must see
+# each of those calls, while an unchanged count would have the dedup leave most of them out.
+SNET_POLLED = {107, 109, 112, 113, 114, 121, 122, 144}
 # what differs between two records of one unchanged poll: its time, frame and place in the call order
 VOLATILE = ("t", "t_us", "seq", "depth", "end", "frame")
 # polled, and logged at every call (a failure as a short record): each success consumes a turn or a message, and
@@ -496,6 +506,23 @@ class Link:
             m.stop_requested = True
 
 
+class StallPolls:
+    """The lagging-players loop's quantum per empty poll (WindowManager.idle_quantum_fn): 0, the usual 1 ms, until the
+    loop has run STALL_AFTER_US, then STALL_POLL_US. It depends only on the guest's state and the clock, so a game
+    stays reproducible."""
+
+    def __init__(self, m):
+        self.m, self.since = m, None
+
+    def __call__(self) -> int:
+        if not self.m.r32(WAIT_GUARD):
+            self.since = None
+            return 0
+        if self.since is None:
+            self.since = self.m.clock_us
+        return STALL_POLL_US if self.m.clock_us - self.since >= STALL_AFTER_US else 0
+
+
 class Driver:
     """One player's run: the machine, its inputs and records."""
 
@@ -516,6 +543,7 @@ class Driver:
         m.on_limit = self.link.sync
         self.inp = Input(self.s)
         self.ctl = Controls(m)
+        m.services["wm"].idle_quantum_fn = StallPolls(m)
         self.events: list[dict] = []
         self.visited: list[list] = []
         self.st = {"last_frame": -1, "started_at": None}
