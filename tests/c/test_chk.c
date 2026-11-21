@@ -17,6 +17,7 @@
 
 #include "kp_data.h"
 #include "kp_files.h"
+#include "kp_map_preview.h"
 #include "kp_sha256.h"
 #include "../../native/kp_core/src/core/kp_campaign.h"
 #include "../../native/kp_core/src/core/kp_chk.h"
@@ -703,6 +704,95 @@ static void map_missions(KpT *T)
 		"the header's load is no game's");
 }
 
+static int preview_kept(int64_t t)
+{
+	static const int64_t KEPT[] = { 176, 177, 178, 188, 89, 90, 93, 94, 95, 96 }; /* the melee filter 0x469600 */
+	size_t k;
+	for (k = 0; k < sizeof KEPT / sizeof KEPT[0]; k++) {
+		if (KEPT[k] == t) return 1;
+	}
+	return 0;
+}
+
+static void preview_free(void *p) { kp_map_preview_free((KpMapPreview *)p); }
+static void dat_free(void *p) { kp_dat_free((KpDat *)p); }
+static void tileset_free(void *p) { kp_tileset_free((KpTileset *)p); }
+
+/* The chat room's preview world of an install map (InitGameWorldForLobbyPreview 0x443850): the melee load's size and
+ * megatiles (the mission's own import), the neutral player's resources and critters under a melee template, every
+ * neutral player's preplaced unit without its starting units byte, in the minimap's drawing order (each player's newest
+ * first); a file that is no map is refused with its reason. */
+static void map_preview_world(KpT *T)
+{
+	static const uint8_t NO_PACKS[1] = { 0 };
+	const char *root = getenv("KP_TEST_ORIGINAL");
+	char path[1024];
+	uint8_t melee[KP_TEMPLATE_SIZE], ums[KP_TEMPLATE_SIZE];
+	KpMapPreview *mp = (KpMapPreview *)owned(T, sizeof *mp);
+	KpMission *m = (KpMission *)owned(T, sizeof *m);
+	KpTileset *tileset = (KpTileset *)owned(T, sizeof *tileset);
+	KpDat *dat = (KpDat *)owned(T, sizeof *dat);
+	KpDataMap map;
+	KpUiPreview out;
+	KpFiles f;
+	KpError err;
+	uint16_t *ids;
+	uint8_t *chk;
+	size_t size, at;
+	int64_t bad = 0;
+	int kept = 0, resources = 0, neutral = 0, k, last_x = -1, last_y = -1, ordered = 1;
+	if (!root || !root[0]) kp_t_skip(T, "no KP_TEST_ORIGINAL");
+	kp_res_files(kp_t_install(T, "KP_TEST_ORIGINAL"), &f);
+	kp_t_ok(T, kp_dat_from_files(dat, &f, &err) == 0, "units.dat: %s", err.msg);
+	kp_t_defer(T, dat_free, dat);
+	snprintf(path, sizeof path, "%s/maps/(2)Challenger.scm", root);
+	memset(melee, 0, sizeof melee);
+	melee[KP_TEMPLATE_STARTING_UNITS] = 1;
+	memset(ums, 0, sizeof ums);
+	kp_t_defer(T, preview_free, mp);
+	kp_t_ok(T, kp_map_preview_load(mp, &f, dat, path, melee, 0, &out, &err) == 0, "the preview: %s", err.msg);
+	/* the mission's own melee load and import */
+	kp_t_ok(T, kp_data_map_open(&map, &f, path, &err) == 0, "the map: %s", err.msg);
+	chk = kp_data_map_chk(&map, &size, &err);
+	kp_data_map_close(&map);
+	kp_t_ok(T, chk != NULL, "its scenario: %s", err.msg);
+	kp_t_ok(T, kp_mission_from_map(m, &f, chk, size, "Challenger", KP_CHK_MELEE, NO_PACKS, 1, &err) == 0, "melee: %s", err.msg);
+	kp_t_defer(T, mission_free, m);
+	kp_t_ok(T, out.map_w == (int32_t)m->width && out.map_h == (int32_t)m->height, "the map's size (%dx%d)", out.map_w, out.map_h);
+	kp_t_ok(T, kp_tileset_from_files(tileset, &f, (int)(m->era & 7), &err) == 0, "the tileset: %s", err.msg);
+	kp_t_defer(T, tileset_free, tileset);
+	ids = (uint16_t *)owned(T, (size_t)m->width * m->height * sizeof *ids);
+	kp_t_ok(T, kp_terrain_import(m, tileset, ids, &bad) == 0, "the import");
+	kp_t_ok(T, memcmp(ids, out.megatiles, (size_t)m->width * m->height * sizeof *ids) == 0, "the megatiles");
+	kp_t_ok(T, out.mmni == mp->tileset.mmni && out.mmni_size == tileset->mmni_size && memcmp(out.rgb, tileset->rgb, 768) == 0,
+		"the tileset's minimap colours and palette");
+	for (at = 0; at + 36 <= m->units.size; at += 36) {
+		const uint8_t *r = m->units.data + at;
+		int64_t t = r[8] | r[9] << 8, owner = r[16];
+		if (owner < 8) continue;
+		neutral++;
+		if (owner != 11 || !preview_kept(t)) continue;
+		kept++;
+		resources += (t >= 176 && t <= 178) || t == 188;
+		last_x = r[4] | r[5] << 8;
+		last_y = r[6] | r[7] << 8;
+	}
+	kp_t_ok(T, kept > 0, "the map has neutral resources");
+	kp_t_eq(T, out.unit_count, kept, "the melee template's neutral units");
+	for (k = 0; k < out.unit_count; k++) {
+		resources -= out.units[k].resource;
+		ordered &= out.units[k].owner == 11;
+	}
+	kp_t_eq(T, resources, 0, "the resources marked");
+	kp_t_ok(T, ordered, "the neutral player's");
+	kp_t_ok(T, out.units[0].x == last_x && out.units[0].y == last_y, "the newest first (%d, %d)", out.units[0].x, out.units[0].y);
+	kp_t_ok(T, kp_map_preview_load(mp, &f, dat, path, ums, 0, &out, &err) == 0, "without starting units: %s", err.msg);
+	kp_t_eq(T, out.unit_count, neutral, "every neutral player's unit");
+	snprintf(path, sizeof path, "%s/maps/missing.scm", root);
+	kp_t_eq(T, kp_map_preview_load(mp, &f, dat, path, melee, 0, &out, &err), -1, "no map");
+	kp_t_ok(T, err.msg[0] != 0 && !mp->loaded, "refused with its reason: %s", err.msg);
+}
+
 /* A map's header for the lists (LoadMapHeader 0x46b5c0 from LoadMapEntryInfo 0x45d870): the header group alone (a map
  * without the game's sections reads), its size, tileset (ERA's low 3 bits), owners and races (User Select marked), the
  * counts (players: owner types 3..7, 0x478e70; computers: types 1 and 5, 0x478ea0; humans: type 6, 0x479550) and the
@@ -1032,5 +1122,6 @@ static const KpTest TESTS[] = {
 	{ "the_1_17_and_remastered_missions_are_equal", installs_missions_equal, 0 },
 	{ "the_campaign_maps_derived_terrain_is_the_originals", derived_terrain_is_the_originals, 0 },
 	{ "the_install_maps_load", install_maps_load, 0 },
+	{ "a_maps_preview_world", map_preview_world, 0 },
 };
 KP_SUITE(kp_suite_chk, "test_chk", TESTS);

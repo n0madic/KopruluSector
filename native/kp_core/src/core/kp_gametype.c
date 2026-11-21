@@ -449,16 +449,20 @@ void kp_gametype_resources(KpGame *g)
 	}
 }
 
-int kp_gametype_unit_excluded(KpGame *g, int64_t t, int64_t owner)
+int kp_template_unit_excluded(const uint8_t *template_record, int64_t t, int64_t owner)
 {
 	size_t k;
-	if (tbyte(&g->setup, KP_TEMPLATE_STARTING_UNITS) != 0) { /* 0x469600 */
-		if (owner != KP_PLAYER_NEUTRAL) return 1;
-		for (k = 0; k < sizeof MELEE_KEPT / sizeof MELEE_KEPT[0]; k++) {
-			if (MELEE_KEPT[k] == t) return 0;
-		}
-		return 1;
+	if (template_record[KP_TEMPLATE_STARTING_UNITS] == 0) return 0;
+	if (owner != KP_PLAYER_NEUTRAL) return 1;
+	for (k = 0; k < sizeof MELEE_KEPT / sizeof MELEE_KEPT[0]; k++) {
+		if (MELEE_KEPT[k] == t) return 0;
 	}
+	return 1;
+}
+
+int kp_gametype_unit_excluded(KpGame *g, int64_t t, int64_t owner)
+{
+	if (tbyte(&g->setup, KP_TEMPLATE_STARTING_UNITS) != 0) return kp_template_unit_excluded(g->setup.template_record, t, owner); /* 0x469600 */
 	if (kp_setup_ums(&g->setup) && owner >= 0 && owner < 8 && g->setup.user_select[owner] != 0) {
 		return (KP_DAT(g, units, staredit_group_flags, t) & GROUP_NEUTRAL) == 0;
 	}

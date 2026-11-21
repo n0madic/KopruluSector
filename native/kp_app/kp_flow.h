@@ -11,6 +11,7 @@
 #include "kp_data.h"
 #include "kp_hud.h"
 #include "kp_locale.h"
+#include "kp_map_preview.h"
 #include "kp_netgame.h"
 #include "kp_seats.h"
 #include "kp_session.h"
@@ -200,6 +201,7 @@ typedef struct KpFlow {
 	KpGlue glue;
 	int glue_on;
 	struct KpNetPlay *netplay; /* the multiplayer screens' network (kp_netplay.h; ui->net), NULL none: the web, no glue */
+	KpMapPreview preview;      /* the chat room's preview world (KpNetUi.preview) */
 	uint32_t options_seen; /* the interface's KP_UI_OPTIONS_KEPT as last kept (the profile's, a flag's over them) */
 	KpHud hud;
 	int hud_on;

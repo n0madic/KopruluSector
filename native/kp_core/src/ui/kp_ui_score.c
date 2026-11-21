@@ -638,10 +638,15 @@ static int score_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 		case KP_UI_DESTROY: /* FreeScoreScreen 0x462290 (Sleep(1000) before: the host's) */
 			free_surface(ui, &s->main);
 			s->dialog = -1;
+			if (!s->answered) { /* closed by the glue's exit with its -1 */
+				s->answered = 1;
+				s->result = ui->result;
+			}
 			break;
 		case KP_UI_CLOSE:
 			kp_ui_stop_sounds(ui);
 			s->answered = 1;
+			s->result = ui->result;
 			kp_ui_glue_slide_out(ui, self);
 			return 1;
 		case KP_UI_POST_LOAD: {

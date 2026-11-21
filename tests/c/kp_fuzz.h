@@ -32,9 +32,14 @@
  *             screens' actions; its sends within the provider's message size and its state within its bounds
  *             (kp_fuzz_lobby.c tells the ops);
  *   transfer  the map transfer (kp_transfer.h) alone: other seats' packets, the offer's peers, cancels and resets; its
- *             packets well-formed, its saves only of names it may save, its transfers within their bounds.
+ *             packets well-formed, its saves only of names it may save, its transfers within their bounds;
+ *   game      a network game's seat after its start (kp_netgame.h, phase N): the turns and messages Storm hands it,
+ *             in-game chat (peers' and its own, slash commands), its commands, failing calls, turns in transit, the
+ *             clock and timeout.bin's drop, frame by frame through the session's KP_TURNS_NET; its sends within the
+ *             provider's message size, its outgoing turn and list within their bounds, and its game never stopped
+ *             (kp_fuzz_game.c tells the ops).
  *
- * save and commands need the game's data (kp_oracle_data("."), run from the source tree's root); the games start once
+ * save, commands and game need the game's data (kp_oracle_data("."), run from the source tree's root); the games start once
  * a process and each input begins from their snapshot. A crash or a sanitizer's report is a finding. A game the
  * game's own checks stop (kp_game_fail under the session's guard) is a refusal: counted, not a finding.
  */
@@ -49,7 +54,7 @@ extern "C" {
 #endif
 
 enum { KP_FUZZ_REP, KP_FUZZ_CHK, KP_FUZZ_SAVE, KP_FUZZ_COMMANDS, KP_FUZZ_TURNS, KP_FUZZ_UDP, KP_FUZZ_SNET, KP_FUZZ_LOBBY,
-	KP_FUZZ_TRANSFER, KP_FUZZ_TARGETS };
+	KP_FUZZ_TRANSFER, KP_FUZZ_GAME, KP_FUZZ_TARGETS };
 
 /* The target's name ("rep", ...), and the target of a name (-1 none). */
 const char *kp_fuzz_name(int target);

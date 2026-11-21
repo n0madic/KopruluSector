@@ -58,10 +58,18 @@ void kp_clock_pause(KpClock *c);
 void kp_clock_resume(KpClock *c);
 void kp_clock_on_window(KpClock *c, int event, int autopause);
 int kp_clock_stopped(const KpClock *c);
+/* The interpolation fraction between the last two steps, in [0, 1): 0 while a step put later (kp_clock_after_wait)
+ * leaves the accumulator below 0, so the world is drawn at its last step and never moves back past it. */
+double kp_clock_alpha(const KpClock *c);
 /* Advances by a frame of dt seconds: the steps to run now and the interpolation fraction in [0, 1). */
 int kp_clock_advance(KpClock *c, double dt, double *alpha);
 /* Advances to wall time now (seconds); the first call after creation or a reset only sets the reference. */
 int kp_clock_advance_wall(KpClock *c, double now, double *alpha);
+/* PollTurn 0x444cc0 when a network game's turn came after a wait of waited_ms: a wait under
+ * KP_CLOCK_SHORT_WAIT_MS puts the next step half a step later (0x6663f8 += 0x503360[speed] / 2), a longer one half a
+ * turn from now (0x6663f8 = now + 0x503360[speed] * frames_per_turn / 2). */
+#define KP_CLOCK_SHORT_WAIT_MS 100
+void kp_clock_after_wait(KpClock *c, double waited_ms, int frames_per_turn);
 
 /* --- the session --- */
 
@@ -112,6 +120,8 @@ typedef struct {
 	double step_ms, step_max_ms;
 	int64_t start_frame, start_turn;
 	int net_begun; /* a network game's RunGame step 7 ran (kp_session_net_begin) */
+	int net_waiting;       /* PollTurn 0x444cc0's 0x666400: the network game's step waits for its turn */
+	double net_wait_start; /* its 0x66642c: the wall time (seconds) the wait began */
 	int failed;
 	char error[KP_ERROR_SIZE];
 	/* The record of a recorded game (owned, NULL none), which watches the executed commands (kp_turns_record) */

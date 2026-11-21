@@ -265,6 +265,18 @@ static int n_find_save(void *owner, uint32_t id, KpNetGameSave *out)
 	return p->config.find_save != NULL && p->config.find_save(p->config.ctx, id, out);
 }
 
+static int n_preview(void *owner, const char *path, const uint8_t *template_record, KpUiPreview *out)
+{
+	KpNetPlay *p = (KpNetPlay *)owner;
+	return p->config.preview != NULL && p->config.preview(p->config.ctx, path, template_record, out);
+}
+
+static void n_preview_release(void *owner)
+{
+	KpNetPlay *p = (KpNetPlay *)owner;
+	if (p->config.preview_release != NULL) p->config.preview_release(p->config.ctx);
+}
+
 /* --- the product's calls --- */
 
 void kp_netplay_init(KpNetPlay *p, KpUi *ui, const KpNetPlayConfig *config)
@@ -278,6 +290,8 @@ void kp_netplay_init(KpNetPlay *p, KpUi *ui, const KpNetPlayConfig *config)
 	p->nu.entry_map = n_entry_map;
 	p->nu.entry_save = n_entry_save;
 	p->nu.find_save = n_find_save;
+	p->nu.preview = n_preview;
+	p->nu.preview_release = n_preview_release;
 	kp_netui_hooks(&p->nu, &p->net);
 	p->net.providers = p_providers;
 	p->net.select_provider = p_select;

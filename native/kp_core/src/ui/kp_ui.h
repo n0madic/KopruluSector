@@ -222,6 +222,7 @@ typedef struct {
 	uint8_t *terrain, *image;        /* 0x671fcc, 0x671fd4 */
 	uint8_t palette_map[256];        /* 0x672078 */
 	int terrain_hidden;              /* 0x671a89 */
+	int preview;                     /* the chat room's preview world is the image's (kp_ui_minimap_preview_world) */
 	int colour_mode;                 /* 0x671a88 */
 	int32_t hovered;                 /* 0x671f9c: the dialog's control under the cursor (-1 none) */
 	int rebuild;                     /* 0x671fa2 */
@@ -870,8 +871,11 @@ typedef struct {
 	uint8_t minimap[12];             /* 0x66ca5c: the first pixels of <dir>tminimap.pcx */
 	KpUiSurface main, inset, box, untab; /* <dir>pMain.pcx, pInset.pcx, scorebox.pcx, untab.pcx */
 	char elapsed_text[128];
-	int answered;                    /* the dialog's result is in ui->result */
+	int answered;                    /* the dialog's result is in ui->result and result */
+	int32_t result;                  /* its result: KP_UI_SCORE_OK, or -1 when the glue's exit closed it (GlueExitHook
+	                                  * 0x458440) */
 } KpUiScore;
+#define KP_UI_SCORE_OK 7 /* the score screen's OK (RunScoreScreen 0x461940's result 7) */
 
 /* The glue's loop and its menus (kp_ui_menus.c; glues.cpp 0x457510, glumain.cpp, glulogin.cpp, glupopup.cpp, the
  * campaign menus, the load screen; atlas P18..P21, P41): the screens' modal runs with their continuations, the
@@ -880,6 +884,13 @@ typedef struct {
 #define KP_UI_SAVES 254
 #define KP_UI_MODALS 8
 #define KP_UI_POPUP_TEXT 512 /* a popup's or a message box's text: the original's 256 bytes in UTF-8 */
+/* RequestGameExit 0x444e00's codes (KpUi.game_exit): Exit Program, Quit Mission, Restart, the victory's, the defeat's */
+#define KP_UI_EXIT_PROGRAM 2
+#define KP_UI_EXIT_QUIT_MISSION 4
+#define KP_UI_EXIT_RESTART 5
+#define KP_UI_EXIT_VICTORY 6
+#define KP_UI_EXIT_DEFEAT 7
+#define KP_UI_ROOM_EXIT 100       /* a race ready room's result when the glue exits (PollBriefingReady 0x461120) */
 typedef void (*KpUiModalDone)(KpUi *ui, int32_t result);
 typedef struct {
 	char name[KP_UI_NAME];
@@ -1011,6 +1022,7 @@ typedef struct {
 	char title[KP_UI_GAME_TITLE];        /* +0x4d */
 } KpUiGame;
 struct KpUiLobby;
+struct KpUiPreview;
 typedef struct KpUiNet {
 	/* SNetEnumProviders (Storm 105): the providers in Storm's order (out[k]'s id, flags, maximum players, name and
 	 * description as Storm gives them); their count */
@@ -1049,10 +1061,19 @@ typedef struct KpUiNet {
 	/* The chat room's lobby (glue state 3, kp_ui_lobby.c). InitJoinedLobby 0x474c60 when the room has started: 1, 0
 	 * aborted (the room closes as Cancel's leave) */
 	int (*lobby_enter)(void *host);
-	/* PollLobby 0x474f00, one pass of the room's idle callback: KP_UI_LOBBY_REFRESH, KP_UI_LOBBY_START, or 0 */
+	/* PollLobby 0x474f00, one pass of the room's idle callback: KP_UI_LOBBY_REFRESH, KP_UI_LOBBY_START,
+	 * KP_UI_LOBBY_MESSAGE (another message taken), or 0 (none) */
 	int (*lobby_poll)(void *host);
 	/* The lobby as the rows and labels read it now (the network glue's globals) */
 	void (*lobby_view)(void *host, struct KpUiLobby *out);
+	/* LayoutLobbySlots 0x451b50 in a replay's lobby: the network glue's slot (0x6726c8 + 8) that is neither a human
+	 * nor closed becomes open */
+	void (*lobby_open_slot)(void *host, int slot);
+	/* LobbyMapPreviewTimer 0x450640's InitGameWorldForLobbyPreview 0x443850 (the lobby's map and every peer has it):
+	 * 1 with the preview world in *out (the host's until lobby_preview_release), 0 when the map does not load (the
+	 * host reported its fatal error 0x61); NULL: no preview world (the preview shows the dialog's background) */
+	int (*lobby_preview)(void *host, struct KpUiPreview *out);
+	void (*lobby_preview_release)(void *host); /* ReleaseLobbyPreviewWorld 0x443d70 */
 	void (*lobby_abort)(void *host);   /* AbortNetworkGame 0x474e60 */
 	void (*lobby_cancel)(void *host);  /* CancelLobby 0x4baf60 */
 	void (*lobby_release)(void *host); /* ReleaseLobbySession 0x474c30: the room closed */
@@ -1094,9 +1115,15 @@ typedef struct KpUiNet {
 	int (*briefing_poll)(void *host);
 	void *host;
 } KpUiNet;
-/* PollLobby's results (ReceiveChatRoomMessage 0x471860's 0x4b: the rows changed; 0x53: the game starts) */
+/* PollLobby's results (ReceiveChatRoomMessage 0x471860's 0x4b: the rows changed; 0x53: the game starts); Koprulu's
+ * KP_UI_LOBBY_MESSAGE: another message was taken, so the room makes another pass in the same frame (0: none was) */
 #define KP_UI_LOBBY_REFRESH 0x4b
 #define KP_UI_LOBBY_START 0x53
+#define KP_UI_LOBBY_MESSAGE 1
+/* The chat room's passes in one frame at most (kp_ui_lobby_idle): the original's modal loop makes a pass, and takes a
+ * message, about 790 times a second (its recorded map transfer under the emulator), Koprulu's glue one a frame; 64 a
+ * frame takes 3,840 a second at 60 frames and bounds a frame's work under a flood of messages */
+#define KP_UI_LOBBY_PASSES 64
 /* The slot menus' actions (the table 0x503b68's) */
 enum { KP_UI_SLOT_NAME, KP_UI_SLOT_PUBLIC, KP_UI_SLOT_OPEN, KP_UI_SLOT_CLOSE, KP_UI_SLOT_COMPUTER, KP_UI_SLOT_BAN,
 	KP_UI_SLOT_SWAP };
@@ -1112,6 +1139,18 @@ typedef struct {
 	uint8_t type, race, force;           /* +8, +9, +0xa (KP_CTRL_*: the lobby's 5 computer, 6 open, 8 closed) */
 	char name[KP_UI_LOBBY_NAME];         /* +0xb */
 } KpUiLobbySlot;
+/* The chat room's preview world as the lobby's minimap draws it (kp_preview.h builds it): the map's size and megatiles,
+ * its tileset's MMNI, palette (768 RGB bytes) and cycled flags (256), and the neutral players' boxes in drawing order. */
+struct KpPreviewUnit;
+typedef struct KpUiPreview {
+	int32_t map_w, map_h;
+	const uint16_t *megatiles;
+	const uint8_t *mmni;
+	size_t mmni_size;
+	const uint8_t *rgb, *cycled;
+	const struct KpPreviewUnit *units;
+	int unit_count;
+} KpUiPreview;
 typedef struct KpUiLobby {
 	KpUiLobbySlot slots[KP_UI_LOBBY_SLOTS];
 	uint8_t setup_types[KP_UI_LOBBY_SLOTS];   /* 0x673d50 + 36j */
@@ -1287,6 +1326,9 @@ typedef struct {
 	KpUiChat chat;                   /* the chat room's */
 	uint16_t refusal;                /* gluAll's string the load or Load Replay screen shows once it stood (0 none) */
 	uint16_t net_error;              /* 0x6728bc: the deferred network.tbl report (StoreDeferredNetError 0x4748d0; 0 none) */
+	char net_detail[KP_UI_POPUP_TEXT]; /* 0x6728c0: its detail ("" none) */
+	uint8_t glue_exit;               /* 0x66a274 is 25: RequestGlueExit 0x457cf0 after a fatal network report, until
+	                                  * GlueExitHook 0x458440 closed the screen (kp_ui_menus_tick) */
 	char map_dir[KP_UI_MAP_DIR]; /* 0x668a68 under the root 0x668b70 (maps\replays, Play Custom's maps): the listed
 	                              * folder */
 	int32_t map_preview;          /* 0x66aef4: the entry whose information the 100 ms timer shows (-1 none) */
@@ -1640,7 +1682,7 @@ struct KpUi {
 	                                  * kp_ui_score_data), 0 at a new game's console */
 	uint16_t game_exit;              /* 0x666420: RequestGameExit 0x444e00's code for the host (0 none; 2 Exit Program,
 	                                  * 4 Quit Mission, 5 Restart, 6 the victory's, 7 the defeat's; 0 again at a new
-	                                  * game's console) */
+	                                  * game's console: KP_UI_EXIT_*) */
 	KpUiInput input;
 	KpUiPlacement placement;
 	KpUiCard card;
@@ -2042,6 +2084,11 @@ void kp_ui_minimap_reset(KpUi *ui);
  * over Map Preview) and its close (FreeMinimap 0x46e1a0). */
 int32_t kp_ui_minimap_preview_open(KpUi *ui);
 void kp_ui_minimap_preview_close(KpUi *ui, int32_t dialog);
+/* InitMinimap 0x46e260 of a preview world under the preview dialog: the image laid out by the map's size
+ * (LayoutMinimap 0x46d850), the tileset's colours as the glue palette's nearest (FindNearestStaticColor 0x4666c0), the
+ * terrain whole (the preview world has no fog) and the neutral players' boxes; the image shows once ShowLobbyControls
+ * shows it. 0, or -1 (no image control, out of memory). */
+int kp_ui_minimap_preview_world(KpUi *ui, int32_t dialog, const KpUiPreview *p);
 /* The resource panel's animated values from 0 (CreateResourceDialog 0x4a78f0), as a console made anew starts them. */
 void kp_ui_resources_reset(KpUi *ui);
 void kp_ui_minimap_ping(KpUi *ui, uint32_t x, uint32_t y, uint8_t colour_row);
@@ -2204,6 +2251,21 @@ void kp_ui_menus_refused(KpUi *ui, uint16_t gluall);
  * StoreDeferredNetError 0x4748d0): network.tbl's string index (1-based) shown in an OK popup by the next glue screen,
  * 100 ms after it is activated (ActivateGlueScreen 0x4579b0's timer, FlushDeferredNetError 0x474980). */
 void kp_ui_menus_net_error(KpUi *ui, uint16_t network);
+/* ReportNetError 0x474a00's screens for a report of the network game (the game's own report, which left Storm's game
+ * and set its latch when fatal):
+ *   - ShowNetErrorMessage 0x474a70: in a game (in_game), or with no dialog open, the report is deferred with its detail
+ *     (StoreDeferredNetError 0x4748d0); otherwise it shows at once over the screen: network.tbl's string index and the
+ *     detail in rez\gluPOkSplit.bin (ShowGlueMessageBox2 0x456fb0 -> 0x460100), or the string alone in rez\gluPOk.bin;
+ *   - fatal: in a game RequestGameExit 0x444e00(4) (ui->game_exit), then RequestGlueExit 0x457cf0 (glue state 25):
+ *     once no popup is open (the original's popup is modal and returns before the exit), GlueExitHook 0x458440 closes
+ *     the glue's screen with result -1 and the main menu follows (kp_ui_menus_glue_exit); a race ready room waiting for
+ *     its players answers 100 (PollBriefingReady 0x461120).
+ * TODO: in a game ShowFatalErrorDialog 0x43ec00 (rez\dlgFatal.bin) shows the report before the game ends; Koprulu
+ * shows it over the main menu the glue exit leads to. */
+void kp_ui_menus_net_report(KpUi *ui, uint16_t network, const char *detail, int fatal, int in_game);
+/* Whether a fatal network report asked for the glue's exit (glue state 25) that no screen has taken yet; take: it is
+ * taken (the host's main menu follows a game or a ready room the report ended). */
+int kp_ui_menus_glue_exit(KpUi *ui, int take);
 /* The answer of the lookup KpUiNet.set_address began (its -1): found, the address popup ends as its Ok; not found, its
  * label says so and Ok and the edit work again. 1 when the popup waited for it, 0 when it no longer did (its Cancel):
  * the host then drops the address. */
@@ -2211,7 +2273,8 @@ int kp_ui_menus_address_found(KpUi *ui, int found);
 /* SetGlueStateFromProvider 0x457e50: the glue state a network game's ready room or score screen goes back to, by the
  * provider (Battle.net 4, a modem 20, the cable 21, the LAN's IPX, AppleTalk and UDP 10, any other the main menu 0). */
 int kp_ui_menus_provider_state(const KpUi *ui);
-/* FlushDeferredNetError 0x474980: the deferred report in an OK popup, then none (the glue's timer). */
+/* FlushDeferredNetError 0x474980: the deferred report shown as ShowNetErrorMessage 0x474a70 shows one (with its detail
+ * in rez\gluPOkSplit.bin), then none (the glue's timer). */
 void kp_ui_menus_flush_net_error(KpUi *ui);
 /* CreateCampaignMissionGame 0x4bb6c0's draws of the glue's generator (FillProgramInfo 0x46f330's key and name): the
  * host's, once a mission history's cinematic row leads to a mission. */

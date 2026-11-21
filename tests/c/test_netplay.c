@@ -626,6 +626,71 @@ static void a_silent_seat_is_dropped_after_the_countdown(KpT *T)
 	kp_t_ok(T, !ng->lagging, "no more waiting");
 }
 
+/* The wall clock of a seat the test steps itself (kp_session_advance): the LAN's time in seconds */
+static double lan_seconds(Play *p) { return kp_net_lobby_now(&p->l) / 1000.0; }
+
+/* A seat's steps by its wall clock: its messages, then kp_session_advance at the LAN's time */
+static void advance_seat(Play *p, int k)
+{
+	KpSession *s = p->seat[k].session;
+	double alpha;
+	kp_session_net_messages(s);
+	p->seat[k].frames += kp_session_advance(s, lan_seconds(p), &alpha, NULL);
+	kp_t_ok(p->T, !s->failed, "seat %d: %s", k, s->error);
+}
+
+/* PollTurn 0x444cc0's pacing after a wait: the first seat, stepped by its wall clock, waits for the second's turn
+ * (0x666400, 0x66642c); a turn that came within 100 ms puts its next step half a step later, one after a longer wait
+ * half a turn from the turn's arrival (0x6663f8), and the step that ran the turn is the clock's last of that call */
+static void a_turn_after_a_wait_paces_the_next_step(KpT *T)
+{
+	Play *p = play_lobby(T, MAP_FILE, 2, 43, 0);
+	KpSession *s;
+	int32_t step;
+	double before, waited_ms;
+	int pass, k;
+	play_start(p);
+	play_begin(p);
+	play_until(p, 0, 50, 50 * FRAME_MS * 4);
+	play_until(p, 1, 50, 50 * FRAME_MS * 4);
+	s = p->seat[0].session;
+	step = kp_clock_step_ms(&s->clock);
+	p->seat[0].stopped = 1; /* the test steps it */
+	for (pass = 0; pass < 2; pass++) {
+		uint32_t silence = pass == 0 ? KP_CLOCK_SHORT_WAIT_MS / 2 : KP_CLOCK_SHORT_WAIT_MS * 4;
+		uint32_t until;
+		p->seat[1].stopped = 1; /* the second seat's turns stop */
+		for (k = 0; k < 400 && !s->net_waiting; k++) {
+			play_run(p, 1);
+			advance_seat(p, 0);
+		}
+		kp_t_ok(T, s->net_waiting, "pass %d: the first seat waits for the turn", pass);
+		until = kp_net_lobby_now(&p->l) + silence;
+		while ((int32_t)(kp_net_lobby_now(&p->l) - until) < 0) {
+			play_run(p, 1);
+			advance_seat(p, 0);
+		}
+		kp_t_ok(T, s->net_waiting, "pass %d: still waiting after %u ms", pass, (unsigned)silence);
+		p->seat[1].stopped = 0;
+		for (k = 0; k < 2000 && s->net_waiting; k++) {
+			before = s->net_wait_start;
+			play_run(p, 1);
+			advance_seat(p, 0);
+		}
+		kp_t_ok(T, !s->net_waiting, "pass %d: the turn came", pass);
+		waited_ms = (lan_seconds(p) - before) * 1000;
+		if (waited_ms < KP_CLOCK_SHORT_WAIT_MS) {
+			kp_t_ok(T, s->clock.accumulator_ms < step - step / 2, "pass %d: half a step later after %.0f ms (%.1f)",
+				pass, waited_ms, s->clock.accumulator_ms);
+		} else {
+			kp_t_ok(T, s->clock.accumulator_ms == step - (double)((uint32_t)(step * s->turns.frames_per_turn) >> 1),
+				"pass %d: half a turn from the turn after %.0f ms (%.1f)", pass, waited_ms, s->clock.accumulator_ms);
+		}
+		kp_t_eq(T, pass == 0 ? waited_ms < KP_CLOCK_SHORT_WAIT_MS : waited_ms >= KP_CLOCK_SHORT_WAIT_MS, 1,
+			"pass %d's wait of %.0f ms", pass, waited_ms);
+	}
+}
+
 /* The game's chat lines of a seat with this text, among its events not yet taken */
 static int chat_lines(KpGame *g, const char *text)
 {
@@ -689,6 +754,7 @@ static const KpTest TESTS[] = {
 	{ "a_leaver_is_seen_at_one_turn", a_leaver_is_seen_at_one_turn, 0 },
 	{ "a_desync_drops_each_side_in_a_game_of_two", a_desync_drops_each_side_in_a_game_of_two, 0 },
 	{ "a_silent_seat_is_dropped_after_the_countdown", a_silent_seat_is_dropped_after_the_countdown, 0 },
+	{ "a_turn_after_a_wait_paces_the_next_step", a_turn_after_a_wait_paces_the_next_step, 0 },
 	{ "a_peers_foreign_commands_run_as_the_original_allows", a_peers_foreign_commands_run_as_the_original_allows, 0 },
 	{ "a_turn_without_a_record_runs_no_command", a_turn_without_a_record_runs_no_command, 0 },
 };

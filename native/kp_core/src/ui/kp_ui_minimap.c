@@ -14,6 +14,7 @@
 #include "kp_ids.h"
 #include "kp_images.h"
 #include "kp_int.h"
+#include "kp_preview.h"
 
 #define C_IMAGE 1
 #define IMAGE_SIDE 128
@@ -106,21 +107,32 @@ static uint8_t cell(const KpUi *ui, int64_t megatile, int k)
 	return at < ui->minimap.mmni_size ? ui->minimap.palette_map[ui->minimap.mmni[at]] : 0;
 }
 
-static void build_terrain(KpUi *ui)
+/* The terrain of a map of mw x mh tiles by its megatiles (the game's, or a preview world's: one of wide, narrow), count
+ * entries of them. A side LayoutMinimap has no case for keeps the image's previous size, whose cells may lie past the
+ * map: the game's 256 x 256 array holds them, a preview world's map-sized one does not, so a cell past count is 0. */
+static void build_cells(KpUi *ui, int64_t mw, int64_t mh, const int64_t *wide, const uint16_t *narrow, int64_t count)
 {
-	KpGame *g = ui->game;
 	KpUiMinimap *m = mm(ui);
-	int64_t mw = g->map_w, side = g->map_w > g->map_h ? g->map_w : g->map_h, x, y;
+	int64_t side = mw > mh ? mw : mh, x, y;
+#define MEGA(i) ((i) >= count ? 0 : wide != NULL ? wide[i] : (int64_t)narrow[i])
 	if (m->terrain == NULL || m->mmni == NULL) return;
 	for (y = 0; y < m->h; y++) {
 		for (x = 0; x < m->w; x++) {
 			uint8_t c;
-			if (side == 64) c = cell(ui, g->terrain.megatiles[(y / 2) * mw + x / 2], (int)((y & 1) * 2 + (x & 1)));
-			else if (side >= 192) c = cell(ui, g->terrain.megatiles[(2 * y) * mw + 2 * x], 0);
-			else c = cell(ui, g->terrain.megatiles[y * mw + x], 0);
+			if (side == 64) c = cell(ui, MEGA((y / 2) * mw + x / 2), (int)((y & 1) * 2 + (x & 1)));
+			else if (side >= 192) c = cell(ui, MEGA((2 * y) * mw + 2 * x), 0);
+			else c = cell(ui, MEGA(y * mw + x), 0);
 			m->terrain[y * m->w + x] = c;
 		}
 	}
+#undef MEGA
+}
+
+static void build_terrain(KpUi *ui)
+{
+	const int64_t *megatiles = ui->game->terrain.megatiles;
+	build_cells(ui, ui->game->map_w, ui->game->map_h, megatiles, NULL,
+		(int64_t)(sizeof ui->game->terrain.megatiles / sizeof megatiles[0]));
 }
 
 /* The fog over the terrain (BuildMinimapFogTables 0x46e840 and the composer), or index 0 with the terrain hidden. */
@@ -1255,30 +1267,29 @@ static void draw_frame(KpUi *ui, KpUiControl *d, int32_t x, int32_t y, const int
 #undef PUT
 }
 
-/* LayoutMinimap 0x46d850. */
-static void layout(KpUi *ui)
+/* LayoutMinimap 0x46d850 of a map of mw x mh tiles. */
+static void layout_map(KpUi *ui, int64_t mw, int64_t mh)
 {
-	KpGame *g = ui->game;
 	KpUiMinimap *m = mm(ui);
 	KpUiControl *c = &ui->controls[m->control];
-	int64_t side = g->map_w > g->map_h ? g->map_w : g->map_h;
+	int64_t side = mw > mh ? mw : mh;
 	int16_t d;
 	switch (side) {
 	case 64:
-		m->w = (int32_t)(2 * g->map_w);
-		m->h = (int32_t)(2 * g->map_h);
+		m->w = (int32_t)(2 * mw);
+		m->h = (int32_t)(2 * mh);
 		m->divisor = 1;
 		m->shift = 1;
 		break;
 	case 96: case 128:
-		m->w = (int32_t)g->map_w;
-		m->h = (int32_t)g->map_h;
+		m->w = (int32_t)mw;
+		m->h = (int32_t)mh;
 		m->divisor = 1;
 		m->shift = 0;
 		break;
 	case 192: case 256:
-		m->w = (int32_t)(g->map_w / 2);
-		m->h = (int32_t)(g->map_h / 2);
+		m->w = (int32_t)(mw / 2);
+		m->h = (int32_t)(mh / 2);
 		m->divisor = 2;
 		m->shift = 0;
 		break;
@@ -1300,6 +1311,8 @@ static void layout(KpUi *ui)
 	m->clip[2] = (int16_t)(m->w - 1 + c->left);
 	m->clip[3] = (int16_t)(m->h + CONSOLE_Y - 1 + c->top);
 }
+
+static void layout(KpUi *ui) { layout_map(ui, ui->game->map_w, ui->game->map_h); }
 
 /* MinimapButtonTimer 0x46d240: the buttons' visibility again as players leave; gone once there is no diplomacy. */
 static void timer_buttons(KpUi *ui, int32_t dialog)
@@ -1461,22 +1474,40 @@ int kp_ui_minimap_create(KpUi *ui)
 
 /* --- the chat room's map preview (OpenMinimapPreview 0x46eb60: MinimapDialogInit 0x46db30 with the preview flag) --- */
 
-/* DrawMinimapFrame 0x46dcf0 in a preview: the full frame around the shown image (128 x 128 without a preview world) */
+/* DrawMinimapFrame 0x46dcf0 in a preview: the full frame around the shown image, W + 2 by H + 2 (MinimapDialogDestroy
+ * 0x46dc80's 128 x 128 without a preview world) */
 static void preview_frame(KpUi *ui, KpUiControl *d, int32_t x, int32_t y, const int16_t clip[4])
 {
 	KpUiDraw stock = kp_ui_type_draw(d->type);
 	KpUiSurface *t = ui->text.target;
 	int32_t k = kp_ui_find_control(ui, (int32_t)(d - ui->controls), C_IMAGE), i;
+	int32_t w = mm(ui)->preview ? mm(ui)->w : IMAGE_SIDE, h = mm(ui)->preview ? mm(ui)->h : IMAGE_SIDE;
 	const KpUiControl *c;
 	if (stock) stock(ui, d, x, y, clip);
 	if (k < 0 || t == NULL || !(ui->controls[k].flags & KP_UI_VISIBLE)) return;
 	c = &ui->controls[k];
 #define PUT(px, py, n) do { if ((px) >= 0 && (px) < t->w && (py) >= 0 && (py) < t->h) t->pixels[(int64_t)(py) * t->w + (px)] = colour(ui, n); } while (0)
-	for (i = 0; i < IMAGE_SIDE + 2; i++) PUT(c->right + 1, c->top - 1 + i, UI_FRAME_LIGHT);
-	for (i = 0; i < IMAGE_SIDE + 2; i++) PUT(c->left - 1 + i, c->top - 1, UI_FRAME_LIGHT);
-	for (i = 0; i < IMAGE_SIDE + 2; i++) PUT(c->left - 1, c->top - 1 + i, UI_FRAME_DARK);
-	for (i = 0; i < IMAGE_SIDE + 2; i++) PUT(c->left - 1 + i, c->bottom + 1, UI_FRAME_DARK);
+	for (i = 0; i < h + 2; i++) PUT(c->right + 1, c->top - 1 + i, UI_FRAME_LIGHT);
+	for (i = 0; i < w + 2; i++) PUT(c->left - 1 + i, c->top - 1, UI_FRAME_LIGHT);
+	for (i = 0; i < h + 2; i++) PUT(c->left - 1, c->top - 1 + i, UI_FRAME_DARK);
+	for (i = 0; i < w + 2; i++) PUT(c->left - 1 + i, c->bottom + 1, UI_FRAME_DARK);
 #undef PUT
+}
+
+/* DrawMinimapImage 0x46e990 of a preview: the image alone, no view rectangle */
+static void preview_image(KpUi *ui, KpUiControl *c, int32_t x, int32_t y, const int16_t clip[4])
+{
+	KpUiMinimap *m = mm(ui);
+	int16_t r[4];
+	(void)x;
+	(void)y;
+	(void)clip;
+	if (m->image == NULL) return;
+	r[0] = 0;
+	r[1] = 0;
+	r[2] = (int16_t)(m->w - 1);
+	r[3] = (int16_t)(m->h - 1);
+	kp_ui_blit_opaque(ui, c->left, c->top, m->image, m->w, m->h, r);
 }
 
 static int preview_interact(KpUi *ui, KpUiControl *d, KpUiEvent *e)
@@ -1514,8 +1545,64 @@ int32_t kp_ui_minimap_preview_open(KpUi *ui)
 	return d;
 }
 
+int kp_ui_minimap_preview_world(KpUi *ui, int32_t dialog, const KpUiPreview *p)
+{
+	KpUiMinimap *m = mm(ui);
+	const uint8_t *glue = kp_ui_glue_palette(ui, NULL);
+	uint8_t rgb[768], loaded[12];
+	int32_t k = kp_ui_find_control(ui, dialog, C_IMAGE);
+	int i;
+	if (k < 0 || glue == NULL) return -1;
+	m->control = k;
+	m->preview = 1;
+	m->mmni = p->mmni;
+	m->mmni_size = p->mmni_size;
+	/* the values the game's minimap left at its end (MinimapDialogDestroy 0x46dc80), which a side LayoutMinimap has no
+	 * case for keeps */
+	m->w = m->h = IMAGE_SIDE;
+	m->divisor = 1;
+	m->shift = 0;
+	layout_map(ui, p->map_w, p->map_h);
+	if (m->terrain == NULL || m->image == NULL) return -1;
+	/* InitMinimap 0x46e260: each tileset colour as the glue palette's nearest (0x671a90, the colour map saved before
+	 * the tileset's replaced it), leaving out the indices the tileset cycles (0x66fd20) */
+	for (i = 0; i < 256; i++) {
+		rgb[3 * i] = glue[4 * i];
+		rgb[3 * i + 1] = glue[4 * i + 1];
+		rgb[3 * i + 2] = glue[4 * i + 2];
+	}
+	for (i = 0; i < 256; i++) m->palette_map[i] = kp_ui_nearest_colour(rgb, p->cycled, p->rgb[3 * i], p->rgb[3 * i + 1], p->rgb[3 * i + 2]);
+	build_cells(ui, p->map_w, p->map_h, NULL, p->megatiles, (int64_t)p->map_w * p->map_h);
+	/* the fog's rows over a world whose tiles nobody's fog covers (InitFogOfWar 0x46c1e0 runs only outside a preview):
+	 * the identity row, the terrain as it is */
+	memcpy(m->image, m->terrain, (size_t)m->w * (size_t)m->h);
+	/* DrawMinimapUnits 0x46d510: only DrawNeutralMinimapUnits 0x46e5b0 draws in a preview, in 0x5290b6's colour of the
+	 * player (game\tminimap.pcx's rows; a neutral player's row is its own) or the resources' */
+	if (pcx_head(ui, "game\\tminimap.pcx", loaded, sizeof loaded) != 0) return -1;
+	for (i = 0; i < p->unit_count; i++) {
+		const KpPreviewUnit *u = &p->units[i];
+		uint8_t c = u->resource ? colour(ui, UI_RESOURCE) : m->colour_mode != 0 ? colour(ui, UI_ENEMY) : loaded[u->owner % 12];
+		unit_box(ui, u->x, u->y, u->w, u->h, c, u->building);
+	}
+	ui->controls[k].draw = preview_image;
+	kp_ui_mark_dirty(ui, k);
+	return 0;
+}
+
 void kp_ui_minimap_preview_close(KpUi *ui, int32_t dialog)
 {
-	/* FreeMinimap 0x46e1a0 of the preview */
+	/* FreeMinimap 0x46e1a0 of the preview: MinimapDialogDestroy 0x46dc80's 128 x 128 and the bitmaps freed */
+	KpUiMinimap *m = mm(ui);
 	if (dialog >= 0 && ui->controls[dialog].used) kp_ui_end_dialog(ui, dialog);
+	if (!m->preview) return;
+	m->preview = 0;
+	m->control = -1;
+	m->w = m->h = IMAGE_SIDE;
+	m->divisor = 1;
+	m->shift = 0;
+	free(m->terrain);
+	free(m->image);
+	m->terrain = m->image = NULL;
+	m->mmni = NULL;
+	m->mmni_size = 0;
 }

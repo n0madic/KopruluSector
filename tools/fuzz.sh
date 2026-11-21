@@ -2,14 +2,14 @@
 # libFuzzer's targets (phase T, stage T2; ADR 0022): build/cmake-fuzz with an LLVM clang that has libFuzzer
 # (KOPRULU_CLANG=<clang>, else Homebrew's llvm; Apple's has none), the seeds, then each target KOPRULU_FUZZ_TIME seconds
 # (default 60) under ASan and UBSan.
-#   tools/fuzz.sh [rep|chk|save|commands|turns|udp|snet|lobby|transfer ...]   (no target: all nine)
+#   tools/fuzz.sh [rep|chk|save|commands|turns|udp|snet|lobby|transfer|game ...]   (no target: all ten)
 # The targets' entries are tests/c/kp_fuzz.c's (kp_fuzz.h tells what each feeds). Their corpora:
 #   build/fuzz/corpus/<target>   what the fuzzer found, kept between runs (the first directory: new inputs go there;
 #                                TODO: merge it (-merge=1) once it grows: each run replays it whole before searching,
 #                                and the slow targets' (chk, save: tens of inputs a second) eats their time)
 #   tests/fuzz/seeds/<target>    the synthetic seeds, committed (kp_fuzz_seeds --synthetic tests/fuzz/seeds)
 #   build/fuzz/seeds/<target>    the seeds made from the game's data, made anew each run (Blizzard's bytes: never
-#                                committed); save and commands need the data and are skipped without it
+#                                committed); save, commands and game need the data and are skipped without it
 #   tests/fuzz/regress/<target>  the findings kept (test_fuzz runs them in every build)
 # A finding (a crash, a sanitizer's report, a leak, an input running 30 s) is written to build/fuzz/<target>/ and the
 # script exits 1 after the other targets. Minimize it:
@@ -22,7 +22,7 @@ cd "$(dirname "$0")/.."
 
 TIME="${KOPRULU_FUZZ_TIME:-60}"
 HANG_SECONDS=30
-ALL=(rep chk save commands turns udp snet lobby transfer)
+ALL=(rep chk save commands turns udp snet lobby transfer game)
 TARGETS=("$@")
 [ ${#TARGETS[@]} -gt 0 ] || TARGETS=("${ALL[@]}")
 for t in "${TARGETS[@]}"; do
@@ -65,7 +65,7 @@ HAVE_DATA=0
 
 found=0
 for t in "${TARGETS[@]}"; do
-  if [ "$HAVE_DATA" = 0 ] && { [ "$t" = save ] || [ "$t" = commands ]; }; then
+  if [ "$HAVE_DATA" = 0 ] && { [ "$t" = save ] || [ "$t" = commands ] || [ "$t" = game ]; }; then
     echo "fuzz_$t: skipped (no game data: make convert)"
     continue
   fi

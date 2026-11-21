@@ -770,6 +770,54 @@ static void resumed_ums_save(KpT *T)
 	kp_t_eq(T, s[1].phase, LEFT, "Beta's room closed");
 }
 
+/* CreateMultiplayerGame 0x475040's ladder argument of SNetCreateLadderGame: the tournament byte's 0, 1, 3 or 5 (past
+ * 3: 0), but a ladder template's (types 0x11..0x16) the zeroed DWORD of its templates.lst entry. */
+static struct {
+	int (*real)(void *ud, const char *name, const char *password, const char *stats, uint32_t game_type,
+		uint32_t ladder_type, uint32_t mode, const void *tmpl, uint32_t tmpl_size, uint32_t max_players,
+		const char *player_name, const char *player_desc, int *player_id);
+	uint32_t ladder;
+	int calls;
+} ladder_spy;
+
+static int spy_create(void *ud, const char *name, const char *password, const char *stats, uint32_t game_type,
+	uint32_t ladder_type, uint32_t mode, const void *tmpl, uint32_t tmpl_size, uint32_t max_players,
+	const char *player_name, const char *player_desc, int *player_id)
+{
+	ladder_spy.ladder = ladder_type;
+	ladder_spy.calls++;
+	return ladder_spy.real(ud, name, password, stats, game_type, ladder_type, mode, tmpl, tmpl_size, max_players,
+		player_name, player_desc, player_id);
+}
+
+static void ladder_type_follows_the_template(KpT *T)
+{
+	static const uint32_t BY_TOURNAMENT[5] = { 0, 1, 3, 5, 0 };
+	static const uint8_t TYPES[3] = { 0x02, 0x11, 0x16 }; /* Melee, the first and the last ladder type */
+	int type, tournament;
+	for (type = 0; type < 3; type++) {
+		for (tournament = 0; tournament < 5; tournament++) {
+			KpNetLobby *l = lobby_new(T, 23, 1, 0);
+			KpNetLobbySeat *s = l->seat;
+			/* Melee's own record changed (FindTemplateRecord 0x447b50 takes the first of a key) */
+			KpTemplate *t = &l->templates.list[KP_NET_LOBBY_MELEE];
+			uint32_t want = TYPES[type] >= 0x11 ? 0 : BY_TOURNAMENT[tournament];
+			t->record[KP_TEMPLATE_TYPE] = TYPES[type];
+			t->record[KP_TEMPLATE_TOURNAMENT] = (uint8_t)tournament;
+			kp_t_ok(T, kp_net_lobby_seat_init(s, KP_NET_LOBBY_NAMES[0], &l->templates, l->map, 1, NULL), "the caps");
+			memset(&ladder_spy, 0, sizeof ladder_spy);
+			ladder_spy.real = s->game.net.create_game;
+			s->game.net.create_game = spy_create;
+			kp_t_ok(T, kp_net_lobby_create(s, &l->templates, KP_NET_LOBBY_MELEE), "type 0x%02x, tournament %d: hosted",
+				TYPES[type], tournament);
+			kp_t_eq(T, ladder_spy.calls, 1, "SNetCreateLadderGame called once");
+			kp_t_eq(T, (int)ladder_spy.ladder, (int)want, "type 0x%02x, tournament %d: the ladder argument", TYPES[type],
+				tournament);
+			kp_t_eq(T, (int)s->game.header.template_record[KP_TEMPLATE_TYPE], TYPES[type], "the template's type");
+		}
+	}
+}
+
 /* A resumed team save (RebuildSlotsFromSaveSummary 0x479ce0): the slots take the template's teams (three of three:
  * slots 0..2, 3..5, 6..7); a defeated computer closes its team's slots, a remaining computer's record goes to every slot
  * of its team; a joiner takes the slot it asks for (its saved one). */
@@ -1183,6 +1231,7 @@ static void restored_slots_follow_the_original(KpT *T)
 
 static const KpTest TESTS[] = {
 	{ "stat_string_round_trip", stat_string_round_trip, 0 },
+	{ "ladder_type_follows_the_template", ladder_type_follows_the_template, 0 },
 	{ "net_string_classes", net_string_classes, 0 },
 	{ "four_seats_reach_one_start", four_seats_reach_one_start, 0 },
 	{ "four_seats_reach_one_start_on_a_lossy_lan", four_seats_reach_one_start_on_a_lossy_lan, 0 },

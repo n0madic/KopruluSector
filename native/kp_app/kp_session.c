@@ -117,6 +117,11 @@ void kp_clock_on_window(KpClock *c, int event, int autopause)
 
 int kp_clock_stopped(const KpClock *c) { return c->paused || c->suspended; }
 
+double kp_clock_alpha(const KpClock *c)
+{
+	return c->accumulator_ms > 0 ? c->accumulator_ms / kp_clock_step_ms(c) : 0;
+}
+
 int kp_clock_advance(KpClock *c, double dt, double *alpha)
 {
 	double step, acc;
@@ -128,7 +133,7 @@ int kp_clock_advance(KpClock *c, double dt, double *alpha)
 	if (dt < 0) dt = 0;
 	step = kp_clock_step_ms(c);
 	acc = c->accumulator_ms + dt * 1000;
-	n = (int)(acc / step);
+	n = acc > 0 ? (int)(acc / step) : 0; /* a step put later (kp_clock_after_wait) leaves it below 0 */
 	if (n > c->max_catchup) {
 		double excess = (n - c->max_catchup) * step;
 		c->dropped_ms += excess;
@@ -138,7 +143,7 @@ int kp_clock_advance(KpClock *c, double dt, double *alpha)
 	acc -= n * step;
 	c->accumulator_ms = acc;
 	c->steps += n;
-	*alpha = acc / step;
+	*alpha = kp_clock_alpha(c);
 	return n;
 }
 
@@ -149,10 +154,17 @@ int kp_clock_advance_wall(KpClock *c, double now, double *alpha)
 	c->last_wall = now;
 	c->has_wall = 1;
 	if (kp_clock_stopped(c) || !had) {
-		*alpha = c->accumulator_ms / kp_clock_step_ms(c);
+		*alpha = kp_clock_alpha(c);
 		return 0;
 	}
 	return kp_clock_advance(c, now - last, alpha);
+}
+
+void kp_clock_after_wait(KpClock *c, double waited_ms, int frames_per_turn)
+{
+	int32_t step = kp_clock_step_ms(c);
+	if (waited_ms < KP_CLOCK_SHORT_WAIT_MS) c->accumulator_ms -= (double)(step / 2);
+	else c->accumulator_ms = (double)step - (double)((uint32_t)(step * frames_per_turn) >> 1);
 }
 
 /* --- the session --- */
@@ -525,8 +537,23 @@ int kp_session_advance(KpSession *s, double now, double *alpha, double (*clock_m
 		int per = kp_session_steps_per_tick(s);
 		for (k = 0; k < per && kp_session_step(s, clock_ms); k++) {
 		}
-		if (k == 0) break;
+		if (k == 0) {
+			/* PollTurn 0x444cc0: a network game's turn did not come, the wait begins (0x666400, 0x66642c) */
+			if (s->turns.kind == KP_TURNS_NET && !s->failed && !s->net_waiting) {
+				s->net_waiting = 1;
+				s->net_wait_start = now;
+			}
+			break;
+		}
 		ran++;
+		if (s->net_waiting) {
+			/* the turn came: the next step's time from the wait's length, and RunPendingFrames' call ends after the
+			 * turn's first frame (its out flag in multiplayer) */
+			s->net_waiting = 0;
+			kp_clock_after_wait(&s->clock, (now - s->net_wait_start) * 1000, s->turns.frames_per_turn);
+			*alpha = kp_clock_alpha(&s->clock);
+			break;
+		}
 		if (k < per) break;
 		/* every seat writes a network save at the end of the step that ran its command (the original's ExecSaveGame
 		 * 0x472f50 saves within the turn): the host writes it before the next step */
@@ -621,8 +648,8 @@ void kp_session_replay_game(KpSession *s, uint32_t seed, KpRepGame *game)
 	game->colors = g->setup.color;
 	game->user_select = g->setup.user_select;
 	/* the started game's records (RunGameSession 0x467ba0 records 0x6726c8 after StartGame's slot steps); the header
-	 * has the slots 8..11 empty. TODO: a team game's slots 8..11 keep forces (a network team replay's header has
-	 * them) */
+	 * has the slots 8..11 empty (kp_rep_header), a team game's too: the emulated 1.17's 0x6726c8 at StartGame has them
+	 * so in every network game of phase N's suite, Team Melee, Top vs Bottom and Capture The Flag among them */
 	for (p = 0; p < 8; p++) {
 		KpRepPlayer *r = &game->players[p];
 		r->slot = (uint32_t)p;

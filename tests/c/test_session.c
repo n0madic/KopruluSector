@@ -140,6 +140,37 @@ static void clock_negative_dt_ignored(KpT *T)
 	kp_t_ok(T, c.accumulator_ms == 0, "no time");
 }
 
+/* PollTurn 0x444cc0's pacing once a network game's turn came after a wait (kp_clock_after_wait): a wait under
+ * KP_CLOCK_SHORT_WAIT_MS puts the next step half a step later, a longer one half a turn from the turn's arrival; while
+ * the step is put later the interpolation stays at the last step (0, never below: the world drawn moving back). */
+static void clock_after_a_turns_wait(KpT *T)
+{
+	enum { LONG_TURN = 5 }; /* frames per turn past 2: half a turn is longer than a step */
+	KpClock c = clock_new(0, 0);
+	const int32_t step = kp_clock_step_ms(&c);
+	double a;
+	kp_t_eq(T, kp_clock_advance(&c, 0.010, &a), 0, NULL);
+	kp_clock_after_wait(&c, KP_CLOCK_SHORT_WAIT_MS - 1, 2);
+	kp_t_ok(T, fabs(c.accumulator_ms - (10.0 - step / 2)) < 1e-9, "a short wait: half a step later (%.3f)",
+		c.accumulator_ms);
+	kp_t_ok(T, kp_clock_alpha(&c) == 0, "the last step's state while the next is put later");
+	kp_t_eq(T, kp_clock_advance(&c, 0.010, &a), 0, NULL);
+	kp_t_ok(T, a == 0, "no fraction below 0 (%.3f)", a);
+	kp_t_eq(T, kp_clock_advance(&c, (double)step / 1000, &a), 0, "a step's time is not enough");
+	kp_t_eq(T, kp_clock_advance(&c, 0.002, &a), 1, "the step half a step later");
+	kp_clock_after_wait(&c, KP_CLOCK_SHORT_WAIT_MS, 1);
+	kp_t_ok(T, fabs(c.accumulator_ms - (step - step / 2)) < 1e-9, "a long wait of a one-frame turn: half a step from now");
+	kp_clock_after_wait(&c, 2 * KP_CLOCK_SHORT_WAIT_MS, LONG_TURN);
+	kp_t_ok(T, fabs(c.accumulator_ms - (step - LONG_TURN * step / 2)) < 1e-9, "a long wait: half a turn from now (%.3f)",
+		c.accumulator_ms);
+	kp_t_eq(T, kp_clock_advance_wall(&c, 100.0, &a), 0, "the wall's reference");
+	kp_t_ok(T, a == 0, "no fraction below 0 at the wall's first call (%.3f)", a);
+	kp_t_eq(T, kp_clock_advance(&c, (double)(LONG_TURN * step / 2 - step - 1) / 1000, &a), 0, NULL);
+	kp_t_ok(T, a == 0, "still the last step's state (%.3f)", a);
+	kp_t_eq(T, kp_clock_advance(&c, (double)step / 1000, &a), 0, "not before half a turn");
+	kp_t_eq(T, kp_clock_advance(&c, 0.002, &a), 1, "the step half a turn after the turn");
+}
+
 /* --- the session over a real game --- */
 
 static void free_session(void *p);
@@ -2405,6 +2436,7 @@ static const KpTest TESTS[] = {
 	{ "clock_wall_reference_resets_on_resume", clock_wall_reference_resets_on_resume, 0 },
 	{ "clock_window_events", clock_window_events, 0 },
 	{ "clock_negative_dt_ignored", clock_negative_dt_ignored, 0 },
+	{ "clock_after_a_turns_wait", clock_after_a_turns_wait, 0 },
 	{ "session_speed_and_commands", session_speed_and_commands, 0 },
 	{ "turns_local_queue_and_recording", turns_local_queue_and_recording, 0 },
 	{ "turns_replay_feed_and_live_commands", turns_replay_feed_and_live_commands, 0 },

@@ -1,5 +1,5 @@
 /* libFuzzer's driver of one target (KP_FUZZ_TARGET, the CMake option KP_FUZZ: fuzz_rep, fuzz_chk, fuzz_save,
- * fuzz_commands; phase T, stage T2, ADR 0022). The entries are tests/c/kp_fuzz.c's, the ones test_fuzz runs the kept
+ * fuzz_commands, ..., fuzz_game; phase T, stage T2, ADR 0022). The entries are tests/c/kp_fuzz.c's, the ones test_fuzz runs the kept
  * inputs through. Run from the source tree's root (the data's targets read kp_oracle_data(".")); tools/fuzz.sh runs
  * them all. A property the entry checks that fails aborts, a finding as a crash is. */
 #include <stdio.h>
@@ -8,7 +8,7 @@
 #include "kp_fuzz.h"
 
 #ifndef KP_FUZZ_TARGET
-#error "KP_FUZZ_TARGET names the target (KP_FUZZ_REP, KP_FUZZ_CHK, KP_FUZZ_SAVE, KP_FUZZ_COMMANDS, KP_FUZZ_TURNS, KP_FUZZ_UDP or KP_FUZZ_SNET)"
+#error "KP_FUZZ_TARGET names the target (KP_FUZZ_REP, KP_FUZZ_CHK, KP_FUZZ_SAVE, KP_FUZZ_COMMANDS, KP_FUZZ_TURNS, KP_FUZZ_UDP, KP_FUZZ_SNET, KP_FUZZ_LOBBY, KP_FUZZ_TRANSFER or KP_FUZZ_GAME)"
 #endif
 
 #define WHY_SIZE 512

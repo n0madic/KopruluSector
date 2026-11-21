@@ -9,6 +9,7 @@
 #include <string.h>
 
 #include "kp_fuzz.h"
+#include "kp_fuzz_game.h"
 #include "kp_session.h"
 
 static const char *const KEPT[] = { "tests/fuzz/seeds", "tests/fuzz/regress", "koprulu-private/fuzz/regress" };
@@ -81,6 +82,64 @@ static void kept_udp_inputs(KpT *T) { kept_inputs(T, KP_FUZZ_UDP); }
 static void kept_snet_inputs(KpT *T) { kept_inputs(T, KP_FUZZ_SNET); }
 static void kept_lobby_inputs(KpT *T) { kept_inputs(T, KP_FUZZ_LOBBY); }
 static void kept_transfer_inputs(KpT *T) { kept_inputs(T, KP_FUZZ_TRANSFER); }
+static void kept_game_inputs(KpT *T) { kept_inputs(T, KP_FUZZ_GAME); }
+
+typedef struct {
+	KpT *T;
+	char names[8][32];
+	KpFuzzGameLast last[8];
+	int count;
+} GameSeeds;
+
+static void game_seed_run(void *ud, const char *name, const uint8_t *b, size_t n)
+{
+	GameSeeds *g = (GameSeeds *)ud;
+	char why[KP_ERROR_SIZE];
+	if (kp_fuzz_run(KP_FUZZ_GAME, b, n, why, sizeof why) != 0) kp_t_fail(g->T, "game's %s: %s", name, why);
+	if (g->count == 8) return;
+	snprintf(g->names[g->count], sizeof g->names[0], "%s", name);
+	g->last[g->count++] = *kp_fuzz_game_last();
+}
+
+static const KpFuzzGameLast *game_seed(KpT *T, const GameSeeds *g, const char *name)
+{
+	int k;
+	for (k = 0; k < g->count; k++) {
+		if (strcmp(g->names[k], name) == 0) {
+			const KpFuzzGameLast *l = &g->last[k];
+			kp_t_log(T, "%s: %d frames, %d turns and %d messages sent, %d messages taken, %d dropped, fatal %d", name,
+				l->frames, l->turns_sent, l->messages_sent, l->messages_taken, l->drops, l->fatal);
+			return l;
+		}
+	}
+	kp_t_fail(T, "no game seed %s", name);
+	return NULL;
+}
+
+/* The game target's synthetic seeds reach what they are for: the echo's frames run, the peer's lines are taken and
+ * the seat's own sent, the peer not responding is dropped by timeout.bin, a failing receive or send latches the fatal report. */
+static void game_seeds_reach_their_paths(KpT *T)
+{
+	GameSeeds g;
+	const KpFuzzGameLast *l;
+	kp_t_data(T);
+	init_target(T, KP_FUZZ_GAME);
+	memset(&g, 0, sizeof g);
+	g.T = T;
+	kp_t_eq(T, kp_fuzz_game_seeds(game_seed_run, &g), 6, "the seeds");
+	l = game_seed(T, &g, "echo");
+	kp_t_ok(T, l->frames >= 90 && l->turns_sent > 0 && !l->fatal && !l->drops, "the echo's game runs");
+	l = game_seed(T, &g, "chat");
+	kp_t_ok(T, l->messages_taken == 3 && l->messages_sent >= 2 && !l->fatal, "the lines taken and sent");
+	l = game_seed(T, &g, "commands");
+	kp_t_ok(T, l->frames >= 32 && !l->fatal, "the commands' game runs");
+	l = game_seed(T, &g, "leave");
+	kp_t_ok(T, l->drops >= 1 && !l->fatal, "the peer dropped");
+	l = game_seed(T, &g, "receive-fails");
+	kp_t_ok(T, l->fatal, "a failing receive is fatal");
+	l = game_seed(T, &g, "send-fails");
+	kp_t_ok(T, l->fatal, "a failing send is fatal");
+}
 
 /* The seeds made from the data (kp_fuzz_write_seeds, as tools/fuzz.sh makes build/fuzz/seeds) through their
  * targets: none fails, every save the game made loads (both forms), and each target has the seeds it should. */
@@ -88,8 +147,8 @@ static void data_seeds_run(KpT *T)
 {
 	/* rep: + recorded; chk: + 7 maps; save: a file and a native save a point; commands: + a player's units and an
 	 * order past orders.dat a map; turns: the synthetic one; udp: the provider's session; snet: hosting and joining;
-	 * lobby: six lobbies (a resumed save among them); transfer: four transfers */
-	static const int AT_LEAST[KP_FUZZ_TARGETS] = { 2, 8, 2 * KP_FUZZ_SAVE_SEED_POINTS, 9, 1, 1, 2, 6, 4 };
+	 * lobby: six lobbies (a resumed save among them); transfer: four transfers; game: the synthetic six */
+	static const int AT_LEAST[KP_FUZZ_TARGETS] = { 2, 8, 2 * KP_FUZZ_SAVE_SEED_POINTS, 9, 1, 1, 2, 6, 4, 6 };
 	const char *root;
 	char why[KP_ERROR_SIZE];
 	int target, written;
@@ -175,6 +234,8 @@ static const KpTest TESTS[] = {
 	{ "kept_snet_inputs", kept_snet_inputs, 0 },
 	{ "kept_lobby_inputs", kept_lobby_inputs, 0 },
 	{ "kept_transfer_inputs", kept_transfer_inputs, 0 },
+	{ "kept_game_inputs", kept_game_inputs, 0 },
+	{ "game_seeds_reach_their_paths", game_seeds_reach_their_paths, 0 },
 	{ "data_seeds_run", data_seeds_run, 0 },
 	{ "seal_makes_the_hash_table", seal_makes_the_hash_table, 0 },
 };

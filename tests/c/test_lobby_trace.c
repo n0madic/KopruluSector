@@ -438,9 +438,10 @@ static int h_find_save(void *ud, uint32_t id, KpNetGameSave *out)
 	return 0;
 }
 
-static void h_error(void *ud, int index, const char *detail, int fatal)
+static void h_error(void *ud, int index, const char *detail, int fatal, int in_game)
 {
 	Replay *r = (Replay *)ud;
+	(void)in_game;
 	kp_t_log(r->T, "%s: network.tbl %#x reported (%s%s)", r->who, (unsigned)index, detail ? detail : "",
 		fatal ? ", fatal" : "");
 }

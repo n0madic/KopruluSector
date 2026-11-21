@@ -68,8 +68,9 @@ static int h_find_save(void *ud, uint32_t id, KpNetGameSave *out)
 
 static void h_leave(void *ud, int reason) { ((KpNetLobbySeat *)ud)->leave = reason; }
 
-static void h_error(void *ud, int index, const char *detail, int fatal)
+static void h_error(void *ud, int index, const char *detail, int fatal, int in_game)
 {
+	(void)in_game;
 	(void)index;
 	(void)detail;
 	(void)fatal;

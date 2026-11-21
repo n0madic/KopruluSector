@@ -73,13 +73,11 @@ static int g_find_save(void *ud, uint32_t id, KpNetGameSave *out)
 	return n->find_save != NULL && n->find_save(n->owner, id, out);
 }
 
-static void g_error(void *ud, int index, const char *detail, int fatal)
+/* ReportNetError 0x474a00's screens (the game left Storm's game and set its latch): the popup now or deferred, and a
+ * fatal report's exits of the game and the glue */
+static void g_error(void *ud, int index, const char *detail, int fatal, int in_game)
 {
-	/* TODO: ShowNetErrorMessage 0x474a70's popup over the active screen with Storm's text (detail), and a fatal
-	 * report's leave (LeaveNetworkGame 0x4bb760); the deferred report of the next screen meanwhile */
-	(void)detail;
-	(void)fatal;
-	kp_ui_menus_net_error(nu(ud)->ui, (uint16_t)index);
+	kp_ui_menus_net_report(nu(ud)->ui, (uint16_t)index, detail, fatal, in_game);
 }
 
 KpNetGameHooks kp_netui_game_hooks(KpNetUi *n)
@@ -223,7 +221,8 @@ static int u_lobby_poll(void *host)
 	int r;
 	if (!ng) return 0;
 	r = kp_netgame_poll(ng);
-	return r == KP_UI_LOBBY_START || r == KP_UI_LOBBY_REFRESH ? r : 0;
+	if (r == KP_UI_LOBBY_START || r == KP_UI_LOBBY_REFRESH) return r;
+	return r == KP_CHAT_NONE ? 0 : KP_UI_LOBBY_MESSAGE;
 }
 
 void kp_netui_view(const KpNetGame *ng, KpUiLobby *out)
@@ -276,6 +275,28 @@ static void u_lobby_view(void *host, KpUiLobby *out)
 	const KpNetGame *ng = nu(host)->game;
 	if (ng) kp_netui_view(ng, out);
 	else memset(out, 0, sizeof *out);
+}
+
+static void u_lobby_open_slot(void *host, int slot)
+{
+	KpNetGame *ng = nu(host)->game;
+	if (ng && slot >= 0 && slot < KP_NETGAME_SLOTS) ng->slots[slot].type = KP_CTRL_OPEN;
+}
+
+/* InitGameWorldForLobbyPreview 0x443850 by the owner; a map that does not load is ReportNetError 0x61, fatal */
+static int u_lobby_preview(void *host, KpUiPreview *out)
+{
+	KpNetUi *n = nu(host);
+	if (!n->game || !n->preview) return 0;
+	if (n->preview(n->owner, kp_netgame_map_path(n->game), n->game->header.template_record, out)) return 1;
+	kp_netgame_report(n->game, KP_NETTBL_MAP_LOAD, NULL, 1);
+	return 0;
+}
+
+static void u_lobby_preview_release(void *host)
+{
+	KpNetUi *n = nu(host);
+	if (n->preview_release) n->preview_release(n->owner);
 }
 
 static void u_lobby_abort(void *host)
@@ -430,6 +451,9 @@ void kp_netui_hooks(KpNetUi *n, KpUiNet *net)
 	net->lobby_enter = u_lobby_enter;
 	net->lobby_poll = u_lobby_poll;
 	net->lobby_view = u_lobby_view;
+	net->lobby_open_slot = u_lobby_open_slot;
+	net->lobby_preview = u_lobby_preview;
+	net->lobby_preview_release = u_lobby_preview_release;
 	net->lobby_abort = u_lobby_abort;
 	net->lobby_cancel = u_lobby_cancel;
 	net->lobby_release = u_lobby_release;

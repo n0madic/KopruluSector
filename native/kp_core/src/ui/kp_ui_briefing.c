@@ -839,14 +839,25 @@ void kp_ui_ready_room_end(KpUi *ui)
 }
 
 /* PollBriefingReady 0x461120 in a network game: PollBriefingTurn 0x476b20 (its own 250 ms), 101 once every player's
- * 0x54 arrived */
+ * 0x54 arrived, 100 when it answers the glue's exit (state 25: a fatal network report, kp_ui_menus_net_report) */
 static void net_poll(KpUi *ui)
 {
 	KpUiBriefing *b = br(ui);
-	/* TODO: result 100 when PollBriefingTurn answers the glue's exit (state 25), which a fatal network error sets */
-	if (ui->net->briefing_poll == NULL || !ui->net->briefing_poll(ui->net->host)) return;
+	int ready = 0;
+	if (!kp_ui_menus_glue_exit(ui, 0)) {
+		if (ui->net->briefing_poll == NULL) return;
+		ready = ui->net->briefing_poll(ui->net->host); /* its turn step may report the error */
+	}
+	if (kp_ui_menus_glue_exit(ui, 0)) { /* PollBriefingTurn answers 0 in state 25, whoever is ready */
+		if (ui->menus.popup >= 0) return; /* the report's popup first, as its modal run is in the original */
+		(void)kp_ui_menus_glue_exit(ui, 1); /* the room's end takes it: the host's main menu follows */
+		ui->result = KP_UI_ROOM_EXIT;
+	} else if (!ready) {
+		return;
+	} else {
+		ui->result = RESULT_START;
+	}
 	b->polling = 0;
-	ui->result = RESULT_START;
 	(void)kp_ui_send_user(ui, b->dialog, KP_UI_CLOSE, 0);
 }
 

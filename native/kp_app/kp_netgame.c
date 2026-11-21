@@ -150,13 +150,16 @@ static void leave_storm(KpNetGame *ng, uint32_t code)
 /* ReportNetError 0x474a00 */
 static void report(KpNetGame *ng, int index, const char *detail, int fatal)
 {
+	const int in_game = ng->in_game; /* the leave's ResetTurnState clears it, not the mode word it stands for */
 	if (ng->error_latch) return;
 	if (fatal) {
 		leave_storm(ng, LEAVE_ERROR);
 		ng->error_latch = 1;
 	}
-	if (ng->hooks.error) ng->hooks.error(ng->hooks.ud, index, fatal ? detail : NULL, fatal);
+	if (ng->hooks.error) ng->hooks.error(ng->hooks.ud, index, fatal ? detail : NULL, fatal, in_game);
 }
+
+void kp_netgame_report(KpNetGame *ng, int index, const char *detail, int fatal) { report(ng, index, detail, fatal); }
 
 static int ignored_error(uint32_t e) { return e == ERROR_BAD_PLAYER || e == ERROR_NOT_OWNER || e == ERROR_CANCELLED; }
 
@@ -2421,6 +2424,9 @@ static uint32_t template_net_flags(const KpNetGame *ng, const uint8_t *t)
 	return f;
 }
 
+#define LADDER_TYPE_FIRST 0x11 /* IsLadderTemplate 0x447ed0: the template types 0x11..0x16 */
+#define LADDER_TYPES 6
+
 int kp_netgame_create(KpNetGame *ng, const KpNetGameHeader *h, const char *password)
 {
 	static const uint32_t LADDER[4] = { 0, 1, 3, 5 };
@@ -2439,8 +2445,11 @@ int kp_netgame_create(KpNetGame *ng, const KpNetGameHeader *h, const char *passw
 	copy(g.creator, sizeof g.creator, ng->config.player_name);
 	if (g.template_record[KP_TEMPLATE_TEAMS] && !g.save_id) g.max_players = 8;
 	ladder = g.template_record[KP_TEMPLATE_TOURNAMENT] < 4 ? LADDER[g.template_record[KP_TEMPLATE_TOURNAMENT]] : 0;
-	/* TODO: a ladder template (types 0x11..0x16) takes its ladder type from FindTemplatePath 0x447b10's entry +0x124;
-	 * the retail templates.lst has none */
+	/* a ladder template (0x447ed0: types 0x11..0x16) takes the DWORD at FindTemplatePath 0x447b10's entry +0x124
+	 * instead. AddTemplate 0x447850 allocates the entry zeroed (SMemAlloc flags 8) and fills that DWORD only from
+	 * ParseServerTemplates 0x447220's records, which only battle.snp hands over: a templates.lst entry's is 0 (the
+	 * retail list has no ladder template; t is the entry FindTemplatePath finds, by the same key) */
+	if ((uint8_t)(g.template_record[KP_TEMPLATE_TYPE] - LADDER_TYPE_FIRST) < LADDER_TYPES) ladder = 0;
 	if (g.template_record[KP_TEMPLATE_VICTORY] == VICTORY_ONE_ON_ONE && !g.save_id && g.max_players > 2)
 		g.max_players = 2;
 	if (kp_template_ums(g.template_record) && !g.save_id) g.max_players = (uint8_t)kp_netgame_open_slots(ng);

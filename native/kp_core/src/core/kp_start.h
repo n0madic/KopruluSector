@@ -118,6 +118,9 @@ typedef struct {
 extern const uint8_t KP_TEMPLATE_UMS[KP_TEMPLATE_SIZE];
 /* IsUseMapSettings 0x447db0 of a template record: victory, starting units and tournament all 0. */
 int kp_template_ums(const uint8_t *template_record);
+/* The melee UNIT filter 0x469600 of a template record whose starting units byte is set: 1 when the record of type t
+ * for owner is left out (the neutral player's resources and critters stay); 0 for every record otherwise. */
+int kp_template_unit_excluded(const uint8_t *template_record, int64_t t, int64_t owner);
 
 /* The inputs of a game start. The data must outlive the game; dat is the game's own copy (the UMS overrides
  * and the acquisition ranges change it), rng and crt are seeded with the game's initial seed. */

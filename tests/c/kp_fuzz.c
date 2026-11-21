@@ -1,5 +1,6 @@
 /* The fuzz targets' entries (kp_fuzz.h; phase T, stage T2, ADR 0022). */
 #include "kp_fuzz.h"
+#include "kp_fuzz_game.h"
 #include "kp_fuzz_lobby.h"
 #include "kp_fuzz_net.h"
 
@@ -41,7 +42,7 @@ static const char *const COMMAND_MAPS[] = { "scenarios/build_terran", "scenarios
 #define COMMAND_KINDS 2
 
 static const char *const NAMES[KP_FUZZ_TARGETS] = { "rep", "chk", "save", "commands", "turns", "udp", "snet", "lobby",
-	"transfer" };
+	"transfer", "game" };
 
 /* the seeds' plain orders: stop and hold position */
 static const uint8_t STOP[2] = { 0x1a, 0 }, HOLD[2] = { 0x2b, 0 };
@@ -87,7 +88,7 @@ int kp_fuzz_target(const char *name)
 	return -1;
 }
 
-int kp_fuzz_needs_data(int target) { return target == KP_FUZZ_SAVE || target == KP_FUZZ_COMMANDS; }
+int kp_fuzz_needs_data(int target) { return target == KP_FUZZ_SAVE || target == KP_FUZZ_COMMANDS || target == KP_FUZZ_GAME; }
 
 const KpFuzzStats *kp_fuzz_stats(void) { return &stats; }
 
@@ -110,6 +111,7 @@ void kp_fuzz_free(void)
 	for (net = 0; net < COMMAND_KINDS; net++) {
 		for (k = 0; k < COMMAND_MAP_COUNT; k++) game_free(&command_games[net][k]);
 	}
+	kp_fuzz_game_free();
 	memset(&stats, 0, sizeof stats);
 }
 
@@ -222,6 +224,7 @@ int kp_fuzz_init(int target, char *why, size_t why_size)
 			}
 		}
 		return 0;
+	case KP_FUZZ_GAME: return need_data(why, why_size) != 0 ? -1 : kp_fuzz_game_init(data, why, why_size);
 	default: return failed(why, why_size, "no target %d", target);
 	}
 }
@@ -597,6 +600,7 @@ int kp_fuzz_run(int target, const uint8_t *d, size_t size, char *why, size_t why
 	case KP_FUZZ_SNET: return kp_fuzz_net_snet(d, size, why, why_size);
 	case KP_FUZZ_LOBBY: return kp_fuzz_lobby_run(d, size, why, why_size);
 	case KP_FUZZ_TRANSFER: return kp_fuzz_transfer_run(d, size, why, why_size);
+	case KP_FUZZ_GAME: return kp_fuzz_game_run(d, size, why, why_size);
 	default: return failed(why, why_size, "no target %d", target);
 	}
 }
@@ -690,6 +694,11 @@ static void net_seed(void *ud, int snet, const char *name, const uint8_t *b, siz
 	seed((Seeds *)ud, snet ? KP_FUZZ_SNET : KP_FUZZ_UDP, name, -1, b, n);
 }
 
+static void game_seed(void *ud, const char *name, const uint8_t *b, size_t n)
+{
+	seed((Seeds *)ud, KP_FUZZ_GAME, name, -1, b, n);
+}
+
 static void lobby_seed(void *ud, int lobby, const char *name, const uint8_t *b, size_t n)
 {
 	seed((Seeds *)ud, lobby ? KP_FUZZ_LOBBY : KP_FUZZ_TRANSFER, name, -1, b, n);
@@ -716,6 +725,7 @@ static void synthetic_seeds(Seeds *sd)
 			0xf8, 0xf9, 0xfa, 0x00, 3, 0x13, 3, 0, 0xf8, 0xf9, 0xfa, 0xf8, 0xf9, 0xfa };
 		seed(sd, KP_FUZZ_TURNS, "synthetic.turns", -1, TURNS, sizeof TURNS);
 	}
+	(void)kp_fuzz_game_seeds(game_seed, sd);
 	if (kp_fuzz_net_seeds(net_seed, sd, sd->why, sizeof sd->why) < 0 ||
 		kp_fuzz_lobby_seeds(lobby_seed, sd, sd->why, sizeof sd->why) < 0) {
 		sd->failed = 1;

@@ -34,6 +34,11 @@ typedef struct KpNetUi {
 	int (*entry_save)(void *owner, KpUi *ui, int index, KpNetGameHeader *h);
 	/* The owner's KpNetGameHooks.find_save: this seat's copy of the saved game id (NULL: none) */
 	int (*find_save)(void *owner, uint32_t id, KpNetGameSave *out);
+	/* The owner's: the chat room's preview world (KpUiNet.lobby_preview, kp_preview.h) of the lobby's map at path under
+	 * the game's template record: 1 with it in *out until preview_release, 0 when the map does not load (the screens
+	 * report network.tbl 0x61); NULL: no preview world */
+	int (*preview)(void *owner, const char *path, const uint8_t *template_record, KpUiPreview *out);
+	void (*preview_release)(void *owner);
 	/* time(NULL), the seed the host's start information carries (NULL: the system's) */
 	uint32_t (*time)(void *owner);
 	void *owner;

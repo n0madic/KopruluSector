@@ -551,7 +551,6 @@ static int create_leaderboard(KpUi *ui)
 #define TB_MOD_SHIFT 0x03       /* the key event's flags +0x0a: either Shift, Ctrl */
 #define TB_MOD_CONTROL 0x04
 #define CMD_CHEAT 0x12
-#define EXIT_QUIT_MISSION 4     /* RequestGameExit 0x444e00's code: the glue's campaign menu or its pending mission */
 #define WARP_REFUSED 63         /* HandleMissionWarpCheat 0x40e030: no warp to mission 63 */
 #define CHEA_HEADER 6           /* u32 carried bits, u16 count */
 
@@ -589,7 +588,7 @@ static int warp_cheat(KpUi *ui, const uint8_t *text)
 	if (kp_ui_warp_mission(ui, (const char *)text + n, WARPS[k].race, WARPS[k].base, WARPS[k].expansion, &mission)
 		&& mission != WARP_REFUSED) {
 		kp_ui_set_pending_mission(ui, mission, WARPS[k].race, WARPS[k].expansion);
-		ui->game_exit = EXIT_QUIT_MISSION; /* RequestGameExit 0x444e00(4) */
+		ui->game_exit = KP_UI_EXIT_QUIT_MISSION; /* RequestGameExit 0x444e00(4) */
 		ui->menus.state = 0;
 	}
 	return 1;

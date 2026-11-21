@@ -53,6 +53,9 @@ typedef struct {
 	 * ctx; NULL none */
 	int (*entry_save)(void *ctx, KpUi *ui, int index, KpNetGameHeader *h);
 	int (*find_save)(void *ctx, uint32_t id, KpNetGameSave *out);
+	/* the chat room's preview world (KpNetUi.preview's and preview_release's, over ctx); NULL none */
+	int (*preview)(void *ctx, const char *path, const uint8_t *template_record, KpUiPreview *out);
+	void (*preview_release)(void *ctx);
 	void (*log)(void *ctx, const char *line); /* a line for the log, NULL none */
 	/* the host by its address at the start ("" none: kp_net.h's form) and the player's new one, to keep (NULL none) */
 	char host[KP_NET_HOST];

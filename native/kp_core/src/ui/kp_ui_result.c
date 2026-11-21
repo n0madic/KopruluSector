@@ -20,8 +20,6 @@
 #define SFX_DEFEAT 22
 #define DEFEAT_TIMER 0
 #define DEFEAT_MS 20000
-#define EXIT_VICTORY 6               /* RequestGameExit 0x444e00's codes */
-#define EXIT_DEFEAT 7
 #define RESULT_DRAW 5                /* KP_EVENT_GAME_RESULT's a */
 #define RESULT_DEFEAT 2
 #define ID_OK (-2)
@@ -278,12 +276,12 @@ static int defeat_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 			ui->result_open = 0;
 			return 1;
 		case KP_UI_CLOSE: /* OnDefeatDialogButton 0x4bd130 */
-			if (ui->result == ID_OK) ui->game_exit = EXIT_DEFEAT;
+			if (ui->result == ID_OK) ui->game_exit = KP_UI_EXIT_DEFEAT;
 			ui->result_answered = 1;
 			break;
 		case KP_UI_TIMER:
 			if (e->param == DEFEAT_TIMER) { /* the 20 s without an answer */
-				ui->game_exit = EXIT_DEFEAT;
+				ui->game_exit = KP_UI_EXIT_DEFEAT;
 				end_dialog(ui, self);
 				return 1;
 			}
@@ -322,7 +320,7 @@ static int victory_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 			return 1;
 		case KP_UI_CLOSE: /* OnVictoryDialogButton 0x4bd3c0 */
 			if (ui->result == ID_OK) {
-				ui->game_exit = EXIT_VICTORY;
+				ui->game_exit = KP_UI_EXIT_VICTORY;
 			} else if (ui->result == ID_OPTION) { /* DisplayTimedMessage 0x46ac90 */
 				kp_ui_timed_message(ui, kp_ui_tbl(ui, KP_UI_NETWORK, CONTINUE_STRING), 0);
 			}

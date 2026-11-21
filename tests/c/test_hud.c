@@ -8,6 +8,7 @@
 #include "kp_hud.h"
 #include "kp_touch.h"
 #include "kp_ids.h"
+#include "kp_preview.h"
 
 #include <ctype.h>
 #include <math.h>
@@ -4380,6 +4381,14 @@ typedef struct {
 	char address[KP_UI_ADDRESS]; /* the host by its address the network keeps (KpUiNet.address) */
 	char looked_up[KP_UI_ADDRESS]; /* the address set_address began to look up (lookup_address) */
 	int address_sets, refuse_address, lookup_address;
+	KpUi *ui;
+	const char *poll_fatal; /* PollBriefingTurn's turn step reports a fatal network error with this detail (NULL none) */
+	int replay;             /* the lobby is a replay's, slot 2 a computer's (LayoutLobbySlots opens it) */
+	int queued, taken;      /* the lobby's messages waiting (each poll takes one: KP_UI_LOBBY_MESSAGE), taken */
+	int slot_types[2];      /* the network glue's slots as the room left them (lobby_open_slot) */
+	int map_ready;          /* the lobby's map is loaded and every peer has it (the preview's timer goes on) */
+	const KpUiPreview *world; /* lobby_preview's answer (NULL: the map does not load) */
+	int previews, preview_releases;
 } FakeNet;
 
 static FakeNet *fake(void *host) { return (FakeNet *)host; }
@@ -4391,15 +4400,21 @@ static void fake_arm(void *host) { fake(host)->armed++; }
 
 static int fake_poll(void *host)
 {
-	int r = fake(host)->poll;
-	fake(host)->poll = 0;
+	FakeNet *n = fake(host);
+	int r = n->poll;
+	n->poll = 0;
+	if (r == 0 && n->queued > 0) {
+		n->queued--;
+		n->taken++;
+		return KP_UI_LOBBY_MESSAGE;
+	}
 	return r;
 }
 
-/* The lobby a host of two slots shows: Alpha's game, slot 2 open */
+/* The lobby a host of two slots shows: Alpha's game, slot 2 open (a replay's: the network's type of it) */
 static void fake_view(void *host, KpUiLobby *out)
 {
-	(void)host;
+	FakeNet *n = fake(host);
 	memset(out, 0, sizeof *out);
 	snprintf(out->game_name, sizeof out->game_name, "Test Game");
 	snprintf(out->title, sizeof out->title, "Test Map");
@@ -4415,7 +4430,28 @@ static void fake_view(void *host, KpUiLobby *out)
 	out->slots[1].storm = -1;
 	out->slots[0].storm = 0;
 	out->lobby_state = 1;
+	out->map_ready = out->transfer_done = n->map_ready;
+	if (n->replay) {
+		out->replay = 1;
+		out->slots[1].type = (uint8_t)n->slot_types[1];
+	}
 }
+
+static void fake_open_slot(void *host, int slot)
+{
+	if (slot >= 0 && slot < 2) fake(host)->slot_types[slot] = 6;
+}
+
+static int fake_preview(void *host, KpUiPreview *out)
+{
+	FakeNet *n = fake(host);
+	n->previews++;
+	if (n->world == NULL) return 0;
+	*out = *n->world;
+	return 1;
+}
+
+static void fake_preview_release(void *host) { fake(host)->preview_releases++; }
 
 static void fake_start(void *host, int abort)
 {
@@ -4423,10 +4459,18 @@ static void fake_start(void *host, int abort)
 	else fake(host)->starts++;
 }
 
+#define NETTBL_NETWORK_ERROR 0x51 /* network.tbl's "A network error has occured." */
+
 static int fake_ready(void *host)
 {
-	fake(host)->polls++;
-	return fake(host)->ready;
+	FakeNet *n = fake(host);
+	n->polls++;
+	if (n->poll_fatal != NULL) { /* ReportNetError 0x474a00 from the turn step: the game's report */
+		kp_ui_menus_net_report(n->ui, NETTBL_NETWORK_ERROR, n->poll_fatal, 1, 0);
+		n->poll_fatal = NULL;
+		return 0;
+	}
+	return n->ready;
 }
 
 static void fake_address(void *host, char *out, size_t size) { snprintf(out, size, "%s", fake(host)->address); }
@@ -4453,6 +4497,9 @@ static FakeNet *fake_net(KpT *T, KpUi *ui)
 	n->net.lobby_enter = fake_enter;
 	n->net.lobby_poll = fake_poll;
 	n->net.lobby_view = fake_view;
+	n->net.lobby_open_slot = fake_open_slot;
+	n->net.lobby_preview = fake_preview;
+	n->net.lobby_preview_release = fake_preview_release;
 	n->net.lobby_abort = fake_abort;
 	n->net.lobby_release = fake_release;
 	n->net.ready_room = fake_ready_room;
@@ -4460,6 +4507,7 @@ static FakeNet *fake_net(KpT *T, KpUi *ui)
 	n->net.briefing_start = fake_start;
 	n->net.briefing_poll = fake_ready;
 	n->net.host = n;
+	n->ui = ui;
 	ui->net = &n->net;
 	ui->menus.multiplayer = 1;
 	ui->menus.conn.provider = 0x5544504eu; /* 'UDPN' */
@@ -4476,7 +4524,7 @@ static void until_event(Glue *G, int frames)
 /* The chat room (glue state 3) on the network's answers: PollLobby's start ends the screens with the network's event in
  * the race ready room's state of a Use Map Settings game (else the room's own state, the game at once); a leave reason
  * aborts the game and shows its text in a modal popup, the room closing only after the popup's Ok (LeaveLobby 0x450980),
- * then the provider's join screen. */
+ * then the provider's join screen; a replay's lobby opens the network's slot that is neither a human nor closed. */
 static void glue_chat_room_follows_the_network(KpT *T)
 {
 	enum { CHAT = 3, ZERG_ROOM = 8, JOIN = 10, FRAMES = 1000 };
@@ -4518,6 +4566,170 @@ static void glue_chat_room_follows_the_network(KpT *T)
 	kp_t_ok(T, G->has_last && G->last.kind == KP_GLUE_PROFILE, "the screens go on (%d)", G->last.kind);
 	kp_t_eq(T, ui->menus.state, JOIN, "the UDP provider's join screen next");
 	kp_t_eq(T, n->released, 3, "each room released the lobby");
+	/* a replay's lobby (LayoutLobbySlots 0x451b50): a slot neither human nor closed is opened in the network's record */
+	n->replay = 1;
+	n->slot_types[0] = 2;
+	n->slot_types[1] = 5; /* a lobby computer */
+	kp_glue_menus(G->glue, CHAT);
+	wait_for(G, "rez\\gluchat.bin", FRAMES);
+	n->poll = KP_UI_LOBBY_REFRESH; /* RefreshLobbySlots 0x451da0 */
+	glue_frame(G);
+	kp_t_eq(T, n->slot_types[1], 6, "the computer's slot is open in the network's record");
+	kp_t_eq(T, n->slot_types[0], 2, "the human's kept");
+}
+
+/* The chat room takes the lobby's messages as they arrive, not one a frame (the map transfer's pace followed the
+ * slower seat's frame rate): a frame makes another pass of LobbyUpdate 0x450d80 while the last took a message, up to
+ * KP_UI_LOBBY_PASSES, and a pass that refreshes the rows ends the frame's passes as LobbyUpdate returns there. */
+static void glue_chat_room_takes_its_messages_as_they_arrive(KpT *T)
+{
+	enum { CHAT = 3, FRAMES = 1000, QUEUED = KP_UI_LOBBY_PASSES + 10 };
+	Glue *G;
+	KpUi *ui;
+	FakeNet *n;
+	if (!kp_t_ready(T, "test_hud.glue_chat_room_takes_its_messages_as_they_arrive", GLUE_FILES)) return;
+	G = glue_bare(T);
+	ui = G->ui;
+	n = fake_net(T, ui);
+	kp_glue_menus(G->glue, CHAT);
+	wait_for(G, "rez\\gluchat.bin", FRAMES);
+	n->queued = QUEUED;
+	glue_frame(G);
+	kp_t_eq(T, n->taken, KP_UI_LOBBY_PASSES, "a frame's passes take as many as they may");
+	glue_frame(G);
+	kp_t_eq(T, n->taken, QUEUED, "the next frame the rest");
+	kp_t_eq(T, n->queued, 0, "none left");
+	n->queued = 5;
+	n->poll = KP_UI_LOBBY_REFRESH;
+	glue_frame(G);
+	kp_t_eq(T, n->taken, QUEUED, "a refresh ends the frame's passes");
+	glue_frame(G);
+	kp_t_eq(T, n->taken, QUEUED + 5, "then the messages");
+}
+
+/* The chat room's map preview (LobbyMapPreviewTimer 0x450640): once the lobby's map is loaded and every peer has it,
+ * the 1000 ms timer asks the preview world once and InitMinimap 0x46e260 draws it under minimappreview.bin: a 64-tile
+ * map at twice its size (LayoutMinimap 0x46d850), each megatile's MMNI colours through the tileset's colours' nearest
+ * of the glue palette (FindNearestStaticColor 0x4666c0), the terrain whole, a neutral resource's box in the resources'
+ * colour (DrawMinimapUnitBox 0x46cb80); the room's close releases the world and frees the bitmaps (128 x 128 again).
+ * A side LayoutMinimap has no case for keeps 128 x 128 and reads nothing past the world's megatiles. A map that does
+ * not load leaves the dialog's background and is not asked again. */
+static void glue_chat_room_previews_the_map(KpT *T)
+{
+	/* ODD: a side LayoutMinimap has no case for; LAST_GAME: the image a 192-tile map's game leaves */
+	enum { CHAT = 3, FRAMES = 1000, SIDE = 64, MARK = 30, SECONDS = 2, PLAIN = 5, ODD = 48, LAST_GAME = 96 };
+	static const uint8_t MMNI[8] = { PLAIN, PLAIN, PLAIN, PLAIN, 7, 8, 9, 10 };
+	static uint16_t megatiles[SIDE * SIDE];
+	uint16_t *odd;
+	KpPreviewUnit units[1];
+	KpUiPreview world;
+	uint8_t rgb[768], cycled[256], glue_rgb[768], mapped[256];
+	const uint8_t *glue;
+	const KpUiMinimap *m;
+	Glue *G;
+	KpUi *ui;
+	FakeNet *n;
+	int k, x, y, terrain_ok, box_ok;
+	if (!kp_t_ready(T, "test_hud.glue_chat_room_previews_the_map", GLUE_FILES)) return;
+	G = glue_bare(T);
+	ui = G->ui;
+	n = fake_net(T, ui);
+	memset(megatiles, 0, sizeof megatiles);
+	megatiles[MARK * SIDE + MARK] = 1;
+	for (k = 0; k < 768; k++) rgb[k] = (uint8_t)(k * 7);
+	memset(cycled, 0, sizeof cycled);
+	cycled[3] = 1;
+	memset(units, 0, sizeof units);
+	units[0].x = 320;
+	units[0].y = 320;
+	units[0].w = 64;
+	units[0].h = 32;
+	units[0].building = 1;
+	units[0].resource = 1;
+	units[0].owner = 11;
+	memset(&world, 0, sizeof world);
+	world.map_w = world.map_h = SIDE;
+	world.megatiles = megatiles;
+	world.mmni = MMNI;
+	world.mmni_size = sizeof MMNI;
+	world.rgb = rgb;
+	world.cycled = cycled;
+	world.units = units;
+	world.unit_count = 1;
+	n->world = &world;
+	kp_glue_menus(G->glue, CHAT);
+	wait_for(G, "rez\\gluchat.bin", FRAMES);
+	kp_t_ok(T, ui->menus.chat.preview >= 0, "the preview's dialog opened with the room");
+	for (k = 0; k < SECONDS * 1000 / 16; k++) glue_frame(G);
+	kp_t_eq(T, n->previews, 0, "no world before the map is ready");
+	n->map_ready = 1;
+	for (k = 0; k < SECONDS * 1000 / 16; k++) glue_frame(G);
+	kp_t_eq(T, n->previews, 1, "the world asked once");
+	m = &ui->minimap;
+	kp_t_ok(T, m->preview && m->image != NULL, "the preview's image");
+	kp_t_ok(T, m->w == 2 * SIDE && m->h == 2 * SIDE && m->shift == 1, "a 64-tile map at twice its size (%dx%d)", m->w, m->h);
+	glue = kp_ui_glue_palette(ui, NULL);
+	for (k = 0; k < 256; k++) {
+		glue_rgb[3 * k] = glue[4 * k];
+		glue_rgb[3 * k + 1] = glue[4 * k + 1];
+		glue_rgb[3 * k + 2] = glue[4 * k + 2];
+	}
+	for (k = 0; k < 256; k++) mapped[k] = kp_ui_nearest_colour(glue_rgb, cycled, rgb[3 * k], rgb[3 * k + 1], rgb[3 * k + 2]);
+	kp_t_ok(T, memcmp(m->palette_map, mapped, sizeof mapped) == 0, "the tileset's colours as the glue palette's nearest");
+	terrain_ok = m->image[(2 * MARK) * m->w + 2 * MARK] == mapped[7] && m->image[(2 * MARK) * m->w + 2 * MARK + 1] == mapped[8]
+		&& m->image[(2 * MARK + 1) * m->w + 2 * MARK] == mapped[9] && m->image[(2 * MARK + 1) * m->w + 2 * MARK + 1] == mapped[10]
+		&& m->image[0] == mapped[PLAIN] && m->image[m->w * m->h - 1] == mapped[PLAIN];
+	kp_t_ok(T, terrain_ok, "the megatiles' four colours, the rest plain, no fog");
+	/* the box: half the placement off the point, at twice the scale, 4 x 2 pixels of a building */
+	box_ok = 1;
+	for (y = 19; y < 21; y++) {
+		for (x = 18; x < 22; x++) box_ok &= m->image[y * m->w + x] == ui->ui_colours[25];
+	}
+	box_ok &= m->image[19 * m->w + 22] == mapped[PLAIN] && m->image[21 * m->w + 18] == mapped[PLAIN];
+	kp_t_ok(T, box_ok, "the mineral's box in the resources' colour");
+	kp_ui_lobby_leave(ui, 0);
+	glue_frame(G);
+	wait_for(G, "rez\\glupok.bin", FRAMES);
+	glue_vk(ui, 0x0d);
+	until_event(G, FRAMES);
+	kp_t_eq(T, n->preview_releases, 1, "the room's close released the world");
+	kp_t_ok(T, !m->preview && m->image == NULL && m->terrain == NULL && m->w == 128 && m->h == 128,
+		"the bitmaps freed, 128 x 128 again");
+	/* a side LayoutMinimap has no case for: the image keeps 128 x 128, the values the game's minimap leaves at its end
+	 * (not a last game's, 96 x 96 of a 192-tile map), and its cells past the map read none of the world's map-sized
+	 * megatiles (ASan sees a read past them): megatile 0 */
+	odd = (uint16_t *)calloc((size_t)ODD * ODD, sizeof *odd);
+	kp_t_ok(T, odd != NULL, "out of memory");
+	kp_t_defer(T, free, odd);
+	odd[ODD * ODD - 1] = 1;
+	world.map_w = world.map_h = ODD;
+	world.megatiles = odd;
+	world.unit_count = 0;
+	ui->minimap.w = ui->minimap.h = LAST_GAME;
+	n->previews = 0;
+	kp_glue_menus(G->glue, CHAT);
+	wait_for(G, "rez\\gluchat.bin", FRAMES);
+	for (k = 0; k < SECONDS * 1000 / 16; k++) glue_frame(G);
+	kp_t_eq(T, n->previews, 1, "the odd map's world asked");
+	kp_t_ok(T, m->preview && m->image != NULL && m->w == 128 && m->h == 128 && m->shift == 0, "128 x 128 (%dx%d)", m->w,
+		m->h);
+	kp_t_ok(T, m->image[0] == mapped[PLAIN] && m->image[(ODD - 1) * m->w + ODD - 1] == mapped[7],
+		"the map's cells by its own width");
+	kp_t_eq(T, m->image[m->w * m->h - 1], mapped[PLAIN], "a cell past the map");
+	kp_ui_lobby_leave(ui, 0);
+	glue_frame(G);
+	wait_for(G, "rez\\glupok.bin", FRAMES);
+	glue_vk(ui, 0x0d);
+	until_event(G, FRAMES);
+	kp_t_eq(T, n->preview_releases, 2, "released again");
+	/* a map that does not load: the background stays and the timer is gone */
+	n->world = NULL;
+	n->previews = 0;
+	kp_glue_menus(G->glue, CHAT);
+	wait_for(G, "rez\\gluchat.bin", FRAMES);
+	for (k = 0; k < 3 * SECONDS * 1000 / 16; k++) glue_frame(G);
+	kp_t_eq(T, n->previews, 1, "asked once");
+	kp_t_ok(T, !m->preview && m->image == NULL, "no image");
 }
 
 /* Koprulu's host by its address (stage N5): the join screen's Address only when the network takes one; it opens
@@ -4682,6 +4894,109 @@ static void glue_network_ready_room_waits_for_the_players(KpT *T)
 		kp_t_ok(T, G->has_last && G->last.kind == KP_GLUE_ROOM_START, "every player's 0x54: the game starts");
 		ui->game = NULL; /* the host's destroy_scene */
 	}
+}
+
+/* ReportNetError 0x474a00's screens (ShowNetErrorMessage 0x474a70, RequestGlueExit 0x457cf0, GlueExitHook 0x458440):
+ * a report over an open screen shows at once, the string alone when it is not fatal (rez\gluPOk.bin, the screen
+ * kept), with the detail when it is (rez\gluPOkSplit.bin); a fatal one's Ok closes the chat room and the main menu
+ * follows; a race ready room whose turn step reports it answers 100 after the popup's Ok; with no dialog open, or in a
+ * game, the report is deferred with its detail and shown by the next screen, and a game's ends (Quit Mission). */
+static void glue_fatal_network_report_exits_the_glue(KpT *T)
+{
+	enum { CHAT = 3, PROTOSS_ROOM = 9, START = 13, TEXT = 2, TEXT2 = 5, FRAMES = 4000 };
+	static const char detail[] = "Storm error 0x85100071";
+	Glue *G;
+	KpUi *ui;
+	FakeNet *n;
+	KpOracleGame *game;
+	char name[128];
+	int32_t c;
+	const char *network;
+	if (!kp_t_ready(T, "test_hud.glue_fatal_network_report_exits_the_glue", GLUE_FILES)) return;
+	G = glue_bare(T);
+	ui = G->ui;
+	n = fake_net(T, ui);
+	network = (const char *)kp_ui_tbl(ui, KP_UI_NETWORK, NETTBL_NETWORK_ERROR);
+	kp_glue_menus(G->glue, CHAT);
+	wait_for(G, "rez\\gluchat.bin", FRAMES);
+	/* not fatal: the string alone, the room kept */
+	kp_ui_menus_net_report(ui, NETTBL_NETWORK_ERROR, detail, 0, 0);
+	kp_t_eq_str(T, top(G, name, sizeof name), "rez\\glupok.bin", "a popup at once");
+	kp_t_eq_str(T, ui->menus.popup_text, network, "network.tbl's string");
+	kp_t_eq(T, ui->menus.popup_text2[0], 0, "no detail");
+	kp_t_eq(T, kp_ui_menus_glue_exit(ui, 0), 0, "no exit");
+	wait_for(G, "rez\\glupok.bin", FRAMES);
+	glue_vk(ui, 0x0d);
+	until_event(G, 200);
+	kp_t_eq_str(T, top(G, name, sizeof name), "rez\\gluchat.bin", "the room after its Ok");
+	kp_t_ok(T, !G->has_last, "the room goes on");
+	/* fatal: the detail too, then the room closes and the main menu follows */
+	kp_ui_menus_net_report(ui, NETTBL_NETWORK_ERROR, detail, 1, 0);
+	kp_t_eq_str(T, top(G, name, sizeof name), "rez\\glupoksplit.bin", "the split popup at once");
+	c = child_of(ui, ui->open, TEXT);
+	kp_t_ok(T, c >= 0 && ui->controls[c].text && strcmp((const char *)ui->controls[c].text, network) == 0, "the string");
+	c = child_of(ui, ui->open, TEXT2);
+	kp_t_ok(T, c >= 0 && ui->controls[c].text && strcmp((const char *)ui->controls[c].text, detail) == 0, "the detail");
+	wait_for(G, "rez\\glupoksplit.bin", FRAMES);
+	kp_t_ok(T, !G->has_last && ui->menus.chat.dialog >= 0, "the room waits for the popup's Ok");
+	glue_vk(ui, 0x0d);
+	until_event(G, FRAMES);
+	kp_t_ok(T, G->has_last && G->last.kind == KP_GLUE_PROFILE, "the screens go on (%d)", G->last.kind);
+	kp_t_eq(T, ui->menus.state, KP_GLUE_MAIN, "the main menu next");
+	kp_t_eq(T, n->released, 1, "the room released the lobby");
+	kp_t_eq(T, kp_ui_menus_glue_exit(ui, 0), 0, "the exit taken");
+	wait_for(G, "rez\\glumain.bin", FRAMES);
+	/* with no dialog open: deferred with its detail, shown by the next screen */
+	while (ui->open >= 0) kp_ui_end_dialog(ui, ui->open);
+	kp_ui_menus_net_report(ui, NETTBL_NETWORK_ERROR, detail, 1, 0);
+	kp_t_eq(T, ui->menus.net_error, NETTBL_NETWORK_ERROR, "deferred");
+	kp_t_eq_str(T, ui->menus.net_detail, detail, "with its detail");
+	kp_t_eq(T, kp_ui_menus_glue_exit(ui, 1), 1, "the exit asked (the host takes it)");
+	kp_ui_menus_flush_net_error(ui);
+	kp_t_eq_str(T, ui->menus.popup_text2, detail, "the flush shows the detail");
+	kp_t_eq(T, ui->menus.net_error, 0, "shown once");
+	kp_ui_menus_close_popup(ui);
+	/* in a game: deferred, and the game ends */
+	ui->game_exit = 0;
+	kp_ui_menus_net_report(ui, NETTBL_NETWORK_ERROR, detail, 1, 1);
+	kp_t_eq(T, ui->game_exit, KP_UI_EXIT_QUIT_MISSION, "RequestGameExit(4)");
+	kp_t_eq(T, ui->menus.net_error, NETTBL_NETWORK_ERROR, "deferred in a game");
+	kp_t_eq(T, kp_ui_menus_glue_exit(ui, 1), 1, "the glue's exit after the game");
+	ui->game_exit = 0;
+	ui->menus.net_error = 0;
+	/* a race ready room waiting for its players: its poll reports it, 100 after the popup's Ok */
+	if (!kp_t_has(T, PROTOSS01)) {
+		kp_t_log(T, "SKIP the ready room's exit: no " PROTOSS01);
+		return;
+	}
+	game = kp_t_game(T, PROTOSS01, 0, 1, NULL);
+	ui->menus.multiplayer = 1; /* the main menu left multiplayer */
+	kp_t_ok(T, kp_glue_room(G->glue, game->g, PROTOSS_ROOM) == 0, "the ready room: %s", ui->error);
+	wait_for(G, "rez\\glurdyp.bin", FRAMES);
+	glue_click(G, START, -1, -1);
+	glue_frame(G);
+	n->poll_fatal = detail;
+	until_event(G, 400);
+	kp_t_ok(T, !G->has_last, "the room stays under the report's popup (%d)", G->last.kind);
+	kp_t_ok(T, n->polls > 0, "the room polled the turns");
+	kp_t_eq_str(T, top(G, name, sizeof name), "rez\\glupoksplit.bin", "the report over the room");
+	wait_for(G, "rez\\glupoksplit.bin", FRAMES);
+	glue_vk(ui, 0x0d);
+	until_event(G, FRAMES);
+	kp_t_ok(T, G->has_last && G->last.kind == KP_GLUE_ROOM_CANCEL, "the room ends (%d)", G->last.kind);
+	kp_t_eq(T, ui->result, KP_UI_ROOM_EXIT, "with 100");
+	kp_t_eq(T, kp_ui_menus_glue_exit(ui, 0), 0, "the room took the exit");
+	/* the score screen: the exit hook closes it with -1 (RunScoreScreen 0x461940: the main menu, not the provider's) */
+	kp_glue_score(G->glue, game->g, 3, 754, 0, NULL, 0);
+	wait_for(G, "rez\\gluscore.bin", FRAMES);
+	kp_ui_menus_net_report(ui, NETTBL_NETWORK_ERROR, NULL, 1, 0);
+	wait_for(G, "rez\\glupok.bin", FRAMES);
+	glue_vk(ui, 0x0d);
+	until_event(G, FRAMES);
+	kp_t_ok(T, G->has_last && G->last.kind == KP_GLUE_SCORE_DONE, "the score screen ends (%d)", G->last.kind);
+	kp_t_eq(T, ui->score.result, -1, "with the exit's -1");
+	kp_t_eq(T, kp_ui_menus_glue_exit(ui, 0), 0, "the exit taken");
+	ui->game = NULL; /* the host's destroy_scene */
 }
 
 /* The screens' work for the host: View Intro is an event of its own once the host plays cinematics (else the main menu
@@ -5734,6 +6049,9 @@ static const KpTest TESTS[] = {
 	{ "message_dialog_chooses_the_chat_target", message_dialog_chooses_the_chat_target, 0 },
 	{ "alliance_dialog_queues_stances_and_vision", alliance_dialog_queues_stances_and_vision, 0 },
 	{ "glue_network_ready_room_waits_for_the_players", glue_network_ready_room_waits_for_the_players, 0 },
+	{ "glue_fatal_network_report_exits_the_glue", glue_fatal_network_report_exits_the_glue, 0 },
+	{ "glue_chat_room_takes_its_messages_as_they_arrive", glue_chat_room_takes_its_messages_as_they_arrive, 0 },
+	{ "glue_chat_room_previews_the_map", glue_chat_room_previews_the_map, 0 },
 	{ "destroyed_dialog_leaves_no_image", destroyed_dialog_leaves_no_image, 0 },
 	{ "glue_hands_the_cinematics_to_the_host", glue_hands_the_cinematics_to_the_host, 0 },
 	{ "main_menu_buttons_the_remake_lacks_are_inert", main_menu_buttons_the_remake_lacks_are_inert, 0 },

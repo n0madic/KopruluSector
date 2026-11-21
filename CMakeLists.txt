@@ -15,7 +15,7 @@ option(KP_SANITIZE "Build with AddressSanitizer and UndefinedBehaviorSanitizer" 
 option(KP_CXX_CHECK "Check the C sources as C++11 (they stay in the common subset of C and C++, ADR 0008)" ON)
 option(KP_APP "Build the product: kp_app over SDL 3.4 and SDL3_mixer, kp_gfx (plan phase S, stage S5)" OFF)
 option(KP_TOOLS "Build the tools and the C suites" ON)
-option(KP_FUZZ "Build libFuzzer's targets fuzz_rep, fuzz_chk, fuzz_save, fuzz_commands, fuzz_turns, fuzz_udp, fuzz_snet, fuzz_lobby, fuzz_transfer (clang with libFuzzer, with KP_SANITIZE; tools/fuzz.sh, ADR 0022)" OFF)
+option(KP_FUZZ "Build libFuzzer's targets fuzz_rep, fuzz_chk, fuzz_save, fuzz_commands, fuzz_turns, fuzz_udp, fuzz_snet, fuzz_lobby, fuzz_transfer, fuzz_game (clang with libFuzzer, with KP_SANITIZE; tools/fuzz.sh, ADR 0022)" OFF)
 option(KP_ASTC "Build the phones' HD sets in ASTC (kp_convert, kp_hd_phone) over the Arm ASTC encoder (tools/toolchain/fetch.sh astc; ADR 0013)" OFF)
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
@@ -239,7 +239,7 @@ target_link_libraries(kp_oracle PRIVATE kp_oracle_lib)
 
 # --- the fuzz targets' entries (tests/c/kp_fuzz.c): test_fuzz's kept inputs, kp_fuzz_seeds, libFuzzer's targets ---
 add_library(kp_fuzz_lib STATIC ${KP_TESTS_DIR}/kp_fuzz.c ${KP_TESTS_DIR}/kp_fuzz_net.c ${KP_TESTS_DIR}/kp_fuzz_lobby.c
-	${KP_TESTS_DIR}/kp_net_world.c ${KP_TESTS_DIR}/kp_net_lobby.c)
+	${KP_TESTS_DIR}/kp_fuzz_game.c ${KP_TESTS_DIR}/kp_net_world.c ${KP_TESTS_DIR}/kp_net_lobby.c)
 kp_target(kp_fuzz_lib CXX)
 target_include_directories(kp_fuzz_lib PUBLIC ${KP_TESTS_DIR})
 target_link_libraries(kp_fuzz_lib PUBLIC kp_oracle_lib)
@@ -247,7 +247,7 @@ add_executable(kp_fuzz_seeds ${CMAKE_CURRENT_SOURCE_DIR}/tests/fuzz/kp_fuzz_seed
 kp_target(kp_fuzz_seeds CXX)
 target_link_libraries(kp_fuzz_seeds PRIVATE kp_fuzz_lib)
 if(KP_FUZZ)
-	foreach(target rep chk save commands turns udp snet lobby transfer)
+	foreach(target rep chk save commands turns udp snet lobby transfer game)
 		string(TOUPPER ${target} upper)
 		add_executable(fuzz_${target} ${CMAKE_CURRENT_SOURCE_DIR}/tests/fuzz/kp_fuzz_main.c)
 		kp_target(fuzz_${target})
@@ -260,7 +260,7 @@ endif()
 # --- kp_test: the C suites (tests/c) ---
 file(GLOB KP_TEST_SOURCES CONFIGURE_DEPENDS ${KP_TESTS_DIR}/*.c)
 list(REMOVE_ITEM KP_TEST_SOURCES ${KP_TESTS_DIR}/kp_fuzz.c ${KP_TESTS_DIR}/kp_fuzz_net.c ${KP_TESTS_DIR}/kp_fuzz_lobby.c
-	${KP_TESTS_DIR}/kp_net_world.c ${KP_TESTS_DIR}/kp_net_lobby.c)
+	${KP_TESTS_DIR}/kp_fuzz_game.c ${KP_TESTS_DIR}/kp_net_world.c ${KP_TESTS_DIR}/kp_net_lobby.c)
 add_executable(kp_test ${KP_TEST_SOURCES})
 kp_target(kp_test CXX)
 target_include_directories(kp_test PRIVATE ${KP_TESTS_DIR})

@@ -64,7 +64,7 @@ The game header's fields at their file offsets:
 | +0x61 | the scenario's name (SPRP), 32 bytes, in the map's encoding |
 | +0x81 | the game's template record, 32 bytes (`KP_TEMPLATE_SIZE`, the record at 0x67293d); a campaign game's is Use Map Settings, `0a 00 01 00 00 00 00 00 00 00 00 02 00 01 03 01 00 01 00` and zeros |
 
-The header is the game's setup (`kp_rep_setup`): a replay whose campaign row is 0 starts its map's game from its template, slots and player records, with the multiplayer byte at 0 as the original plays every replay. The player records, colours and user-select flags are those of the started game (phase M stage M2, `kp_session_replay_game`): the races chosen for random, the slots the random starts moved the players to, the shuffled colours. A team game's slots 8..11 are empty until stage M5 (a `TODO`).
+The header is the game's setup (`kp_rep_setup`): a replay whose campaign row is 0 starts its map's game from its template, slots and player records, with the multiplayer byte at 0 as the original plays every replay. The player records, colours and user-select flags are those of the started game (phase M stage M2, `kp_session_replay_game`): the races chosen for random, the slots the random starts moved the players to, the shuffled colours. The slots 8..11 are empty (the slot its index, Storm ID −1, the rest 0), a team game's too: so are the emulated 1.17's records at `StartGame` in every network game of phase N's suite and 18 of the 25 public replays' headers ([phase N](../phase-network.md#the-remaining-code-items-2026-11-21)).
 
 Player records:
 - **The human:** type 2, Storm ID 0, the profile's name.

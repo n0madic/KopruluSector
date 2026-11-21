@@ -241,8 +241,14 @@ static void preview_tick(KpUi *ui, int32_t owner)
 	if (ui->net->lobby_view != NULL) ui->net->lobby_view(ui->net->host, &view);
 	if (!view.map_ready || view.local_slot < 0 || view.local_slot >= KP_UI_LOBBY_PLAYERS || !view.transfer_done) return;
 	c->preview_state = 1;
-	/* TODO: InitGameWorldForLobbyPreview 0x443850's world and the minimap's image under it (with the generator
-	 * disabled, SetRngEnabled 0x4781c0); the preview shows the dialog's background until then */
+	/* InitGameWorldForLobbyPreview 0x443850 (under SetRngEnabled 0x4781c0(1): the preview world draws nothing of the
+	 * game's generator here) and InitMinimap 0x46e260 under the preview; a map that does not load was reported (0x61,
+	 * fatal: the glue exits) */
+	if (ui->net->lobby_preview != NULL && c->preview >= 0) {
+		KpUiPreview world;
+		memset(&world, 0, sizeof world);
+		if (ui->net->lobby_preview(ui->net->host, &world)) (void)kp_ui_minimap_preview_world(ui, c->preview, &world);
+	}
 	kp_ui_delete_timer(&ui->timers, owner, PREVIEW_TIMER);
 }
 
@@ -271,8 +277,8 @@ static void close_preview(KpUi *ui)
 		show_lobby_controls(ui, 0, 1);
 		c->preview_shown = 0;
 	}
-	/* ReleaseLobbyPreviewWorld 0x443d70: no preview world yet (preview_tick's TODO); its last step frees the minimap
-	 * (FreeMinimap 0x46e1a0) */
+	/* ReleaseLobbyPreviewWorld 0x443d70: the world, then the minimap (FreeMinimap 0x46e1a0) */
+	if (ui->net->lobby_preview_release != NULL) ui->net->lobby_preview_release(ui->net->host);
 	if (c->preview >= 0) kp_ui_minimap_preview_close(ui, c->preview);
 	c->preview = -1;
 	c->preview_state = 0;
@@ -821,7 +827,8 @@ static void layout_rows(KpUi *ui, int budget)
 			} else if (slot->type == SLOT_CLOSED) {
 				update_open_closed_row(ui, i, s, 0, 0, 0, joinable);
 			} else {
-				/* TODO: the live slot's type (the network glue's 0x6726c8 + 8) becomes open too; the view's only */
+				/* the network glue's slot becomes open, and the view the rows read with it */
+				if (ui->net->lobby_open_slot != NULL) ui->net->lobby_open_slot(ui->net->host, s);
 				live->slots[s].type = SLOT_OPEN;
 				update_open_closed_row(ui, i, s, 0, 0, 1, joinable);
 			}
@@ -1581,30 +1588,29 @@ int32_t kp_ui_lobby_open(KpUi *ui)
 	return d;
 }
 
-/* The chat room's dialog is the topmost modal (the original's nested popups run their own loop). */
-void kp_ui_lobby_idle(KpUi *ui)
+/* LobbyUpdate 0x450d80: the room's idle callback, which every pass of a modal loop runs for each open dialog
+ * (RunModalDialog 0x4c35c0), the room's own or a popup's over it. 1 when the pass took a message that ended nothing,
+ * so another pass may take the next. */
+static int lobby_pass(KpUi *ui)
 {
-	/* LobbyUpdate 0x450d80: the room's idle callback, which every pass of a modal loop runs for each open dialog
-	 * (RunModalDialog 0x4c35c0), the room's own or a popup's over it */
 	KpUiChat *c = ch(ui);
 	int r;
-	if (!c->polling || c->dialog < 0) return;
 	r = ui->net->lobby_poll != NULL ? ui->net->lobby_poll(ui->net->host) : 0;
 	if (r == KP_UI_LOBBY_REFRESH) {
 		refresh_rows(ui);
 		c->refresh = 0;
-		return;
+		return 0;
 	}
 	if (r == KP_UI_LOBBY_START) {
 		close_with(ui, R_START);
-		return;
+		return 0;
 	}
 	if (c->leave) {
 		if (ui->net->lobby_abort != NULL) ui->net->lobby_abort(ui->net->host);
 		show_lobby_controls(ui, 0, 1);
 		c->preview_shown = 0;
 		leave_room(ui, c->leave_text, R_LEAVE);
-		return;
+		return 0;
 	}
 	if (c->refresh) {
 		refresh_rows(ui);
@@ -1618,6 +1624,20 @@ void kp_ui_lobby_idle(KpUi *ui)
 			refresh_password(ui);
 			c->password_refresh = 0;
 		}
+	}
+	return r == KP_UI_LOBBY_MESSAGE;
+}
+
+/* The chat room's dialog is the topmost modal (the original's nested popups run their own loop). The passes the
+ * original's modal loop makes between two of Koprulu's frames: another while the last took a message, so the lobby's
+ * messages (the map transfer's chunks, several in flight) go as fast as they arrive, not one a frame (the transfer's
+ * pace followed the slower seat's frame rate). */
+void kp_ui_lobby_idle(KpUi *ui)
+{
+	KpUiChat *c = ch(ui);
+	int pass;
+	for (pass = 0; pass < KP_UI_LOBBY_PASSES; pass++) {
+		if (!c->polling || c->dialog < 0 || !lobby_pass(ui)) return;
 	}
 }
 

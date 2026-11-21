@@ -359,6 +359,18 @@ static void ok_cancel_popup(KpUi *ui, const uint8_t *text, KpUiModalDone done)
 	(void)run_popup(ui, "rez\\gluPOkCancel.bin", PROCS, 3, popup_proc, done);
 }
 
+static void ok_split_popup(KpUi *ui, const uint8_t *text, const char *text2)
+{
+	/* ShowOkSplitPopup 0x460100 (procedures 0x5082c8: Ok's button, the texts' defaults) */
+	KpUiMenus *m = mn(ui);
+	static const KpUiInteract PROCS[5] = { kp_ui_text_button_proc, NULL, NULL, NULL, NULL };
+	close_popup(ui);
+	snprintf(m->popup_text, sizeof m->popup_text, "%s", text != NULL ? (const char *)text : "");
+	snprintf(m->popup_text2, sizeof m->popup_text2, "%s", text2);
+	popup_background(ui, "pOPopup.pcx");
+	(void)run_popup(ui, "rez\\gluPOkSplit.bin", PROCS, 5, popup_proc, NULL);
+}
+
 void kp_ui_menus_ok_popup(KpUi *ui, const uint8_t *text, KpUiModalDone done) { ok_popup(ui, text, done); }
 
 void kp_ui_menus_ok_cancel_popup(KpUi *ui, const uint8_t *text, KpUiModalDone done) { ok_cancel_popup(ui, text, done); }
@@ -1792,7 +1804,60 @@ static void load_done(KpUi *ui, int32_t r)
 
 void kp_ui_menus_refused(KpUi *ui, uint16_t gluall) { mn(ui)->refusal = gluall; }
 
-void kp_ui_menus_net_error(KpUi *ui, uint16_t network) { mn(ui)->net_error = network; }
+/* StoreDeferredNetError 0x4748d0 */
+static void defer_net_error(KpUi *ui, uint16_t network, const char *detail)
+{
+	KpUiMenus *m = mn(ui);
+	m->net_error = network;
+	snprintf(m->net_detail, sizeof m->net_detail, "%s", detail != NULL ? detail : "");
+}
+
+void kp_ui_menus_net_error(KpUi *ui, uint16_t network) { defer_net_error(ui, network, NULL); }
+
+/* ShowNetErrorMessage 0x474a70 over an open glue dialog: ShowGlueMessageBox2 0x456fb0 with the detail, else
+ * ShowGlueOkBox 0x4570d0 (both the glue's popups while a dialog is open) */
+static void show_net_error(KpUi *ui, uint16_t network, const char *detail)
+{
+	const uint8_t *text = kp_ui_tbl(ui, KP_UI_NETWORK, network);
+	if (detail != NULL && detail[0] != 0) ok_split_popup(ui, text, detail);
+	else ok_popup(ui, text, NULL);
+}
+
+void kp_ui_menus_net_report(KpUi *ui, uint16_t network, const char *detail, int fatal, int in_game)
+{
+	/* ReportNetError 0x474a00: a report that is not fatal shows without its detail */
+	if (!fatal) detail = NULL;
+	if (in_game || ui->open < 0) defer_net_error(ui, network, detail);
+	else show_net_error(ui, network, detail);
+	if (!fatal) return;
+	if (in_game) ui->game_exit = KP_UI_EXIT_QUIT_MISSION; /* RequestGameExit 0x444e00(4) */
+	mn(ui)->glue_exit = 1; /* RequestGlueExit 0x457cf0 */
+}
+
+int kp_ui_menus_glue_exit(KpUi *ui, int take)
+{
+	KpUiMenus *m = mn(ui);
+	int pending = m->glue_exit;
+	if (take) m->glue_exit = 0;
+	return pending;
+}
+
+/* GlueExitHook 0x458440 in state 25 (the modal loops' hook): the main menu next, the result -1, the popup closed
+ * (CloseGluePopup 0x45fd20) and the glue's screen (0x66a318) closed. Koprulu's popup is no modal loop of its own, so
+ * the hook waits for the report's popup to end, as the original's ReportNetError does before RequestGlueExit. */
+static void glue_exit_hook(KpUi *ui)
+{
+	KpUiMenus *m = mn(ui);
+	int32_t screen = ui->glue.dialog;
+	if (!m->glue_exit || m->popup >= 0 || screen < 0) return;
+	/* a race ready room waiting for its players reported the error from its own poll, which answers 100 before the
+	 * modal loop's next pass runs the hook (PollBriefingReady 0x461120) */
+	if (ui->briefing.polling && screen == ui->briefing.dialog) return;
+	m->glue_exit = 0;
+	m->state = STATE_MAIN;
+	ui->result = -1;
+	kp_ui_end_dialog(ui, screen);
+}
 
 int kp_ui_menus_provider_state(const KpUi *ui)
 {
@@ -1808,10 +1873,14 @@ int kp_ui_menus_provider_state(const KpUi *ui)
 
 void kp_ui_menus_flush_net_error(KpUi *ui)
 {
-	uint16_t index = mn(ui)->net_error;
+	KpUiMenus *m = mn(ui);
+	char detail[KP_UI_POPUP_TEXT];
+	uint16_t index = m->net_error;
 	if (index == 0) return;
-	mn(ui)->net_error = 0;
-	ok_popup(ui, kp_ui_tbl(ui, KP_UI_NETWORK, index), NULL); /* ShowGlueOkBox 0x4570d0 over the active dialog */
+	m->net_error = 0;
+	snprintf(detail, sizeof detail, "%s", m->net_detail);
+	m->net_detail[0] = 0;
+	show_net_error(ui, index, detail); /* over the active dialog */
 }
 
 /* The refusal of the game the screen chose before, once the screen stood (kp_ui_menus_refused). */
@@ -2250,6 +2319,7 @@ void kp_ui_menus_tick(KpUi *ui)
 {
 	KpUiMenus *m = mn(ui);
 	int k = m->map_preview;
+	glue_exit_hook(ui);
 	kp_ui_lobby_tick(ui);
 	if (k < 0 || (int32_t)(ui->now - m->map_preview_due) < 0) return;
 	m->create.replay_read = 0;

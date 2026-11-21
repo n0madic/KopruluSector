@@ -5,6 +5,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "kp_gametype.h"
+#include "kp_ids.h"
 #include "kp_record.h"
 #include "kp_rep.h"
 #include "kp_session.h"
@@ -369,6 +371,42 @@ static void builds_the_originals_header(KpT *T)
 	}
 }
 
+/* The player records 8..11 of a team game's header: empty (the slot its index, Storm ID -1, the rest 0), whatever the
+ * records 0..7 hold. The emulated 1.17's records 0x6726c8 at StartGame 0x443f40 have them so in every network game of
+ * phase N's suite (Team Melee, Top vs Bottom and Capture The Flag among them), as 18 of the 25 public replays'
+ * headers do. */
+static void team_games_header_leaves_8_to_11_empty(KpT *T)
+{
+	/* Team Melee's record as the emulated lobby started it (template 0x0b, subtype 2: two teams) */
+	static const uint8_t TEAM_MELEE[KP_TEMPLATE_SIZE] = { 0x0b, 0, 1, 0, 2, 0, 0, 0, 1, 1, 1, 2, 2, 0, 1, 1, 2, 1 };
+	KpRep *bp = rep_new(T);
+	KpRepGame game;
+	KpRepPlayer p;
+	int k;
+	memset(&game, 0, sizeof game);
+	game.player_name = "Alpha";
+	game.map_w = game.map_h = 128;
+	game.speed = 6;
+	game.map_name = "Blood Bath";
+	game.template_record = TEAM_MELEE;
+	game.slots = 4;
+	for (k = 0; k < 8; k++) {
+		game.players[k].slot = (uint32_t)k;
+		game.players[k].storm = k < 4 ? k : -1;
+		game.players[k].type = (uint8_t)(k < 4 ? KP_CTRL_HUMAN : KP_CTRL_OPEN);
+		game.players[k].race = KP_RACE_RANDOM;
+		game.players[k].force = (uint8_t)(1 + k / 4);
+	}
+	kp_rep_header(bp, &game);
+	for (k = 8; k < KP_REP_PLAYERS; k++) {
+		kp_rep_player(bp, k, &p);
+		kp_t_ok(T, p.slot == (uint32_t)k && p.storm == -1 && p.type == 0 && p.race == 0 && p.force == 0 && !p.name[0],
+			"record %d: slot %u, Storm ID %d, type %d, race %d, force %d", k, (unsigned)p.slot, (int)p.storm, p.type,
+			p.race, p.force);
+	}
+	kp_rep_player(bp, 4, &p);
+	kp_t_eq(T, p.force, 2, "record 4's force kept");
+}
 
 /* --- the record (kp_record.h) --- */
 
@@ -528,6 +566,7 @@ static const KpTest TESTS[] = {
 	{ "mutations", mutations, 0 },
 	{ "reads_the_originals_file", reads_the_originals_file, 0 },
 	{ "builds_the_originals_header", builds_the_originals_header, 0 },
+	{ "team_games_header_leaves_8_to_11_empty", team_games_header_leaves_8_to_11_empty, 0 },
 	{ "record_blocks", record_blocks, 0 },
 	{ "feed_loses_commands_as_the_original", feed_loses_commands_as_the_original, 0 },
 	{ "split_walks_as_the_dispatcher", split_walks_as_the_dispatcher, 0 },

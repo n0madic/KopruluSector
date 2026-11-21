@@ -119,7 +119,7 @@ enum {
 	KP_NETTBL_ACCEPTING = 0x4e, KP_NETTBL_TO = 0x4f, KP_NETTBL_FROM = 0x50,
 	KP_NETTBL_NETWORK_ERROR = 0x51, KP_NETTBL_PROVIDER_CAPS = 0x55, KP_NETTBL_JOIN_FAILED = 0x59,
 	KP_NETTBL_JOIN_VERSION = 0x5a, KP_NETTBL_SEND_FAILED = 0x5b, KP_NETTBL_INVALID_OPTIONS = 0x5d,
-	KP_NETTBL_NO_SAVE = 0x5f, KP_NETTBL_LAUNCH = 0x60, KP_NETTBL_NO_MAP = 0x64
+	KP_NETTBL_NO_SAVE = 0x5f, KP_NETTBL_LAUNCH = 0x60, KP_NETTBL_MAP_LOAD = 0x61, KP_NETTBL_NO_MAP = 0x64
 };
 
 /* A player slot or a setup record (36 bytes at 0x6726c8 and 0x673d48) */
@@ -229,9 +229,9 @@ typedef struct {
 	void (*swap)(void *ud, int a, int b);  /* OnLobbySwapSlots 0x471150 step 1: close the slot combo of a or b */
 	void (*lock)(void *ud);                /* LockLobbySlotsThunk 0x451770: the countdown locks the slots' rows */
 	void (*force_names)(void *ud);         /* 'K' arrived: the force headers changed */
-	/* ReportNetError 0x474a00: network.tbl `index` with an optional detail (Storm's error text), fatal: leave and close
-	 * the screens */
-	void (*error)(void *ud, int index, const char *detail, int fatal);
+	/* ReportNetError 0x474a00: network.tbl `index` with an optional detail (Storm's error text), fatal: Storm's game
+	 * left, the screens' exit; in_game: the mode word 0x6662b8 was 3 (the game's turns ran) when it was reported */
+	void (*error)(void *ud, int index, const char *detail, int fatal, int in_game);
 	/* DecodeSpawnResources 0x4635d0's decodes GetSpawnKeyHash 0x4634e0 runs (CreateMultiplayerGame, BuildJoinRequest
 	 * 0x4714b0): each reseeds the glue's CRT generator and draws from it */
 	void (*key_draws)(void *ud, int decodes);
@@ -530,6 +530,10 @@ int kp_netgame_command(KpNetGame *ng, const uint8_t *bytes, size_t size);
 void kp_netgame_game_chat(KpNetGame *ng, const char *text, uint16_t recipients);
 void kp_netgame_game_messages(KpNetGame *ng, KpGame *g, void (*record)(void *ud, const uint8_t *cmd, size_t size),
 	void *ud);
+
+/* ReportNetError 0x474a00 of a step outside the network code (the chat room's preview world, 0x443850's 0x61): nothing
+ * while a fatal report is latched; a fatal one leaves Storm's game first and sets the latch. */
+void kp_netgame_report(KpNetGame *ng, int index, const char *detail, int fatal);
 
 /* Queries the screens make. */
 int kp_netgame_open_slots(const KpNetGame *ng);         /* CountOpenPlayerSlots 0x479550 */

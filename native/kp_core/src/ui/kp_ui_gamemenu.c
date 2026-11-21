@@ -35,10 +35,6 @@
 #define TILED_MENU 4                 /* 0x508ba0[4] = 0x70: the menus' buttons */
 #define HELP_STRINGS 0x34            /* help_txt.tbl 1..51 */
 #define CMD_RESTART 0x08             /* SendRestartCommand 0x474060 */
-#define EXIT_PROGRAM 2               /* RequestGameExit 0x444e00's codes */
-#define EXIT_QUIT_MISSION 4
-#define EXIT_VICTORY 6
-#define EXIT_DEFEAT 7
 #define RESULT_VICTORY 3             /* the committed results 0x5349e0 */
 #define ID_QUIT_TEXT (-10)           /* abrtmenu.bin's hidden quit labels: Quit Mission, End Mission (victory) */
 #define ID_END_TEXT (-11)
@@ -350,7 +346,7 @@ static void quit_handler(KpUi *ui, int32_t dialog)
 		back_to(ui, dialog, open_abort_menu);
 		return;
 	}
-	ui->game_exit = EXIT_PROGRAM;
+	ui->game_exit = KP_UI_EXIT_PROGRAM;
 	end_dialog(ui, dialog);
 }
 
@@ -362,10 +358,10 @@ static void quit_mission_handler(KpUi *ui, int32_t dialog)
 	if (ui->result == ID_OK && ui->menus.multiplayer) { /* a network game's: the result's exit (victory kept) */
 		KpGame *g = ui->game;
 		ui->game_exit = g->local_player >= 0 && g->local_player < 8 && g->results[g->local_player] == RESULT_VICTORY
-			? EXIT_VICTORY : EXIT_DEFEAT;
+			? KP_UI_EXIT_VICTORY : KP_UI_EXIT_DEFEAT;
 		end_dialog(ui, dialog);
 	} else if (ui->result == ID_OK) {
-		ui->game_exit = EXIT_QUIT_MISSION;
+		ui->game_exit = KP_UI_EXIT_QUIT_MISSION;
 		ui->menus.state = ui->menus.expansion ? GLUE_EXPANSION_CAMPAIGN : GLUE_CAMPAIGN;
 		end_dialog(ui, dialog);
 	} else if (ui->result == ID_OBSERVER) {
@@ -381,7 +377,7 @@ static void quit_replay_handler(KpUi *ui, int32_t dialog)
 	/* QuitReplayMenuHandler 0x47bed0 (rez\\quitrepl.bin): a single player's exit code 4 and the campaign menu next */
 	set_handler(ui, NULL);
 	if (ui->result == ID_OK) {
-		ui->game_exit = EXIT_QUIT_MISSION;
+		ui->game_exit = KP_UI_EXIT_QUIT_MISSION;
 		ui->menus.state = ui->menus.expansion ? GLUE_EXPANSION_CAMPAIGN : GLUE_CAMPAIGN;
 		end_dialog(ui, dialog);
 	} else {

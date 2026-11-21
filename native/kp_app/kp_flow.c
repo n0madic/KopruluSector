@@ -27,11 +27,6 @@
 #include <string.h>
 #include <time.h>
 
-#define EXIT_PROGRAM 2
-#define EXIT_QUIT_MISSION 4
-#define EXIT_RESTART 5
-#define EXIT_VICTORY 6
-#define EXIT_DEFEAT 7
 #define RESULT_DEFEAT 2 /* KP_EVENT_GAME_RESULT's */
 #define RESULT_VICTORY 3
 #define VIEW_ROWS_ORIGINAL 400 /* the original's game view: 640 x 400 */
@@ -3103,7 +3098,9 @@ static void custom_next(KpFlow *f)
 static void score_next(KpFlow *f)
 {
 	if (f->net_game) {
-		leave_glue_game(f, after_game_menu(f));
+		/* RunScoreScreen 0x461940 in multiplayer: OK goes back by the provider (SetGlueStateFromProvider 0x457e50),
+		 * any other result (the glue's exit) to the main menu */
+		leave_glue_game(f, f->ui->score.result == KP_UI_SCORE_OK ? after_game_menu(f) : KP_GLUE_MAIN);
 	} else if (custom_mode(f)) {
 		custom_next(f);
 	} else if (f->has_next) {
@@ -3202,18 +3199,20 @@ static void history_cinematic(KpFlow *f, const KpGlueEvent *ev)
 static int exit_ends_program(const KpFlow *f, int exit)
 {
 	if (f->glue_on && f->exit_to_menu) return 0;
-	return exit == EXIT_PROGRAM;
+	return exit == KP_UI_EXIT_PROGRAM;
 }
 
 /* After an in-game menu ended the game: Exit Program goes to the main menu (the web's), Quit Mission to the campaign
  * menu, Restart plays the mission again from its ready room. */
 static void glue_after_game(KpFlow *f)
 {
-	int exit = f->after_exit;
+	int exit = f->after_exit, glue_exit = kp_ui_menus_glue_exit(f->ui, 1);
 	f->after_game = 0;
-	if (exit == EXIT_PROGRAM) {
+	if (exit == KP_UI_EXIT_PROGRAM || glue_exit) {
+		/* a fatal network report in the game: RequestGameExit 0x444e00(4), then the glue's exit (state 25) to the
+		 * main menu, which shows the deferred report */
 		leave_glue_game(f, KP_GLUE_MAIN);
-	} else if (exit == EXIT_RESTART && f->has_run) {
+	} else if (exit == KP_UI_EXIT_RESTART && f->has_run) {
 		f->has_continue = 1;
 		f->continue_run = f->run;
 		f->continue_carry = f->after_carry;
@@ -3518,7 +3517,10 @@ static void glue_frame(KpFlow *f)
 	}
 	case KP_GLUE_ROOM_CANCEL:
 		if (f->net_game) f->net_left = 1; /* the room's cancel left Storm's game (SendBriefingStart 0x475cc0) */
-		leave_glue_game(f, after_game_menu(f));
+		/* RunTerranReadyRoom 0x461420 and its twins: the glue's exit (100, or the exit hook's -1) goes to the main
+		 * menu (state 25, then 0) */
+		if (f->ui->result == KP_UI_ROOM_EXIT || f->ui->result == -1) leave_glue_game(f, KP_GLUE_MAIN);
+		else leave_glue_game(f, after_game_menu(f));
 		break;
 	case KP_GLUE_SCORE_DONE: { /* the cinematic rows between the missions play before the next step (mode 10) */
 		int n = f->step_cinematic_count;
@@ -3551,7 +3553,7 @@ static void hud_frame(KpFlow *f, int ticks)
 	video_options(f);
 	if (committed_options(f)) f->host.save_profile(f->host.ctx);
 	exit = ui->game_exit;
-	if (exit == EXIT_PROGRAM || exit == EXIT_QUIT_MISSION || exit == EXIT_RESTART) {
+	if (exit == KP_UI_EXIT_PROGRAM || exit == KP_UI_EXIT_QUIT_MISSION || exit == KP_UI_EXIT_RESTART) {
 		/* the in-game menus' Exit Program, Quit Mission, Restart (no result) */
 		kp_ui_end_game(ui);
 		net_game_end(f);
@@ -3568,10 +3570,10 @@ static void hud_frame(KpFlow *f, int ticks)
 			kp_carry_take(f->session->g, &f->after_carry);
 			f->after_cheats = kp_cheats(f->session->g);
 		}
-	} else if (exit != 0 && (f->result || (f->net_game && (exit == EXIT_VICTORY || exit == EXIT_DEFEAT)))) {
+	} else if (exit != 0 && (f->result || (f->net_game && (exit == KP_UI_EXIT_VICTORY || exit == KP_UI_EXIT_DEFEAT)))) {
 		/* the result dialog's answer (RequestGameExit 0x444e00: 6 victory, 7 defeat) ends the game; a network game's
 		 * Quit Mission too (QuitMissionMenuHandler 0x47bff0: 6 after a victory, else 7, the result the exit's) */
-		int result = f->result ? f->result : exit == EXIT_VICTORY ? RESULT_VICTORY : RESULT_DEFEAT;
+		int result = f->result ? f->result : exit == KP_UI_EXIT_VICTORY ? RESULT_VICTORY : RESULT_DEFEAT;
 		/* ComputeGameResults 0x477270 while Storm's game still runs (0x4bd220, before EndGame's leave) */
 		uint8_t storm_results[KP_NETGAME_PLAYERS];
 		int network = f->net_game && !f->net_left && f->netplay && f->netplay->game_on, local = 0;
@@ -4032,6 +4034,21 @@ static int netplay_entry_save(void *ctx, KpUi *ui, int index, KpNetGameHeader *h
 }
 
 static int netplay_find_save(void *ctx, uint32_t id, KpNetGameSave *out) { return kp_flow_find_save((KpFlow *)ctx, id, out); }
+
+/* The chat room's preview world of the lobby's map */
+static int netplay_preview(void *ctx, const char *path, const uint8_t *template_record, KpUiPreview *out)
+{
+	KpFlow *f = (KpFlow *)ctx;
+	KpError e;
+	if (kp_map_preview_load(&f->preview, &f->data->files, &f->data->dat, path, template_record, f->ui->menus.expansion,
+		out, &e) == 0) {
+		return 1;
+	}
+	say(f, "lobby: map preview of %s: %s", path, e.msg);
+	return 0;
+}
+
+static void netplay_preview_release(void *ctx) { kp_map_preview_free(&((KpFlow *)ctx)->preview); }
 #endif
 
 /* The glue's network over the system's sockets (none on the web) */
@@ -4062,6 +4079,8 @@ static void netplay_open(KpFlow *f)
 	c.entry_map = netplay_entry_map;
 	c.entry_save = netplay_entry_save;
 	c.find_save = netplay_find_save;
+	c.preview = netplay_preview;
+	c.preview_release = netplay_preview_release;
 	c.log = netplay_log;
 	/* the host by its address: --lan-host's for the run, else the profile's */
 	snprintf(c.host, sizeof c.host, "%s", f->flags->lan_host[0] ? f->flags->lan_host : f->profile->lan_host);
@@ -4080,6 +4099,7 @@ static void netplay_open(KpFlow *f)
 
 static void netplay_close(KpFlow *f)
 {
+	kp_map_preview_free(&f->preview);
 	if (!f->netplay) return;
 	kp_netplay_free(f->netplay);
 	free(f->netplay);
