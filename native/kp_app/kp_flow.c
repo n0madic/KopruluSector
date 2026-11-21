@@ -3232,7 +3232,11 @@ static void game_events(KpFlow *f)
 	while (kp_event_take(f->session->g, &e)) {
 		if (f->hud_on) kp_hud_event(&f->hud, &e);
 		if (e.kind == KP_EVENT_SAVE_GAME && e.text) {
-			snprintf(f->pending_save, sizeof f->pending_save, "%s", e.text);
+			/* a multiplayer game's command names it in windows-1252 (kp_ui_saveload.c dispatched_name): a network
+			 * game's file takes that name (save_requests), --seats' profile file its UTF-8 */
+			if (f->session->g->setup.multiplayer && !f->net_game)
+				(void)kp_text_from_legacy(e.text, f->pending_save, sizeof f->pending_save);
+			else snprintf(f->pending_save, sizeof f->pending_save, "%s", e.text);
 			f->pending_save_id = (uint32_t)e.a;
 		}
 		else if (e.kind == KP_EVENT_LOAD_GAME && e.text) snprintf(f->pending_load, sizeof f->pending_load, "%s", e.text);

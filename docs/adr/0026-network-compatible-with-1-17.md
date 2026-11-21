@@ -35,7 +35,7 @@ Network play could follow the original's protocol or a protocol of the remake's 
 
 ## Addition: stage N2, the state machines and their transports
 
-Built on 2026-11-17 ([phase N](../phase-network.md#n2-kp_snet-and-the-udp-provider)).
+Built on 2026-11-17 ([phase N](../phase-network.md#n2-kp_snet-and-the-udp-provider-done-2026-11-17)).
 
 1. **Two state machines, no third provider.** `kp_snp_udp` is the provider and `kp_snet` is SNet over it. The in-process provider of decision 4 (`kp_snp_loop`) is not built: the tests and the fuzz targets run the UDP provider itself over an in-process LAN (`kp_net_lan`), so Koprulu↔Koprulu checks carry the bytes a 1.17 peer gets. The relay of stage N5 will be another transport under the same provider.
 2. **The pump belongs to the driver.** `kp_snet_pump` is one pass of Storm's network thread: the driver runs it when a datagram arrived (signalled) or when the wait the last pass returned has run out. `kp_net_sock` waits on the sockets and starts no thread. The network thread of decision 5 belongs to the game's network code (stage N4), which owns the driver. `kp_snet_join_game` alone pumps for itself, as `SNetJoinGame` does, and waits through the host's sleep.

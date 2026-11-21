@@ -2393,7 +2393,10 @@ static void unit_bounds(KpGame *g, int64_t unit, int32_t *x, int32_t *y)
 	*y = g->w->img.y[i];
 }
 
-#define SEAT_SAVE "seat zero"
+#define SEAT_SAVE "seat z\303\251ro" /* the profile's name, in UTF-8 */
+#define SEAT_SAVE_FRAMES 30          /* a queued command's turns through the hub, and the save's write */
+/* SendSaveGameCommand 0x4740e0's {0x06, time, name}: the name in windows-1252 */
+static const uint8_t SEAT_SAVE_COMMAND[] = { 0x06, 0, 0, 0, 0, 's', 'e', 'a', 't', ' ', 'z', 0xe9, 'r', 'o', 0 };
 
 /* Whether the interface's saves list (kp_glue_saves) has name. */
 static int has_save(const KpUi *ui, const char *name)
@@ -2454,9 +2457,11 @@ static void seats_keep_their_consoles(KpT *T)
 	kp_t_ok(T, x1 == x0 && y1 == y0, "the hidden seat's redraw refreshed its bounds: (%d,%d), shown (%d,%d)", (int)x1,
 		(int)y1, (int)x0, (int)y0);
 	kp_t_eq(T, second->now, first->now, "the hidden console's frame ran");
-	/* a save on seat 0 changes the profile's saves, which seat 1's dialogs list once it is shown */
-	snprintf(H->f.pending_save, sizeof H->f.pending_save, "%s", SEAT_SAVE);
-	frames(H, 2);
+	/* a save on seat 0 changes the profile's saves, which seat 1's dialogs list once it is shown. Its command goes
+	 * through the hub's dispatcher, so it names the save in windows-1252 as a multiplayer game's does
+	 * (kp_ui_saveload.c), and the profile's file is named in UTF-8 */
+	kp_t_eq(T, kp_session_command(H->f.session, SEAT_SAVE_COMMAND, sizeof SEAT_SAVE_COMMAND, -1), 0, "the save queued");
+	frames(H, SEAT_SAVE_FRAMES);
 	kp_t_ok(T, has_save(first, SEAT_SAVE), "saved on seat 0 (%s)", H->last_log);
 	kp_t_ok(T, !has_save(second, SEAT_SAVE), "the hidden seat's list as its console started");
 	/* seat 1 shown: its own interface, its game menu open; seat 0 and back keeps it */

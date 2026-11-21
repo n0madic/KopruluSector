@@ -2824,18 +2824,22 @@ static void network_save_names_are_windows_1252(KpT *T)
 	hud(T, ui, game->g);
 	c.ui = ui;
 	c.now = 1000;
-	for (net = 0; net < 2; net++) {
-		ui->menus.multiplayer = net;
+	/* 0 a single player's, 1 a network game's, 2 a multiplayer game no menu chose (--seats: its hub's dispatcher) */
+	for (net = 0; net < 3; net++) {
+		ui->menus.multiplayer = net == 1;
+		game->g->setup.multiplayer = net == 2;
 		kp_ui_save_dialog(ui, 0);
 		frames(&c, 10);
 		(void)kp_t_ui_take_commands(ui, NULL, &size);
 		name_typed(ui, "Caf\303\251");
 		dialog_click(T, &c, ID_OK);
-		kp_t_eq(T, kp_t_ui_take_commands(ui, cmd, &size), 1, "the save sent");
+		kp_t_eq(T, kp_t_ui_take_commands(ui, cmd, &size), 1, "the save sent (%d)", net);
 		kp_t_ok(T, size >= 5 && strcmp((const char *)cmd + 5, net ? "Caf\351" : "Caf\303\251") == 0,
-			net ? "a network game's name in windows-1252" : "a single player's name in UTF-8");
+			net ? "a multiplayer game's name in windows-1252 (%d)" : "a single player's name in UTF-8 (%d)", net);
 		ui->save.sent = 0; /* the next save without the network's wait */
 	}
+	game->g->setup.multiplayer = 0;
+	ui->menus.multiplayer = 1;
 	kp_ui_save_dialog(ui, 0);
 	frames(&c, 10);
 	name_typed(ui, "\320\241\320\265\320\271\320\262");

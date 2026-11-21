@@ -321,6 +321,8 @@ step "the generated CRC tables are current (tools/native/crc32_table.py: kp_kpf.
 "$PYTHON" tools/native/crc32_table.py --check
 step "the native core's boundaries (tools/boundaries.sh: no mutable static state, ADR 0023)"
 tools/boundaries.sh
+step "the documents' links and their headings (tools/doc_links.py)"
+"$PYTHON" tools/doc_links.py
 step "kp_core's defs tables are current (tools/defs_c.py: the profile and its input manifest, ADR 0018)"
 "$PYTHON" tools/defs_c.py --check
 step "native build (CMake): kp_sim, kp_ui, their tools and the C suites, checked as C and C++"

@@ -1,6 +1,6 @@
 # Script files (`.kps`)
 
-A script drives the product from a text file: `koprulu --script FILE --script-out DIR` ([ADR 0017](../adr/0017-scripted-runs.md), stages in [docs/phase-script.md](../phase-script.md)). The parse and the run are `native/kp_app/kp_script.c`. The host resolves the names a script uses and runs its inputs and observations: the product's host is `native/kp_app/sdl/kp_app_script.c` with the flow's names in `native/kp_app/kp_script_flow.c` (stage SC3, [what it has](#the-products-names-stage-sc3)), the tests' host records (`tests/c/test_script.c`).
+A script drives the product from a text file: `koprulu --script FILE --script-out DIR` ([ADR 0017](../adr/0017-scripted-runs.md), stages in [docs/phase-script.md](../phase-script.md)). The parse and the run are `native/kp_app/kp_script.c`. The host resolves the names a script uses and runs its inputs and observations: the product's host is `native/kp_app/sdl/kp_app_script.c` with the flow's names in `native/kp_app/kp_script_flow.c` (stage SC3, [what it has](#the-products-names)), the tests' host records (`tests/c/test_script.c`).
 
 ```
 koprulu --script tests/scripts/smoke_pass.kps --script-out build/script/smoke_pass --headless --window 1280x720
@@ -28,7 +28,7 @@ Directives come before the first command, in the main file only.
 | `mission NAME` | The game to start (`zerg/zerg01`), as `--mission` does; the command line's `--mission` wins |
 | `options originals` | The development checks' mode: the original's options, no first-start intro |
 | `video originals` | The index path's video options too (font, graphics, fog, water). It implies `options originals`, else the profile's video options would come back |
-| `clock fixed` or `clock real` | The run's clock: fixed (the default; 1/60 s a frame, [below](#the-fixed-clock)) or real |
+| `clock fixed` or `clock real` | The run's clock: fixed (the default; 1/60 s a frame, [below](#the-runs-log-and-its-end)) or real |
 | `timeout S` | A wait's time without `within` (default 60 s) |
 | `watchdog S` | The time one frame may take before the host ends the program with exit code 3 (default 60 s) |
 

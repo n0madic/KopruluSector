@@ -21,7 +21,7 @@ Plan: phase 1 (converter, dependency analyzer, map viewer). Started 2026-10-12.
 | 4 | Defold resource generators | done: terrain (tilesources, tilemap templates, mission template collections), minimaps (`<mission>_minimap.png` by the native rules `0x46c920`/`0x46c990`/`0x46ca20` and palette map `0x46e260`), glyph and portrait atlases, GRP atlases per pack, resource packs, mission sound collections, viewer debug overlays and sprite probe | `converter/emit/`, [packs](formats/packs.md) |
 | 5 | `game/data` loaders | done: `.kpm` (canonical and derived sections), strings, DAT SoA, scripts, tilesets with the terrain import, palettes, fonts, ui, sounds, portraits, `grpmeta`, override effects (`rules.lua`) and UNIT records (`unit_records.lua`) | `game/data/` |
 | 6 | Reference harness | done: M0E probe adapter (phase 0) and the full-game emulator trace adapter (per-frame digests, sound requests, PNG hashes, input log; M1 Wasteland victory and all 64 no-input runs) | `tools/oracle/`, [golden oracle](golden-oracle.md) |
-| 7 | Map viewer | done: terrain of any mission, camera, resize, mission switching, static units and doodads through the `mesh_texture` backend, packs loaded per `PACK`, minimap, walkability and region overlays | [viewer](../viewer/README.md) |
+| 7 | Map viewer | done: terrain of any mission, camera, resize, mission switching, static units and doodads through the `mesh_texture` backend, packs loaded per `PACK`, minimap, walkability and region overlays | the viewer (removed in phase S, [ADR 0012](adr/0012-sdl3-runtime.md)) |
 
 ## CHK import (item 1a)
 

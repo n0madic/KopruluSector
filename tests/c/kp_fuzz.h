@@ -13,7 +13,10 @@
  *             inputs) by its sections, {u8 section, u24 offset, u8 n, n bytes}, its hash table then made right by
  *             kp_save_seal and the save given to kp_load;
  *   commands  the first byte picks the scenario; then chunks {u8 player | steps << 3, u8 n, n bytes} whose bytes
- *             kp_record_split walks into the player's commands, the steps after each chunk run by the session;
+ *             kp_record_split walks into the player's commands, the steps after each chunk run by the session; each
+ *             input in a single player's game and in a network game's (the game's multiplayer). A network game
+ *             refuses no seat's commands (every seat runs them all, so a refusal stops the game for every seat):
+ *             there a refusal is a finding;
  *   turns     a network game's turn hub (kp_hub.h; phase M, stage M6) of 1 to 8 seats: the seats' commands, first
  *             turns and frames in the input's order, each turn's list the same on every seat and by the Storm IDs from
  *             7 down, no seat past QueueTurnCommand's bound of turns in transit nor its stream's ring;

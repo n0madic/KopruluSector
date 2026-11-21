@@ -37,6 +37,8 @@
 /* the commands target's scenarios (the first byte picks one): workers and buildings, a fight, a computer's spells */
 static const char *const COMMAND_MAPS[] = { "scenarios/build_terran", "scenarios/bench_combat", "scenarios/ai_queen" };
 #define COMMAND_MAP_COUNT ((int)(sizeof COMMAND_MAPS / sizeof COMMAND_MAPS[0]))
+#define COMMAND_NETWORK 1         /* the commands' games: a single player's (0), a network game's */
+#define COMMAND_KINDS 2
 
 static const char *const NAMES[KP_FUZZ_TARGETS] = { "rep", "chk", "save", "commands", "turns", "udp", "snet", "lobby",
 	"transfer" };
@@ -55,7 +57,7 @@ typedef struct {
 
 static const KpData *data;
 static KpSaveIdentity identity;
-static FuzzGame save_game, command_games[COMMAND_MAP_COUNT];
+static FuzzGame save_game, command_games[COMMAND_KINDS][COMMAND_MAP_COUNT];
 /* the save target's game's own native save at its snapshot and its sections: what a native input edits */
 static uint8_t *save_base;
 static size_t save_base_size;
@@ -99,13 +101,15 @@ static void game_free(FuzzGame *fg)
 
 void kp_fuzz_free(void)
 {
-	int k;
+	int k, net;
 	game_free(&save_game);
 	free(save_base);
 	save_base = NULL;
 	save_base_size = 0;
 	save_section_count = 0;
-	for (k = 0; k < COMMAND_MAP_COUNT; k++) game_free(&command_games[k]);
+	for (net = 0; net < COMMAND_KINDS; net++) {
+		for (k = 0; k < COMMAND_MAP_COUNT; k++) game_free(&command_games[net][k]);
+	}
 	memset(&stats, 0, sizeof stats);
 }
 
@@ -118,8 +122,9 @@ static int need_data(char *why, size_t size)
 	return 0;
 }
 
-/* The session of a scenario (recorded or not) after `steps` steps, with its snapshot. */
-static int game_start(FuzzGame *fg, const char *key, int record, int steps, char *why, size_t size)
+/* The session of a scenario (recorded or not) after `steps` steps, with its snapshot; with multiplayer, the game's
+ * rules a network game's (test_multiplayer's network game: every seat runs every seat's commands by them). */
+static int game_start(FuzzGame *fg, const char *key, int record, int steps, int multiplayer, char *why, size_t size)
 {
 	KpSessionStart st;
 	KpMission m;
@@ -153,6 +158,7 @@ static int game_start(FuzzGame *fg, const char *key, int record, int steps, char
 			return -1;
 		}
 	}
+	if (multiplayer) fg->s->g->setup.multiplayer = 1;
 	fg->snap_size = kp_snapshot_size(fg->s->g);
 	if (!(fg->snap = (uint8_t *)malloc(fg->snap_size)) || kp_snapshot(fg->s->g, fg->snap, fg->snap_size, &err) != 0) {
 		game_free(fg);
@@ -182,7 +188,7 @@ static int save_start(char *why, size_t size)
 	KpSession *s;
 	KpError err;
 	if (save_base) return 0;
-	if (game_start(&save_game, SAVE_MAP, 1, SAVE_STEPS, why, size) != 0) return -1;
+	if (game_start(&save_game, SAVE_MAP, 1, SAVE_STEPS, 0, why, size) != 0) return -1;
 	s = save_game.s;
 	if (kp_save(s->g, s->host.name, s->host.identity, &save_base, &save_base_size, &err) != 0) {
 		return failed(why, size, "%s: %s", SAVE_MAP, err.msg);
@@ -198,7 +204,7 @@ static int save_start(char *why, size_t size)
 
 int kp_fuzz_init(int target, char *why, size_t why_size)
 {
-	int k;
+	int k, net;
 	switch (target) {
 	case KP_FUZZ_REP: return 0;
 	case KP_FUZZ_TURNS: return 0;
@@ -209,8 +215,11 @@ int kp_fuzz_init(int target, char *why, size_t why_size)
 	case KP_FUZZ_CHK: (void)need_data(why, why_size); why[0] = 0; return 0; /* with the data when present */
 	case KP_FUZZ_SAVE: return save_start(why, why_size);
 	case KP_FUZZ_COMMANDS:
-		for (k = 0; k < COMMAND_MAP_COUNT; k++) {
-			if (game_start(&command_games[k], COMMAND_MAPS[k], 0, 0, why, why_size) != 0) return -1;
+		for (net = 0; net < COMMAND_KINDS; net++) {
+			for (k = 0; k < COMMAND_MAP_COUNT; k++) {
+				if (game_start(&command_games[net][k], COMMAND_MAPS[k], 0, 0, net == COMMAND_NETWORK, why, why_size) != 0)
+				return -1;
+			}
 		}
 		return 0;
 	default: return failed(why, why_size, "no target %d", target);
@@ -424,14 +433,13 @@ static void note_refusal(const char *msg)
 	stats.reason_count[r]++;
 }
 
-static int run_commands(const uint8_t *d, size_t size, char *why, size_t why_size)
+/* The input's commands run on one game (a single player's or a network game's, kind), back at its snapshot after. */
+static int play_commands(int kind, const uint8_t *d, size_t size, char *why, size_t why_size)
 {
-	FuzzGame *fg;
+	FuzzGame *fg = &command_games[kind][d[0] % COMMAND_MAP_COUNT];
 	Submit sb;
 	size_t at = 1;
 	int chunks = 0, steps = 0, stopped = 0;
-	if (size == 0) return 0;
-	fg = &command_games[d[0] % COMMAND_MAP_COUNT];
 	if (!fg->s) return 0;
 	sb.s = fg->s;
 	while (at + 2 <= size && chunks < COMMAND_CHUNKS && !stopped) {
@@ -450,8 +458,27 @@ static int run_commands(const uint8_t *d, size_t size, char *why, size_t why_siz
 		}
 	}
 	if (!stopped) stopped = !kp_session_step(fg->s, NULL);
+	if (stopped && fg->s->failed && kind == COMMAND_NETWORK) {
+		char error[sizeof fg->s->error];
+		memcpy(error, fg->s->error, sizeof error);
+		(void)game_reset(fg, why, why_size);
+		return failed(why, why_size, "a network game refused a seat's commands: %s", error);
+	}
 	if (stopped && fg->s->failed) note_refusal(fg->s->error);
 	return game_reset(fg, why, why_size);
+}
+
+/* Each input in both games. A single player's refusal is the game's own check: counted. A network game refuses no
+ * seat's commands: every seat runs every seat's, so a refusal is one seat (a modified one) stopping the game for all
+ * (ADR 0026's review addition), a finding. */
+static int run_commands(const uint8_t *d, size_t size, char *why, size_t why_size)
+{
+	int kind;
+	if (size == 0) return 0;
+	for (kind = 0; kind < COMMAND_KINDS; kind++) {
+		if (play_commands(kind, d, size, why, why_size) != 0) return -1;
+	}
+	return 0;
 }
 
 /* --- turns --- */
@@ -751,10 +778,11 @@ static void synthetic_seeds(Seeds *sd)
 /* Commands on a game's own units: player p's first units selected (their refs), then a right click, a stop and a
  * hold; one seed a player that has units. And the first such player's units given a targeted order past orders.dat
  * (0xff): the original reads its tables past their end (ExecTargetedOrder 0x472270, tech 0x51b800[order]); Koprulu's
- * DAT read gives KP_NIL and the requirements' range check stops the game, a refusal (test_fuzz.data_seeds_run). */
+ * DAT read gives KP_NIL and the requirements' range check stops a single player's game, a refusal, while the input's
+ * network game ignores the order (test_fuzz.data_seeds_run). */
 static void unit_seeds(Seeds *sd, int map)
 {
-	KpGame *g = command_games[map].s->g;
+	KpGame *g = command_games[0][map].s->g;
 	uint8_t buf[256], select[2 + 2 * KP_SLOTS], click[10] = { 0x14, 0, 0, 0, 0, 0, 0, 0xe4, 0, 0 };
 	uint8_t past[11] = { 0x15, 0, 0, 0, 0, 0, 0, 0xe4, 0, 0xff, 0 };
 	int64_t p, n;

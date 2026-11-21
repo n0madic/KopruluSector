@@ -110,7 +110,9 @@ static void data_seeds_run(KpT *T)
 			kp_t_ok(T, kp_fuzz_stats()->loaded - loaded == count, "every save loads: %ld of %d",
 				kp_fuzz_stats()->loaded - loaded, count);
 		}
-		if (target == KP_FUZZ_COMMANDS) { /* the orders past orders.dat, refused, and the games back at their start */
+		if (target == KP_FUZZ_COMMANDS) {
+			/* a single player's three orders past orders.dat refused, the network game's ignored (run_dir fails a
+			 * network game's refusal), and the games back at their start */
 			const KpFuzzStats *st = kp_fuzz_stats();
 			int r;
 			for (r = 0; r < st->reasons; r++) kp_t_log(T, "refused %ld: %s", st->reason_count[r], st->reason[r]);

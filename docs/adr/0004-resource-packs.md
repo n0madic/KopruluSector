@@ -22,7 +22,7 @@ Superseded in part by [ADR 0012](0012-sdl3-runtime.md) (phase S, 2026-10-25): co
   - `tilemap.max_tile_count`;
   - `resource.max_resources` (the default 1,024 cannot hold all packs at once).
 
-  The converter, which knows the pack contents, reports the required minimums (`generated/reports/packs.json`, [resource packs](../formats/packs.md#engine-minimums)).
+  The converter, which knows the pack contents, reports the required minimums (`generated/reports/packs.json`, [resource packs](../formats/packs.md); the section went with Defold's limits, [ADR 0012](0012-sdl3-runtime.md)).
 
 ## Consequences
 
