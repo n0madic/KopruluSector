@@ -4,7 +4,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-int kp_turns_replay(KpTurns *t, const KpRep *rep)
+/* BeginReplayPlayback 0x4789f0: the record loaded into the feed, the header's frames and the records' Storm IDs */
+static int load_feed(KpTurns *t, const KpRep *rep)
 {
 	int k;
 	if (!(t->feed = (KpRecorder *)malloc(sizeof *t->feed))) return -1;
@@ -19,7 +20,6 @@ int kp_turns_replay(KpTurns *t, const KpRep *rep)
 		t->feed = NULL;
 		return -1;
 	}
-	t->kind = KP_TURNS_REPLAY;
 	t->frames = kp_rep_frames(rep);
 	for (k = 0; k < KP_TURNS_SLOTS; k++) {
 		KpRepPlayer p;
@@ -27,6 +27,42 @@ int kp_turns_replay(KpTurns *t, const KpRep *rep)
 		t->feed_storm[k] = (uint32_t)p.storm;
 		t->feed_slot[k] = p.slot;
 	}
+	return 0;
+}
+
+int kp_turns_replay(KpTurns *t, const KpRep *rep)
+{
+	if (load_feed(t, rep) != 0) return -1;
+	t->kind = KP_TURNS_REPLAY;
+	return 0;
+}
+
+int kp_turns_watch(KpTurns *t, const KpRep *rep)
+{
+	if (load_feed(t, rep) != 0) return -1;
+	t->kind = KP_TURNS_REPLAY;
+	t->growing = 1;
+	t->frames = 0;
+	if (kp_record_grow(t->feed, NULL, 0, -1) != 0) {
+		kp_turns_free(t);
+		return -1;
+	}
+	return 0;
+}
+
+int kp_turns_watch_grow(KpTurns *t, const uint8_t *bytes, size_t size, uint32_t frames, int whole)
+{
+	if (!t->growing || t->whole) return -1;
+	if (kp_record_grow(t->feed, bytes, size, (int64_t)frames - 1) != 0) return -1;
+	t->frames = frames;
+	t->whole = whole;
+	return 0;
+}
+
+int kp_turns_net_replay(KpTurns *t, KpNetGame *net, const KpRep *rep)
+{
+	if (load_feed(t, rep) != 0) return -1;
+	kp_turns_net(t, net);
 	return 0;
 }
 
@@ -76,26 +112,18 @@ void kp_turns_free(KpTurns *t)
 	memset(t, 0, sizeof *t);
 }
 
-int kp_turns_playing(const KpTurns *t) { return t->kind == KP_TURNS_REPLAY; }
+int kp_turns_playing(const KpTurns *t) { return t->feed != NULL; }
 int kp_turns_ended(const KpTurns *t) { return t->ended; }
-uint32_t kp_turns_frames(const KpTurns *t) { return t->kind == KP_TURNS_REPLAY ? t->frames : 0; }
-
-/* The replay filter of ExecuteTurnCommands 0x475d30 for the live commands of a playback (table 0x47636c): the
- * keep-alive, restart, pause and resume, the sync and the four the network's (0x37-0x3b), latency and the replay
- * speed. */
-static int live_in_replay(uint8_t id)
-{
-	return id == 0x05 || id == 0x08 || id == 0x10 || id == 0x11 || (id >= 0x37 && id <= 0x3b) || id == 0x55 || id == 0x56;
-}
+uint32_t kp_turns_frames(const KpTurns *t) { return t->feed ? t->frames : 0; }
 
 int kp_turns_submit(KpTurns *t, const uint8_t *bytes, size_t size, int64_t player)
 {
 	KpQueuedCommand *c;
 	if (t->kind == KP_TURNS_SEATS) return kp_hub_submit(t->hub, t->seat, bytes, size);
+	if (t->feed && (size == 0 || !kp_record_live_in_replay(bytes[0]))) return -1; /* a playback's (0x47636c) */
 	if (t->kind == KP_TURNS_NET) return kp_netgame_command(t->net, bytes, size);
 	if (t->pending_count >= KP_TURNS_PENDING || size == 0 || size > KP_TURNS_COMMAND_BYTES) return -1;
 	if (player < 0 || player >= KP_TURNS_SLOTS) return -1; /* the dispatcher's players: a seat's, 0..7 */
-	if (t->kind == KP_TURNS_REPLAY && !live_in_replay(bytes[0])) return -1;
 	c = &t->pending[t->pending_count++];
 	c->player = player;
 	c->size = (uint16_t)size;
@@ -137,13 +165,17 @@ static void add_command(void *ud, const uint8_t *cmd, size_t n)
 	c->size = n;
 }
 
+#define FEED_WAIT 2
+
 /* FeedReplayCommands 0x4769b0's part of a frame: the commands recorded for it, each buffer's player the one whose
  * record has its Storm ID (kept from the buffer before when none has), walked as ExecuteTurnCommands 0x475d30 walks
- * them; 1 at the end of the record (SetReplayPaused 0x480e00), -1 out of memory. */
+ * them; 1 at the end of the record (SetReplayPaused 0x480e00), FEED_WAIT while a growing record does not hold the
+ * frame after this one yet (kp_turns.h), -1 out of memory. */
 static int feed(KpTurns *t, int64_t frame, Split *sp)
 {
 	const KpRecordEntry *e;
 	int n, k, j;
+	if (t->growing && !t->whole && frame + 1 >= (int64_t)t->frames) return FEED_WAIT; /* the next frame's blocks too */
 	if (kp_record_feed(t->feed, frame, t->frames, &e, &n)) return 1;
 	for (k = 0; k < n; k++) {
 		for (j = 0; j < KP_TURNS_SLOTS; j++) {
@@ -156,6 +188,35 @@ static int feed(KpTurns *t, int64_t frame, Split *sp)
 		(void)kp_record_split(e[k].bytes, e[k].size, add_command, sp);
 	}
 	return sp->failed ? -1 : 0;
+}
+
+/* The record's part of a frame into sp: KP_TURNS_READY, KP_TURNS_ENDED once, or KP_TURNS_NO_MEMORY */
+static int feed_frame(KpTurns *t, int64_t frame, Split *sp)
+{
+	int fed = feed(t, frame, sp);
+	if (fed < 0) return KP_TURNS_NO_MEMORY;
+	if (fed == FEED_WAIT) return KP_TURNS_WAIT;
+	if (fed > 0 && !t->ended) {
+		t->ended = 1;
+		return KP_TURNS_ENDED;
+	}
+	return KP_TURNS_READY;
+}
+
+int kp_turns_feed(KpTurns *t, int64_t frame, const KpCommand **list, int *count)
+{
+	Split sp;
+	int status;
+	memset(&sp, 0, sizeof sp);
+	sp.t = t;
+	*list = NULL;
+	*count = 0;
+	if (!t->feed) return KP_TURNS_READY;
+	status = feed_frame(t, frame, &sp);
+	if (status == KP_TURNS_NO_MEMORY) return status;
+	*list = t->list;
+	*count = sp.count;
+	return status;
 }
 
 int kp_turns_frame(KpTurns *t, int64_t frame, const KpCommand **list, int *count)
@@ -176,12 +237,8 @@ int kp_turns_frame(KpTurns *t, int64_t frame, const KpCommand **list, int *count
 		}
 	}
 	if (t->kind == KP_TURNS_REPLAY) {
-		int fed = feed(t, frame, &sp);
-		if (fed < 0) return KP_TURNS_NO_MEMORY;
-		if (fed > 0 && !t->ended) {
-			t->ended = 1;
-			status = KP_TURNS_ENDED;
-		}
+		status = feed_frame(t, frame, &sp);
+		if (status == KP_TURNS_NO_MEMORY || status == KP_TURNS_WAIT) return status;
 	}
 	if (list_room(t, sp.count, t->pending_count) != 0) return KP_TURNS_NO_MEMORY;
 	for (k = 0; k < t->pending_count; k++) {

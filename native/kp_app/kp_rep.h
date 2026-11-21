@@ -33,7 +33,8 @@ extern "C" {
 #define KP_REP_BROOD_WAR 0x00
 #define KP_REP_FRAMES 0x01
 #define KP_REP_CAMPAIGN 0x05
-#define KP_REP_SEED_RECORD 0x07 /* 13 bytes: command byte, the seed (+8), 8 player bytes */
+#define KP_REP_SEED_RECORD 0x07 /* command byte, the seed (+8), 8 player bytes */
+#define KP_REP_SEED_RECORD_SIZE 13
 #define KP_REP_SEED 0x08
 #define KP_REP_GAME 0x14 /* the 141-byte game header 0x6728d0 */
 #define KP_REP_GAME_SIZE 0x8d
@@ -114,6 +115,10 @@ typedef struct {
 	int slots;               /* the map's player slots (0: a campaign's 1) */
 	const int64_t *colors;      /* 8 colour rows (NULL: 0..7) */
 	const int64_t *user_select; /* 8 user-select flags (NULL: 0) */
+	/* the network lobby's start information 0x48 as the seat received it (13 bytes: the command, the seed, the saved
+	 * slots; OnLobbyStartInfo 0x4709d0 -> SetReplayGameSeedRecord 0x4807f0), NULL none (a game without a lobby: the
+	 * record's bytes 0 but the seed) */
+	const uint8_t *seed_record;
 } KpRepGame;
 
 /* The 633-byte header of game into r->header. */

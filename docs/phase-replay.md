@@ -78,6 +78,7 @@ Design: [ADR 0020](adr/0020-campaign-replays.md); the format: [docs/formats/rep.
   - **The time panel** (`UpdateReplayInfoPanel` 0x4a5640): the progress bar, "Replay Progress", the elapsed time (0x480d70) and the speed or "Paused", refreshed each second, on a new speed and by the pause's blink (0x480fb0, 0x481040).
   - **The minimap** (`DrawMinimapUnits` 0x46d510): every player in its colour, no local pass. Ghosts are skipped on tiles none of the vision players explored, unless reveal-all is on (0x418520 mode 1).
   - **The vision dialog** (`allyfltr.bin`, `OpenAllianceDialog` 0x441b70): one box per player, applied through `kp_replay_set_vision` (0x67cc84, 0x67cc88).
+  - **The pick by the replay's vision** (2026-11-21): `PickUnitAtPoint` 0x4bcd00 takes a unit whose sprite one of the replay's vision players sees (0x67cc84's low byte; a cloaked one by its visibility against the whole word), or any with the reveal 0x67cc88; `FilterSelectableUnits` 0x4bc5b0 keeps the local vision 0x672668, which the vision dialog sets the same. Before, a replay picked and selected no unit (`test_hud.replay_picks_by_its_vision`).
 - **The message line:** in a replay a line that is no cheat goes to `HandleReplayChatCommand` 0x480be0: "/replay show NAME" sets the leaderboard of table 0x4ef6a8 (kills, razings, slaughter, resources, minerals, gas, score and its five kinds; `ReplayShowLeaderboard` 0x47fd60) through `TrigActLeaderboard` 0x4b67c0 of a zeroed action (`kp_replay_leaderboard`), and "/replay hide" clears it (0x47fe10). `test_hud.replay_line_shows_and_hides_the_leaderboard`.
 - **The menus:**
   - The game menu hides Save and Load (0x47b4c0).
@@ -109,6 +110,11 @@ Design: [ADR 0020](adr/0020-campaign-replays.md); the format: [docs/formats/rep.
   - The layout makes it a console asset (`KP_HD_UI_CONSOLE`, its own silhouette) with one frame. The columns are centred on the 640 (x −106.5 logical, as the races' left and right pieces lie at a 853-wide screen's edges). The first row is 306: the picture's luminance gradients against `nconsole.pcx`'s agree best there (measured on HD2 at whole and half pixels; 305, the bottom edge's row, agrees less).
   - The interface marks the console as one picture (`KpUi.console_whole`), so every group (`kp_canvas.c`'s `piece_item`) and every dialog background captured from the console take frame 0.
   - Checks: `test_hd.ui_equals_the_converters` (the golden's new asset; the golden is private), `test_hud.replay_console_keeps_its_holes_and_fluff`, and `tests/scripts/hd_replay.kps` in `tools/ci.sh` over the install and the repack (the replay's screen with no HD art missing: before the fix 44,862 of its pixels had none).
+
+- **Replays over the network** (2026-11-21, [phase N](phase-network.md#replays-over-the-network-and-the-viewers-2026-11-21)):
+  - a network game's replay hosted in the lobby (`CreateGameFromEntry` `0x45bfc0`'s kind `0x80`), played on every seat in lockstep;
+  - the network replays' seed record (header +0x07) is now the lobby's `0x48`;
+  - a viewer of a network game plays its replay as the record grows (`kp_turns_watch`, `kp_record_grow`; [watch-udp.md](formats/watch-udp.md)).
 
 ### Open in RP3
 

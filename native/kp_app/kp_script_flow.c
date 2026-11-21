@@ -1024,6 +1024,8 @@ int kp_script_flow_act(KpFlow *f, KpScriptRun *run, const KpScriptStep *step, ch
 		if (step->op == KP_SCRIPT_REPLAY) return kp_flow_play_replay(f, step->text, why, size);
 		if (!save_name_fits(step->text, why, size) || kp_flow_load_saved(f, step->text, why, size) != 0) return -1;
 		return 0;
+	case KP_SCRIPT_WATCH:
+		return kp_flow_watch(f, step->text, why, size);
 	case KP_SCRIPT_MENU:
 	case KP_SCRIPT_OPTIONS_DIALOG:
 		if (!in_game(f)) break;

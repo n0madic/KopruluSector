@@ -1524,6 +1524,9 @@ int64_t kp_fog_unit(KpGame *g, int64_t x, int64_t y, int64_t type);
 /* OrderRightClickAction 0x431200 (order 133). */
 void kp_order_right_click_action(KpGame *g, int64_t n);
 void kp_run_turn(KpGame *g, const KpCommand *commands, int count);
+/* A hosted replay's record commands of a frame (FeedReplayCommands 0x4769b0 beside the network's turns): run as
+ * kp_run_turn runs them, the context given back to the seat, no turn counted. */
+void kp_run_commands(KpGame *g, const KpCommand *commands, int count);
 /* RunGame 0x445310 before its first turn: the turn counter 0x672658 starts again at 0 (atlas P15). */
 void kp_start_turns(KpGame *g);
 

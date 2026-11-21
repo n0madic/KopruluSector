@@ -61,6 +61,7 @@ typedef struct KpRecorder {
 	size_t exec_size, exec_cap;
 	KpRecordEntry *entries; /* owned: the entries kp_record_feed returned last */
 	int entries_cap;
+	size_t sentinel; /* a growing record's end header (kp_record_grow): its offset + 1, 0 none */
 } KpRecorder;
 
 /* CreateRecorder 0x4788b0: an empty record, recording. -1 out of memory. */
@@ -76,6 +77,15 @@ const uint8_t *kp_record_bytes(KpRecorder *r, size_t *size);
 /* LoadRecordedCommands 0x478640 then BeginReplayPlayback 0x4789f0 and ResetReplayFeed 0x476d80: plays `bytes`. -1
  * out of memory. */
 int kp_record_load(KpRecorder *r, const uint8_t *bytes, size_t size);
+/* A growing record's playback (Koprulu's viewer of a network game, kp_watch.h): `size` more bytes of the record
+ * appended, the record then known to hold every block up to frame `limit`. ReadRecordedFrame 0x478480 takes a frame
+ * only when the next block's header follows it, so a header of frame limit + 1 with no payload ends the data: the feed
+ * dispatches the last block received and then stops at that header, which the next bytes replace (the read position
+ * put back on it). The header stays once the record is whole too, so the viewer runs every block, the game's last
+ * one among them, whenever it came (a file's playback never runs the last block). The feed reads as it reads the file
+ * only while every frame it is called at is below `limit` (kp_turns.h: the frame's read ahead must find the next
+ * block). -1 out of memory, r unchanged. */
+int kp_record_grow(KpRecorder *r, const uint8_t *bytes, size_t size, int64_t limit);
 /* A recorder's state from a save: the bytes (saved with the open block closed, kp_record_close) and the frame the closed
  * block kept, which the same frame's next commands go on without a header for. -1 out of memory, r unchanged. */
 int kp_record_restore(KpRecorder *r, const uint8_t *bytes, size_t size, int64_t open_frame);
@@ -92,6 +102,11 @@ int kp_record_split(const uint8_t *b, size_t size, void (*fn)(void *ud, const ui
 /* 1 for an id the recorder never writes (RecordCommand 0x478340's table 0x4ef2fc: save, load, restart, the playback's
  * own commands); 0 otherwise. */
 int kp_record_excluded(uint8_t id);
+/* 1 for an id ExecuteTurnCommands 0x475d30 dispatches from a live turn in a replay (table 0x47636c): the keep-alive,
+ * restart, pause and resume, the sync and the network's 0x38-0x3b, latency and the replay speed. Its skip path does
+ * not advance past the command (0x476352 tests what is left without adding the length), so the first other command
+ * ends the buffer. */
+int kp_record_live_in_replay(uint8_t id);
 /* The original's length of command `b` with its id byte (0x4720c0, 0x4ef048), -1 for an id it does not know. */
 int kp_record_command_length(const uint8_t *b, size_t size);
 

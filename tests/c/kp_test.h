@@ -211,7 +211,7 @@ extern const KpSuite kp_suite_rng, kp_suite_initial_state, kp_suite_scenarios, k
 	kp_suite_locale, kp_suite_speech, kp_suite_script, kp_suite_res, kp_suite_formats, kp_suite_original,
 	kp_suite_chk, kp_suite_cine, kp_suite_scr, kp_suite_movies, kp_suite_encoders, kp_suite_convert,
 	kp_suite_hd, kp_suite_rep, kp_suite_gametype, kp_suite_multiplayer, kp_suite_seats, kp_suite_snet,
-	kp_suite_net_trace, kp_suite_lobby_trace, kp_suite_netgame, kp_suite_net_live, kp_suite_netplay;
+	kp_suite_net_trace, kp_suite_lobby_trace, kp_suite_netgame, kp_suite_net_live, kp_suite_netplay, kp_suite_watch;
 
 #define KP_SUITE(var, label, tests) const KpSuite var = { label, tests, (int)(sizeof tests / sizeof tests[0]), 0 }
 /* A suite whose tests a parallel run gives a job each: one process for the whole would be the run's longest job. */

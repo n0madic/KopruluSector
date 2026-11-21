@@ -43,7 +43,7 @@ The offsets are `ReadReplayFile`'s accessors 0x480540–0x480680. The values are
 | +0x00 | 1 | Brood War (1: the expansion's game; refused without Brood War, gluAll 60) |
 | +0x01 | 4 | frame count at the end of the game (`0x480670`); the playback ends there |
 | +0x05 | 2 | campaign row (`0x4805d0`; 0 for a map that is not one) |
-| +0x07 | 13 | the seed record: a command byte, the seed (+0x08, `0x4805b0`), 8 player bytes |
+| +0x07 | 13 | the seed record: a command byte, the seed (+0x08, `0x4805b0`), 8 player bytes; a network game's is the lobby's start information `0x48` (`SetReplayGameSeedRecord` `0x4807f0`: `48`, the seed, eight `08`), a single-player game's the seed alone with the other bytes 0 |
 | +0x14 | 141 | the game header `0x6728d0` (below) |
 | +0xa1 | 12 × 36 | the player records `0x6726c8`: `{u32 slot, s32 Storm ID, u8 type, u8 race, u8 force, char name[25]}` |
 | +0x251 | 8 × 4 | the colours (`0x480630`); a campaign game's are 0..7 |

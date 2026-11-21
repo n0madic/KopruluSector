@@ -829,6 +829,7 @@ static const struct {
 	{ "load", KP_SCRIPT_LOAD, p_save_name },
 	{ "load-file", KP_SCRIPT_LOAD_FILE, p_save_name },
 	{ "replay", KP_SCRIPT_REPLAY, p_save_name },
+	{ "watch", KP_SCRIPT_WATCH, p_text },
 	{ "menu", KP_SCRIPT_MENU, p_named },
 	{ "options-dialog", KP_SCRIPT_OPTIONS_DIALOG, p_named },
 	{ "activate", KP_SCRIPT_ACTIVATE, p_named },

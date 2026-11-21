@@ -16,6 +16,7 @@
 #include "kp_record.h"
 #include "kp_rep.h"
 #include "kp_turns.h"
+#include "kp_watch.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -96,6 +97,9 @@ typedef struct {
 	 * the briefing's objectives, which Load Replay's start has none of), so that its state equals the recorded game's
 	 * in every field */
 	int replay_as_game;
+	/* a viewer of a network game (kp_watch.h): the replay's record grows (kp_session_watch_grow), the playback waits
+	 * past what it holds */
+	int watch;
 	/* a custom game's setup (ADR 0024): the lobby's, or a custom replay's header (kp_rep_setup); has_setup 0: the
 	 * campaign's from the map */
 	int has_setup;
@@ -120,12 +124,15 @@ typedef struct {
 	double step_ms, step_max_ms;
 	int64_t start_frame, start_turn;
 	int net_begun; /* a network game's RunGame step 7 ran (kp_session_net_begin) */
+	size_t watch_checked; /* a viewer's record walked this far (kp_session_watch_grow) */
 	int net_waiting;       /* PollTurn 0x444cc0's 0x666400: the network game's step waits for its turn */
 	double net_wait_start; /* its 0x66642c: the wall time (seconds) the wait began */
 	int failed;
 	char error[KP_ERROR_SIZE];
 	/* The record of a recorded game (owned, NULL none), which watches the executed commands (kp_turns_record) */
 	KpRecorder *rec;
+	/* the server of the recorded game's viewers (kp_watch.h; not owned, NULL none): marked after each step */
+	KpWatchServer *watch_server;
 	/* a recorded game's header as its start left it (kp_session_replay_game; the frame count is written with the
 	 * file) and the saves loaded since (each restored the record a save kept; one without it left the record empty) */
 	uint8_t rec_header[KP_REP_HEADER_SIZE];
@@ -182,9 +189,13 @@ void kp_session_release_wait(KpSession *s);
  * more and a speed above Slowest, else 1. */
 int kp_session_steps_per_tick(const KpSession *s);
 /* The playback's start fields from a replay's header (seed, expansion, the campaign row, the speed) and from Koprulu's
- * tail (the carried globals and the cheats at the start); -1 when the record holds a command the playback refuses (a
- * network player's leave 0x57 or chat 0x5c, outside V1). */
+ * tail (the carried globals and the cheats at the start); -1 when the record holds a command the playback refuses (an
+ * id the recorder never writes, kp_record_excluded: a crafted file's save 0x06 or load 0x07 among them). */
 int kp_session_replay_start(KpSessionStart *st, const KpRep *rep);
+/* A viewer's record grown (kp_turns_watch_grow): its next bytes, the frames it now lets the playback run, whether the
+ * game ended. The bytes are walked as kp_session_replay_start walks a record: one holding a command the playback
+ * refuses (a save or a load) fails the session. 0, or -1 (the session failed). */
+int kp_session_watch_grow(KpSession *s, const uint8_t *bytes, size_t size, uint32_t frames, int whole);
 /* What a recorded game's header holds as the game starts (the players' types, races and forces; the human's name
  * "Anonymous" and the computers' none: the caller with the interface's network.tbl names them, then sets the header
  * with kp_session_replay_header). kp_session_start with record does both with these names. */

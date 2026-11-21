@@ -171,6 +171,22 @@ static uint32_t u_create_game(void *host, KpUi *ui, int index, uint8_t speed)
 	KpNetGameHeader h;
 	char path[KP_TRANSFER_PATH];
 	if (!ng || index < 0 || index >= ui->menus.entry_count) return CREATE_FAILED;
+	ng->config.replay = 0; /* CreateGameFromEntry 0x45bfc0: 0x67cc90 = 0, 1 for a replay's entry */
+	if (ui->menus.entries[index].kind == KP_UI_ENTRY_REPLAY) {
+		/* the replay's game header with the player's name as the game's; its scenario the lobby's map (0x45d250's
+		 * LoadMapHeader 0x46b5c0), the replay file the one the transfer sends; its 0x48 record the start's */
+		KpNetReplayEntry r;
+		uint32_t err;
+		if (!n->entry_replay || !n->entry_replay(n->owner, ui, index, &r)) return CREATE_FAILED;
+		kp_netgame_map(&m, &r.map, r.path, &ng->hooks);
+		kp_netgame_set_map(ng, &m);
+		kp_netgame_header_read(r.game, &h);
+		snprintf(h.name, sizeof h.name, "%s", ng->config.player_name);
+		ng->config.replay = 1;
+		memcpy(ng->config.replay_seed, r.seed_record, sizeof ng->config.replay_seed);
+		if ((err = create(ng, &h)) != 0) ng->config.replay = 0;
+		return err;
+	}
 	if (ui->menus.entries[index].kind == KP_UI_ENTRY_SAVE) {
 		/* CreateGameFromEntry 0x45bfc0's saved game: its header the game's, the player's name its name (the map, the
 		 * slots and the screen's choices are the save's: the lobby reads them from it) */
@@ -196,8 +212,6 @@ static uint32_t u_create_game(void *host, KpUi *ui, int index, uint8_t speed)
 	h.sub = c->record[KP_TEMPLATE_SUB];
 	h.subtype = record16(c->record, KP_TEMPLATE_SUBTYPE);
 	memcpy(h.title, m.title, sizeof h.title);
-	/* TODO: stage N4 hosts a replay's game (CreateGameFromEntry's kind 0x80: the replay's header, the lobby that plays
-	 * it) */
 	return create(ng, &h);
 }
 

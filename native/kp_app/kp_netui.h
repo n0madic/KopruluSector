@@ -23,6 +23,17 @@ extern "C" {
 
 #define KP_NETUI_TEXTS 0x100 /* network.tbl's strings the game asks (KP_NETTBL_*) */
 
+/* A replay entry of the Create Game screen as a hosted replay's game takes it (CreateGameFromEntry 0x45bfc0's kind
+ * 0x80, LoadReplayEntryInfo 0x45d250): its game header (the header's +0x14, its replay byte set), the 0x48 record its
+ * start information carries (GetReplayGameSeedRecord 0x480540), its scenario's header and the file the transfer
+ * sends. */
+typedef struct {
+	uint8_t game[KP_NETGAME_HEADER];
+	uint8_t seed_record[KP_NETGAME_START_INFO];
+	KpMapHeader map;
+	char path[KP_TRANSFER_PATH];
+} KpNetReplayEntry;
+
 typedef struct KpNetUi {
 	KpNetGame *game; /* the selected provider's game (NULL: none, every hook refuses) */
 	KpUi *ui;        /* the screens the game's hooks forward to */
@@ -32,6 +43,8 @@ typedef struct KpNetUi {
 	/* The owner's: the game header of the Create Game screen's saved game entry index (the game it resumes): 1, or 0
 	 * when it cannot be read (NULL: none) */
 	int (*entry_save)(void *owner, KpUi *ui, int index, KpNetGameHeader *h);
+	/* The owner's: the replay of the Create Game screen's entry index: 1, or 0 when it cannot be played (NULL: none) */
+	int (*entry_replay)(void *owner, KpUi *ui, int index, KpNetReplayEntry *out);
 	/* The owner's KpNetGameHooks.find_save: this seat's copy of the saved game id (NULL: none) */
 	int (*find_save)(void *owner, uint32_t id, KpNetGameSave *out);
 	/* The owner's: the chat room's preview world (KpUiNet.lobby_preview, kp_preview.h) of the lobby's map at path under

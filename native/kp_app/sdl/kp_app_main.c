@@ -14,6 +14,7 @@
  *           [--cine-check DIR] [--headless] [--locale LOC] [--speech LOC]
  *           [--script FILE --script-out DIR] [--script-live FIFO --script-out DIR]
  *           [--lan-port PORT] [--lan-map BASE:HOSTS:SELF] [--lan-host NAME[:PORT]]
+ *           [--watch NAME[:PORT]] [--watch-delay SECONDS] [--watch-port PORT]
  */
 #define SDL_MAIN_USE_CALLBACKS 1
 #include <SDL3/SDL.h>
@@ -93,6 +94,7 @@ static void usage_flags(KpAppFlags *f, int argc, char **argv)
 	f->scale_mode = KP_SCALE_AUTO;
 	f->font_mode = f->graphics = f->fog_style = f->water = f->lighting = KP_VIDEO_AUTO;
 	f->vector_size = 1.0;
+	f->watch_delay = -1; /* KP_WATCH_DELAY_SECONDS */
 	f->win_w = KP_APP_WINDOW_W;
 	f->win_h = KP_APP_WINDOW_H;
 	for (k = 1; k < argc; k++) {
@@ -111,6 +113,17 @@ static void usage_flags(KpAppFlags *f, int argc, char **argv)
 			if (strlen(argv[++k]) < sizeof f->lan_host) snprintf(f->lan_host, sizeof f->lan_host, "%s", argv[k]);
 			else SDL_Log("koprulu: --lan-host: an address of %u bytes, at most %u: ignored", (unsigned)strlen(argv[k]),
 				(unsigned)(sizeof f->lan_host - 1));
+		}
+		else if (strcmp(s, "--watch") == 0 && next) {
+			if (strlen(argv[++k]) < sizeof f->watch) snprintf(f->watch, sizeof f->watch, "%s", argv[k]);
+			else SDL_Log("koprulu: --watch: an address of %u bytes, at most %u: ignored", (unsigned)strlen(argv[k]),
+				(unsigned)(sizeof f->watch - 1));
+		}
+		else if (strcmp(s, "--watch-delay") == 0 && next) f->watch_delay = atof(argv[++k]);
+		else if (strcmp(s, "--watch-port") == 0 && next) {
+			int port = atoi(argv[++k]);
+			if (port > 0 && port <= 0xffff) f->watch_port = port;
+			else SDL_Log("koprulu: --watch-port %s: not a port, %u kept", argv[k], (unsigned)KP_WATCH_PORT);
 		}
 		else if (strcmp(s, "--console") == 0 && next) {
 			const char *m = argv[++k];

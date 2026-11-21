@@ -259,6 +259,12 @@ static int n_entry_save(void *owner, KpUi *ui, int index, KpNetGameHeader *h)
 	return p->config.entry_save != NULL && p->config.entry_save(p->config.ctx, ui, index, h);
 }
 
+static int n_entry_replay(void *owner, KpUi *ui, int index, KpNetReplayEntry *out)
+{
+	KpNetPlay *p = (KpNetPlay *)owner;
+	return p->config.entry_replay != NULL && p->config.entry_replay(p->config.ctx, ui, index, out);
+}
+
 static int n_find_save(void *owner, uint32_t id, KpNetGameSave *out)
 {
 	KpNetPlay *p = (KpNetPlay *)owner;
@@ -289,6 +295,7 @@ void kp_netplay_init(KpNetPlay *p, KpUi *ui, const KpNetPlayConfig *config)
 	p->nu.owner = p;
 	p->nu.entry_map = n_entry_map;
 	p->nu.entry_save = n_entry_save;
+	p->nu.entry_replay = n_entry_replay;
 	p->nu.find_save = n_find_save;
 	p->nu.preview = n_preview;
 	p->nu.preview_release = n_preview_release;

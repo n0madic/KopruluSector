@@ -279,7 +279,7 @@ void kp_step_frame(KpGame *g)
 }
 
 /* ExecuteGameTurn 0x4768a0: the game RNG runs during the commands (an order's animation may draw from it). */
-void kp_run_turn(KpGame *g, const KpCommand *commands, int count)
+void kp_run_commands(KpGame *g, const KpCommand *commands, int count)
 {
 	int k;
 	kp_rng_game_set_enabled(g->rng, 1);
@@ -289,6 +289,11 @@ void kp_run_turn(KpGame *g, const KpCommand *commands, int count)
 	g->command_record = g->local_record;
 	kp_scalar_set(g, KP_COMMAND_PLAYER, g->local_player);
 	kp_rng_game_set_enabled(g->rng, 0);
+}
+
+void kp_run_turn(KpGame *g, const KpCommand *commands, int count)
+{
+	kp_run_commands(g, commands, count);
 	if (g->turn_cancels_cursor) { /* ExecuteGameTurn 0x4768a0's end: a pause or a resume ran */
 		g->turn_cancels_cursor = 0;
 		kp_cancel_cursor_modes(g); /* CancelCursorModes 0x448c20 */

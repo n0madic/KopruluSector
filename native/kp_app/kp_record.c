@@ -87,6 +87,11 @@ int kp_record_excluded(uint8_t id)
 	return 0;
 }
 
+int kp_record_live_in_replay(uint8_t id)
+{
+	return id == 0x05 || id == 0x08 || id == 0x10 || id == 0x11 || (id >= 0x37 && id <= 0x3b) || id == 0x55 || id == 0x56;
+}
+
 void kp_record_command(KpRecorder *r, int64_t frame, uint8_t storm, const uint8_t *cmd, size_t size)
 {
 	if (!r->recording || !r->buf || size == 0 || size >= 0x100 || kp_record_excluded(cmd[0])) return;
@@ -129,6 +134,7 @@ int kp_record_restore(KpRecorder *r, const uint8_t *bytes, size_t size, int64_t 
 	r->used = size;
 	r->open = 0;
 	r->open_frame = open_frame;
+	r->sentinel = 0;
 	return 0;
 }
 
@@ -140,6 +146,35 @@ int kp_record_load(KpRecorder *r, const uint8_t *bytes, size_t size)
 	r->cursor = 0;
 	r->buffered_frame = -1;
 	r->count = 0;
+	return 0;
+}
+
+#define BLOCK_HEADER 5
+
+int kp_record_grow(KpRecorder *r, const uint8_t *bytes, size_t size, int64_t limit)
+{
+	size_t at = r->sentinel ? r->sentinel - 1 : r->used, need = at + size + BLOCK_HEADER + KP_RECORD_SCRATCH;
+	if (need > r->cap) {
+		size_t cap = r->cap ? r->cap : KP_RECORD_START;
+		uint8_t *g;
+		while (cap < need) cap += KP_RECORD_GROW;
+		if (!(g = (uint8_t *)realloc(r->buf, cap))) return -1;
+		r->buf = g;
+		r->cap = cap;
+	}
+	if (r->sentinel && r->cursor > at) r->cursor = at; /* the feed read the end header: it reads what replaced it */
+	if (size) memcpy(r->buf + at, bytes, size);
+	r->used = at + size;
+	{
+		uint32_t f = (uint32_t)(limit + 1);
+		r->buf[r->used] = (uint8_t)f;
+		r->buf[r->used + 1] = (uint8_t)(f >> 8);
+		r->buf[r->used + 2] = (uint8_t)(f >> 16);
+		r->buf[r->used + 3] = (uint8_t)(f >> 24);
+		r->buf[r->used + 4] = 0;
+		r->sentinel = r->used + 1;
+		r->used += BLOCK_HEADER;
+	}
 	return 0;
 }
 

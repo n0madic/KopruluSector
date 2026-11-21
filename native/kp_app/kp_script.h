@@ -66,6 +66,7 @@ typedef enum {
 	KP_SCRIPT_LOAD,            /* text: the save loaded in the game */
 	KP_SCRIPT_LOAD_FILE,       /* text: the save loaded from its file (the glue's Load Saved) */
 	KP_SCRIPT_REPLAY,          /* text: the replay of the replays folder played (Load Replay's Ok) */
+	KP_SCRIPT_WATCH,           /* text: the host's address whose network game is watched (kp_flow_watch) */
 	KP_SCRIPT_MENU,            /* id: the game menu opened */
 	KP_SCRIPT_OPTIONS_DIALOG,  /* id: the options dialog opened */
 	KP_SCRIPT_ACTIVATE,        /* id: the open menu's control activated as its click does */

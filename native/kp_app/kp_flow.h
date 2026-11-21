@@ -13,9 +13,11 @@
 #include "kp_locale.h"
 #include "kp_map_preview.h"
 #include "kp_netgame.h"
+#include "kp_netui.h"
 #include "kp_seats.h"
 #include "kp_session.h"
 #include "kp_transfer.h"
+#include "kp_watch.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -52,6 +54,13 @@ typedef struct {
 	/* --lan-host ADDRESS: a host the LAN provider also asks for its game, "name[:port]" (kp_net.h; the profile's, which
 	 * the join screen's Address sets, when not given) */
 	char lan_host[KP_NET_HOST];
+	/* the viewers of a network game (kp_watch.h): --watch ADDRESS ("name[:port]", the port KP_WATCH_PORT when not
+	 * given) plays the game that host serves, at once without the glue as --map; --watch-delay SECONDS how far the
+	 * games this program hosts are served behind (< 0: KP_WATCH_DELAY_SECONDS, 0 none); --watch-port PORT their
+	 * server's port (0: KP_WATCH_PORT) */
+	char watch[KP_NET_HOST];
+	double watch_delay;
+	int watch_port;
 	/* Create Game reads StarCraft 1.17's saved network games (.mlt, .mlx; kp_netsave.h) besides Koprulu's own, and a
 	 * resumed lobby finds them: the network oracle's runs only (no option sets it; the product resumes Koprulu's) */
 	int original_saves;
@@ -238,6 +247,16 @@ typedef struct KpFlow {
 	/* the network's game (stage N4): the game in play is the chat room's (its turns netplay's KpNetGame), its first
 	 * turn ran (RunGame 0x445310's step 8: the frames run after it), Storm's game left (EndGame 0x443db0) */
 	int net_game, net_running, net_left;
+	/* the viewers (kp_watch.h): the socket (owned, NULL none), the server of the network game this seat hosts (kept
+	 * after the game: its viewers fetch its end), and this program's viewer: the host's address being looked up, the
+	 * address, the viewer, its playback asked for (build_scene takes it), begun, and whether the game in play is it */
+	struct KpNetSock *watch_sock;
+	KpWatchServer watch_server;
+	int watch_serving;
+	struct KpNetLookup *watch_lookup;
+	KpNetAddr watch_addr;
+	KpWatchViewer watch_viewer;
+	int watching, watch_known, watch_start, watch_begun, watch_game;
 	int fatal_held;              /* ShowFatalErrorDialog 0x43ec00's modal run: the session's clock paused under it */
 	char pending_save[KP_PROFILE_SAVE_NAME], pending_load[KP_PROFILE_SAVE_NAME], load_on_start[KP_PROFILE_SAVE_NAME];
 	uint32_t pending_save_id; /* the save command's DWORD (a network save's ID, FindMultiplayerSaveById 0x4995e0) */
@@ -380,6 +399,13 @@ int kp_flow_entry_map(KpFlow *f, int index, KpMapHeader *h, char *path, size_t s
 /* The saved network game of the map list's entry index (ValidateSaveFile 0x499750 of its file): its game header, 1, or
  * 0 when it is not a readable save (KpNetUi.entry_save: Create Game's game resuming it). */
 int kp_flow_entry_save(KpFlow *f, int index, KpNetGameHeader *h);
+/* The replay a Create Game screen's entry names, as a hosted replay's game takes it (KpNetUi.entry_replay): 1, or 0
+ * when Load Replay would refuse it (check_replay) or its scenario's header does not read. */
+int kp_flow_entry_replay(KpFlow *f, int index, KpNetReplayEntry *out);
+/* A viewer of the network game the host at `address` serves ("name[:port]"; kp_watch.h): its replay played as it grows,
+ * at once without the glue's screens once the start of it came. 0, or -1 with why (no sockets: the web; a glue
+ * screen open; a viewer already). */
+int kp_flow_watch(KpFlow *f, const char *address, char *why, size_t why_size);
 /* FindMultiplayerSaveById 0x4995e0 (the user's maps folder: its saves of this game's extension, then its subfolders',
  * in FindFirstFileA's order; the first whose header has the ID names the save), LoadSavedGameByName 0x498bd0 (the
  * first file of that name and extension below the folder, in the same order) and ReadSaveHeaderAndGameBlock 0x499c50

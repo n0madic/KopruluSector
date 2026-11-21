@@ -231,6 +231,8 @@ static int start_turns(KpSession *s, const KpSessionStart *start)
 		kp_turns_seats(&s->turns, start->hub, start->seat);
 		return 0;
 	}
+	if (start->net && start->replay) return kp_turns_net_replay(&s->turns, start->net, start->replay);
+	if (start->watch && start->replay) return kp_turns_watch(&s->turns, start->replay);
 	if (start->net) kp_turns_net(&s->turns, start->net);
 	else if (start->replay) return kp_turns_replay(&s->turns, start->replay);
 	if (!start->record) return 0;
@@ -426,16 +428,56 @@ void kp_session_net_messages(KpSession *s)
 	(void)kp_session_guard(s, net_messages, &f);
 }
 
-/* A network game's frame (RunPendingFrames 0x444e30's iteration): PollTurn's countdown, a turn at its end, then the
- * frame (a paused one's flashes and triggers), and after a turn's first frame the draw's sprites' checksum */
+#define KP_REPLAY_RESULT 3 /* the victory dialog's result (KP_EVENT_GAME_RESULT's a) */
+
+/* The game's speed command (ExecGameSpeed 0x473310) sets the speed the clock steps at, a replay's speed command
+ * (SetReplaySpeed 0x481040) the multiplier too */
+static void follow_speed(KpSession *s)
+{
+	int64_t speed = kp_scalar(s->g, KP_SPEED);
+	if (speed != KP_NIL && game_speed(s->clock.speed) != speed && speed >= 0 && speed < KP_CLOCK_SPEEDS) {
+		kp_clock_set_speed(&s->clock, (int)speed + 1);
+	}
+	if (kp_turns_playing(&s->turns)) kp_clock_set_multiplier(&s->clock, s->g->replay_multiplier);
+}
+
+/* A hosted replay's FeedReplayCommands 0x4769b0 (RunPendingFrames 0x444e30 step 1): the record's commands of the
+ * frame run before the turn is polled; at its end the playback pauses and the victory dialog opens once. 0, or -1 out
+ * of memory. */
+static int net_feed(KpSession *s)
+{
+	const KpCommand *list;
+	int count, status = kp_turns_feed(&s->turns, kp_scalar(s->g, KP_FRAME), &list, &count);
+	if (status == KP_TURNS_NO_MEMORY) return -1;
+	if (count) kp_run_commands(s->g, list, count);
+	if (status == KP_TURNS_ENDED) kp_event(s->g, KP_EVENT_GAME_RESULT, KP_REPLAY_RESULT, 0, 0, NULL);
+	if (kp_turns_ended(&s->turns)) s->g->replay_paused = 1;
+	return 0;
+}
+
+/* A frame's step after PollTurn let it run: none while a replay's playback is paused (RunPendingFrames step 3),
+ * else the frame (a paused game's flashes and triggers) */
+static void net_step_frame(KpSession *s)
+{
+	if (s->turns.feed && s->g->replay_paused) return;
+	kp_run_frame_between_turns(s->g);
+}
+
+/* A network game's frame (RunPendingFrames 0x444e30's iteration): a hosted replay's record, PollTurn's countdown, a
+ * turn at its end, then the frame (a paused one's flashes and triggers), and after a turn's first frame the draw's
+ * sprites' checksum */
 static void net_frame(void *ud)
 {
 	NetFrame *f = (NetFrame *)ud;
 	KpSession *s = f->s;
 	KpTurns *t = &s->turns;
+	if (t->feed && net_feed(s) != 0) {
+		f->status = KP_TURNS_NO_MEMORY;
+		return;
+	}
 	if (t->countdown > 1) {
 		t->countdown--;
-		kp_run_frame_between_turns(s->g);
+		net_step_frame(s);
 		f->status = KP_TURNS_BETWEEN;
 		return;
 	}
@@ -444,9 +486,16 @@ static void net_frame(void *ud)
 		t->countdown = 1; /* polled again at the next frame */
 		return;
 	}
-	kp_run_frame_between_turns(s->g);
+	net_step_frame(s);
 	kp_netgame_game_draw(t->net, s->g, screen_tile_y(s->g));
 	t->countdown = t->frames_per_turn;
+}
+
+/* After a step: the record's mark for the viewers' server (a failed one ends what it publishes) */
+static void watch_mark(KpSession *s)
+{
+	if (s->watch_server && s->rec && kp_watch_server_mark(s->watch_server, s->rec, (uint32_t)kp_scalar(s->g, KP_FRAME)) != 0)
+		(void)kp_watch_server_end(s->watch_server, NULL, 0);
 }
 
 static int net_step(KpSession *s, double (*clock_ms)(void))
@@ -462,10 +511,13 @@ static int net_step(KpSession *s, double (*clock_ms)(void))
 	ms = clock_ms ? clock_ms() - t0 : 0;
 	s->step_ms += ms;
 	if (ms > s->step_max_ms) s->step_max_ms = ms;
+	if (s->turns.feed) { /* a hosted replay's speed command: the clock, and PollTurn's frames per turn 0x666404[speed] */
+		follow_speed(s);
+		s->turns.frames_per_turn = kp_hub_frames_per_turn((int)game_speed(s->clock.speed), (int)s->turns.net->turns_per_second);
+	}
+	watch_mark(s);
 	return 1;
 }
-
-#define KP_REPLAY_RESULT 3 /* the victory dialog's result (KP_EVENT_GAME_RESULT's a) */
 
 int kp_session_step(KpSession *s, double (*clock_ms)(void))
 {
@@ -500,15 +552,8 @@ int kp_session_step(KpSession *s, double (*clock_ms)(void))
 	s->step_ms += ms;
 	if (ms > s->step_max_ms) s->step_max_ms = ms;
 	if (s->failed) return 0;
-	/* the game's speed command (ExecGameSpeed 0x473310) sets the speed the clock steps at, a replay's speed command
-	 * (SetReplaySpeed 0x481040) the multiplier too */
-	{
-		int64_t speed = kp_scalar(s->g, KP_SPEED);
-		if (speed != KP_NIL && game_speed(s->clock.speed) != speed && speed >= 0 && speed < KP_CLOCK_SPEEDS) {
-			kp_clock_set_speed(&s->clock, (int)speed + 1);
-		}
-		if (kp_turns_playing(&s->turns)) kp_clock_set_multiplier(&s->clock, s->g->replay_multiplier);
-	}
+	follow_speed(s);
+	watch_mark(s);
 	return 1;
 }
 
@@ -563,6 +608,25 @@ int kp_session_advance(KpSession *s, double now, double *alpha, double (*clock_m
 	return ran;
 }
 
+static int record_refused(const uint8_t *record, size_t record_size, size_t *at);
+
+int kp_session_watch_grow(KpSession *s, const uint8_t *bytes, size_t size, uint32_t frames, int whole)
+{
+	const KpRecorder *r;
+	if (s->failed || !s->g) return -1;
+	if (kp_turns_watch_grow(&s->turns, bytes, size, frames, whole) != 0) {
+		fail(s, "watch: out of memory");
+		return -1;
+	}
+	r = s->turns.feed;
+	if (record_refused(r->buf, r->sentinel ? r->sentinel - 1 : r->used, &s->watch_checked)) {
+		fail(s, "watch: the record holds a command the playback refuses");
+		return -1;
+	}
+	s->g->replay_frames = kp_turns_frames(&s->turns); /* the progress bar's (0x480e20): the frames known so far */
+	return 0;
+}
+
 /* --- the replay's file --- */
 
 static int err_msg(KpError *err, const char *msg);
@@ -576,36 +640,45 @@ static void refused_command(void *ud, const uint8_t *cmd, size_t n)
 	if (kp_record_excluded(cmd[0])) *(int *)ud = 1;
 }
 
+/* The entries of a record from *at as the feed reads them (ReadRecordedFrame 0x478480, kp_record.c read_frame: an
+ * entry's length may run past its block's size, the next block's header follows it; an unknown id or an entry past
+ * the record ends the data), each walked as the dispatcher walks it; *at left at the first block not walked whole (a
+ * growing record's next bytes go on there). 1 when one holds a refused command. */
+static int record_refused(const uint8_t *record, size_t record_size, size_t *at)
+{
+	int refused = 0;
+	while (*at + 5 <= record_size) {
+		size_t pos = *at + 5, size = record[*at + 4], sum = 0;
+		while (sum < size) {
+			int len;
+			if (pos + 1 > record_size) return 0;
+			pos++; /* the Storm ID */
+			len = kp_record_command_length(record + pos, record_size - pos);
+			if (len < 0) {
+				*at = record_size;
+				return 0;
+			}
+			if ((size_t)len > record_size - pos) return 0;
+			(void)kp_record_split(record + pos, (size_t)len, refused_command, &refused);
+			if (refused) return 1;
+			pos += (size_t)len;
+			sum += (size_t)len + 1;
+		}
+		*at = pos;
+	}
+	return 0;
+}
+
 int kp_session_replay_start(KpSessionStart *st, const KpRep *rep)
 {
 	size_t at = 0;
-	int k, refused = 0;
+	int k;
 	for (k = 0; k < KP_REP_PLAYERS; k++) { /* a record with a Storm ID plays as its slot: a game's player, 0..7 */
 		KpRepPlayer p;
 		kp_rep_player(rep, k, &p);
 		if (p.storm != -1 && p.slot >= KP_TURNS_SLOTS) return -1;
 	}
-	/* the entries as the feed reads them (ReadRecordedFrame 0x478480, kp_record.c read_frame: an entry's length may run
-	 * past its block's size, the next block's header follows it; an unknown id or an entry past the record ends the
-	 * data), each walked as the dispatcher walks it */
-	while (at + 5 <= rep->record_size) {
-		size_t size = rep->record[at + 4], sum = 0;
-		at += 5;
-		while (sum < size) {
-			int len;
-			if (at + 1 > rep->record_size) break;
-			at++; /* the Storm ID */
-			len = kp_record_command_length(rep->record + at, rep->record_size - at);
-			if (len < 0 || (size_t)len > rep->record_size - at) {
-				at = rep->record_size;
-				break;
-			}
-			(void)kp_record_split(rep->record + at, (size_t)len, refused_command, &refused);
-			if (refused) return -1;
-			at += (size_t)len;
-			sum += (size_t)len + 1;
-		}
-	}
+	if (record_refused(rep->record, rep->record_size, &at)) return -1;
 	st->seed = kp_rep_seed(rep);
 	st->expansion = kp_rep_brood_war(rep);
 	st->mission_index = kp_rep_campaign(rep);
@@ -647,6 +720,7 @@ void kp_session_replay_game(KpSession *s, uint32_t seed, KpRepGame *game)
 	game->slots = (int)g->setup.slots;
 	game->colors = g->setup.color;
 	game->user_select = g->setup.user_select;
+	if (s->turns.kind == KP_TURNS_NET && s->turns.net) game->seed_record = s->turns.net->start_info;
 	/* the started game's records (RunGameSession 0x467ba0 records 0x6726c8 after StartGame's slot steps); the header
 	 * has the slots 8..11 empty (kp_rep_header), a team game's too: the emulated 1.17's 0x6726c8 at StartGame has them
 	 * so in every network game of phase N's suite, Team Melee, Top vs Bottom and Capture The Flag among them */

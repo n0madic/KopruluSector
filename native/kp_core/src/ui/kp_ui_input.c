@@ -390,17 +390,24 @@ static int unselectable(int64_t t)
 
 static int multi_selectable(KpGame *g, int64_t n) { return kp_multi_selectable(g, n); } /* 0x4291b0 */
 
-/* The sprite's visibility for the local player (FilterSelectableUnits 0x4bc5b0 step 2, PickUnitAtPoint 0x4bcd00). */
-static int visible(KpGame *g, int64_t n)
+/* The sprite's visibility for the local player: FilterSelectableUnits 0x4bc5b0 step 2 tests the local vision
+ * 0x672668 in a replay too (ApplyAllianceDialog keeps it the replay's); PickUnitAtPoint 0x4bcd00 (pick) tests a
+ * replay's vision 0x67cc84 (the world's local_vision), its reveal 0x67cc88 passing either test. */
+static int visible(KpGame *g, int64_t n, int pick)
 {
 	KpImages *w = g->w;
-	uint32_t vision = (uint32_t)g->local_vision, sprite = (uint32_t)w->spr.visibility[kp_unit_sprite(g, n)];
-	if (w->replay) {
-		/* TODO: a replay's vision (0x67cc84, 0x67cc88) */
-		return 0;
+	uint32_t sprite = (uint32_t)w->spr.visibility[kp_unit_sprite(g, n)];
+	int cloaked = (kp_unit_get_status(g, n) & STATUS_CLOAKED) != 0;
+	if (pick && w->replay) {
+		uint32_t vision = (uint32_t)w->local_vision;
+		if (!(sprite & vision & 0xff) && !w->replay_reveal) return 0;
+		return !cloaked || (kp_unit_get_visibility(g, n) & vision) || w->replay_reveal;
 	}
-	if (!(sprite & vision & 0xff)) return 0;
-	return !(kp_unit_get_status(g, n) & STATUS_CLOAKED) || (kp_unit_get_visibility(g, n) & vision);
+	{
+		uint32_t vision = (uint32_t)g->local_vision;
+		if (!(sprite & vision & 0xff)) return 0;
+		return !cloaked || (kp_unit_get_visibility(g, n) & vision);
+	}
 }
 
 /* GetSpriteClickableBounds 0x4160e0 with IsPointInSpriteBounds 0x416980. */
@@ -480,7 +487,7 @@ static int64_t pick_unit(KpUi *ui, int32_t x, int32_t y)
 		int32_t a;
 		if (!in_sprite_bounds(w, kp_unit_sprite(g, u), x, y)) continue;
 		if (unit_flags(g, u) & DAT_SUBUNIT) u = kp_unit_get_subunit(g, u);
-		if (!visible(g, u) || unselectable(kp_unit_get_type(g, u))) continue;
+		if (!visible(g, u, 1) || unselectable(kp_unit_get_type(g, u))) continue;
 		if (best == 0) {
 			a = placement_area(g, kp_unit_get_type(g, u));
 		} else if (kp_sprite_depth_key(w, kp_unit_sprite(g, best)) < kp_sprite_depth_key(w, kp_unit_sprite(g, u))) {
@@ -537,7 +544,7 @@ static int filter_selectable(KpUi *ui, const int64_t *list, int count, int64_t *
 			for (j = 0; j < n; j++) dup |= out[j] == v;
 			if (dup) continue;
 		}
-		if (!visible(g, v) || unselectable(kp_unit_get_type(g, v))) continue;
+		if (!visible(g, v, 0) || unselectable(kp_unit_get_type(g, v))) continue;
 		if (!multi_selectable(g, v) || g->w->replay || kp_unit_get_owner(g, v) != g->local_player) {
 			last = v;
 			continue;

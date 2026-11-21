@@ -13,6 +13,7 @@ Phase M ([phase-multiplayer.md](phase-multiplayer.md)) left several seats of one
 
 - **No relay for now.** The native programs (the desktops and the phones) play over the internet by the host's address: Koprulu's provider asks a given host for its game besides the broadcast ([N5](#n5-a-host-by-its-address-and-the-phones-done-2026-11-21)); the host forwards UDP ports 6111 and 6112, or the players share a virtual LAN (ZeroTier, Tailscale).
 - **The web has no network play.** It cannot send UDP. A relay or WebRTC can come later (`TODO:` in `kp_netplay.h`).
+- **Replays over the network and the viewers** (approved inline): Create Game's replay entry hosts the replay as 1.17 does; a viewer of a network game is Koprulu's own, on a UDP port of its own, a replay whose record grows, 60 seconds behind by default ([below](#replays-over-the-network-and-the-viewers-2026-11-21), [ADR 0027](adr/0027-network-game-viewers.md)).
 
 ## Layers
 
@@ -431,3 +432,37 @@ The open items of N3–N6 that need no other machine, at the user's request:
 - **The fatal dialog in a game** (2026-11-21, `ShowFatalErrorDialog` `0x43ec00`..`0x43f090`, `kp_ui_fatal.c`): in a game with the console open, `ShowNetErrorMessage` shows the report at once in `rez\dlgFatal.bin`, run modally over the game: network.tbl's string in control -10, the detail in -20 (a report that is not fatal has none), its background black with two outlines in UI colour 16 and OK's outlines white while pressed (`DrawFatalDialogBackground` `0x43edb0`, `0x43ed10`, `DrawFatalDialogText` `0x43ee70`); the placement and the targeting are cancelled and the modeless dialog closed before it, the cursor locked and the default accelerators set under it (`InitFatalDialog` `0x43ee90`, `DestroyFatalDialog` `0x43ef40`). The flow pauses the session's clock while it shows (`kp_ui_fatal_shown`, `KpFlow.fatal_held`): no step under it and no time to catch up after it, as the original's modal run. A fatal report's exits (`RequestGameExit` `0x444e00(4)`, `RequestGlueExit`) come at its OK, so the main menu follows with nothing deferred. With no dialog open the report is deferred as before. Not ported: the cursor's clip to the dialog (`0x4ce850`, the host's system cursor) and the swap of the current player `0x508d44`/`0x508d48` around it. Tests: `test_hud.glue_fatal_network_report_exits_the_glue`, `test_flow.a_fatal_network_error_returns_to_the_main_menu` (the game's frame stays while it shows). Checked: the dialog's bitmap from the test (the string, Storm's error and OK); not seen in the running app, which needs a Storm failure in a network game.
 - **Still open:** the preview's image has no click procedure (`0x508c50`, `TODO:` in `kp_ui_minimap.c`).
 
+## Replays over the network and the viewers (2026-11-21)
+
+The user's three items: the players' vision in a replay, a replay hosted in the network lobby, and a viewer of a network game; the designs of the last two approved inline ([ADR 0027](adr/0027-network-game-viewers.md)).
+
+- **The pick by the replay's vision** (`0x67cc84`, `0x67cc88`): in a replay the pointer picks a unit by the replay's vision and its reveal, not the local player's; the selection filter keeps the local player's ([phase RP](phase-replay.md#rp3-as-built); `test_hud.replay_picks_by_its_vision`).
+- **A replay hosted in the lobby** (`CreateGameFromEntry` `0x45bfc0`'s kind `0x80`):
+  - Create Game takes a replay of a network game. Its game header and seed record become the lobby's, and the replay flag `0x67cc90` is set; a single-player replay, whose seed record is not the lobby's `0x48`, is refused. Joiners receive the `.rep` by the map transfer and list it as a replay (`kp_flow_entry_replay`, `KpNetReplayEntry`).
+  - Every seat's session is the replay over the network's turns (`kp_turns_net_replay`): the record's commands of a frame run before the turn is polled (`FeedReplayCommands` `0x4769b0` first in `RunPendingFrames` `0x444e30`), and while the playback is paused at its end the turns are still polled.
+  - The live turns pass the filter `0x47636c`: the keep-alive, pause and resume, the sync and `0x38`–`0x3b`, latency and the replay speed `0x56`. The first other command ends the buffer, as `0x476352` never advances past it (`kp_netgame.c`'s split).
+  - A viewer whose Storm ID has no record runs its speed command as record 0. A seat's own commands other than those are refused at the submit.
+  - Koprulu's network replays now carry the lobby's seed record (header +0x07, `SetReplayGameSeedRecord` `0x4807f0` from `OnLobbyStartInfo`). Before, it was zero, so a hosted replay's start seed was wrong.
+  - Test: `test_netplay.a_hosted_replay_is_watched_in_lockstep`. A game's replay is hosted and downloaded by the joiner. The start seed is the replay's. The joiner's speed command runs at one frame on both seats, and its selection is refused. Both seats end once with the victory dialog and stay paused past the end. Their hashes are equal to each other and to the replay played alone at every frame.
+- **The viewers** ([watch-udp.md](formats/watch-udp.md)):
+  - The host of a network game serves its replay on UDP port 6120 (`--watch-port`), `--watch-delay` seconds behind (60 by default). The session marks the record after each step, and the server publishes what the delay lets out. At the game's end, when the session is freed, the whole record is published.
+  - `koprulu --watch HOST[:PORT]`, or the script's `watch "ADDRESS"`, asks for the start file and then for the record. The playback starts once the start file came, and grows by `kp_session_watch_grow`.
+  - The protocol is a stateless pull whose answer is never larger than its request. The viewer keeps only contiguous bytes with a valid CRC, and waits 5 minutes for a host still in its lobby.
+  - The playback is a replay with an empty block's header after the received bytes (`kp_record_grow`). So it runs every block, the game's last one included, which a file's playback never runs.
+  - Frame f runs once the blocks up to f + 1 are in. The feed then reads each block one call early, as in a file, and 1.17's loss of a frame of more than 0x200 bytes is the same.
+  - `--watch` runs without the glue, as `--map` does. At the end the playback stays at its result.
+  - Tests:
+    - `test_watch` (7): the growing record dispatches the file's commands at delays 0, 1, 7 and 25 (frame 20's loss included), and the published bytes are the closed record's. A lossy link (a quarter of the datagrams lost) brings the start file and the whole record. An answer is never larger than its request. A viewer stops when the server goes on to another game or goes silent. A load ends the published game, with no delay too. A paused game's steps mark nothing, and the game goes on being published after the pause.
+    - `test_netplay.a_network_game_is_watched_as_it_goes`: a two-seat network game, served 48 frames behind over a link that loses 10 %. The viewer starts during the game, never runs ahead of the delay, and ends at the game's last frame. Its hashes equal the finished replay's playback up to the last block.
+    - `net_watch.kps` in `tools/ci.sh` beside `net_host.kps` and `net_join.kps`: three programs.
+- **Product-verified on macOS** (2026-11-21): `net_host.kps` (with `--watch-delay 2`: 30 frames at the game's speed), `net_join.kps` and `net_watch.kps` (`--watch 127.0.0.1`) at once. The viewer waited through the host's lobby, started its replay with the game, and reached tick 300 while the host played to 400.
+- **Open:**
+  - A viewer started from the main menu: a game started under a glue screen keeps its menus (the `TODO` of the script's `replay`), so `--watch` runs without the glue and does not return to the menu.
+  - Create Game lists replays only from the maps folders, not from `<pref>replays/`, where Koprulu keeps its own; a replay to host has to be copied there.
+  - Not tried yet:
+    - a hosted campaign replay;
+    - a hosted replay with the emulated 1.17;
+    - a viewer over the internet, which needs the host's port 6120 forwarded;
+    - the phones as hosts or viewers.
+  - A save's load in a watched game ends what the viewers get.
+  - The viewer's clock catches up after a wait in a burst of steps.

@@ -34,6 +34,8 @@ typedef struct {
 	uint16_t map_base; /* 0: no map */
 	int map_hosts;     /* the map's hosts: 10.0.0.1 to 10.0.0.map_hosts */
 	int map_self;      /* this program's host in the map, -1 for none */
+	int single;        /* socket A alone, on every interface at `port` (0: a port the system picks), no map: a
+	                    * viewer's server and its viewers (kp_watch.h) */
 } KpNetSockConfig;
 
 typedef struct KpNetSock KpNetSock;
@@ -48,7 +50,7 @@ void kp_net_sock_close(KpNetSock *s);
 KpNetIo kp_net_sock_io(KpNetSock *s);
 /* Waits at most `ms` for a datagram, then hands every waiting one to fn; how many, -1 on a socket error. */
 int kp_net_sock_wait(KpNetSock *s, uint32_t ms, KpNetSockDeliver fn, void *ud);
-/* The real port socket A or B is bound to. */
+/* The real port socket A or B is bound to (0: B of a single socket). */
 uint16_t kp_net_sock_port(const KpNetSock *s, int socket);
 /* A monotonic millisecond clock that wraps as GetTickCount does. */
 uint32_t kp_net_sock_now(void);

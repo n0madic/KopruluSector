@@ -10,6 +10,7 @@
 #include "kp_flow.h"
 #include "kp_gametype.h"
 #include "kp_ids.h"
+#include "kp_net_sock.h"
 #include "kp_netplay.h"
 #include "kp_netsave.h"
 #include "kp_text.h"
@@ -345,6 +346,225 @@ static void free_seat_views(KpFlow *f);
 
 static void net_game_end(KpFlow *f);
 
+/* --- the viewers of a network game (kp_watch.h) --- */
+
+static int replay_room(KpFlow *f, char *why, size_t why_size);
+static int start_replay(KpFlow *f, const char *name, char *why, size_t why_size);
+
+/* The viewers' socket: open, or opened at port (0: one the system picks); NULL with a line said when it cannot be */
+static KpNetSock *watch_socket(KpFlow *f, int port)
+{
+	KpNetSockConfig c;
+	char why[256];
+	if (f->watch_sock) return f->watch_sock;
+	memset(&c, 0, sizeof c);
+	c.single = 1;
+	c.port = (uint16_t)port;
+	c.map_self = -1;
+	if (!(f->watch_sock = kp_net_sock_open(&c, why, sizeof why))) say(f, "watch: no socket: %s", why);
+	else say(f, "watch: UDP port %u", (unsigned)kp_net_sock_port(f->watch_sock, KP_NET_SOCKET_LIST));
+	return f->watch_sock;
+}
+
+/* The network game this seat created served to its viewers from its start (a resumed game's once its save loaded):
+ * the replay file at the start without its record, the record after each step (the session marks it) as it stood
+ * --watch-delay seconds before. */
+static void watch_serve(KpFlow *f)
+{
+	KpSession *s = f->session;
+	KpRep rep;
+	KpError err;
+	uint8_t *bytes = NULL;
+	size_t size;
+	double seconds = f->flags->watch_delay < 0 ? KP_WATCH_DELAY_SECONDS : f->flags->watch_delay;
+	uint32_t delay;
+	int port = f->flags->watch_port ? f->flags->watch_port : KP_WATCH_PORT;
+	if (!s || !s->rec) return;
+	if (s->rec_lost) { /* a resumed game whose save kept no record: its replay starts at the load, not at the map's start */
+		say(f, "watch: the game's record is lost, it is not served");
+		return;
+	}
+	if (!watch_socket(f, port)) return;
+	if (kp_net_sock_port(f->watch_sock, KP_NET_SOCKET_LIST) != port) /* the socket a viewer of this program opened */
+		say(f, "watch: served on UDP port %u, not %d", (unsigned)kp_net_sock_port(f->watch_sock, KP_NET_SOCKET_LIST), port);
+	if (kp_session_replay_file(s, f->rep_tail, &rep, &err) != 0) {
+		say(f, "watch: %s", err.msg);
+		return;
+	}
+	rep.record_size = 0; /* the record is the server's part 1, all of it (a resumed game's restored record too) */
+	if (kp_rep_write(&rep, &bytes, &size, &err) != 0) {
+		kp_rep_free(&rep);
+		say(f, "watch: %s", err.msg);
+		return;
+	}
+	kp_rep_free(&rep);
+	if (f->watch_serving) kp_watch_server_free(&f->watch_server);
+	f->watch_serving = 0;
+	delay = kp_watch_delay_frames(seconds, kp_clock_step_ms(&s->clock));
+	if (kp_watch_server_init(&f->watch_server, f->netplay->game.seed ^ now_ms(f), bytes, size, delay) == 0) {
+		f->watch_serving = 1;
+		s->watch_server = &f->watch_server;
+		say(f, "watch: serving the game, %u frames behind", (unsigned)delay);
+	} else {
+		say(f, "watch: out of memory");
+	}
+	free(bytes);
+}
+
+/* The served game's end (its session freed): the whole record published, final; the server answers on. */
+static void watch_serve_end(KpFlow *f)
+{
+	KpSession *s = f->session;
+	if (!s || !s->watch_server) return;
+	if (kp_watch_server_end(s->watch_server, s->rec, s->g ? (uint32_t)kp_scalar(s->g, KP_FRAME) : 0) != 0)
+		say(f, "watch: out of memory at the game's end");
+	s->watch_server = NULL;
+}
+
+typedef struct {
+	KpFlow *f;
+	KpNetAddr to;
+} WatchReply;
+
+static void watch_send(void *ud, const uint8_t *data, size_t size)
+{
+	WatchReply *r = (WatchReply *)ud;
+	KpNetIo io = kp_net_sock_io(r->f->watch_sock);
+	io.send(io.ud, KP_NET_SOCKET_LIST, &r->to, data, size);
+}
+
+static void watch_arrived(void *ud, int socket, const KpNetAddr *from, const uint8_t *data, size_t size)
+{
+	KpFlow *f = (KpFlow *)ud;
+	WatchReply r;
+	(void)socket;
+	if (size <= KP_WATCH_AT_TYPE) return;
+	r.f = f;
+	r.to = *from;
+	if (data[KP_WATCH_AT_TYPE] == KP_WATCH_REQUEST && f->watch_serving)
+		kp_watch_server_receive(&f->watch_server, data, size, watch_send, &r);
+	else if (data[KP_WATCH_AT_TYPE] == KP_WATCH_DATA && f->watching && f->watch_known && kp_net_addr_eq(from, &f->watch_addr))
+		kp_watch_viewer_receive(&f->watch_viewer, data, size, now_ms(f));
+}
+
+static void watch_stop(KpFlow *f, const char *why)
+{
+	say(f, "watch: %s", why);
+	f->watching = 0;
+	kp_net_lookup_free(f->watch_lookup);
+	f->watch_lookup = NULL;
+	kp_watch_viewer_free(&f->watch_viewer);
+}
+
+/* The viewer's frame: the host's address looked up, the requests, the playback started once the start file came and
+ * its record grown */
+static void watch_view(KpFlow *f)
+{
+	KpWatchViewer *v = &f->watch_viewer;
+	const uint8_t *bytes;
+	size_t size;
+	uint32_t frames;
+	int whole;
+	char why[KP_ERROR_SIZE];
+	if (f->watch_lookup) {
+		int r = kp_net_lookup_poll(f->watch_lookup, &f->watch_addr, why, sizeof why);
+		if (r < 0) return;
+		kp_net_lookup_free(f->watch_lookup);
+		f->watch_lookup = NULL;
+		if (r == 0) {
+			watch_stop(f, why);
+			f->host.quit(f->host.ctx); /* nothing else to show: the viewer runs without the glue */
+			return;
+		}
+		f->watch_known = 1;
+		kp_watch_viewer_init(v, now_ms(f));
+		say(f, "watch: asking %s", kp_net_addr_text(&f->watch_addr, why, sizeof why));
+	}
+	{
+		WatchReply r;
+		r.f = f;
+		r.to = f->watch_addr;
+		kp_watch_viewer_poll(v, now_ms(f), watch_send, &r);
+	}
+	if (v->status == KP_WATCH_FAILED) {
+		watch_stop(f, "no game from the host");
+		if (!f->watch_game) f->host.quit(f->host.ctx);
+		return;
+	}
+	if (f->watch_begun && !f->watch_game) { /* the playback ended before the record did (the player left it) */
+		watch_stop(f, "the playback ended");
+		return;
+	}
+	if (!f->watch_begun && (bytes = kp_watch_viewer_start(v, &size)) != NULL) {
+		KpError err;
+		int r = replay_room(f, why, sizeof why);
+		f->watch_begun = 1;
+		f->watch_start = 1;
+		if (r == 0 && kp_rep_read(f->replay_play, bytes, size, NULL, &err) != 0) {
+			snprintf(why, sizeof why, "the start of the replay: %s", err.msg);
+			r = -1;
+		}
+		if (r != 0 || start_replay(f, "of the network game", why, sizeof why) != 0) {
+			f->watch_start = 0;
+			watch_stop(f, why);
+			f->host.quit(f->host.ctx);
+			return;
+		}
+	}
+	if (f->watch_game && f->session && f->session->g && kp_watch_viewer_take(v, &bytes, &size, &frames, &whole)) {
+		if (kp_session_watch_grow(f->session, bytes, size, frames, whole) != 0) {
+			watch_stop(f, f->session->error);
+			return;
+		}
+		if (whole) watch_stop(f, v->status == KP_WATCH_GONE ? "the host is gone: the game ends where it came to"
+			: "the game ended");
+	}
+}
+
+/* The viewers' part of a frame: what arrived on their socket, the viewer's turn */
+static void watch_frame(KpFlow *f)
+{
+	if (f->watch_sock && kp_net_sock_wait(f->watch_sock, 0, watch_arrived, f) < 0) say(f, "watch: the socket failed");
+	if (f->watching) watch_view(f);
+}
+
+static void watch_free(KpFlow *f)
+{
+	if (f->watching) watch_stop(f, "closed");
+	if (f->watch_serving) kp_watch_server_free(&f->watch_server);
+	f->watch_serving = 0;
+	kp_net_sock_close(f->watch_sock);
+	f->watch_sock = NULL;
+}
+
+int kp_flow_watch(KpFlow *f, const char *address, char *why, size_t why_size)
+{
+	char text[KP_NET_HOST + 8];
+	if (f->watching || f->watch_game) {
+		snprintf(why, why_size, "a viewer already");
+		return -1;
+	}
+	if (kp_flow_glue_active(f)) { /* TODO: as the script's replay, a game started under a glue screen keeps its menus */
+		snprintf(why, why_size, "the glue's screen is open");
+		return -1;
+	}
+	if (!watch_socket(f, 0)) {
+		snprintf(why, why_size, "no UDP socket");
+		return -1;
+	}
+	/* the viewers' port when the address names none ("[" an IPv6 form is not taken: Storm's addresses are IPv4) */
+	snprintf(text, sizeof text, strchr(address, ':') ? "%s" : "%s:%u", address, (unsigned)KP_WATCH_PORT);
+	if (!(f->watch_lookup = kp_net_lookup_start(text))) {
+		snprintf(why, why_size, "out of memory");
+		return -1;
+	}
+	f->watching = 1;
+	f->watch_known = f->watch_begun = 0;
+	memset(&f->watch_viewer, 0, sizeof f->watch_viewer);
+	say(f, "watch: %s", text);
+	return 0;
+}
+
 /* The game's console, world, session and seats freed (Storm's game and the LastReplay left to destroy_scene). */
 static void free_scene(KpFlow *f)
 {
@@ -354,6 +574,7 @@ static void free_scene(KpFlow *f)
 	if (f->world) f->host.world_free(f->host.ctx);
 	f->world = 0;
 	if (f->session) {
+		watch_serve_end(f);
 		if (f->session->g && f->session->g->rng) f->rng_state = f->session->g->rng->state; /* the next lobby's (0x479c90) */
 		kp_session_free(f->session);
 		free(f->session);
@@ -368,6 +589,7 @@ static void free_scene(KpFlow *f)
 static void destroy_scene(KpFlow *f)
 {
 	save_last_replay(f);
+	f->watch_game = 0;
 	if (f->session) net_game_end(f); /* a network game that ends without the console's exit (a failure) */
 	free_scene(f);
 }
@@ -1284,6 +1506,37 @@ int kp_flow_entry_save(KpFlow *f, int index, KpNetGameHeader *h)
 	return rc == KP_NETSAVE_VALID;
 }
 
+static uint16_t check_replay(void *host, int index);
+static int start_replay_file(KpFlow *f, const char *file, char *why, size_t why_size);
+
+int kp_flow_entry_replay(KpFlow *f, int index, KpNetReplayEntry *out)
+{
+	const KpUiMenus *m = &f->ui->menus;
+	char why[KP_ERROR_SIZE];
+	uint16_t refusal = 0;
+	KpRep rep;
+	int ok;
+	memset(out, 0, sizeof *out);
+	/* TODO: Create Game lists the maps folders only, not <pref>replays/ where Koprulu writes its replays (1.17 keeps
+	 * them in its maps folder): a replay to host has to be copied there */
+	if (check_replay(f, index) != 0 || !entry_path(f, m, index, out->path, sizeof out->path)) return 0;
+	if (read_replay_at(out->path, &rep, &refusal) != 0) return 0;
+	/* Koprulu's guard: a replay without a lobby's start information (a single player's: the record's command byte 0)
+	 * would send a start no seat takes (ExecuteLobbyCommands 0x476650 stops at the id), the lobby then waiting on */
+	if (rep.header[KP_REP_SEED_RECORD] != KP_LOBBY_START_INFO_MSG) {
+		say(f, "replay %s: no network game's, it cannot be hosted", m->entries[index].file);
+		kp_rep_free(&rep);
+		return 0;
+	}
+	memcpy(out->game, rep.header + KP_REP_GAME, KP_REP_GAME_SIZE);
+	memcpy(out->seed_record, rep.header + KP_REP_SEED_RECORD, sizeof out->seed_record);
+	ok = kp_map_header(&out->map, rep.chk, rep.chk_size, f->data->files.profile, f->ui->menus.expansion, why,
+		sizeof why) == 0;
+	if (!ok) say(f, "replay %s: %s", m->entries[index].file, why);
+	kp_rep_free(&rep);
+	return ok;
+}
+
 typedef struct {
 	const KpFlow *f;
 	const char *ext;
@@ -1442,25 +1695,42 @@ static uint16_t check_replay(void *host, int index)
 	return refusal;
 }
 
-/* Load Replay's Ok: the replay file's mission without a ready room, played from the file at path. */
-static int start_replay_file(KpFlow *f, const char *file, char *why, size_t why_size)
+/* The replay's room (f->replay_play) emptied for the next one. -1 out of memory. */
+static int replay_room(KpFlow *f, char *why, size_t why_size)
 {
-	uint16_t refusal;
-	int k;
 	if (!f->replay_play && !(f->replay_play = (KpRep *)calloc(1, sizeof *f->replay_play))) {
 		snprintf(why, why_size, "out of memory");
 		return -1;
 	}
 	kp_rep_free(f->replay_play);
-	if (read_replay_at(file, f->replay_play, &refusal) != 0 || (k = replay_mission(f, f->replay_play)) == -1) {
-		snprintf(why, why_size, "replay %s: cannot be played", file);
+	return 0;
+}
+
+/* f->replay_play's mission without a ready room, played from its record (name: the replay's, said) */
+static int start_replay(KpFlow *f, const char *name, char *why, size_t why_size)
+{
+	int k = replay_mission(f, f->replay_play);
+	if (k == -1) {
+		snprintf(why, why_size, "replay %s: cannot be played", name);
 		return -1;
 	}
 	if (k == KP_FLOW_CUSTOM && custom_from_replay(f, f->replay_play, why, why_size) != 0) return -1;
-	say(f, "replay %s: %u frames", file, (unsigned)kp_rep_frames(f->replay_play));
+	say(f, "replay %s: %u frames", name, (unsigned)kp_rep_frames(f->replay_play));
 	f->glue_room = 0;
 	f->playing_replay = 1;
 	return k == KP_FLOW_CUSTOM ? kp_flow_start_custom(f, why, why_size) : kp_flow_start_mission(f, k, why, why_size);
+}
+
+/* Load Replay's Ok: the replay file's mission without a ready room, played from the file at path. */
+static int start_replay_file(KpFlow *f, const char *file, char *why, size_t why_size)
+{
+	uint16_t refusal;
+	if (replay_room(f, why, why_size) != 0) return -1;
+	if (read_replay_at(file, f->replay_play, &refusal) != 0) {
+		snprintf(why, why_size, "replay %s: cannot be played", file);
+		return -1;
+	}
+	return start_replay(f, file, why, why_size);
 }
 
 static int start_replay_game(KpFlow *f, int index, char *why, size_t why_size)
@@ -2203,6 +2473,12 @@ static int build_scene(KpFlow *f, char *err, size_t err_size)
 			snprintf(err, err_size, "replay: its map is not %s's", entry->name);
 			return -1;
 		}
+		if (f->net_game) { /* a hosted replay: the network's turns beside the record (kp_turns_net_replay) */
+			st.local_storm = f->netplay->game.local_storm;
+			st.net = &f->netplay->game;
+		}
+		st.watch = f->watch_game = f->watch_start; /* a viewer's: the record grows (kp_watch.h) */
+		f->watch_start = 0;
 	} else {
 		st.seed = KP_APP_SEED;
 		st.mission_index = entry->index;
@@ -2246,6 +2522,8 @@ static int build_scene(KpFlow *f, char *err, size_t err_size)
 		kp_rep_free(f->replay_play); /* the session has the record */
 	} else {
 		replay_start(f, &st);
+		/* a resumed game is served once its save loaded (its header and record are the save's) */
+		if (custom && f->net_game && f->netplay->game.host && !f->seats.count && !f->net_resume) watch_serve(f);
 	}
 	layout(f); /* the scale the world's art is chosen by (a game started before the first frame has none yet) */
 	if (f->host.world_build(f->host.ctx, err, err_size) != 0) return -1;
@@ -2725,6 +3003,20 @@ static int start_network_game(KpFlow *f, int state, char *why, size_t why_size)
 	f->net_left = 0;
 	f->net_running = 0;
 	f->net_resume = 0;
+	if (ng->config.replay) {
+		/* a hosted replay (StartGame 0x443f40 with 0x67cc90: the host's file or the one it received), at once, its
+		 * record fed beside the network's turns */
+		if (!path[0]) {
+			snprintf(why, why_size, "no replay");
+			return -1;
+		}
+		if (kp_netgame_game_caps(ng) != 0) {
+			snprintf(why, why_size, "the provider's caps");
+			return -1;
+		}
+		say(f, "network replay %s (Storm ID %d)", last_part(path), ng->local_storm);
+		return start_replay_file(f, path, why, why_size);
+	}
 	if (kp_netgame_resumes(ng)) {
 		if (resumed_game(f, ng, why, why_size) != 0) return -1;
 		path = f->net_load;
@@ -2931,6 +3223,7 @@ static void save_requests(KpFlow *f)
 			stop(f, f->session->error);
 		} else {
 			say(f, "network: resumed %s", f->net_load);
+			if (f->net_game && f->netplay && f->netplay->game.host && !f->seats.count) watch_serve(f);
 		}
 	}
 	/* a save of another mission starts its game, which asks for the save again: loaded at once too */
@@ -3662,6 +3955,7 @@ void kp_flow_frame(KpFlow *f)
 	f->fixed_screen = kp_flow_glue_active(f); /* a glue screen keeps the original's 640 x 480 */
 	layout(f);
 	if (f->netplay) kp_netplay_pump(f->netplay); /* what arrived, before the chat room's pass reads it */
+	watch_frame(f);
 	if (f->fixed_screen) {
 		glue_frame(f);
 		cursor(f, 1);
@@ -3795,8 +4089,8 @@ int kp_flow_match_language(const KpUiLanguages *l, const char *wanted)
 	return -1;
 }
 
-/* --mission's or --map's game at once, without the glue. */
-static int starts_a_game(const KpFlow *f) { return f->flags->mission[0] != 0 || f->flags->map[0] != 0; }
+/* --mission's, --map's or --watch's game at once, without the glue. */
+static int starts_a_game(const KpFlow *f) { return f->flags->mission[0] != 0 || f->flags->map[0] != 0 || f->flags->watch[0] != 0; }
 
 /* The language of the start: --locale's; for the glue (not the checks', --mission's, the screenshots' or the benches':
  * theirs is the base's with its original fonts) the profile's when installed, else the system's first installed, else
@@ -4044,6 +4338,12 @@ static int netplay_entry_save(void *ctx, KpUi *ui, int index, KpNetGameHeader *h
 	return kp_flow_entry_save((KpFlow *)ctx, index, h);
 }
 
+static int netplay_entry_replay(void *ctx, KpUi *ui, int index, KpNetReplayEntry *out)
+{
+	(void)ui;
+	return kp_flow_entry_replay((KpFlow *)ctx, index, out);
+}
+
 static int netplay_find_save(void *ctx, uint32_t id, KpNetGameSave *out) { return kp_flow_find_save((KpFlow *)ctx, id, out); }
 
 /* The chat room's preview world of the lobby's map */
@@ -4089,6 +4389,7 @@ static void netplay_open(KpFlow *f)
 	c.transfer = kp_flow_transfer_io(f);
 	c.entry_map = netplay_entry_map;
 	c.entry_save = netplay_entry_save;
+	c.entry_replay = netplay_entry_replay;
 	c.find_save = netplay_find_save;
 	c.preview = netplay_preview;
 	c.preview_release = netplay_preview_release;
@@ -4167,6 +4468,10 @@ int kp_flow_init(KpFlow *f, char *err, size_t err_size)
 		if (!f->flags->play) f->flags->play = 1;
 		return kp_flow_play_map(f, f->flags->map, f->flags->map_template, err, err_size);
 	}
+	if (f->flags->watch[0]) {
+		if (!f->flags->play) f->flags->play = 1;
+		return kp_flow_watch(f, f->flags->watch, err, err_size);
+	}
 	if (f->flags->autotest) return 0; /* the autotest starts its games itself */
 	kp_glue_init(&f->glue, f->ui, f->profile, now_ms(f));
 	f->glue_on = 1;
@@ -4184,6 +4489,7 @@ int kp_flow_init(KpFlow *f, char *err, size_t err_size)
 void kp_flow_free(KpFlow *f)
 {
 	destroy_scene(f);
+	watch_free(f);
 	netplay_close(f);
 	if (f->glue_on) kp_glue_free(&f->glue);
 	f->glue_on = 0;

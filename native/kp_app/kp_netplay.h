@@ -52,6 +52,8 @@ typedef struct {
 	/* its saved game's header (KpNetUi.entry_save's) and this seat's copy of a saved game (KpNetUi.find_save's), over
 	 * ctx; NULL none */
 	int (*entry_save)(void *ctx, KpUi *ui, int index, KpNetGameHeader *h);
+	/* its replay entry's (KpNetUi.entry_replay's, over ctx); NULL none */
+	int (*entry_replay)(void *ctx, KpUi *ui, int index, KpNetReplayEntry *out);
 	int (*find_save)(void *ctx, uint32_t id, KpNetGameSave *out);
 	/* the chat room's preview world (KpNetUi.preview's and preview_release's, over ctx); NULL none */
 	int (*preview)(void *ctx, const char *path, const uint8_t *template_record, KpUiPreview *out);

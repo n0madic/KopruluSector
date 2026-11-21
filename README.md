@@ -252,6 +252,9 @@ the settings for one run:
 | `--lan-port PORT` | the local network's UDP port (default 6111, the original's; the next port is used too) |
 | `--lan-map BASE:HOSTS:SELF` | several games on one machine: game SELF of HOSTS, on the ports from BASE (for testing) |
 | `--lan-host NAME[:PORT]` | the host to ask for its game besides the local network's broadcast, as the join screen's Address sets it (PORT: the host's `--lan-port`, default 6111) |
+| `--watch NAME[:PORT]` | watch the network game that host is playing, as a replay that grows (PORT default 6120); runs without the menus |
+| `--watch-delay SECONDS` | how far behind the games you host are shown to their viewers (default 60, 0 none) |
+| `--watch-port PORT` | the UDP port your hosted games are served to viewers on (default 6120) |
 
 Your profile, saves and settings are kept in the system's per-user application folder. Saves do not carry over between
 builds whose saved state differs: the load screen says that such a save is of another version.

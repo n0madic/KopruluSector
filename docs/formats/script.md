@@ -64,6 +64,7 @@ The host runs the script after a frame is drawn and before it is shown.
 | | `world on\|off`, `fog on\|off` | The world's images drawn; the fog |
 | | `save "NAME"`, `load "NAME"`, `load-file "NAME"` | The game saved, loaded in the game, loaded from its file as the glue's Load Saved loads it (with the glue's screen open the run aborts: a glue run goes through Load Saved's screen) |
 | | `replay "NAME"` | The replays folder's `NAME.rep` (`.rep` added when the name lacks it) played as Load Replay's Ok plays it: its mission started from the file, over the game in play or after it (a `--mission` run). A file that cannot be played (missing, damaged, outside version 1) aborts the run, and so does the glue's screen open (a glue run goes through Load Replay: `click control glucmpgn.replay`, then the list's Ok) |
+| | `watch "ADDRESS"` | A viewer of the network game the host at ADDRESS (`name[:port]`, port 6120 when not given) serves: its replay starts once the start of it came and plays as its record grows ([watch-udp.md](watch-udp.md)); with the glue's screen open, without sockets (the web) or with a viewer already the run aborts |
 | | `menu NAME`, `options-dialog NAME` | A game menu, an options dialog opened |
 | | `activate NAME` | The open menu's control activated as its click does |
 | | `select NAME RADIUS` | The camera on the player's unit of the kind, a box of the radius over it; no such unit is the step's failure |

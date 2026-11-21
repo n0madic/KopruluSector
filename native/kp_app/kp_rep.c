@@ -348,6 +348,7 @@ void kp_rep_header(KpRep *r, const KpRepGame *game)
 	wr32(h + KP_REP_FRAMES, game->frames);
 	h[KP_REP_CAMPAIGN] = (uint8_t)game->campaign;
 	h[KP_REP_CAMPAIGN + 1] = (uint8_t)(game->campaign >> 8);
+	if (game->seed_record) memcpy(h + KP_REP_SEED_RECORD, game->seed_record, KP_REP_SEED_RECORD_SIZE);
 	wr32(h + KP_REP_SEED, game->seed);
 	put_text(h + KP_REP_GAME_NAME, game->player_name, KP_REP_GAME_NAME_SIZE);
 	h[KP_REP_MAP_SIZE] = (uint8_t)game->map_w;

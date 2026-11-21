@@ -862,6 +862,33 @@ static void replay_line_shows_and_hides_the_leaderboard(KpT *T)
 	kp_t_eq(T, H->g->trig.lb_action, 0, "hide clears the board");
 }
 
+/* A replay's pick (PickUnitAtPoint 0x4bcd00): a unit is picked when the replay's vision (0x67cc84) sees its sprite,
+ * or with the reveal (0x67cc88); the selection's filter (FilterSelectableUnits 0x4bc5b0) keeps the local vision. */
+static void replay_picks_by_its_vision(KpT *T)
+{
+	Hud *H;
+	KpGame *g;
+	int64_t a, x, y, owner;
+	if (!ready(T, "test_hud.replay_picks_by_its_vision", TERRAN01)) return;
+	H = with_hud(T, terran01(T), 1280, 720);
+	g = H->g;
+	a = own_unit(g, 1, MARINE, 0);
+	kp_t_ok(T, a != 0, "a Marine");
+	if (a == 0) return;
+	x = g->u.x[a];
+	y = g->u.y[a];
+	owner = g->u.owner[a];
+	kp_t_eq(T, kp_ui_pick_unit(H->ui, (int32_t)x, (int32_t)y), a, "outside a replay: the Marine");
+	g->w->replay = 1;
+	g->w->local_vision = 0;
+	kp_t_eq(T, kp_ui_pick_unit(H->ui, (int32_t)x, (int32_t)y), 0, "no player in the replay's vision: none");
+	g->w->local_vision = (int32_t)(1 << owner);
+	kp_t_eq(T, kp_ui_pick_unit(H->ui, (int32_t)x, (int32_t)y), a, "its owner in the replay's vision");
+	g->w->local_vision = 0;
+	g->w->replay_reveal = 1;
+	kp_t_eq(T, kp_ui_pick_unit(H->ui, (int32_t)x, (int32_t)y), a, "the reveal");
+}
+
 /* A replay's console at 640 x 480 as the emulator's frames show it (terran01.rep, frames 40, 100 and 200): the
  * minimap dialog's captured background keeps nconsole.pcx's holes beside it (130..137 x 315..323: the game shows),
  * and the replay's fluff rectangle (138, 367, 358, 22) repeats the console art over the menu button's first row
@@ -6156,6 +6183,7 @@ static const KpTest TESTS[] = {
 	{ "status_tooltip_follows_the_panels_layout", status_tooltip_follows_the_panels_layout, 0 },
 	{ "text_reaches_the_window_as_code_points", text_reaches_the_window_as_code_points, 0 },
 	{ "replay_line_shows_and_hides_the_leaderboard", replay_line_shows_and_hides_the_leaderboard, 0 },
+	{ "replay_picks_by_its_vision", replay_picks_by_its_vision, 0 },
 	{ "replay_console_keeps_its_holes_and_fluff", replay_console_keeps_its_holes_and_fluff, 0 },
 	{ "one_key_is_one_hotkey", one_key_is_one_hotkey, 0 },
 	{ "glue_text_takes_code_points", glue_text_takes_code_points, 0 },

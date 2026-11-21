@@ -18,7 +18,16 @@
  *     the hub's every frames per turn; the session runs its frames itself (kp_session_step: the turn, the sync ring
  *     and the frame are one guarded step), the local commands go into the outgoing turn.
  *
- * TODO: a viewer of a network game is REPLAY over a growing record.
+ *   - NET over a replay, a hosted replay watched over the network (CreateGameFromEntry 0x45bfc0's kind 0x80): each
+ *     frame the record's commands first (RunPendingFrames 0x444e30 step 1, kp_turns_feed), then the network's turn
+ *     at its frame, whose commands the replay's filter passes (0x47636c, kp_netgame.h).
+ *
+ *   - REPLAY over a growing record, a viewer of a network game (kp_watch.h): the record's bytes arrive as the game
+ *     goes on, each time with the frame every block up to which it holds (kp_turns_watch_grow); frame f runs once
+ *     the blocks up to f + 1 are there, else waits (KP_TURNS_WAIT) until more arrives or the record is whole (its end
+ *     then the replay's, its last block run too: kp_record_grow). The block after f is so in the record whenever the feed reads ahead at f, as in a file:
+ *     read one call early, a frame of more than 0x200 bytes loses its commands as 1.17's does (kp_record.h), read at
+ *     its own frame it would not.
  */
 #ifndef KP_TURNS_H
 #define KP_TURNS_H
@@ -63,6 +72,7 @@ typedef struct {
 	KpRecorder *feed;
 	uint32_t frames;
 	int ended;
+	int growing, whole; /* a viewer's growing record (kp_turns_watch) and whether it is whole */
 	uint32_t feed_storm[KP_TURNS_SLOTS], feed_slot[KP_TURNS_SLOTS];
 	int64_t feed_player;
 	KpCommand *list; /* owned: the frame's commands kp_turns_frame gave */
@@ -79,6 +89,16 @@ typedef struct {
 /* A replay's source: its record loaded (BeginReplayPlayback 0x4789f0), its players' Storm IDs. t must be zeroed (a
  * zeroed KpTurns is a LOCAL source). -1 out of memory, t then LOCAL again. */
 int kp_turns_replay(KpTurns *t, const KpRep *rep);
+/* A viewer's source: a replay (its header and map; its record, if any, the first bytes) whose record grows
+ * (kp_turns_watch_grow), no frame of it known yet. -1 out of memory, t then LOCAL again. */
+int kp_turns_watch(KpTurns *t, const KpRep *rep);
+/* The viewer's record grown by `size` bytes, holding every block up to frame frames - 1 (the viewer then plays up to
+ * frame frames - 2); `whole`: the game ended, `frames` its count. -1 out of memory (nothing taken), or for a source that is not a
+ * viewer's. */
+int kp_turns_watch_grow(KpTurns *t, const uint8_t *bytes, size_t size, uint32_t frames, int whole);
+/* A hosted replay's seat: the network game's turns (as kp_turns_net) over the replay's record (as kp_turns_replay).
+ * -1 out of memory, t then LOCAL again. */
+int kp_turns_net_replay(KpTurns *t, KpNetGame *net, const KpRep *rep);
 /* A network game's seat: its turns the hub's (kept until kp_turns_free; t zeroed). */
 void kp_turns_seats(KpTurns *t, KpTurnHub *hub, int seat);
 /* A network game's seat: its turns the network game's (kept until kp_turns_free; t zeroed). */
@@ -98,7 +118,7 @@ int kp_turns_ended(const KpTurns *t);
 uint32_t kp_turns_frames(const KpTurns *t);
 
 /* A command of player (0..7) for the next step: 0, or -1 when the queue is full, it is empty or too long, the player is
- * none of the seats, or the playback does not let it through (REPLAY: the keep-alive, restart, pause and resume, the
+ * none of the seats, or the playback does not let it through (REPLAY and a hosted replay: the keep-alive, restart, pause and resume, the
  * sync, the network's 0x37-0x3b, latency and the replay speed only, ExecuteTurnCommands 0x475d30's replay filter).
  * SEATS: the seat's command for its outgoing turn, whatever the player (kp_hub_submit); NET the same
  * (kp_netgame_command). */
@@ -106,6 +126,9 @@ int kp_turns_submit(KpTurns *t, const uint8_t *bytes, size_t size, int64_t playe
 /* The commands of game frame `frame` in *list (owned by t, valid until kp_turns_done; the queued ones point into
  * the queue) and their count: KP_TURNS_READY, KP_TURNS_ENDED or KP_TURNS_NO_MEMORY (*count 0). */
 int kp_turns_frame(KpTurns *t, int64_t frame, const KpCommand **list, int *count);
+/* A playback's record of frame `frame` alone (FeedReplayCommands 0x4769b0; the network's turns are polled apart): as
+ * kp_turns_frame, nothing without a record. */
+int kp_turns_feed(KpTurns *t, int64_t frame, const KpCommand **list, int *count);
 /* The frame's commands ran: the queue is empty. */
 void kp_turns_done(KpTurns *t);
 /* RecordCommand 0x478340 of a frame's executed commands before the frame's step: each command of a buffer whose player

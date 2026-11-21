@@ -235,14 +235,18 @@ KpNetSock *kp_net_sock_open(const KpNetSockConfig *c, char *error, size_t size)
 		error = scratch;
 		size = sizeof scratch;
 	}
+	if (c->single && c->map_base) {
+		snprintf(error, size, "a single socket has no map");
+		return NULL;
+	}
 	if (c->map_base && (c->map_hosts < 1 || c->map_self >= c->map_hosts ||
 		(uint32_t)c->map_base + 2u * (uint32_t)c->map_hosts > 0x10000u)) {
 		snprintf(error, size, "a map of %d hosts from port %u does not hold host %d", c->map_hosts, c->map_base,
 			c->map_self);
 		return NULL;
 	}
-	if (!port) port = c->map_base && c->map_self >= 0 ? c->map_base + 2u * (uint32_t)c->map_self : KP_NET_LIST_PORT;
-	if (port > 0xfffe) {
+	if (!port && !c->single) port = c->map_base && c->map_self >= 0 ? c->map_base + 2u * (uint32_t)c->map_self : KP_NET_LIST_PORT;
+	if (port > (c->single ? 0xffffu : 0xfffeu)) {
 		snprintf(error, size, "port %u has no port above it", port);
 		return NULL;
 	}
@@ -267,11 +271,21 @@ KpNetSock *kp_net_sock_open(const KpNetSockConfig *c, char *error, size_t size)
 	s->map_hosts = c->map_base ? c->map_hosts : 0;
 	s->map_self = c->map_base ? c->map_self : -1;
 	s->self_ip = s->map_self >= 0 ? KP_NET_MAP_IP + (uint32_t)s->map_self : UNMAPPED_SELF;
-	for (k = 0; k < KP_NET_SOCKETS; k++)
+	for (k = 0; k < (c->single ? 1 : KP_NET_SOCKETS); k++)
 		if (!open_socket(s, k, bind_ip, (uint16_t)(port + (uint32_t)k), error, size)) {
 			kp_net_sock_close(s);
 			return NULL;
 		}
+	if (c->single && !port) { /* the port the system picked */
+		struct sockaddr_in a;
+		socklen_t len = sizeof a;
+		if (getsockname(s->fd[0], (struct sockaddr *)&a, &len) != 0) {
+			snprintf(error, size, "getsockname: error %d", last_error());
+			kp_net_sock_close(s);
+			return NULL;
+		}
+		s->port[0] = ntohs(a.sin_port);
+	}
 	return s;
 }
 
@@ -381,14 +395,15 @@ int kp_net_sock_wait(KpNetSock *s, uint32_t ms, KpNetSockDeliver fn, void *ud)
 	fd_set set;
 	struct timeval t;
 	FD_ZERO(&set);
-	for (k = 0; k < KP_NET_SOCKETS; k++) FD_SET(s->fd[k], &set);
+	for (k = 0; k < KP_NET_SOCKETS; k++)
+		if (s->fd[k] != NO_FD) FD_SET(s->fd[k], &set);
 	t.tv_sec = (long)(ms / 1000);
 	t.tv_usec = (long)(ms % 1000) * 1000;
 	ready = select(0, &set, NULL, NULL, &t);
 	if (ready == SOCKET_ERROR) return -1;
 #else
 	struct pollfd p[KP_NET_SOCKETS];
-	for (k = 0; k < KP_NET_SOCKETS; k++) {
+	for (k = 0; k < KP_NET_SOCKETS; k++) { /* a single socket's B: poll skips a negative descriptor */
 		p[k].fd = s->fd[k];
 		p[k].events = POLLIN;
 		p[k].revents = 0;
@@ -397,7 +412,7 @@ int kp_net_sock_wait(KpNetSock *s, uint32_t ms, KpNetSockDeliver fn, void *ud)
 	if (ready < 0) return errno == EINTR ? 0 : -1;
 #endif
 	if (ready == 0) return 0;
-	for (k = 0; k < KP_NET_SOCKETS; k++) {
+	for (k = 0; k < KP_NET_SOCKETS && s->fd[k] != NO_FD; k++) {
 		int got = drain(s, k, fn, ud);
 		if (got < 0) return -1;
 		n += got;

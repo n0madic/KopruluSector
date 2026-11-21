@@ -1,0 +1,12 @@
+# A viewer of a network game (docs/phase-network.md, the viewers): tools/ci.sh runs it with --watch 127.0.0.1 beside
+# net_host.kps and net_join.kps, the host serving its game to viewers (--watch-delay 2: two seconds behind). The
+# viewer's replay starts once the host's start file came and runs as far as the record holds; the host leaves at tick
+# 400 and the viewer plays on to the record's end, its tick logged past the joiner's command (tick 40).
+options originals
+clock real
+wait game within 120000
+expect replay
+log watching tick
+wait tick >= 300 within 120000
+log watched tick
+quit

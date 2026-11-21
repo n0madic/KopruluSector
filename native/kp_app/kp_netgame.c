@@ -923,11 +923,12 @@ void kp_netgame_game_begin(KpNetGame *ng, KpGame *g)
 
 typedef struct {
 	KpNetGame *ng;
-	int id, count, failed;
+	int id, count, failed, stopped;
 	int64_t record, player;
 } TurnSplit;
 
 #define PLAYER_FLAG_SET 0x38
+#define REPLAY_SPEED_COMMAND 0x56
 #define PLAYER_FLAG_CLEAR 0x39
 #define PLAYER_FLAG 0x2
 
@@ -949,6 +950,11 @@ static void split_command(void *ud, const uint8_t *cmd, size_t n)
 {
 	TurnSplit *t = (TurnSplit *)ud;
 	KpNetGame *ng = t->ng;
+	/* a replay's live turn (0x47636c): the first command outside the filter ends the buffer */
+	if (ng->config.replay && (t->stopped || !kp_record_live_in_replay(cmd[0]))) {
+		t->stopped = 1;
+		return;
+	}
 	if (cmd[0] == LATENCY_COMMAND && n >= 2) ng->extra_latency = cmd[1] < LATENCY_MAX ? cmd[1] : LATENCY_MAX;
 	if (cmd[0] == KP_LOBBY_KEEP_ALIVE) {
 		t->count++;
@@ -964,6 +970,12 @@ static void split_command(void *ud, const uint8_t *cmd, size_t n)
 			if (cmd[0] == PLAYER_FLAG_SET) p->flags |= PLAYER_FLAG;
 			else p->flags &= (uint16_t)~PLAYER_FLAG;
 		}
+	}
+	/* a replay's viewer whose Storm ID has no record of the replay's: its speed command runs as record 0 (the
+	 * original's record 8 reads past its tables; SetReplaySpeed 0x481040 reads no player), its other commands none */
+	if (t->record >= KP_NETGAME_PLAYERS && ng->config.replay && cmd[0] == REPLAY_SPEED_COMMAND) {
+		if (add_command(ng, 0, cmd, n) != 0) t->failed = 1;
+		return;
 	}
 	if (t->record >= KP_NETGAME_PLAYERS) return;
 	if (cmd[0] == KP_NETGAME_CHAT_COMMAND && cmd[1] != t->record) return;
