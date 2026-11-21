@@ -369,15 +369,19 @@ void kp_ui_menus_close_popup(KpUi *ui) { close_popup(ui); }
 
 #define ID_ADDRESS_NOT_FOUND 5 /* koprulu\address.bin's label (hidden) that the address has no host */
 
-/* Koprulu's address popup: its label that the address has no host hidden once the player changes the address */
+/* Koprulu's address popup's label that the address has no host, shown or hidden */
+static void address_label(KpUi *ui, int32_t dialog, int shown)
+{
+	int32_t c = kp_ui_find_control(ui, dialog, ID_ADDRESS_NOT_FOUND);
+	if (c < 0 || !(ui->controls[c].flags & KP_UI_VISIBLE) == !shown) return;
+	kp_ui_set_visible(ui, c, shown);
+	kp_ui_mark_dirty(ui, c);
+}
+
+/* the label hidden once the player changes the address */
 static void address_edited(KpUi *ui, const KpUiControl *edit, const char *before)
 {
-	int32_t c;
-	if (strcmp(before, edit->text != NULL ? (const char *)edit->text : "") == 0) return;
-	if ((c = kp_ui_find_control(ui, edit->parent, ID_ADDRESS_NOT_FOUND)) >= 0 && (ui->controls[c].flags & KP_UI_VISIBLE)) {
-		kp_ui_set_visible(ui, c, 0);
-		kp_ui_mark_dirty(ui, c);
-	}
+	if (strcmp(before, edit->text != NULL ? (const char *)edit->text : "") != 0) address_label(ui, edit->parent, 0);
 }
 
 static int forbidden(const KpUiMenus *m, uint16_t key)
@@ -501,21 +505,38 @@ static void edit_popup(KpUi *ui, const uint8_t *prompt, const char *text, int ma
 
 #define ADDRESS_CHARS "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-_:" /* kp_net.h's form */
 
-/* Ok gives the address to the host: one it does not take shows the label and the popup stays */
+/* The popup waiting for the host's lookup (on) or no longer: Ok and the edit disabled meanwhile, Cancel still works */
+static void wait_for_lookup(KpUi *ui, int32_t dialog, int on)
+{
+	int32_t edit = kp_ui_find_control(ui, dialog, ID_EDIT), ok = kp_ui_find_control(ui, dialog, R_OK);
+	mn(ui)->address_wait = (uint8_t)on;
+	if (on) {
+		address_label(ui, dialog, 0);
+		if (ok >= 0) kp_ui_set_enabled(ui, ok, 0);
+		if (edit >= 0) kp_ui_set_enabled(ui, edit, 0);
+		return;
+	}
+	if (edit < 0) return;
+	kp_ui_set_enabled(ui, edit, 1);
+	edit_ok_state(ui, &ui->controls[edit]);
+	kp_ui_focus_control(ui, edit);
+}
+
+/* Ok gives the address to the host: one it does not take shows the label and the popup stays; one it looks up keeps
+ * the popup waiting for the answer (kp_ui_menus_address_found) */
 static int address_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 {
-	int32_t self = (int32_t)(d - ui->controls), c;
+	int32_t self = (int32_t)(d - ui->controls);
 	if (e->type == KP_UI_USER && e->code == KP_UI_CLOSE && ui->result == R_OK && ui->net != NULL
 		&& ui->net->set_address != NULL) {
 		int32_t edit = kp_ui_find_control(ui, self, ID_EDIT);
 		const char *text = edit >= 0 && ui->controls[edit].text != NULL ? (const char *)ui->controls[edit].text : "";
-		if (!ui->net->set_address(ui->net->host, text)) {
-			if ((c = kp_ui_find_control(ui, self, ID_ADDRESS_NOT_FOUND)) >= 0) {
-				kp_ui_set_visible(ui, c, 1);
-				kp_ui_mark_dirty(ui, c);
-			}
-			return 1;
-		}
+		int taken;
+		if (mn(ui)->address_wait) return 1; /* the lookup's answer ends the wait, not Ok */
+		taken = ui->net->set_address(ui->net->host, text);
+		if (taken < 0) wait_for_lookup(ui, self, 1);
+		else if (taken == 0) address_label(ui, self, 1);
+		if (taken <= 0) return 1;
 	}
 	return edit_popup_proc(ui, d, e);
 }
@@ -527,6 +548,21 @@ static void address_done(KpUi *ui, int32_t r)
 	ui->result = m->saved_result;
 	m->edit_allowed = NULL;
 	m->edit_address = 0;
+	m->address_wait = 0;
+}
+
+int kp_ui_menus_address_found(KpUi *ui, int found)
+{
+	KpUiMenus *m = mn(ui);
+	if (!m->address_wait || m->popup < 0) return 0;
+	wait_for_lookup(ui, m->popup, 0);
+	if (found) { /* the popup's Ok */
+		ui->result = R_OK;
+		kp_ui_end_dialog(ui, m->popup);
+	} else {
+		address_label(ui, m->popup, 1);
+	}
+	return 1;
 }
 
 static void address_popup(KpUi *ui)

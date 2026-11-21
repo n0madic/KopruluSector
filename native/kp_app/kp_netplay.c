@@ -60,10 +60,14 @@ static void s_event(void *ud, const KpSnetEvent *e)
 	if (p->game_on) kp_netgame_event(&p->game, e);
 }
 
-/* ResetNetworkProvider 0x475a20, ShutdownNetwork 0x477f60: the game (Storm leaves it), SNet, the provider and the
- * sockets freed */
+/* ResetNetworkProvider 0x475a20, ShutdownNetwork 0x477f60: the game (Storm leaves it), SNet, the provider, the
+ * sockets and the lookups of host addresses freed */
 static void stop(KpNetPlay *p)
 {
+	kp_net_lookup_free(p->host_lookup);
+	p->host_lookup = NULL;
+	kp_net_lookup_free(p->asked);
+	p->asked = NULL;
 	if (p->game_on) kp_netgame_free(&p->game);
 	p->game_on = 0;
 	p->nu.game = NULL;
@@ -77,25 +81,49 @@ static void stop(KpNetPlay *p)
 	p->locked = 0;
 }
 
-/* The host by its address given to the provider (none for ""); 0 when it is no address or has none. TODO: a name is
- * resolved here on the main thread (kp_net_sock_resolve waits for the system's resolver), at each provider selection
- * and at the Address popup's Ok, so a slow or unreachable DNS server stalls the screens: resolve it off the main
- * thread (kp_netplay_pump taking the answer) and let the popup wait for it. */
-static int direct_host(KpNetPlay *p, const char *text)
+/* --- the host by its address: its lookup off the main thread (kp_net_lookup_*), the answer taken each frame --- */
+
+/* The provider asks the host `text` at a (NULL: no host) */
+static void direct(KpNetPlay *p, const char *text, const KpNetAddr *a)
+{
+	char shown[32];
+	if (p->snp_on) (void)kp_snp_udp_direct(&p->snp, a);
+	if (a) say(p, "network: the host %s asked at %s", text, kp_net_addr_text(a, shown, sizeof shown));
+}
+
+/* The player's address taken: kept, and asked at a (NULL: none, for "") */
+static void take_host(KpNetPlay *p, const char *text, const KpNetAddr *a)
+{
+	kp_net_lookup_free(p->host_lookup); /* the address it looked up is no longer the host's */
+	p->host_lookup = NULL;
+	snprintf(p->host, sizeof p->host, "%s", text);
+	direct(p, p->host, a);
+	if (p->config.host_changed) p->config.host_changed(p->config.ctx, p->host);
+}
+
+/* The lookup's answer (1 the address into *a, 0 none: logged, -1 not yet); a lookup that answered is freed */
+static int answer(KpNetPlay *p, KpNetLookup **l, KpNetAddr *a)
+{
+	char error[128];
+	int r = kp_net_lookup_poll(*l, a, error, sizeof error);
+	if (r < 0) return r;
+	if (r == 0) say(p, "network: %s", error);
+	kp_net_lookup_free(*l);
+	*l = NULL;
+	return r;
+}
+
+/* The lookups' answers: the host's given to the provider; the popup's address, while the popup waits for it, taken or
+ * refused there (one the popup no longer waits for, its Cancel, is dropped) */
+static void take_answers(KpNetPlay *p)
 {
 	KpNetAddr a;
-	char error[128];
-	if (!text[0]) {
-		if (p->snp_on) (void)kp_snp_udp_direct(&p->snp, NULL);
-		return 1;
+	int r;
+	if (p->host_lookup && (r = answer(p, &p->host_lookup, &a)) > 0) direct(p, p->host, &a);
+	if (p->asked && (r = answer(p, &p->asked, &a)) >= 0) {
+		if (!kp_ui_menus_address_found(p->nu.ui, r)) say(p, "network: the address %s dropped", p->asked_text);
+		else if (r) take_host(p, p->asked_text, &a);
 	}
-	if (!kp_net_sock_resolve(text, &a, error, sizeof error)) {
-		say(p, "network: %s", error);
-		return 0;
-	}
-	if (p->snp_on) (void)kp_snp_udp_direct(&p->snp, &a);
-	say(p, "network: the host %s asked at %s", text, kp_net_addr_text(&a, error, sizeof error));
-	return 1;
 }
 
 /* --- the provider hooks --- */
@@ -138,7 +166,9 @@ static int p_select(void *host, uint32_t id)
 	io = kp_net_sock_io(p->sock);
 	kp_snp_udp_init(&p->snp, &io, program, PROGRAM_VERSION, PROVIDER_PLAYERS);
 	p->snp_on = 1;
-	(void)direct_host(p, p->host); /* a host that has no address is only logged: the broadcast still lists */
+	/* the host by its address asked once its lookup answers (kp_netplay_pump); one that has no address is only
+	 * logged: the broadcast still lists */
+	if (p->host[0]) p->host_lookup = kp_net_lookup_start(p->host);
 	memset(&sh, 0, sizeof sh);
 	sh.now = s_now;
 	sh.sleep = s_sleep;
@@ -176,19 +206,30 @@ static void p_address(void *host, char *out, size_t size)
 	if (size) snprintf(out, size, "%s", np(host)->host);
 }
 
+/* The popup's address: "" and a dotted address taken at once, one that is no address refused, a name looked up (-1:
+ * the popup waits for take_answers) */
 static int p_set_address(void *host, const char *text)
 {
 	KpNetPlay *p = np(host);
-	char name[KP_NET_HOST];
-	uint16_t port;
-	if (!text || (text[0] && !kp_net_host_parse(text, name, sizeof name, &port))) {
-		say(p, "network: \"%s\" is not an address", text ? text : "");
+	KpNetLookup *l;
+	KpNetAddr a;
+	int r;
+	kp_net_lookup_free(p->asked); /* an earlier address the popup gave up */
+	p->asked = NULL;
+	if (text && !text[0]) {
+		take_host(p, "", NULL);
+		return 1;
+	}
+	if (!text || !(l = kp_net_lookup_start(text))) {
+		say(p, "network: no lookup of \"%s\"", text ? text : "");
 		return 0;
 	}
-	if (!direct_host(p, text)) return 0;
-	snprintf(p->host, sizeof p->host, "%s", text);
-	if (p->config.host_changed) p->config.host_changed(p->config.ctx, p->host);
-	return 1;
+	if ((r = answer(p, &l, &a)) > 0) take_host(p, text, &a);
+	if (r >= 0) return r;
+	p->asked = l;
+	snprintf(p->asked_text, sizeof p->asked_text, "%s", text);
+	say(p, "network: looking up %s", text);
+	return -1;
 }
 
 static int n_entry_map(void *owner, KpUi *ui, int index, KpMapHeader *h, char *path, size_t size)
@@ -236,6 +277,7 @@ void kp_netplay_pump(KpNetPlay *p)
 {
 	uint32_t now, t;
 	int sig;
+	take_answers(p);
 	if (!p->sock || !p->snet) return;
 	read_sockets(p, 0);
 	/* Storm's pump thread 0x15022780: a pass when a datagram arrived or a send signalled it, or its timer ran out */

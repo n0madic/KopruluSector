@@ -1037,7 +1037,8 @@ typedef struct KpUiNet {
 	/* Koprulu's host by its address (phase N, stage N5; the join screen's Address and koprulu\address.bin, shown only
 	 * when set_address is): the address the provider also asks for its game ("" none, at most KP_UI_ADDRESS - 1
 	 * bytes into out), and a new one the player gave: 1 taken (its game joins the list), 0 it is no address or has none
-	 * (the popup says so and stays) */
+	 * (the popup says so and stays), -1 its name is being looked up (the popup waits with Ok and the edit disabled
+	 * until the host gives the answer: kp_ui_menus_address_found) */
 	void (*address)(void *host, char *out, size_t size);
 	int (*set_address)(void *host, const char *text);
 	/* CreateGameFromEntry 0x45bfc0's multiplayer game of the Create Game screen's entry index (a map read and checked:
@@ -1267,6 +1268,7 @@ typedef struct {
 	 * empty text (no host) */
 	const char *edit_allowed;
 	uint8_t edit_address;
+	uint8_t address_wait;            /* the address popup waits for the host's lookup (KpUiNet.set_address's -1) */
 	KpUiSurface popup_image;         /* 0x66b3f8: the popup's background */
 	KpUiProfile profiles[KP_UI_PROFILES]; /* 0x5081a0, in the list's order */
 	int profile_count;
@@ -2202,6 +2204,10 @@ void kp_ui_menus_refused(KpUi *ui, uint16_t gluall);
  * StoreDeferredNetError 0x4748d0): network.tbl's string index (1-based) shown in an OK popup by the next glue screen,
  * 100 ms after it is activated (ActivateGlueScreen 0x4579b0's timer, FlushDeferredNetError 0x474980). */
 void kp_ui_menus_net_error(KpUi *ui, uint16_t network);
+/* The answer of the lookup KpUiNet.set_address began (its -1): found, the address popup ends as its Ok; not found, its
+ * label says so and Ok and the edit work again. 1 when the popup waited for it, 0 when it no longer did (its Cancel):
+ * the host then drops the address. */
+int kp_ui_menus_address_found(KpUi *ui, int found);
 /* SetGlueStateFromProvider 0x457e50: the glue state a network game's ready room or score screen goes back to, by the
  * provider (Battle.net 4, a modem 20, the cable 21, the LAN's IPX, AppleTalk and UDP 10, any other the main menu 0). */
 int kp_ui_menus_provider_state(const KpUi *ui);

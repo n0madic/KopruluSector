@@ -28,6 +28,7 @@ typedef SOCKET Fd;
 #include <netdb.h>
 #include <netinet/in.h>
 #include <poll.h>
+#include <pthread.h>
 #include <sys/socket.h>
 #include <time.h>
 #include <unistd.h>
@@ -71,14 +72,6 @@ KpNetSock *kp_net_sock_open(const KpNetSockConfig *c, char *error, size_t size)
 	(void)c;
 	if (size) snprintf(error, size, "no UDP sockets on the web");
 	return NULL;
-}
-int kp_net_sock_resolve(const char *text, KpNetAddr *out, char *error, size_t size)
-{
-	char name[KP_NET_HOST];
-	uint16_t port;
-	int r = parse_host(text, out, name, &port, error, size);
-	if (r == 0 && size) snprintf(error, size, "no resolver on the web");
-	return r > 0;
 }
 void kp_net_sock_close(KpNetSock *s) { (void)s; }
 KpNetIo kp_net_sock_io(KpNetSock *s)
@@ -397,17 +390,12 @@ int kp_net_sock_wait(KpNetSock *s, uint32_t ms, KpNetSockDeliver fn, void *ud)
 	return n;
 }
 
-int kp_net_sock_resolve(const char *text, KpNetAddr *out, char *error, size_t size)
+/* The system's resolver for a name (IPv4 only): 1 its first IPv4 address with port into *out, 0 none (the reason in
+ * error). getaddrinfo is safe on any thread. */
+static int resolve_name(const char *name, uint16_t port, KpNetAddr *out, char *error, size_t size)
 {
-	char name[KP_NET_HOST], scratch[1];
-	uint16_t port;
 	struct addrinfo hints, *list = NULL, *a;
 	int r, found = 0;
-	if (!error || !size) {
-		error = scratch;
-		size = sizeof scratch;
-	}
-	if ((r = parse_host(text, out, name, &port, error, size)) != 0) return r > 0;
 #ifdef _WIN32
 	{
 		WSADATA wsa; /* getaddrinfo wants Winsock started, sockets open or not */
@@ -436,3 +424,165 @@ int kp_net_sock_resolve(const char *text, KpNetAddr *out, char *error, size_t si
 }
 
 #endif
+
+/* --- a host's address looked up off the caller's thread (kp_net_lookup_*) --- */
+
+#define LOOKUP_RESOLVING (-1)
+
+struct KpNetLookup {
+	char name[KP_NET_HOST]; /* the name and port the thread resolves (written before it starts, never after) */
+	uint16_t port;
+	int threaded;  /* a thread resolves it: the lock is initialized */
+	/* under the lock while threaded: 1 found (addr), 0 none (error), LOOKUP_RESOLVING; given up by its owner while
+	 * resolving (the thread frees it) */
+	int state, abandoned;
+	KpNetAddr addr;
+	char error[128];
+#ifdef _WIN32
+	CRITICAL_SECTION lock;
+#elif !defined(__EMSCRIPTEN__)
+	pthread_mutex_t lock;
+#endif
+};
+
+static void lookup_lock(KpNetLookup *l)
+{
+	if (!l->threaded) return;
+#ifdef _WIN32
+	EnterCriticalSection(&l->lock);
+#elif !defined(__EMSCRIPTEN__)
+	pthread_mutex_lock(&l->lock);
+#endif
+}
+
+static void lookup_unlock(KpNetLookup *l)
+{
+	if (!l->threaded) return;
+#ifdef _WIN32
+	LeaveCriticalSection(&l->lock);
+#elif !defined(__EMSCRIPTEN__)
+	pthread_mutex_unlock(&l->lock);
+#endif
+}
+
+static void lookup_destroy(KpNetLookup *l)
+{
+	if (l->threaded) {
+#ifdef _WIN32
+		DeleteCriticalSection(&l->lock);
+#elif !defined(__EMSCRIPTEN__)
+		pthread_mutex_destroy(&l->lock);
+#endif
+	}
+	free(l);
+}
+
+#ifndef __EMSCRIPTEN__
+/* The thread: the resolver's answer, then the lookup freed if its owner gave it up meanwhile */
+static void lookup_run(KpNetLookup *l)
+{
+	KpNetAddr a;
+	char error[sizeof l->error];
+	int found = resolve_name(l->name, l->port, &a, error, sizeof error), abandoned;
+	lookup_lock(l);
+	if (found) l->addr = a;
+	else snprintf(l->error, sizeof l->error, "%s", error);
+	l->state = found;
+	abandoned = l->abandoned;
+	lookup_unlock(l);
+	if (abandoned) lookup_destroy(l);
+}
+
+#ifdef _WIN32
+static DWORD WINAPI lookup_thread(LPVOID p)
+{
+	lookup_run((KpNetLookup *)p);
+	return 0;
+}
+#else
+static void *lookup_thread(void *p)
+{
+	lookup_run((KpNetLookup *)p);
+	return NULL;
+}
+#endif
+#endif
+
+/* The name handed to a detached thread of its own; 0 none started (the reason in l->error) */
+static int lookup_spawn(KpNetLookup *l)
+{
+#ifdef __EMSCRIPTEN__
+	snprintf(l->error, sizeof l->error, "no resolver on the web");
+	return 0;
+#else
+	int started;
+#ifdef _WIN32
+	HANDLE t;
+	InitializeCriticalSection(&l->lock);
+#else
+	pthread_t t;
+	pthread_attr_t attr;
+	if (pthread_mutex_init(&l->lock, NULL) != 0) {
+		snprintf(l->error, sizeof l->error, "the resolver's lock: no resources");
+		return 0;
+	}
+#endif
+	l->threaded = 1;
+	l->state = LOOKUP_RESOLVING; /* before the thread starts: from then on it is the thread's to set */
+#ifdef _WIN32
+	t = CreateThread(NULL, 0, lookup_thread, l, 0, NULL);
+	started = t != NULL;
+	if (started) CloseHandle(t); /* detached */
+#else
+	started = pthread_attr_init(&attr) == 0;
+	if (started) {
+		started = pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED) == 0
+			&& pthread_create(&t, &attr, lookup_thread, l) == 0;
+		pthread_attr_destroy(&attr);
+	}
+#endif
+	if (started) return 1;
+#ifdef _WIN32
+	DeleteCriticalSection(&l->lock);
+#else
+	pthread_mutex_destroy(&l->lock);
+#endif
+	l->threaded = 0;
+	l->state = 0;
+	snprintf(l->error, sizeof l->error, "the resolver's thread did not start");
+	return 0;
+#endif
+}
+
+KpNetLookup *kp_net_lookup_start(const char *text)
+{
+	KpNetLookup *l = (KpNetLookup *)calloc(1, sizeof *l);
+	int r;
+	if (!l) return NULL;
+	r = parse_host(text, &l->addr, l->name, &l->port, l->error, sizeof l->error);
+	l->state = r > 0;
+	if (r == 0) (void)lookup_spawn(l);
+	return l;
+}
+
+int kp_net_lookup_poll(KpNetLookup *l, KpNetAddr *out, char *error, size_t size)
+{
+	int state;
+	lookup_lock(l);
+	state = l->state;
+	if (state == 1 && out) *out = l->addr;
+	if (state == 0 && error && size) snprintf(error, size, "%s", l->error);
+	lookup_unlock(l);
+	return state;
+}
+
+void kp_net_lookup_free(KpNetLookup *l)
+{
+	int resolving;
+	if (!l) return;
+	lookup_lock(l);
+	resolving = l->state == LOOKUP_RESOLVING;
+	if (resolving) l->abandoned = 1;
+	lookup_unlock(l);
+	if (!resolving) lookup_destroy(l);
+}

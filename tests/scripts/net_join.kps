@@ -1,8 +1,9 @@
 # Network play by the host's address (docs/phase-network.md, stage N5), the joiner's side of net_host.kps. tools/ci.sh
 # runs it with --lan-map 42010:1:0, a map of its own: the host's broadcasts never reach it, so the join screen lists
 # nothing until the host's address is given in the Address popup (koprulu\address.bin, the host's game list on
-# 127.0.0.1's port 42000, its game on the next port). The game listed, Ok joins it; in the game the joiner moves a
-# worker and logs the shared hash at tick 400, which tools/ci.sh compares with the host's.
+# localhost's port 42000, its game on the next port): a name, which the popup waits for while the resolver's thread
+# looks it up. The game listed, Ok joins it; in the game the joiner moves a worker and logs the shared hash at tick 400,
+# which tools/ci.sh compares with the host's.
 options originals
 clock real
 wait screen gluMain
@@ -21,7 +22,7 @@ wait seconds 2
 expect list.count == 0
 click control gluJoin.16
 wait dialog address and still
-text "127.0.0.1:42000"
+text "localhost:42000"
 click control address.1
 wait screen gluJoin
 wait list.count >= 1 within 10000

@@ -743,7 +743,8 @@ if [ -n "${KOPRULU_APP:-}" ]; then
         fi
       done
       # network play by the host's address (phase N, stage N5): two programs, each the one host of its own map of
-      # 127.0.0.1's ports (the host's game list on 42000, net_join.kps types that address), so no broadcast crosses;
+      # 127.0.0.1's ports (the host's game list on 42000, net_join.kps types localhost:42000, a name the popup waits
+      # for while it is looked up), so no broadcast crosses;
       # the game reaches tick 400 with the same shared hash in both; a joiner that fails stops the host, which would
       # otherwise wait for it (holding its ports) to its own time limit
       app_script net_host 0 "$APP" --data "$KOPRULU_ORIGINAL" --lan-map 42000:1:0 &

@@ -4378,7 +4378,8 @@ typedef struct {
 	int ready;    /* PollBriefingTurn's answer */
 	int entered, released, aborted, armed, starts, start_aborts, polls;
 	char address[KP_UI_ADDRESS]; /* the host by its address the network keeps (KpUiNet.address) */
-	int address_sets, refuse_address;
+	char looked_up[KP_UI_ADDRESS]; /* the address set_address began to look up (lookup_address) */
+	int address_sets, refuse_address, lookup_address;
 } FakeNet;
 
 static FakeNet *fake(void *host) { return (FakeNet *)host; }
@@ -4435,6 +4436,10 @@ static int fake_set_address(void *host, const char *text)
 	FakeNet *n = fake(host);
 	n->address_sets++;
 	if (n->refuse_address) return 0;
+	if (n->lookup_address) { /* the test gives the answer: kp_ui_menus_address_found */
+		snprintf(n->looked_up, sizeof n->looked_up, "%s", text);
+		return -1;
+	}
 	snprintf(n->address, sizeof n->address, "%s", text);
 	return 1;
 }
@@ -4518,7 +4523,9 @@ static void glue_chat_room_follows_the_network(KpT *T)
 /* Koprulu's host by its address (stage N5): the join screen's Address only when the network takes one; it opens
  * koprulu\address.bin with the network's address, which takes the characters of an address only; Ok gives the text to
  * the network, and one it does not take shows the popup's label (hidden again once the address changes) and keeps the
- * popup; Cancel gives nothing. The join screen stays under the popup throughout. */
+ * popup; a name the network looks up keeps the popup waiting (Ok and the edit disabled) for the answer, found (the
+ * popup ends) or not (the label); Cancel gives nothing, and ends a wait (a later answer dropped). The join screen stays
+ * under the popup throughout. */
 static void glue_join_address_asks_the_host(KpT *T)
 {
 	enum { JOIN = 10, FRAMES = 1000, ADDRESS = 16, OK = 1, CANCEL = 3, EDIT = 4, NOT_FOUND = 5 };
@@ -4568,18 +4575,62 @@ static void glue_join_address_asks_the_host(KpT *T)
 	c = child_of(ui, ui->open, NOT_FOUND);
 	kp_t_ok(T, c >= 0 && !(ui->controls[c].flags & KP_UI_VISIBLE), "the label hidden once the address changes");
 	glue_key(G, '7');
+	/* a name the network looks up: the popup waits for the answer, Ok and the edit disabled */
+	n->lookup_address = 1;
 	glue_click(G, OK, -1, -1);
+	for (k = 0; k < 10; k++) glue_frame(G);
+	kp_t_ok(T, n->address_sets == 2 && strcmp(n->looked_up, "badhost:7") == 0, "Ok gave the name to look up");
+	kp_t_eq_str(T, top(G, name, sizeof name), "koprulu\\address.bin", "the popup waits");
+	kp_t_ok(T, (ui->controls[child_of(ui, ui->open, OK)].flags & KP_UI_DISABLED)
+			&& (ui->controls[child_of(ui, ui->open, EDIT)].flags & KP_UI_DISABLED),
+		"Ok and the edit disabled while it waits");
+	glue_key(G, 'x');
+	glue_click(G, OK, -1, -1);
+	for (k = 0; k < 10; k++) glue_frame(G);
+	c = child_of(ui, ui->open, EDIT);
+	kp_t_ok(T, n->address_sets == 2 && ui->controls[c].text && strcmp((const char *)ui->controls[c].text, "badhost:7") == 0,
+		"neither the edit nor Ok take anything while it waits");
+	kp_t_ok(T, kp_ui_menus_address_found(ui, 0), "the popup takes the lookup's answer");
+	glue_frame(G);
+	c = child_of(ui, ui->open, NOT_FOUND);
+	kp_t_ok(T, c >= 0 && (ui->controls[c].flags & KP_UI_VISIBLE), "no address: the label shown");
+	kp_t_ok(T, !(ui->controls[child_of(ui, ui->open, OK)].flags & KP_UI_DISABLED)
+			&& !(ui->controls[child_of(ui, ui->open, EDIT)].flags & KP_UI_DISABLED),
+		"Ok and the edit work again");
+	kp_t_eq_str(T, top(G, name, sizeof name), "koprulu\\address.bin", "the popup stays");
+	glue_click(G, OK, -1, -1);
+	for (k = 0; k < 10; k++) glue_frame(G);
+	c = child_of(ui, ui->open, NOT_FOUND);
+	kp_t_ok(T, n->address_sets == 3 && c >= 0 && !(ui->controls[c].flags & KP_UI_VISIBLE), "Ok looks it up again, the label hidden");
+	kp_t_ok(T, kp_ui_menus_address_found(ui, 1), "the popup takes the lookup's answer");
+	snprintf(n->address, sizeof n->address, "%s", n->looked_up); /* the network keeps what it found */
 	for (k = 0; k < 150; k++) glue_frame(G);
-	kp_t_ok(T, n->address_sets == 2 && strcmp(n->address, "badhost:7") == 0, "the address kept: \"%s\"", n->address);
-	kp_t_eq_str(T, top(G, name, sizeof name), "rez\\glujoin.bin", "the join screen after Ok");
+	kp_t_eq_str(T, top(G, name, sizeof name), "rez\\glujoin.bin", "the join screen once the name was found");
 	kp_t_ok(T, !G->has_last, "the screens ended (%d)", G->last.kind);
 	kp_t_eq(T, ui->menus.state, JOIN, "the join screen's state");
+	kp_t_ok(T, !kp_ui_menus_address_found(ui, 1), "no popup waits for an answer");
+	/* Cancel while it waits: the answer that comes later is the network's to drop */
 	glue_click(G, ADDRESS, -1, -1);
 	wait_for(G, "koprulu\\address.bin", FRAMES);
+	glue_key(G, 'y');
+	glue_click(G, OK, -1, -1);
+	for (k = 0; k < 10; k++) glue_frame(G);
+	kp_t_ok(T, n->address_sets == 4 && strcmp(n->looked_up, "y") == 0, "Ok gave the name to look up");
+	glue_click(G, CANCEL, -1, -1);
+	for (k = 0; k < 150; k++) glue_frame(G);
+	kp_t_eq_str(T, top(G, name, sizeof name), "rez\\glujoin.bin", "Cancel ends the wait");
+	kp_t_ok(T, !kp_ui_menus_address_found(ui, 1), "the answer after Cancel is dropped");
+	kp_t_eq_str(T, n->address, "badhost:7", "the network's address kept");
+	n->lookup_address = 0;
+	glue_click(G, ADDRESS, -1, -1);
+	wait_for(G, "koprulu\\address.bin", FRAMES);
+	kp_t_ok(T, !(ui->controls[child_of(ui, ui->open, OK)].flags & KP_UI_DISABLED)
+			&& !(ui->controls[child_of(ui, ui->open, EDIT)].flags & KP_UI_DISABLED),
+		"a new popup does not wait");
 	glue_key(G, 'x');
 	glue_click(G, CANCEL, -1, -1);
 	for (k = 0; k < 150; k++) glue_frame(G);
-	kp_t_ok(T, n->address_sets == 2 && strcmp(n->address, "badhost:7") == 0, "Cancel gave \"%s\"", n->address);
+	kp_t_ok(T, n->address_sets == 4 && strcmp(n->address, "badhost:7") == 0, "Cancel gave \"%s\"", n->address);
 	kp_t_eq_str(T, top(G, name, sizeof name), "rez\\glujoin.bin", "the join screen after Cancel");
 }
 

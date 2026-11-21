@@ -4,13 +4,16 @@
  * game's network code (KpNetGame) and the screens' adapter (KpNetUi): kp_ui's KpUiNet answered as StarCraft 1.17's
  * glue answers its screens, so a Koprulu seat lists, hosts and joins the lobbies of Koprulu and of the original.
  *
- * Nothing runs a thread: the flow pumps the sockets and Storm's timers each frame (kp_netplay_pump), and a join waits
- * inside SNetJoinGame as the original's glue does (the sockets read meanwhile). TODO: pump Storm on a thread of its own
- * while a mission loads (the plan's native network thread), so a long load does not miss Storm's timeouts.
+ * Nothing runs a thread but a host name's lookup: the flow pumps the sockets and Storm's timers each frame
+ * (kp_netplay_pump), and a join waits inside SNetJoinGame as the original's glue does (the sockets read meanwhile).
+ * TODO: pump Storm on a thread of its own while a mission loads (the plan's native network thread), so a long load does
+ * not miss Storm's timeouts.
  *
  * A host by its address (stage N5): the join screen's Address (and --lan-host) gives the provider a host to ask for its
  * game besides the broadcast (kp_snp_udp_direct), for a game over the internet or a network without broadcasts; the
- * host forwards UDP ports 6111 and 6112 (its --lan-port and the next one) to itself.
+ * host forwards UDP ports 6111 and 6112 (its --lan-port and the next one) to itself. A name is looked up off the main
+ * thread (kp_net_lookup_*) and its answer taken by kp_netplay_pump: the provider asks the host once it has its address,
+ * and the Address popup waits for it (KpUiNet.set_address's -1, kp_ui_menus_address_found).
  *
  * TODO: the web has no UDP sockets and no network play (the user's decision of 2026-11-21: no relay for now; a relay
  * or WebRTC later, docs/phase-network.md).
@@ -67,16 +70,20 @@ typedef struct KpNetPlay {
 	int signalled;   /* a datagram arrived since Storm's last pass */
 	uint32_t wake;   /* Storm's next timer pass, KP_SNET_INFINITE none */
 	char host[KP_NET_HOST]; /* the host by its address ("" none) */
+	KpNetLookup *host_lookup; /* host's address being looked up for the provider, NULL none */
+	KpNetLookup *asked;       /* the Address popup's address (asked_text) being looked up, NULL none */
+	char asked_text[KP_NET_HOST];
 	int locked;      /* lan_lock(1) called */
 } KpNetPlay;
 
 /* p over ui: its hooks set as ui->net, no provider chosen yet. */
 void kp_netplay_init(KpNetPlay *p, KpUi *ui, const KpNetPlayConfig *config);
-/* A frame's network: what arrived on the sockets handed to the provider, Storm's pass when it is due. */
+/* A frame's network: a host's address that a lookup found given to the provider (and the Address popup told), what
+ * arrived on the sockets handed to the provider, Storm's pass when it is due. */
 void kp_netplay_pump(KpNetPlay *p);
 /* AbortNetworkGame 0x474e60: the game left (the chat room's start the flow cannot play yet), the provider kept. */
 void kp_netplay_leave(KpNetPlay *p);
-/* The provider's stack and the texts freed (ui->net is the caller's to clear). */
+/* The provider's stack, the lookups and the texts freed (ui->net is the caller's to clear). */
 void kp_netplay_free(KpNetPlay *p);
 
 #ifdef __cplusplus

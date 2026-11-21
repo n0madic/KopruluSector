@@ -11,7 +11,8 @@
  * every interface. A program the map does not hold (Koprulu against the bridge) binds two adjacent ports of its own:
  * the bridge names it 10.0.1.n, and to itself it is 127.0.0.2 (its broadcasts come back to it, as on Windows).
  *
- * Nothing here runs a thread: kp_net_sock_wait reads what arrived, the caller feeds the provider and pumps SNet.
+ * Nothing here runs a thread but a name's lookup (kp_net_lookup_*): kp_net_sock_wait reads what arrived, the caller
+ * feeds the provider and pumps SNet.
  */
 #ifndef KP_NET_SOCK_H
 #define KP_NET_SOCK_H
@@ -52,10 +53,17 @@ uint16_t kp_net_sock_port(const KpNetSock *s, int socket);
 uint32_t kp_net_sock_now(void);
 /* Datagrams the system refused to send (an unreachable host, a full buffer). */
 long kp_net_sock_send_errors(const KpNetSock *s);
-/* A host's address as the player gives it (kp_net_host_parse) as its socket A's provider address: a dotted IPv4
- * address as it is, a name by the system's resolver (IPv4 only: Storm's addresses are sockaddr_in; the call waits for
- * the resolver). 0 with the reason in `error` when it is no address or the name has none (and on the web). */
-int kp_net_sock_resolve(const char *text, KpNetAddr *out, char *error, size_t size);
+/* A host's address as the player gives it (kp_net_host_parse) looked up as its socket A's provider address, off the
+ * caller's thread: a dotted IPv4 address, or a text that is no address, is answered at once; a name goes to the
+ * system's resolver (IPv4 only: Storm's addresses are sockaddr_in) on a thread of its own, which may take as long as
+ * the resolver does. The web has no resolver: a name has no address there. */
+typedef struct KpNetLookup KpNetLookup;
+/* The lookup of text started; NULL only when out of memory. */
+KpNetLookup *kp_net_lookup_start(const char *text);
+/* Never waits: 1 the address into *out, 0 none (the reason in `error`), -1 still resolving. */
+int kp_net_lookup_poll(KpNetLookup *l, KpNetAddr *out, char *error, size_t size);
+/* Frees l (NULL nothing); one still resolving is given up, its thread frees it once the resolver returns. */
+void kp_net_lookup_free(KpNetLookup *l);
 
 #ifdef __cplusplus
 }

@@ -159,6 +159,10 @@ target_link_libraries(kp_app_core PUBLIC kp_present kp_storm kp_casc_c kp_vpx kp
 if(WIN32)
 	target_link_libraries(kp_app_core PUBLIC ws2_32) # kp_net_sock's Winsock
 endif()
+if(NOT EMSCRIPTEN) # the web build has no threads (no SharedArrayBuffer) and resolves no name
+	find_package(Threads REQUIRED)
+	target_link_libraries(kp_app_core PUBLIC Threads::Threads) # kp_net_sock's lookup of a host's name
+endif()
 
 # --- kp_json: the tools' JSON (the oracle's goldens, kp_convert's scenario specs) ---
 if(KP_TOOLS OR KP_ENCODERS)

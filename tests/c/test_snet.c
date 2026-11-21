@@ -362,8 +362,7 @@ static void game_list_is_bounded(KpT *T)
 	kp_snp_udp_free(&sender);
 }
 
-/* The host's address as the player gives it (kp_net_host_parse), a dotted IPv4 address (kp_net_ipv4_parse) and the
- * provider address of either (kp_net_sock_resolve). */
+/* The host's address as the player gives it (kp_net_host_parse) and a dotted IPv4 address (kp_net_ipv4_parse). */
 static void host_address_parsing(KpT *T)
 {
 	static const struct {
@@ -412,10 +411,9 @@ static void host_address_parsing(KpT *T)
 		{"a.b.c.d", 0, 0},
 		{"", 0, 0},
 	};
-	char name[KP_NET_HOST], error[128], text[KP_NET_HOST + 8];
+	char name[KP_NET_HOST], text[KP_NET_HOST + 8];
 	uint16_t port;
 	uint32_t ip;
-	KpNetAddr a;
 	size_t k;
 	for (k = 0; k < sizeof HOSTS / sizeof HOSTS[0]; k++) {
 		int ok = kp_net_host_parse(HOSTS[k].text, name, sizeof name, &port);
@@ -432,17 +430,54 @@ static void host_address_parsing(KpT *T)
 		int ok = kp_net_ipv4_parse(IPS[k].text, &ip);
 		kp_t_ok(T, ok == IPS[k].ok && (!ok || ip == IPS[k].ip), "\"%s\": %d, %#x", IPS[k].text, ok, ok ? ip : 0);
 	}
-	kp_t_ok(T, kp_net_sock_resolve("127.0.0.1:7000", &a, error, sizeof error) && kp_net_addr_ip(&a) == 0x7f000001u &&
-			kp_net_addr_port(&a) == 7000,
-		"a dotted address: %s", error);
-	kp_t_ok(T, !kp_net_sock_resolve("no address!", &a, error, sizeof error) && error[0], "no address");
+}
+
+/* A lookup's first answer (kp_net_lookup_poll), and the answer it gives within LOOKUP_MS */
+#define LOOKUP_MS 10000
+static int lookup(const char *text, int *first, KpNetAddr *a, char *error, size_t size)
+{
+	KpNetLookup *l = kp_net_lookup_start(text);
+	uint32_t until = kp_net_sock_now() + LOOKUP_MS;
+	int r;
+	*first = -2;
+	if (!l) return -2;
+	r = *first = kp_net_lookup_poll(l, a, error, size);
+	while (r < 0 && (int32_t)(until - kp_net_sock_now()) > 0) r = kp_net_lookup_poll(l, a, error, size);
+	kp_net_lookup_free(l);
+	return r;
+}
+
+/* A host's address looked up off the caller's thread (kp_net_lookup_*): a dotted address and a text that is no address
+ * answered at once, a name by the resolver's thread (none on the web); lookups given up while they resolve free
+ * themselves (ASan's leak check sees one that does not). */
+static void host_address_lookups(KpT *T)
+{
+	KpNetLookup *gone[4];
+	KpNetAddr a;
+	char error[128];
+	int first, r;
+	size_t k;
+	error[0] = 0;
+	r = lookup("127.0.0.1:7000", &first, &a, error, sizeof error);
+	kp_t_ok(T, first == 1 && r == 1 && kp_net_addr_ip(&a) == 0x7f000001u && kp_net_addr_port(&a) == 7000,
+		"a dotted address at once: %d %s", first, error);
+	r = lookup("no address!", &first, &a, error, sizeof error);
+	kp_t_ok(T, first == 0 && r == 0 && strstr(error, "is not an address") != NULL, "no address at once: %s", error);
+	r = lookup("localhost", &first, &a, error, sizeof error);
 #ifdef __EMSCRIPTEN__
-	kp_t_ok(T, !kp_net_sock_resolve("localhost", &a, error, sizeof error), "a name resolved on the web");
+	kp_t_ok(T, first == 0 && r == 0 && strstr(error, "no resolver") != NULL, "no name on the web: %s", error);
 #else
-	kp_t_ok(T, kp_net_sock_resolve("localhost", &a, error, sizeof error) && (kp_net_addr_ip(&a) >> 24) == 127 &&
-			kp_net_addr_port(&a) == KP_NET_LIST_PORT,
-		"localhost: %s", error);
+	kp_t_ok(T, r == 1 && (kp_net_addr_ip(&a) >> 24) == 127 && kp_net_addr_port(&a) == KP_NET_LIST_PORT,
+		"localhost by the resolver's thread: %d %s", r, error); /* the hosts file's: no network needed */
 #endif
+	for (k = 0; k < sizeof gone / sizeof gone[0]; k++) {
+		gone[k] = kp_net_lookup_start(k % 2 ? "localhost:6200" : "localhost");
+		kp_t_ok(T, gone[k] != NULL, "lookup %u started", (unsigned)k);
+	}
+	for (k = 0; k < sizeof gone / sizeof gone[0]; k++) kp_net_lookup_free(gone[k]);
+	kp_net_lookup_free(NULL);
+	r = lookup("localhost", &first, &a, error, sizeof error); /* time for the threads given up to end */
+	kp_t_ok(T, r >= 0, "a lookup after those given up: %d", r);
 }
 
 /* The port of the game the provider lists for an advertisement from `from` (0: none listed). */
@@ -1148,6 +1183,7 @@ static const KpTest TESTS[] = {
 	{ "game_list_follows_the_advertisements", game_list_follows_the_advertisements, 0 },
 	{ "game_list_is_bounded", game_list_is_bounded, 0 },
 	{ "host_address_parsing", host_address_parsing, 0 },
+	{ "host_address_lookups", host_address_lookups, 0 },
 	{ "host_by_address_ports", host_by_address_ports, 0 },
 	{ "host_by_address_without_broadcasts", host_by_address_without_broadcasts, 0 },
 	{ "two_seats_play_in_lockstep", two_seats_play_in_lockstep, 0 },
