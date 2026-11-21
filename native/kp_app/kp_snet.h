@@ -17,7 +17,13 @@
  *     address and every packet until its memory runs out; one global bound would let one address stop every seat's
  *     turns). With KP_SNET_RECORDS kept, a new address takes the place of the stranger heard least recently (no
  *     player id, no dropped player's old id, not the join's host; one not connecting first), so forged addresses
- *     cannot keep a new player out; only when every record is a player's is its datagram dropped;
+ *     cannot keep a new player out; only when every record is a player's is its datagram dropped. The limit: a
+ *     joiner's record is a stranger from its connect (control command 1) until the host reads its join request
+ *     (command 7), a round trip and the host's next pump, so more than KP_SNET_RECORDS - 1 forged connects in that
+ *     time (tens of thousands of datagrams a second, held as long as joins should fail; the bound alone took
+ *     KP_SNET_RECORDS datagrams every FORGET) evict it and its join fails. Evicting the newest, refusing when full or
+ *     a bound per address prefix each make that cheaper, and the 1.17 wire does not authenticate a sender: whoever
+ *     forges a player's address can as well send that player's packets;
  *   - a datagram that fails Storm's own checks of its header (its length, class and checksum) makes no record (Storm
  *     makes the sender's record first);
  *   - who may send what (a peer's datagram is unauthenticated, and since stage N5 a host is reached over the internet;
