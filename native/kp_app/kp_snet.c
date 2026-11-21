@@ -244,10 +244,37 @@ static void player_free(KpSnet *s, Player *r)
 	free(r);
 }
 
+static void remote_delete(KpSnet *s, Player *r);
+
+/* Koprulu's (kp_snet.h): the record a new address takes the place of once KP_SNET_RECORDS are kept, the stranger
+ * heard least recently, one that has not started a connection before one that has. A stranger has no player id and
+ * no dropped player's old id, is not the record whose control packets are dispatched and not the join's host; no game
+ * state lives in it. NULL when every record is a player's. Storm allocates records without a bound: a bound alone let
+ * datagrams from forged addresses keep every new player out. */
+static Player *stalest_stranger(KpSnet *s)
+{
+	Player *r, *best = NULL;
+	uint32_t now = now_of(s), age = 0;
+	for (r = s->remotes; r; r = r->next) {
+		uint32_t a = now - r->heard;
+		if (r->id != KP_SNET_NO_ID || r->old_id != KP_SNET_NO_ID || r == s->dispatching) continue;
+		if (s->joining && kp_net_addr_eq(&r->addr, &s->join_addr)) continue;
+		if (!best || (!r->connecting && best->connecting) || (!r->connecting == !best->connecting && a > age)) {
+			best = r;
+			age = a;
+		}
+	}
+	return best;
+}
+
 static Player *remote_new(KpSnet *s, const KpNetAddr *addr)
 {
 	Player *r;
-	if (s->remote_count >= KP_SNET_RECORDS) return NULL;
+	if (s->remote_count >= KP_SNET_RECORDS) {
+		Player *old = stalest_stranger(s);
+		if (!old) return NULL;
+		remote_delete(s, old);
+	}
 	if (!(r = player_new(s, addr))) return NULL;
 	if (s->remotes_tail) s->remotes_tail->next = r;
 	else s->remotes = r;
@@ -685,12 +712,15 @@ static void on_datagram(KpSnet *s, const KpNetAddr *from, const uint8_t *d, uint
 	unsigned cls, cmd;
 	uint16_t seq, ack, next;
 	Node *n, *prev, *at;
-	if (flags & FLAG_RELAYED) r = find_by_id(s, d[10]);
-	else r = find_or_create(s, from);
-	if (!r || !local || size < KP_SNET_HEADER) return;
+	/* Koprulu's: Storm's checks of the header come before the sender's record is found or made (kp_snet.h), so a
+	 * datagram no peer sends makes no record; they read no clock */
+	if (size < KP_SNET_HEADER) return;
 	len = kp_net_get16(d + 2);
 	cls = d[8];
 	if (len < KP_SNET_HEADER || len > size || cls >= KP_SNET_CLASSES || kp_net_sum(d, len) != 0) return;
+	if (flags & FLAG_RELAYED) r = find_by_id(s, d[10]);
+	else r = find_or_create(s, from);
+	if (!r || !local) return;
 	if ((flags & FLAG_RELAYED) && !relay_accepted(s, from, cls)) return;
 	if (!s->joining && !(flags & FLAG_RELAYED) && d[10] != KP_SNET_NO_ID && find_by_id(s, d[10]) != r) return;
 	seq = (uint16_t)kp_net_get16(d + 4);

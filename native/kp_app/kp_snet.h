@@ -15,7 +15,11 @@
  *     packets (KP_SNET_UNKNOWN_FILED without a player id), and records without an id together file only while fewer
  *     than half of KP_SNET_NODES are in use: a datagram beyond them is dropped (Storm allocates for every forged
  *     address and every packet until its memory runs out; one global bound would let one address stop every seat's
- *     turns);
+ *     turns). With KP_SNET_RECORDS kept, a new address takes the place of the stranger heard least recently (no
+ *     player id, no dropped player's old id, not the join's host; one not connecting first), so forged addresses
+ *     cannot keep a new player out; only when every record is a player's is its datagram dropped;
+ *   - a datagram that fails Storm's own checks of its header (its length, class and checksum) makes no record (Storm
+ *     makes the sender's record first);
  *   - who may send what (a peer's datagram is unauthenticated, and since stage N5 a host is reached over the internet;
  *     none of these changes a datagram an honest 1.17 or Koprulu peer sends, ADR 0026's review addition):
  *       - during a join, control commands 2, 6, 8, 9 and 10 (accept, player info, game info, template, reject) count

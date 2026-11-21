@@ -1020,6 +1020,47 @@ static void strangers_cannot_steer_a_join(KpT *T)
 		w->seat[1].id, w->seat[1].templates);
 }
 
+#define FORGED_ADDRESSES (KP_SNET_RECORDS + 1000) /* past the records' bound */
+#define FORGED(k) (0x0b000000u + (uint32_t)(k))  /* 11.0.k.k: addresses no seat has */
+
+/* Forged addresses cannot keep a new player out (kp_snet.h's departures): datagrams that fail the header's checks make
+ * no record, and once valid ones from more addresses than KP_SNET_RECORDS fill the records, a joiner's address takes a
+ * stranger's place. With the bound alone the third seat's join found no room on the host. */
+static void forged_addresses_cannot_keep_a_player_out(KpT *T)
+{
+	World *w = world_new(T, 24, 3);
+	uint8_t bad[KP_SNET_HEADER];
+	int before, k;
+	host(w, 0, "Koprulu", "", 3);
+	join(w, 1, "Koprulu");
+	before = kp_snet_remote_count(w->seat[0].n.net);
+	memset(bad, 0, sizeof bad);
+	kp_net_put16(bad + 2, KP_SNET_HEADER);
+	bad[8] = 3;
+	kp_net_checksum(bad, sizeof bad);
+	bad[0] ^= 0x5a; /* a checksum Storm refuses */
+	for (k = 0; k < 500; k++) {
+		KpNetAddr from = kp_net_addr(FORGED(k), KP_NET_GAME_PORT);
+		kp_net_world_deliver(&w->seat[0].n, KP_NET_SOCKET_GAME, &from, bad, sizeof bad);
+		if (k % 256 == 255) play(w, 1); /* within the provider's queue */
+	}
+	play(w, 10);
+	kp_t_eq(T, kp_snet_remote_count(w->seat[0].n.net), before, "a refused datagram makes no record");
+	for (k = 0; k < FORGED_ADDRESSES; k++) {
+		forge(w, 0, FORGED(k), 3, 0, 0, KP_SNET_NO_ID, 0, NULL, 0);
+		if (k % 256 == 255) play(w, 1);
+	}
+	play(w, 10);
+	kp_t_eq(T, kp_snet_remote_count(w->seat[0].n.net), KP_SNET_RECORDS, "the forged addresses fill the records");
+	join(w, 2, "Koprulu");
+	kp_t_ok(T, w->seat[2].id == 2, "the third seat's id %d", w->seat[2].id);
+	kp_t_ok(T, kp_snet_remote_count(w->seat[0].n.net) <= KP_SNET_RECORDS, "%d records",
+		kp_snet_remote_count(w->seat[0].n.net));
+	kp_t_ok(T, kp_snet_is_host(w->seat[2].n.net, 0) == 1 && kp_snet_is_host(w->seat[2].n.net, 1) == 0,
+		"the joiner knows the host and the first joiner: %d %d", kp_snet_is_host(w->seat[2].n.net, 0),
+		kp_snet_is_host(w->seat[2].n.net, 1));
+}
+
 /* Three seats on the system's sockets over 127.0.0.1: the two hosts of a map (Koprulu's own games on one machine) and
  * a program the map does not hold (Koprulu against the network oracle's bridge), on the two ports above the map's.
  * They list and join the game, play in lockstep, and see a leave at one turn. */
@@ -1295,6 +1336,7 @@ static const KpTest TESTS[] = {
 	{ "garbage_is_ignored", garbage_is_ignored, 0 },
 	{ "strangers_cannot_steer_a_game", strangers_cannot_steer_a_game, 0 },
 	{ "strangers_cannot_steer_a_join", strangers_cannot_steer_a_join, 0 },
+	{ "forged_addresses_cannot_keep_a_player_out", forged_addresses_cannot_keep_a_player_out, 0 },
 	{ "sockets_carry_a_game", sockets_carry_a_game, 0 },
 	{ "sockets_reach_a_host_by_address", sockets_reach_a_host_by_address, 0 },
 	{ "live_bridge_join", live_bridge_join, 0 },

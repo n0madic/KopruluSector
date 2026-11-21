@@ -261,6 +261,7 @@ Not the original's, and nothing on the wire changes: an honest 1.17 or Koprulu p
 - commands 12 to 15 count only from a record with a player id;
 - a relayed packet counts only in class 2 and only from the address of a record with a player id (the original attributes it to the player its sender byte names: one datagram ran as the host's turn);
 - a record files at most 1024 packets, 256 without a player id, and records without an id together file only while fewer than half of the 16,384 packets kept are in use; class 3 is not filed.
+- a datagram that fails the header's checks above (its length, class or checksum) makes no record (the original makes the sender's record first); with 1024 records kept, a new address takes the place of the stranger heard least recently (a record with no player id and no dropped player's old id, not the join's host, one that has not started a connection first), so datagrams from forged addresses cannot keep a joiner out; only when every record is a player's is a new address's datagram dropped.
 
 ## Runtime confirmation (2026-11-17)
 

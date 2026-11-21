@@ -14,7 +14,14 @@
 #ifdef _WIN32
 #include <sys/utime.h>
 #else
+#include <fcntl.h>
+#include <unistd.h>
 #include <utime.h>
+#ifndef __EMSCRIPTEN__
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#endif
 #endif
 
 #include "kp_flow.h"
@@ -22,6 +29,7 @@
 #include "kp_ids.h"
 #include "kp_mpq.h"
 #include "kp_net_lobby.h"
+#include "kp_netplay.h"
 #include "kp_netsave.h"
 #include "kp_oracle.h"
 #include "kp_rep.h"
@@ -105,6 +113,8 @@ typedef struct {
 	char export_name[64];
 	uint8_t *export_bytes;
 	size_t export_size;
+	const char *watch;       /* the log's lines that hold this text are counted in watched (NULL: none) */
+	int watched;
 } Host;
 
 /* --- the host --- */
@@ -115,6 +125,7 @@ static void host_log(void *ctx, const char *line)
 {
 	Host *H = (Host *)ctx;
 	snprintf(H->last_log, sizeof H->last_log, "%s", line);
+	if (H->watch && strstr(line, H->watch)) H->watched++;
 }
 
 static uint8_t *host_read(void *ctx, const char *path, size_t *size)
@@ -2195,6 +2206,387 @@ static void a_failed_network_game_leaves_storms_game(KpT *T)
 	kp_t_ok(T, text != NULL && strcmp((const char *)H->f.ui->lines.text[ERROR_LINE], (const char *)text) == 0,
 		"the error line: \"%s\"", (const char *)H->f.ui->lines.text[ERROR_LINE]);
 	H->f.net_game = 0;
+}
+
+/* --- a network game's flow over a Storm of the test's --- */
+
+#define LOOP_TURNS 16          /* turns in transit the loop holds: past the transit's 8 */
+#define LOOP_TURN_BYTES 0x400  /* a turn's bytes: past KP_NETGAME_TURN_MAX */
+#define LOOP_PEER 1            /* the peer's Storm ID and slot */
+#define LOOP_GAME "Koprulu Game"
+#define LOOP_PEER_NAME "Zeratul"
+#define LOOP_SEED 0x5eedu
+#define LOOP_SPEED 6           /* the game header's speed: the fastest */
+#define PROTOSS_ROOM 9         /* the race ready room's glue state of a Protoss player */
+
+/* Storm for a network game of which this seat alone sends: SNetReceiveTurns hands its own turns back, as Storm hands
+ * every seat its own, and nothing else arrives. The peer stands in the lobby's records only. */
+typedef struct {
+	uint8_t turn[LOOP_TURNS][LOOP_TURN_BYTES];
+	uint32_t size[LOOP_TURNS];
+	int head, count;
+	uint8_t current[LOOP_TURN_BYTES];
+	uint32_t error;
+	int leaves;
+} LoopStorm;
+
+static LoopStorm *loop_of(void *ud) { return (LoopStorm *)ud; }
+
+static int loop_refuse(LoopStorm *l, uint32_t error)
+{
+	l->error = error;
+	return 0;
+}
+
+static int loop_create(void *ud, const char *name, const char *password, const char *stats, uint32_t game_type,
+	uint32_t ladder_type, uint32_t mode, const void *tmpl, uint32_t tmpl_size, uint32_t max_players,
+	const char *player_name, const char *player_desc, int *player_id)
+{
+	(void)name, (void)password, (void)stats, (void)game_type, (void)ladder_type, (void)mode, (void)tmpl;
+	(void)tmpl_size, (void)max_players, (void)player_name, (void)player_desc, (void)player_id;
+	return loop_refuse(loop_of(ud), KP_SNET_ERROR_PARAMETER);
+}
+
+static int loop_join(void *ud, uint32_t game_id, const char *name, const char *password, const char *player_name,
+	const char *player_desc, int *player_id)
+{
+	(void)game_id, (void)name, (void)password, (void)player_name, (void)player_desc, (void)player_id;
+	return loop_refuse(loop_of(ud), KP_SNET_ERROR_PARAMETER);
+}
+
+static int loop_leave(void *ud, uint32_t reason)
+{
+	(void)reason;
+	loop_of(ud)->leaves++;
+	return 1;
+}
+
+static int loop_enum(void *ud, int (*fn)(void *fn_ud, const KpSnetGame *g), void *fn_ud, uint32_t *hint)
+{
+	(void)fn, (void)fn_ud, (void)hint;
+	return loop_refuse(loop_of(ud), KP_SNET_ERROR_NO_DATA);
+}
+
+static int loop_send_turn(void *ud, const void *data, uint32_t size)
+{
+	LoopStorm *l = loop_of(ud);
+	int at = (l->head + l->count) % LOOP_TURNS;
+	if (l->count == LOOP_TURNS || size > LOOP_TURN_BYTES) return loop_refuse(l, KP_SNET_ERROR_PARAMETER);
+	if (size) memcpy(l->turn[at], data, size);
+	l->size[at] = size;
+	l->count++;
+	return 1;
+}
+
+static int loop_receive_turns(void *ud, int first, int count, const uint8_t **data, uint32_t *sizes, uint32_t *status)
+{
+	LoopStorm *l = loop_of(ud);
+	int k;
+	if (!l->count) return loop_refuse(l, KP_SNET_ERROR_NO_DATA);
+	memcpy(l->current, l->turn[l->head], l->size[l->head]);
+	for (k = 0; k < count; k++) {
+		data[k] = NULL;
+		sizes[k] = 0;
+		status[k] = 0;
+	}
+	if (first == 0 && count > 0) { /* this seat is Storm ID 0 */
+		data[0] = l->current;
+		sizes[0] = l->size[l->head];
+		status[0] = KP_SNET_PRESENT | KP_SNET_HAS_TURN | KP_SNET_RESPONDING;
+	}
+	l->head = (l->head + 1) % LOOP_TURNS;
+	l->count--;
+	return 1;
+}
+
+static int loop_in_transit(void *ud, uint32_t *turns)
+{
+	*turns = (uint32_t)loop_of(ud)->count;
+	return 1;
+}
+
+static int loop_send_message(void *ud, int target, const void *data, uint32_t size)
+{
+	(void)ud, (void)target, (void)data, (void)size;
+	return 1;
+}
+
+static int loop_receive_message(void *ud, int *sender, const uint8_t **data, uint32_t *size)
+{
+	(void)sender, (void)data, (void)size;
+	return loop_refuse(loop_of(ud), KP_SNET_ERROR_NO_DATA);
+}
+
+static int loop_game_info(void *ud, int type, void *buf, uint32_t size, uint32_t *written)
+{
+	(void)type, (void)buf, (void)size, (void)written;
+	return loop_refuse(loop_of(ud), KP_SNET_ERROR_PARAMETER);
+}
+
+static int loop_set_mode(void *ud, uint32_t mode, int make_private)
+{
+	(void)ud, (void)mode, (void)make_private;
+	return 1;
+}
+
+static int loop_player_name(void *ud, int id, char *buf, uint32_t size)
+{
+	(void)id, (void)buf, (void)size;
+	return loop_refuse(loop_of(ud), KP_SNET_ERROR_BAD_PLAYER);
+}
+
+static int loop_caps(void *ud, KpSnetCaps *caps)
+{
+	(void)ud;
+	*caps = KP_SNET_UDP_CAPS;
+	return 1;
+}
+
+static int loop_drop(void *ud, int id, uint32_t reason)
+{
+	(void)ud, (void)id, (void)reason;
+	return 1;
+}
+
+static int loop_disconnect(void *ud, uint32_t reason)
+{
+	(void)ud, (void)reason;
+	return 1;
+}
+
+static uint32_t loop_error(void *ud) { return loop_of(ud)->error; }
+
+static KpNetCalls loop_calls(LoopStorm *l)
+{
+	KpNetCalls c;
+	memset(&c, 0, sizeof c);
+	c.create_game = loop_create;
+	c.join_game = loop_join;
+	c.leave_game = loop_leave;
+	c.enum_games = loop_enum;
+	c.send_turn = loop_send_turn;
+	c.receive_turns = loop_receive_turns;
+	c.turns_in_transit = loop_in_transit;
+	c.send_message = loop_send_message;
+	c.receive_message = loop_receive_message;
+	c.game_info = loop_game_info;
+	c.set_game_mode = loop_set_mode;
+	c.player_name = loop_player_name;
+	c.provider_caps = loop_caps;
+	c.drop_player = loop_drop;
+	c.disconnect_all = loop_disconnect;
+	c.error = loop_error;
+	c.ud = l;
+	return c;
+}
+
+/* The flow's network game as its chat room leaves it to the start (the host's lobby of protoss01's scenario as a map
+ * with Use Map Settings): the flow's own network (kp_netplay) with the game over l, this seat the host in slot 0 and
+ * the peer in LOOP_PEER, both humans. The game starts at the menus' end, in the Protoss ready room. */
+static void loop_network_game(Host *H, LoopStorm *l)
+{
+	KpT *T = H->T;
+	const KpDataMission *mission = mission_entry(H, PROTOSS01);
+	KpNetPlay *p = H->f.netplay;
+	KpNetGame *ng = &p->game;
+	const KpTemplate *ums = NULL;
+	KpNetGameHooks hooks;
+	KpNetGameConfig config;
+	KpNetCalls calls = loop_calls(l);
+	KpMapHeader mh;
+	KpNetMap m;
+	KpError err;
+	uint8_t *chk;
+	size_t size = 0;
+	char path[512], why[256];
+	int k;
+	for (k = 0; k < H->data->templates.count && !ums; k++)
+		if (strcmp(H->data->templates.list[k].name, TYPE_UMS_TEXT) == 0) ums = &H->data->templates.list[k];
+	kp_t_ok(T, ums != NULL, "the " TYPE_UMS_TEXT " template");
+	snprintf(path, sizeof path, "%s\\staredit\\scenario.chk", mission->directory);
+	kp_t_ok(T, (chk = kp_files_need(&H->data->files, path, &size, &err)) != NULL, "%s", err.msg);
+	snprintf(path, sizeof path, "%smaps", H->pref);
+	kp_t_ok(T, kp_t_mkdir(path) == 0, "%s", path);
+	write_custom_map(H, NEXT_FIRST, chk, size);
+	k = kp_map_header(&mh, chk, size, H->data->files.profile, 0, why, sizeof why);
+	free(chk);
+	kp_t_ok(T, k == 0, "the map's header: %s", why);
+	hooks = kp_netui_game_hooks(&p->nu);
+	memset(&config, 0, sizeof config);
+	snprintf(config.player_name, sizeof config.player_name, "%s", H->profile.name);
+	config.templates = &H->data->templates;
+	kp_t_eq(T, kp_netgame_init(ng, &calls, &hooks, &config), 0, "the network's game");
+	p->game_on = 1;
+	p->nu.game = ng;
+	snprintf(path, sizeof path, "%smaps/" NEXT_FIRST, H->pref);
+	kp_netgame_map(&m, &mh, path, &ng->hooks);
+	kp_netgame_set_map(ng, &m);
+	snprintf(ng->header.name, sizeof ng->header.name, LOOP_GAME);
+	ng->header.max_players = mh.players;
+	ng->header.speed = LOOP_SPEED;
+	memcpy(ng->header.template_record, ums->record, KP_TEMPLATE_SIZE);
+	ng->host = 1;
+	ng->seed = LOOP_SEED;
+	ng->local_storm = ng->local_slot = ng->local_index = 0;
+	for (k = 0; k <= LOOP_PEER; k++) {
+		KpNetSlot *s = &ng->slots[k];
+		s->storm = k;
+		s->type = KP_CTRL_HUMAN;
+		snprintf(s->name, sizeof s->name, "%s", k ? LOOP_PEER_NAME : H->profile.name);
+		ng->storm_slot[k] = (uint8_t)k;
+		ng->players[k].state = 1;
+	}
+	H->f.ui->menus.multiplayer = 1;
+	menus_end(H, KP_UI_MENU_NETWORK, PROTOSS_ROOM, 0, 0, 0);
+	kp_t_ok(T, H->f.net_game && H->f.session, "the network's game stands (%s)", H->last_log);
+	kp_t_eq(T, H->f.glue.screen, KP_GLUE_ROOM, "in its ready room");
+}
+
+/* The ready room's Start of a network game: the room waits for every present player's 0x54, which comes back with
+ * this seat's turns. */
+static void loop_room_start(Host *H)
+{
+	int k;
+	wait_for(H, PROTOSS_ROOM_BIN, ROOM_FRAMES);
+	key(H, 's');
+	for (k = 0; k < END_FRAMES && !H->f.hud_on; k++) frame(H);
+	kp_t_ok(H->T, H->f.hud_on, "the room's Start: the console (%s)", H->last_log);
+}
+
+static void loop_free(void *p) { free(p); }
+
+/* A network game's replay names its humans by the lobby's names and its header by the game's name (it named every human
+ * after the local player). A player who leaves in a Use Map Settings game's ready room is a lobby leave there
+ * (HandlePlayerLeftLobby 0x477c20), and the original builds its game from the records after the room
+ * (RunGameSession 0x467ba0's StartGame): at the room's Start the flow builds the game the room showed again without the
+ * player, and the game starts at once; without a leave the room's game goes on. */
+static void network_ready_room_builds_the_game_again(KpT *T)
+{
+	int pass;
+	for (pass = 0; pass < 2; pass++) {
+		LoopStorm *l = (LoopStorm *)calloc(1, sizeof *l);
+		Host *H;
+		KpRep rep;
+		KpRepPlayer local, peer;
+		KpError err;
+		const KpGameSetup *s;
+		kp_t_ok(T, l != NULL, "out of memory");
+		kp_t_defer(T, loop_free, l); /* freed after the flow, whose end leaves Storm's game */
+		H = logged_in_host(T, "Fenix");
+		if (!H->f.netplay) kp_t_skip(T, "no network play (the web)");
+		loop_network_game(H, l);
+		/* the replay of the game the room shows */
+		memset(&rep, 0, sizeof rep);
+		kp_t_ok(T, kp_session_replay_file(H->f.session, NULL, &rep, &err) == 0, "the replay: %s", err.msg);
+		kp_rep_player(&rep, 0, &local);
+		kp_rep_player(&rep, LOOP_PEER, &peer);
+		kp_t_eq_str(T, (const char *)rep.header + KP_REP_GAME_NAME, LOOP_GAME, "the header's name: the game's");
+		kp_t_ok(T, local.type == KP_CTRL_HUMAN && strcmp(local.name, "Fenix") == 0, "this seat's human: %s",
+			local.name);
+		kp_t_ok(T, peer.type == KP_CTRL_HUMAN && strcmp(peer.name, LOOP_PEER_NAME) == 0, "the peer's: %s", peer.name);
+		kp_rep_free(&rep);
+		if (pass == 0) { /* the peer's Cancel in the room: Storm removes the player (event 3) */
+			KpSnetEvent e;
+			memset(&e, 0, sizeof e);
+			e.id = KP_SNET_EVENT_REMOVED;
+			e.player = LOOP_PEER;
+			kp_netgame_event(&H->f.netplay->game, &e);
+		}
+		loop_room_start(H);
+		s = &H->f.session->g->setup;
+		kp_t_eq(T, H->f.glue.screen != KP_GLUE_ROOM, 1, "no ready room again");
+		kp_t_ok(T, s->type[0] == KP_CTRL_HUMAN && s->storm[0] == 0, "this seat plays");
+		if (pass == 0) {
+			kp_t_ok(T, !(s->type[LOOP_PEER] == KP_CTRL_HUMAN && s->storm[LOOP_PEER] == LOOP_PEER),
+				"the game built again without the peer (type %d, Storm ID %d)", (int)s->type[LOOP_PEER],
+				(int)s->storm[LOOP_PEER]);
+		} else {
+			kp_t_ok(T, s->type[LOOP_PEER] == KP_CTRL_HUMAN && s->storm[LOOP_PEER] == LOOP_PEER
+				&& strcmp(s->name[LOOP_PEER], LOOP_PEER_NAME) == 0, "the room's game goes on with the peer");
+		}
+		frames(H, 10);
+		kp_t_eq(T, H->f.net_left, 0, "the game runs on (%s)", H->last_log);
+		kp_t_eq(T, H->quits, 0, NULL);
+	}
+}
+
+#define SOCKETS_FAILED "the sockets failed" /* kp_netplay's line for a socket that fails */
+#define FREE_PORT_TRIES 32
+#define MAX_FD 1024
+
+#if !defined(_WIN32) && !defined(__EMSCRIPTEN__)
+/* The flow's network with the UDP provider chosen on two free ports of 127.0.0.1 (a map of one host, as Koprulu's own
+ * games on one machine); 1 chosen. */
+static int choose_udp_on_free_ports(Host *H)
+{
+	KpNetPlay *p = H->f.netplay;
+	int attempt;
+	for (attempt = 0; attempt < FREE_PORT_TRIES; attempt++) {
+		uint32_t base = 20000u + (kp_net_sock_now() / 2u + (uint32_t)attempt * 7919u) % 20000u * 2u;
+		memset(&p->config.sock, 0, sizeof p->config.sock);
+		p->config.sock.map_base = (uint16_t)base;
+		p->config.sock.map_hosts = 1;
+		p->config.sock.map_self = 0;
+		if (p->net.select_provider(p->net.host, KP_SNP_UDP_ID)) return 1;
+	}
+	return 0;
+}
+
+/* The descriptor of this process's UDP socket bound to port, -1 none */
+static int udp_socket_at(uint16_t port)
+{
+	int fd;
+	for (fd = 0; fd < MAX_FD; fd++) {
+		struct sockaddr_in a;
+		socklen_t len = sizeof a;
+		int type = 0;
+		socklen_t type_len = sizeof type;
+		if (getsockname(fd, (struct sockaddr *)&a, &len) != 0 || a.sin_family != AF_INET || ntohs(a.sin_port) != port)
+			continue;
+		if (getsockopt(fd, SOL_SOCKET, SO_TYPE, &type, &type_len) == 0 && type == SOCK_DGRAM) return fd;
+	}
+	return -1;
+}
+#endif
+
+/* A provider's socket that fails (a phone's network gone): the reads stop until the provider is chosen again, the
+ * player is told network.tbl's network error once and the log says it once (every frame logged it, and a join's waits
+ * spun on it); choosing the provider again reads again. The socket is made to fail by a descriptor that is no socket
+ * in its place. */
+static void a_failing_socket_stops_the_reads(KpT *T)
+{
+#if defined(_WIN32) || defined(__EMSCRIPTEN__)
+	kp_t_skip(T, "a socket made to fail by dup2 (POSIX sockets only)");
+#else
+	Host *H = logged_in_host(T, "Fenix");
+	KpNetPlay *p = H->f.netplay;
+	int fd, null_fd;
+	kp_t_ok(T, p != NULL, "the flow's network");
+	kp_t_ok(T, choose_udp_on_free_ports(H), "the UDP provider on free ports (%s)", H->last_log);
+	kp_t_ok(T, p->sock && p->snet && !p->sock_failed, "its sockets");
+	frames(H, 10);
+	kp_t_ok(T, !p->sock_failed, "the sockets read");
+	fd = udp_socket_at(kp_net_sock_port(p->sock, KP_NET_SOCKET_GAME));
+	kp_t_ok(T, fd >= 0, "socket B's descriptor");
+	null_fd = open("/dev/null", O_RDONLY);
+	kp_t_ok(T, null_fd >= 0 && dup2(null_fd, fd) == fd, "no socket in socket B's place");
+	close(null_fd);
+	H->watch = SOCKETS_FAILED;
+	H->f.ui->menus.net_error = 0;
+	frame(H);
+	kp_t_ok(T, p->sock_failed, "the failure seen (%s)", H->last_log);
+	kp_t_eq(T, H->watched, 1, "and logged");
+	kp_t_eq(T, H->f.ui->menus.net_error, NETTBL_NETWORK_ERROR, "the player told the network error");
+	H->f.ui->menus.net_error = 0;
+	frames(H, 60);
+	kp_t_eq(T, H->watched, 1, "logged once");
+	kp_t_eq(T, H->f.ui->menus.net_error, 0, "told once");
+	kp_t_ok(T, choose_udp_on_free_ports(H), "the provider chosen again (%s)", H->last_log);
+	kp_t_ok(T, p->sock && !p->sock_failed, "its new sockets");
+	frames(H, 10);
+	kp_t_ok(T, !p->sock_failed && H->watched == 1, "read again");
+	H->watch = NULL;
+#endif
 }
 
 /* Play Custom's Import (kp_flow_import_map): Import asks the host's picker for a map; the picked map is copied into
@@ -4635,6 +5027,8 @@ static const KpTest TESTS[] = {
 	{ "network_saves_list_and_resume_by_id", network_saves_list_and_resume_by_id, 0 },
 	{ "koprulu_network_saves_list_and_resume", koprulu_network_saves_list_and_resume, 0 },
 	{ "a_failed_network_game_leaves_storms_game", a_failed_network_game_leaves_storms_game, 0 },
+	{ "network_ready_room_builds_the_game_again", network_ready_room_builds_the_game_again, 0 },
+	{ "a_failing_socket_stops_the_reads", a_failing_socket_stops_the_reads, 0 },
 	{ "play_custom_screens_are_the_originals", play_custom_screens_are_the_originals, 0 },
 	{ "custom_games_end_in_the_next_scenario_or_the_campaign_menu", custom_games_end_in_the_next_scenario_or_the_campaign_menu, 0 },
 	{ "custom_saves_find_their_maps_folder", custom_saves_find_their_maps_folder, 0 },
