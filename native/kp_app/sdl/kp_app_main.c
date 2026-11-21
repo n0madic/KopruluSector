@@ -106,7 +106,12 @@ static void usage_flags(KpAppFlags *f, int argc, char **argv)
 		else if (strcmp(s, "--seats") == 0 && next) f->seats = atoi(argv[++k]);
 		else if (strcmp(s, "--lan-port") == 0 && next) f->lan_port = atoi(argv[++k]);
 		else if (strcmp(s, "--lan-map") == 0 && next) snprintf(f->lan_map, sizeof f->lan_map, "%s", argv[++k]);
-		else if (strcmp(s, "--lan-host") == 0 && next) snprintf(f->lan_host, sizeof f->lan_host, "%s", argv[++k]);
+		else if (strcmp(s, "--lan-host") == 0 && next) {
+			/* refused, not cut: a cut name or port would join another host */
+			if (strlen(argv[++k]) < sizeof f->lan_host) snprintf(f->lan_host, sizeof f->lan_host, "%s", argv[k]);
+			else SDL_Log("koprulu: --lan-host: an address of %u bytes, at most %u: ignored", (unsigned)strlen(argv[k]),
+				(unsigned)(sizeof f->lan_host - 1));
+		}
 		else if (strcmp(s, "--console") == 0 && next) {
 			const char *m = argv[++k];
 			f->console_edges = strcmp(m, "edges") == 0 ? 1 : strcmp(m, "ornaments") == 0 ? 0 : KP_CONSOLE_EDGES;

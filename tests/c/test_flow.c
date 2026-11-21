@@ -2170,6 +2170,33 @@ static void koprulu_network_saves_list_and_resume(KpT *T)
 	H->f.net_game = 0;
 }
 
+/* A network game whose session fails (a core refusal; a turn that does not split, a resumed save that does not load):
+ * the seat leaves Storm's game at once, so the others see it leave instead of waiting for its turns, and the console's
+ * error line shows network.tbl's network error (Koprulu's: the original has no refusal). */
+#define NETTBL_NETWORK_ERROR 0x51
+#define ERROR_LINE (KP_UI_LINES - 1) /* the lines' error slot (kp_ui_lines.c) */
+
+static void a_failed_network_game_leaves_storms_game(KpT *T)
+{
+	Host *H = logged_in_host(T, "Fenix");
+	const uint8_t *text;
+	play(H, PROTOSS01);
+	if (!H->f.session) return;
+	H->f.net_game = 1;
+	H->f.net_left = 0;
+	frame(H);
+	kp_t_eq(T, H->f.net_left, 0, "a game that runs stays in Storm's game");
+	H->f.session->failed = 1;
+	snprintf(H->f.session->error, sizeof H->f.session->error, "%s", "a test refusal");
+	frame(H);
+	kp_t_eq(T, H->f.net_left, 1, "the failed game leaves Storm's game");
+	kp_t_ok(T, strstr(H->last_log, "a test refusal") != NULL, "and says why (%s)", H->last_log);
+	text = kp_ui_tbl(H->f.ui, KP_UI_NETWORK, NETTBL_NETWORK_ERROR);
+	kp_t_ok(T, text != NULL && strcmp((const char *)H->f.ui->lines.text[ERROR_LINE], (const char *)text) == 0,
+		"the error line: \"%s\"", (const char *)H->f.ui->lines.text[ERROR_LINE]);
+	H->f.net_game = 0;
+}
+
 /* Play Custom's Import (kp_flow_import_map): Import asks the host's picker for a map; the picked map is copied into
  * the user's maps folder (made) under the picked file's name, ".scm" or ".scx" kept in lower case, a taken name
  * numbered, a name without either given the screen's (".scm" without Brood War), and the list shows the copy
@@ -4602,6 +4629,7 @@ static const KpTest TESTS[] = {
 	{ "map_transfer_finds_and_saves_the_users_maps", map_transfer_finds_and_saves_the_users_maps, 0 },
 	{ "network_saves_list_and_resume_by_id", network_saves_list_and_resume_by_id, 0 },
 	{ "koprulu_network_saves_list_and_resume", koprulu_network_saves_list_and_resume, 0 },
+	{ "a_failed_network_game_leaves_storms_game", a_failed_network_game_leaves_storms_game, 0 },
 	{ "play_custom_screens_are_the_originals", play_custom_screens_are_the_originals, 0 },
 	{ "custom_games_end_in_the_next_scenario_or_the_campaign_menu", custom_games_end_in_the_next_scenario_or_the_campaign_menu, 0 },
 	{ "custom_saves_find_their_maps_folder", custom_saves_find_their_maps_folder, 0 },

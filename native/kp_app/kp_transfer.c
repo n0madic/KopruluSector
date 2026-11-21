@@ -7,6 +7,7 @@
 
 #include "kp_kpf.h"
 #include "kp_net.h"
+#include "kp_text.h"
 
 uint32_t kp_transfer_crc(const uint8_t *data, size_t size) { return ~kp_crc32(data, size); }
 
@@ -22,6 +23,9 @@ int kp_transfer_extension_ok(const char *name)
 static const char *const RESERVED[] = { "nul", "con", "prn", "aux", "conin$", "conout$", "clock$", "com1", "com2",
 	"com3", "com4", "com5", "com6", "com7", "com8", "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7",
 	"lpt8", "lpt9" };
+#define DEVICE_DIGIT 3 /* the digit's place in COM1 and LPT1 */
+static const char SUPERSCRIPTS[] = "\xb9\xb2\xb3"; /* windows-1252's superscript one, two and three */
+#define KP_TRANSFER_MISSING '_' /* an offered name's character that windows-1252 lacks */
 /* rez\network.tbl string 17, as shipped */
 static const char FORBIDDEN[] = "*\\/:><|&+^?\"";
 
@@ -37,9 +41,15 @@ int kp_transfer_name_valid(const char *name, size_t limit)
 	if (strpbrk(name, FORBIDDEN)) return 0;
 	dot = strchr(name, '.');
 	len = dot ? (size_t)(dot - name) : n;
+	/* Koprulu's, not the original's: Windows takes a device name with trailing spaces ("com1 .scm") and COM and LPT
+	 * with a superscript digit (windows-1252 0xb9, 0xb2, 0xb3) too */
+	while (len > 0 && name[len - 1] == ' ') len--;
+	if (len == DEVICE_DIGIT + 1 && strchr(SUPERSCRIPTS, name[DEVICE_DIGIT])
+		&& (kp_net_ncasecmp(name, "com", DEVICE_DIGIT) == 0 || kp_net_ncasecmp(name, "lpt", DEVICE_DIGIT) == 0)) {
+		return 0;
+	}
 	for (k = 0; k < sizeof RESERVED / sizeof RESERVED[0]; k++) {
-		size_t r = strlen(RESERVED[k]);
-		if (kp_net_ncasecmp(name, RESERVED[k], len > r ? len : r) == 0) return 0;
+		if (len == strlen(RESERVED[k]) && kp_net_ncasecmp(name, RESERVED[k], len) == 0) return 0;
 	}
 	return 1;
 }
@@ -152,13 +162,14 @@ void kp_transfer_cancel(KpTransfer *t, KpTransferOffer *o)
 	remove_offer(t, o);
 }
 
-/* SendFileOffer 0x4416a0 */
+/* SendFileOffer 0x4416a0. The name travels in windows-1252, as 1.17's file names do: the path's UTF-8 converted, each
+ * character windows-1252 lacks sent as '_' ('?', Windows' default character, is a forbidden name character) */
 static void send_offer(KpTransfer *t, int storm, const KpTransferOffer *o)
 {
 	uint8_t p[44];
-	const char *name = file_name(o->path);
+	char name[KP_TRANSFER_NAME + 1];
 	size_t n;
-	n = strlen(name);
+	n = kp_text_to_legacy_or(file_name(o->path), name, sizeof name, KP_TRANSFER_MISSING);
 	if (n + 1 > KP_TRANSFER_NAME) return;
 	p[0] = KP_TRANSFER_OFFER;
 	p[1] = o->id;
@@ -231,14 +242,13 @@ static void send_status(KpTransfer *t, const KpTransferActive *a)
 	send_packet(t, a->origin, p, sizeof p);
 }
 
+/* AbortPlayerTransfers 0x440f40, which removes the first transfer the player offered; Koprulu removes all of them, as
+ * its bound of KP_TRANSFER_MAX_ACTIVE would otherwise keep a departed seat's offers refusing the host's */
 void kp_transfer_abort_peer(KpTransfer *t, int storm)
 {
 	int k;
-	for (k = 0; k < t->active_count; k++) {
-		if (t->active[k]->origin == (uint8_t)storm) {
-			remove_active(t, k);
-			break;
-		}
+	for (k = t->active_count - 1; k >= 0; k--) {
+		if (t->active[k]->origin == (uint8_t)storm) remove_active(t, k);
 	}
 	for (k = 0; k < t->active_count; k++) {
 		KpTransferActive *a = t->active[k];
@@ -341,6 +351,10 @@ static int on_offer(KpTransfer *t, const uint8_t *p, size_t size, int sender)
 	char name[KP_TRANSFER_NAME], path[KP_TRANSFER_PATH];
 	uint32_t file_size;
 	size_t limit, n;
+	if (sender != KP_TRANSFER_HOST) { /* only the host offers (SendFileOffer 0x4416a0 from OnLobbyJoinRequest 0x470af0) */
+		t->refused++;
+		return 0;
+	}
 	if (size < 10) return 0;
 	if ((file_size = kp_net_get32(p + 2)) == 0) return 0;
 	/* ValidateNetString(packet + 10, 0x20, [length - 0x4a]): a NUL within min(32, length - 74 unsigned), no byte

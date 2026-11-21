@@ -36,6 +36,12 @@ size_t kp_text_encode(int32_t cp, uint8_t out[KP_TEXT_UTF8_MAX]);
 size_t kp_text_from_legacy(const char *legacy, char *out, size_t size);
 /* A UTF-8 string back to windows-1252 bytes, what has no byte left out: its length (never longer than utf8). */
 size_t kp_text_to_legacy(const char *utf8, char *out, size_t size);
+/* The same with `missing` for each character that has no byte (0: left out): its length (never longer than utf8). */
+size_t kp_text_to_legacy_or(const char *utf8, char *out, size_t size, char missing);
+/* WideCharToMultiByte's default character: what an ANSI program on Windows (StarCraft 1.17) shows for a character its
+ * code page lacks; the network's names and chat lines take it (a name made only of characters windows-1252 lacks is
+ * not left empty) */
+#define KP_TEXT_LEGACY_DEFAULT '?'
 /* Whether n bytes are valid UTF-8 as Python's strict decoder takes it (no overlong forms, surrogates or code points
  * past U+10FFFF). */
 int kp_text_valid_utf8(const uint8_t *s, size_t n);

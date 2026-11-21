@@ -274,24 +274,13 @@ void kp_snp_udp_unlock_games(KpSnpUdp *p)
 	}
 }
 
-/* _stricmp in the C locale. */
-static int ascii_casecmp(const char *a, const char *b)
-{
-	for (;; a++, b++) {
-		int x = (unsigned char)*a, y = (unsigned char)*b;
-		if (x >= 'A' && x <= 'Z') x += 'a' - 'A';
-		if (y >= 'A' && y <= 'Z') y += 'a' - 'A';
-		if (x != y || !x) return x - y;
-	}
-}
-
 int kp_snp_udp_game_info(KpSnpUdp *p, uint32_t id, const char *name, KpSnpGame *out)
 {
 	const KpSnpGame *g;
 	memset(out, 0, sizeof *out);
 	if (!name || (id == 0 && !*name)) return 0;
 	for (g = p->games; g; g = g->next) {
-		if ((id == 0 || g->id == id) && (!*name || ascii_casecmp(name, g->name) == 0)) {
+		if ((id == 0 || g->id == id) && (!*name || kp_net_casecmp(name, g->name) == 0)) {
 			*out = *g;
 			out->next = NULL;
 			return 1;

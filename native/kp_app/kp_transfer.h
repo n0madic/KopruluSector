@@ -17,6 +17,9 @@
  *   - at most KP_TRANSFER_OFFERS files offered by this seat (the original's 255 file ids; the game offers one);
  *   - a local copy whose size is not the offer's fails the transfer: an offer from this seat's own Storm ID naming
  *     one of its offered files with another size (the original copies the whole file into a buffer of the offer's);
+ *   - an offer counts only from the host, Storm ID 0 (the original takes one from any seat; only the host's join
+ *     handler sends one), and a departed seat's transfers all go (AbortPlayerTransfers 0x440f40 removes the first:
+ *     the rest would fill KP_TRANSFER_MAX_ACTIVE);
  *   - an upload request whose receiver is past Storm ID 7 is refused (the original sends the chunks to that ID, which
  *     Storm refuses: no StarCraft game has a player there);
  *   - a chunk acknowledgement or a stop from a seat other than the upload's receiver is ignored (the original asks only
@@ -45,6 +48,7 @@ extern "C" {
 #define KP_TRANSFER_START_BYTES 8
 #define KP_TRANSFER_MAX_SIZE (16u << 20)  /* Koprulu's bound of an offered file */
 #define KP_TRANSFER_MAX_ACTIVE 16         /* Koprulu's bound of the active transfers */
+#define KP_TRANSFER_HOST 0                /* the Storm ID of the game's creator, the one seat that offers */
 #define KP_TRANSFER_OFFERS 8              /* Koprulu's bound of this seat's offered files */
 #define KP_TRANSFER_PEERS 8               /* one peer node a Storm ID 0..7 */
 

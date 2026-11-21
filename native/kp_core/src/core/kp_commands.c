@@ -618,6 +618,10 @@ static void targeted_order(KpGame *g, int64_t x, int64_t y, int64_t target, int6
 	KpFormation f;
 	int64_t units[KP_SLOTS], player = kp_scalar(g, KP_COMMAND_PLAYER);
 	int count, k;
+	/* An order past orders.dat: the original reads its tables past their end (tech 0x51b800[order]); offline the
+	 * requirements' range check refuses the game, while a network game ignores what only a hostile seat sends rather
+	 * than let it stop every seat's game (ADR 0026's review addition). */
+	if (order >= KP_ORD_NONE && g->setup.multiplayer != 0) return;
 	kp_group_formation(g, x, y, KP_DAT(g, orders, obstructable, order) != 0, &f);
 	if (ignored_targeted(order)) return;
 	count = kp_selected_units(g, g->command_record, units);
@@ -765,7 +769,9 @@ void kp_execute_command(KpGame *g, int64_t record, const uint8_t *b, size_t size
 		break;
 	}
 	case CHEAT_COMMAND: kp_exec_cheat(g, u32(g, b, size, 1)); break;
-	case RESTART_COMMAND: kp_event(g, KP_EVENT_GAME_EXIT, EXIT_RESTART, 0, 0, NULL); break; /* ExecRestartGame 0x472e20 */
+	case RESTART_COMMAND: /* ExecRestartGame 0x472e20: a single player's */
+		if (g->setup.multiplayer == 0) kp_event(g, KP_EVENT_GAME_EXIT, EXIT_RESTART, 0, 0, NULL);
+		break;
 	case SAVE_COMMAND: case LOAD_COMMAND: { /* ExecSaveGame 0x472f50, ExecLoadGame 0x4729e0: the host's files */
 		char name[KP_EVENT_TEXT_SIZE]; /* the event's text: the dialog limits the name in characters */
 		size_t n = 0;

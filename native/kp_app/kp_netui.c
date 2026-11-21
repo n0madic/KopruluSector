@@ -206,7 +206,7 @@ static uint32_t u_create_game(void *host, KpUi *ui, int index, uint8_t speed)
 static void u_player_name(void *host, const char *name)
 {
 	KpNetGame *ng = nu(host)->game;
-	if (ng) (void)kp_text_to_legacy(name, ng->config.player_name, sizeof ng->config.player_name);
+	if (ng) (void)kp_text_to_legacy_or(name, ng->config.player_name, sizeof ng->config.player_name, KP_TEXT_LEGACY_DEFAULT);
 }
 
 static int u_lobby_enter(void *host)
@@ -307,7 +307,7 @@ static void u_lobby_chat(void *host, const char *text)
 {
 	char legacy[KP_NETGAME_LINE];
 	if (!nu(host)->game) return;
-	(void)kp_text_to_legacy(text, legacy, sizeof legacy);
+	(void)kp_text_to_legacy_or(text, legacy, sizeof legacy, KP_TEXT_LEGACY_DEFAULT);
 	kp_netgame_chat(nu(host)->game, legacy);
 }
 
@@ -315,7 +315,7 @@ static void u_game_chat(void *host, const char *text, uint16_t recipients)
 {
 	char legacy[KP_NETGAME_LINE];
 	if (!nu(host)->game) return;
-	(void)kp_text_to_legacy(text, legacy, sizeof legacy);
+	(void)kp_text_to_legacy_or(text, legacy, sizeof legacy, KP_TEXT_LEGACY_DEFAULT);
 	kp_netgame_game_chat(nu(host)->game, legacy, recipients);
 }
 

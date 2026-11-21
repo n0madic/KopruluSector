@@ -253,6 +253,15 @@ Not the original's. Koprulu's provider can be given one host's address, its sock
 
 The original's joiner has no such address: it lists only what the broadcast reaches.
 
+### Koprulu's receiver: who may send what (the review of 2026-11-21)
+
+Not the original's, and nothing on the wire changes: an honest 1.17 or Koprulu peer sends none of what Koprulu ignores. The original takes the control commands and the relays above from any address, which since stage N5 means from anywhere on the internet ([ADR 0026](../adr/0026-network-compatible-with-1-17.md#addition-the-review-of-the-network-play), the list in `kp_snet.h`):
+
+- during a join, commands 2, 6, 8, 9 and 10 count only from the joined game's address; outside a join 2, 8, 9 and 10 are ignored, and 6 counts only from a record with a player id (a stranger's command 8 reset the seat's id and turn counters, a stranger's 9 or 10 ended a join);
+- commands 12 to 15 count only from a record with a player id;
+- a relayed packet counts only in class 2 and only from the address of a record with a player id (the original attributes it to the player its sender byte names: one datagram ran as the host's turn);
+- a record files at most 1024 packets, 256 without a player id, and records without an id together file only while fewer than half of the 16,384 packets kept are in use; class 3 is not filed.
+
 ## Runtime confirmation (2026-11-17)
 
 The full-game emulator's network recordings were checked against this page: 20 LAN games of two to four emulated StarCraft 1.17 seats on a virtual segment (two-player, free-for-all, team, capture-the-flag, top-versus-bottom and UMS games, a Brood War game, chat, a map transfer, save and load, leave, kick, ban, a cut link, a desync and a latency run), each with the segment's packet capture and every seat's SNet call log. No recorded datagram contradicts the page.

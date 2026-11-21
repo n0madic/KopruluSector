@@ -52,6 +52,8 @@ int kp_net_sock_wait(KpNetSock *s, uint32_t ms, KpNetSockDeliver fn, void *ud);
 uint16_t kp_net_sock_port(const KpNetSock *s, int socket);
 /* A monotonic millisecond clock that wraps as GetTickCount does. */
 uint32_t kp_net_sock_now(void);
+/* The calling thread asleep for ms milliseconds (Storm's waits once the sockets failed). */
+void kp_net_sock_sleep(uint32_t ms);
 /* Datagrams the system refused to send (an unreachable host, a full buffer). */
 long kp_net_sock_send_errors(const KpNetSock *s);
 /* A host's address as the player gives it (kp_net_host_parse) looked up as its socket A's provider address, off the

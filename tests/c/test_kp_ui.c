@@ -2791,6 +2791,61 @@ static void save_dialog_reports_a_file_that_stays(KpT *T)
 	kp_t_eq_str(T, ui->menus.saves[0], "beta", NULL);
 }
 
+/* The save dialog's name as typed: its text, and Ok enabled as the key filter enables it (kp_ui_save_name_key). */
+static void name_typed(KpUi *ui, const char *text)
+{
+	enum { ID_OK = -2, ID_EDIT = 2 };
+	kp_ui_edit_set_text(ui, kp_ui_find_control(ui, ui->open, ID_EDIT), (const uint8_t *)text);
+	kp_ui_set_enabled(ui, kp_ui_find_control(ui, ui->open, ID_OK), 1);
+}
+
+/* A network game's save name travels as the original's does (SendSaveGameCommand 0x4740e0): windows-1252 bytes, the
+ * NUL within 28, so a 1.17 seat reads it and the turn's split (its NUL within 0x1c bytes) takes it; a name with a
+ * character windows-1252 lacks is refused at Ok with network.tbl's "Invalid character." (Koprulu's: the original's
+ * ANSI edit box takes none). A single player's name stays UTF-8. */
+static void network_save_names_are_windows_1252(KpT *T)
+{
+	enum { ID_OK = -2, NET_INVALID_CHARACTER = 0x58 };
+	KpOracleGame *game;
+	KpOracleUi *u;
+	KpUi *ui;
+	Clock c;
+	char name[128];
+	uint8_t cmd[KP_UI_COMMAND_BYTES];
+	size_t size;
+	int net;
+	if (!kp_t_ready(T, "test_kp_ui.network_save_names_are_windows_1252", GAME_FILES)) return;
+	game = terran01(T);
+	u = kp_t_ui(T, KP_ORACLE_UI_STRINGS);
+	ui = u->ui;
+	kp_ui_font_set(ui, 1);
+	theme(T, ui, 1);
+	ui->now = 1000;
+	hud(T, ui, game->g);
+	c.ui = ui;
+	c.now = 1000;
+	for (net = 0; net < 2; net++) {
+		ui->menus.multiplayer = net;
+		kp_ui_save_dialog(ui, 0);
+		frames(&c, 10);
+		(void)kp_t_ui_take_commands(ui, NULL, &size);
+		name_typed(ui, "Caf\303\251");
+		dialog_click(T, &c, ID_OK);
+		kp_t_eq(T, kp_t_ui_take_commands(ui, cmd, &size), 1, "the save sent");
+		kp_t_ok(T, size >= 5 && strcmp((const char *)cmd + 5, net ? "Caf\351" : "Caf\303\251") == 0,
+			net ? "a network game's name in windows-1252" : "a single player's name in UTF-8");
+		ui->save.sent = 0; /* the next save without the network's wait */
+	}
+	kp_ui_save_dialog(ui, 0);
+	frames(&c, 10);
+	name_typed(ui, "\320\241\320\265\320\271\320\262");
+	dialog_click(T, &c, ID_OK);
+	kp_t_eq_str(T, kp_t_ui_bin(ui, ui->open, name, sizeof name), "rez\\ok.bin", "a name windows-1252 cannot hold");
+	kp_t_eq_str(T, ui->box.text, (const char *)kp_ui_tbl(ui, KP_UI_NETWORK, NET_INVALID_CHARACTER), "Invalid character");
+	kp_t_eq(T, kp_t_ui_take_commands(ui, NULL, &size), 0, "no save sent");
+	ui->menus.multiplayer = 0;
+}
+
 /* --- the score's Save Replay (kp_ui_replay_save.c, replay.cpp: atlas P28) --- */
 
 #define SCORE_SAVE_REPLAY 61     /* gluscore.bin: Save Replay */
@@ -3342,6 +3397,11 @@ static void text_reads_utf8_and_windows_1252_bytes(KpT *T)
 	kp_t_eq_str(T, back, "K\351\222", "the way back");
 	kp_t_eq(T, (int64_t)kp_text_from_legacy("\351\351", out, 4), 2, "cut on a boundary");
 	kp_t_eq(T, (int64_t)kp_text_to_legacy("a\320\233b", back, sizeof back), 2, "no byte: left out");
+	kp_t_eq(T, (int64_t)kp_text_to_legacy_or("a\320\233b\303\251", back, sizeof back, KP_TEXT_LEGACY_DEFAULT), 4,
+		"no byte: the network's default character");
+	kp_t_eq_str(T, back, "a?b\351", NULL);
+	kp_t_eq(T, (int64_t)kp_text_to_legacy_or("\320\232\320\276", back, sizeof back, KP_TEXT_LEGACY_DEFAULT), 2,
+		"a name of characters windows-1252 lacks is not left empty");
 }
 
 /* A character with no glyph has no width and its text goes on, in the drawing as in the measuring; a stray byte whose
@@ -4391,6 +4451,7 @@ static const KpTest TESTS[] = {
 	{ "failed_console_leaves_no_game_input", failed_console_leaves_no_game_input, 0 },
 	{ "end_game_resets_the_input_procedures", end_game_resets_the_input_procedures, 0 },
 	{ "save_dialog_reports_a_file_that_stays", save_dialog_reports_a_file_that_stays, 0 },
+	{ "network_save_names_are_windows_1252", network_save_names_are_windows_1252, 0 },
 	{ "save_replay_is_a_custom_games", save_replay_is_a_custom_games, 0 },
 	{ "save_replay_dialog_names_a_replay", save_replay_dialog_names_a_replay, 0 },
 	{ "save_replay_frame_is_dlgs_tiles_in_hd", save_replay_frame_is_dlgs_tiles_in_hd, 0 },

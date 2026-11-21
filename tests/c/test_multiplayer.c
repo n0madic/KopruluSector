@@ -12,6 +12,7 @@
 #include "kp_gametype.h"
 #include "kp_ids.h"
 
+#include <setjmp.h>
 #include <string.h>
 
 #define MAP "missions/terran/terran01"
@@ -28,6 +29,13 @@
 #define RESUME_COMMAND 0x11
 #define CHEAT_COMMAND 0x12
 #define LATENCY_COMMAND 0x55
+#define RESTART_COMMAND 0x08
+#define CONTROL_GROUP_COMMAND 0x13
+#define TARGETED_ORDER_COMMAND 0x15
+#define GROUP_SELECT 1
+#define GROUP_PAST 18 /* the original accepts groups 0..18 */
+#define ORDER_PAST 0xff
+#define EXIT_RESTART 5 /* RequestGameExit 0x444e00's code */
 #define LEFT_GAME_STRING 0x4b
 #define ELIMINATED_STRING 0x35
 #define PLAYER_ELIMINATED_STRING 0x36
@@ -553,6 +561,64 @@ static void speed_and_cheats_are_single_players(KpT *T)
 	kp_t_eq(T, kp_scalar(g, KP_SPEED), speed, "a network game's speed stays");
 }
 
+/* Whether the command stops the game (kp_game_fail); the error is cleared. */
+static int refused(KpGame *g, int64_t record, const uint8_t *b, size_t size)
+{
+	KpTry t;
+	volatile int stopped = 0;
+	kp_images_begin(g->w, &t);
+	if (setjmp(t.buf)) stopped = 1;
+	else kp_execute_command(g, record, b, size);
+	kp_images_end(g->w, &t);
+	g->w->error[0] = '\0';
+	return stopped;
+}
+
+/* ExecRestartGame 0x472e20 is a single player's (RequestGameExit 0x444e00 only without the multiplayer byte). A targeted
+ * order past orders.dat and group 18 of the last record make the original read or write past its tables: offline the
+ * game is refused (ADR 0022), a network game ignores them (ADR 0026's review addition: a hostile seat cannot stop every
+ * seat's game). */
+static void restart_and_past_the_tables_in_a_network_game(KpT *T)
+{
+	static const uint8_t restart[1] = { RESTART_COMMAND };
+	static const uint8_t group18[3] = { CONTROL_GROUP_COMMAND, GROUP_SELECT, GROUP_PAST };
+	uint8_t order[11] = { TARGETED_ORDER_COMMAND, 0 };
+	KpGame *g;
+	int64_t me, marine, since, a = -1, b = -1, c = -1, x, y, before;
+	int32_t s;
+	if (!kp_t_ready(T, "test_multiplayer", FILES)) return;
+	g = game(T);
+	me = g->local_player;
+	marine = unit(g, KP_TYPE_MARINE, me);
+	kp_t_ok(T, marine != 0, "the unit");
+	if (marine == 0) return;
+	s = kp_unit_sprite(g, marine);
+	x = g->w->spr.x[s];
+	y = g->w->spr.y[s];
+	order[1] = (uint8_t)x;
+	order[2] = (uint8_t)(x >> 8);
+	order[3] = (uint8_t)y;
+	order[4] = (uint8_t)(y >> 8);
+	order[9] = ORDER_PAST;
+	select_units(g, me, &marine, 1);
+	kp_t_ok(T, refused(g, me, order, sizeof order), "offline: an order past orders.dat is refused");
+	kp_t_ok(T, refused(g, KP_SELECTION_PLAYERS - 1, group18, sizeof group18), "offline: group 18 of record 7 is refused");
+	since = kp_event_sequence(g);
+	kp_execute_command(g, me, restart, sizeof restart);
+	kp_t_eq(T, events(g, KP_EVENT_GAME_EXIT, since, &a, &b, &c), 1, "offline: the restart");
+	kp_t_eq(T, a, EXIT_RESTART, "offline: the restart's code");
+	g->setup.multiplayer = 1;
+	select_units(g, me, &marine, 1);
+	before = g->u.order[marine];
+	kp_t_ok(T, !refused(g, me, order, sizeof order), "a network game: an order past orders.dat is ignored");
+	kp_t_eq(T, g->u.order[marine], before, "a network game: the unit's order stays");
+	kp_t_ok(T, !refused(g, KP_SELECTION_PLAYERS - 1, group18, sizeof group18),
+		"a network game: group 18 of record 7 is ignored");
+	since = kp_event_sequence(g);
+	kp_execute_command(g, me, restart, sizeof restart);
+	kp_t_eq(T, count_events(g, KP_EVENT_GAME_EXIT, since), 0, "a network game: no restart");
+}
+
 /* ExecPauseGame 0x472c70: in a network game a human with pauses left (CanPlayerPause 0x47cb20) pauses and spends one
  * (0x47cc60; 3 at the start, 0x47cb90), the line 0x39 shows the pauses left; any player resumes (ExecResumeGame
  * 0x472be0); both cancel the cursor modes at the turn's end (0x672985 in ExecuteGameTurn 0x4768a0). A single player's
@@ -900,6 +966,7 @@ static const KpTest TESTS[] = {
 	{ "result_dialog_does_not_pause_a_network_game", result_dialog_does_not_pause_a_network_game, 0 },
 	{ "results_free_the_trigger_lists_in_a_network_game", results_free_the_trigger_lists_in_a_network_game, 0 },
 	{ "speed_and_cheats_are_single_players", speed_and_cheats_are_single_players, 0 },
+	{ "restart_and_past_the_tables_in_a_network_game", restart_and_past_the_tables_in_a_network_game, 0 },
 	{ "pauses_are_limited_in_a_network_game", pauses_are_limited_in_a_network_game, 0 },
 	{ "saves_and_loads_in_a_network_game", saves_and_loads_in_a_network_game, 0 },
 	{ "latency_command_shows_its_line", latency_command_shows_its_line, 0 },

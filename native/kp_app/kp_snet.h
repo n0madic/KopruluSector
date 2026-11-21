@@ -11,8 +11,21 @@
  *
  * Where it differs from Storm, only for inputs Storm mishandles or for state no caller reads:
  *   - a control command shorter than its payload reads its missing bytes as zeros (Storm reads past it);
- *   - at most KP_SNET_RECORDS remote records and KP_SNET_NODES filed packets: a datagram beyond them is dropped
- *     (Storm allocates for every forged address and every packet until its memory runs out);
+ *   - at most KP_SNET_RECORDS remote records and KP_SNET_NODES packets; a record files at most KP_SNET_PEER_FILED
+ *     packets (KP_SNET_UNKNOWN_FILED without a player id), and records without an id together file only while fewer
+ *     than half of KP_SNET_NODES are in use: a datagram beyond them is dropped (Storm allocates for every forged
+ *     address and every packet until its memory runs out; one global bound would let one address stop every seat's
+ *     turns);
+ *   - who may send what (a peer's datagram is unauthenticated, and since stage N5 a host is reached over the internet;
+ *     none of these changes a datagram an honest 1.17 or Koprulu peer sends, ADR 0026's review addition):
+ *       - during a join, control commands 2, 6, 8, 9 and 10 (accept, player info, game info, template, reject) count
+ *         only from the joined game's address; outside a join 2, 8, 9 and 10 are ignored, and 6 counts only from a
+ *         record with a player id. Storm takes them from any address (a stranger's game info resets the seat's id
+ *         and turn counters, a stranger's template or reject ends a join);
+ *       - commands 12 to 15 (drop, new host, mode, ladder type) count only from a record with a player id;
+ *       - a relayed packet (flag 4) counts only in class 2 and only from the address of a record with a player id
+ *         (Storm attributes it to the player its sender byte names, from any address and in any class);
+ *       - class 3 is not filed (StarCraft never reads it: Storm keeps every such packet until the record goes);
  *   - a turn or message above 0xFFFF - 12 bytes is refused with 0x57 (Storm's 16-bit length wraps);
  *   - a control command whose handler deletes the record being dispatched ends that dispatch (Storm reads on in the
  *     freed record);
@@ -20,8 +33,7 @@
  *     k again, whose turn it takes twice);
  *   - the name table (SNetGetPlayerNames and SNetReportGameResult, Battle.net's) is not kept, nor the performance
  *     counters; the base player is 0 (StarCraft never sets it);
- *   - SNetSendDatagram and SNetReceiveDatagram (class 3, which StarCraft never calls) are not ported: a datagram of
- *     that class is filed and never read, as nothing reads it in StarCraft;
+ *   - SNetSendDatagram and SNetReceiveDatagram (class 3, which StarCraft never calls) are not ported;
  *   - SNetLeaveGame does not sleep its max(L, 50) ms at the end (the driver may).
  */
 #ifndef KP_SNET_H
@@ -57,7 +69,9 @@ extern "C" {
 #define KP_SNET_HEADER 12
 #define KP_SNET_STRING 128 /* names, descriptions, the game's name, stat string and password (0x80) */
 #define KP_SNET_RECORDS 1024 /* remote records, at most */
-#define KP_SNET_NODES 16384  /* filed packets, at most */
+#define KP_SNET_NODES 16384  /* packets kept (filed, queued, delivered), at most */
+#define KP_SNET_PEER_FILED 1024   /* packets one record with a player id keeps filed, at most */
+#define KP_SNET_UNKNOWN_FILED 256 /* packets one record without a player id keeps filed, at most */
 
 /* Mode bits (SNetSetGameMode, command 0x0E, the advertisement) */
 #define KP_SNET_MODE_PASSWORD 1u

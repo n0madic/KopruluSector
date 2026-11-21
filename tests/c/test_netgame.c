@@ -295,6 +295,96 @@ static void four_seats_reach_one_start(KpT *T)
 
 static void four_seats_reach_one_start_on_a_lossy_lan(KpT *T) { four_seats(T, 11, 1); }
 
+/* --- what a hostile seat sends (ADR 0026's review addition) --- */
+
+#define STEP_MS 50
+
+/* bytes a modified client puts in its next lobby turn, past what its screens queue */
+static void inject(KpNetGame *ng, const uint8_t *m, uint32_t size)
+{
+	memcpy(ng->out + ng->out_size, m, size);
+	ng->out_size += size;
+}
+
+/* The lobby advanced until seat k's lobby state is `state`: 1, or 0 after START_MS. */
+static int until_state(KpNetLobby *l, int k, uint8_t state)
+{
+	uint32_t t;
+	for (t = 0; t < START_MS && l->seat[k].game.lobby_state != state; t += STEP_MS) kp_net_lobby_advance(l, STEP_MS);
+	return l->seat[k].game.lobby_state == state;
+}
+
+/* A joiner's 0x3c during the countdown: the original's OnLobbyStartGame 0x4712d0 makes every seat outside the joined
+ * state leave as "unable" before it asks who sent it; Koprulu's ignores another seat's, and all three start. */
+static void a_joiners_start_does_not_stop_the_countdown(KpT *T)
+{
+	static const uint8_t start[1] = { KP_LOBBY_START_GAME };
+	KpNetLobby *l = lobby_new(T, 23, 3, 0);
+	KpNetLobbySeat *s = l->seat;
+	int k;
+	host(T, l, KP_NET_LOBBY_MELEE);
+	join(T, l, 1, 1);
+	join(T, l, 2, 1);
+	settle(l);
+	kp_t_ok(T, kp_netgame_start(&s[0].game), "the host starts");
+	kp_t_ok(T, until_state(l, 1, KP_LOBBY_STARTING), "Beta counts down");
+	inject(&s[2].game, start, sizeof start);
+	kp_net_lobby_run_to_start(l, START_MS);
+	for (k = 0; k < 3; k++) kp_t_eq(T, s[k].leave, -1, "seat %d does not leave", k);
+	same_start(T, l);
+}
+
+/* A joiner's race request once the host built the start information 0x48: the slot update would reach the others
+ * after their start, so the host takes none (the original takes one in any state from the joined one on) and every
+ * seat starts with the same slots. */
+static void the_host_takes_no_race_after_its_start_info(KpT *T)
+{
+	static const uint8_t race[3] = { KP_LOBBY_RACE, 8, RACE_PROTOSS };
+	KpNetLobby *l = lobby_new(T, 29, 2, 0);
+	KpNetLobbySeat *s = l->seat;
+	int slot;
+	uint8_t was;
+	host(T, l, KP_NET_LOBBY_MELEE);
+	join(T, l, 1, 1);
+	settle(l);
+	slot = slot_of(l, 0, 1);
+	kp_t_ok(T, slot >= 0, "Beta's slot");
+	if (slot < 0) return;
+	was = s[0].game.slots[slot].race;
+	kp_t_ok(T, was != RACE_PROTOSS, "Beta is not Protoss yet");
+	kp_t_ok(T, kp_netgame_start(&s[0].game), "the host starts");
+	kp_t_ok(T, until_state(l, 0, KP_LOBBY_START_INFO), "the host builds the start information");
+	inject(&s[1].game, race, sizeof race);
+	kp_net_lobby_run_to_start(l, START_MS);
+	kp_t_eq(T, s[0].game.slots[slot].race, was, "the host keeps Beta's race");
+	same_start(T, l);
+}
+
+/* A host's 0x48 naming a slot past 8 makes the joiner report a fatal error and leave Storm's game (OnLobbyStartInfo
+ * 0x4709d0), which frees the turn it reads: the walk of that turn ends there, and the 0x54 after it is not run. */
+static void a_bad_start_info_ends_the_lobby_walk(KpT *T)
+{
+	uint8_t bad[KP_NETGAME_START_INFO + 1];
+	KpNetLobby *l = lobby_new(T, 31, 2, 0);
+	KpNetLobbySeat *s = l->seat;
+	uint32_t leaves;
+	host(T, l, KP_NET_LOBBY_MELEE);
+	join(T, l, 1, 1);
+	settle(l);
+	kp_t_ok(T, kp_netgame_start(&s[0].game), "the host starts");
+	kp_t_ok(T, until_state(l, 0, KP_LOBBY_START_INFO), "the host builds the start information");
+	memset(bad, 0xff, sizeof bad);
+	bad[0] = KP_LOBBY_START_INFO_MSG;
+	bad[KP_NETGAME_START_INFO] = KP_LOBBY_READY;
+	leaves = s[1].game.storm_leaves;
+	s[1].game.ready[0] = 0;
+	inject(&s[0].game, bad, sizeof bad);
+	kp_net_lobby_run_to_start(l, START_MS);
+	kp_t_eq(T, s[1].game.storm_leaves, leaves + 1, "Beta leaves Storm's game once");
+	kp_t_ok(T, s[1].errors > 0, "Beta reports the error");
+	kp_t_eq(T, s[1].game.ready[0], 0, "the walk ends at the bad start information");
+}
+
 /* The host kicks one joiner (Open on its slot) and bans another: each leaves with its reason, the others see the slot
  * open; the kicked player joins again, the banned one is refused again; the rest start together. */
 static void kick_and_ban(KpT *T)
@@ -341,6 +431,7 @@ static void ums_ready_room(KpT *T)
 {
 	KpNetLobby *l = lobby_new(T, 5, 2, 0);
 	KpNetLobbySeat *s = l->seat;
+	KpGameSetup room;
 	host(T, l, KP_NET_LOBBY_UMS);
 	kp_t_ok(T, kp_netgame_ums(&s[0].game), "the host's game is Use Map Settings");
 	join(T, l, 1, 1);
@@ -354,11 +445,56 @@ static void ums_ready_room(KpT *T)
 	kp_t_eq(T, s[0].phase, READY_ROOM, "the host waits in the ready room");
 	kp_t_eq(T, s[1].phase, READY_ROOM, "Beta waits in the ready room");
 	kp_t_eq(T, s[0].game.seed, s[1].game.seed, "the seed before the ready room");
+	kp_netgame_game_setup(&s[0].game, &room);
 	s[0].press_start = 1;
 	settle(l);
 	kp_t_eq(T, s[0].phase, READY_ROOM, "the host waits for Beta's Start");
 	kp_t_eq(T, s[1].phase, READY_ROOM, "Beta has not pressed Start");
 	s[1].press_start = 1;
+	kp_net_lobby_run_to_start(l, START_MS);
+	same_start(T, l);
+	kp_t_ok(T, !kp_netgame_setup_changed(&s[0].game, &room), "no leave: the records the room's game was built from");
+}
+
+/* Whether a setup has a human of a Storm ID. */
+static int has_human(const KpGameSetup *s, int storm)
+{
+	int k;
+	for (k = 0; k < KP_SETUP_SLOTS; k++)
+		if (s->type[k] == KP_CTRL_HUMAN && s->storm[k] == storm) return 1;
+	return 0;
+}
+
+/* A player who leaves in a Use Map Settings game's ready room (its Cancel) is a lobby leave there
+ * (HandlePlayerLeftLobby 0x477c20 in the glue mode): the others' records lose the player, so the game the flow built
+ * for the briefing is built again at the Start (kp_netgame_setup_changed); the rest start together without it. */
+static void a_leave_in_the_ready_room_changes_the_records(KpT *T)
+{
+	KpNetLobby *l = lobby_new(T, 37, 3, 0);
+	KpNetLobbySeat *s = l->seat;
+	KpGameSetup room[2];
+	int k, gamma;
+	host(T, l, KP_NET_LOBBY_UMS);
+	for (k = 1; k < 3; k++) join(T, l, k, 1);
+	settle(l);
+	kp_t_ok(T, kp_netgame_start(&s[0].game), "the host starts");
+	kp_net_lobby_run_to_start(l, START_MS);
+	for (k = 0; k < 3; k++) kp_t_eq(T, s[k].phase, READY_ROOM, "seat %d waits in the ready room", k);
+	gamma = s[2].game.local_storm;
+	for (k = 0; k < 2; k++) {
+		kp_netgame_game_setup(&s[k].game, &room[k]);
+		kp_t_ok(T, has_human(&room[k], gamma), "seat %d's records have Gamma", k);
+	}
+	kp_netgame_briefing_start(&s[2].game, 1); /* Gamma's Cancel: Storm's game left */
+	s[2].phase = LEFT;
+	settle(l);
+	for (k = 0; k < 2; k++) {
+		KpGameSetup now;
+		kp_netgame_game_setup(&s[k].game, &now);
+		kp_t_ok(T, kp_netgame_setup_changed(&s[k].game, &room[k]), "seat %d's records changed in the room", k);
+		kp_t_ok(T, !has_human(&now, gamma), "seat %d's records have no Gamma", k);
+	}
+	s[0].press_start = s[1].press_start = 1;
 	kp_net_lobby_run_to_start(l, START_MS);
 	same_start(T, l);
 }
@@ -682,17 +818,21 @@ static void resumed_team_save(KpT *T)
 typedef struct {
 	int sent, last_to;
 	uint8_t last_type;
+	uint8_t last[64];
+	size_t last_size;
 } SendLog;
 
-enum { TX_ORIGIN = 0, TX_SELF = 1, TX_RECEIVER = 2, TX_STRANGER = 3, TX_ID = 5, TX_SIZE = 300, TX_CAPACITY = 137 };
+enum { TX_ORIGIN = 0, TX_SELF = 1, TX_RECEIVER = 2, TX_STRANGER = 3, TX_ID = 5, TX_SIZE = 300, TX_CAPACITY = 137,
+	TX_OFFER = 42, TX_OFFERS = 3 };
 
 static void tx_send(void *ud, int storm, const uint8_t *packet, size_t size)
 {
 	SendLog *log = (SendLog *)ud;
-	(void)size;
 	log->sent++;
 	log->last_to = storm;
 	log->last_type = packet[0];
+	log->last_size = size < sizeof log->last ? size : sizeof log->last;
+	memcpy(log->last, packet, log->last_size);
 }
 
 static uint8_t *tx_read(void *ud, const char *path, size_t *size)
@@ -760,6 +900,84 @@ static void transfer_upload_obeys_only_its_receiver(KpT *T)
 	kp_t_eq(T, log.last_type, KP_TRANSFER_STATUS, "answers with the status");
 	kp_t_eq(T, log.last_to, TX_ORIGIN, "to the origin");
 	kp_t_eq(T, kp_transfer_dispatch(&t, ack, sizeof ack, TX_RECEIVER), 0, "no acknowledgement of an ended upload");
+	kp_transfer_reset(&t);
+}
+
+static void tx_begin(KpTransfer *t, KpTransferIo *io, SendLog *log, int self)
+{
+	memset(t, 0, sizeof *t); /* kp_transfer_begin frees what the structure holds */
+	memset(log, 0, sizeof *log);
+	memset(io, 0, sizeof *io);
+	io->send = tx_send;
+	io->read = tx_read;
+	io->find = tx_find;
+	io->ud = log;
+	kp_transfer_begin(t, io, self, TX_CAPACITY);
+}
+
+static void tx_offer(uint8_t *offer, uint8_t id, const char *name)
+{
+	memset(offer, 0, TX_OFFER);
+	offer[0] = KP_TRANSFER_OFFER;
+	offer[1] = id;
+	kp_net_put32(offer + 2, TX_SIZE);
+	memcpy(offer + 10, name, strlen(name) + 1);
+}
+
+/* Only the host (Storm ID 0) offers: SendFileOffer 0x4416a0 runs from the host's OnLobbyJoinRequest 0x470af0 alone, so
+ * another seat's offer is refused (the original takes it). A departed seat's transfers all go (AbortPlayerTransfers
+ * 0x440f40 removes the first; the rest would fill KP_TRANSFER_MAX_ACTIVE). */
+static void transfer_takes_offers_from_the_host_alone(KpT *T)
+{
+	KpTransfer t;
+	KpTransferIo io;
+	SendLog log;
+	uint8_t offer[TX_OFFER];
+	uint32_t refused;
+	int k;
+	tx_begin(&t, &io, &log, TX_SELF);
+	tx_offer(offer, TX_ID, "own.scm");
+	refused = t.refused;
+	kp_t_eq(T, kp_transfer_dispatch(&t, offer, sizeof offer, TX_STRANGER), 0, "another seat's offer");
+	kp_t_eq(T, t.active_count, 0, "makes no transfer");
+	kp_t_eq(T, t.refused, refused + 1, "is counted as refused");
+	for (k = 0; k < TX_OFFERS; k++) {
+		tx_offer(offer, (uint8_t)(TX_ID + k), "own.scm");
+		kp_t_eq(T, kp_transfer_dispatch(&t, offer, sizeof offer, TX_ORIGIN), 1, "the host's offer %d", k);
+	}
+	kp_t_eq(T, t.active_count, TX_OFFERS, "the host's transfers");
+	kp_transfer_abort_peer(&t, TX_ORIGIN);
+	kp_t_eq(T, t.active_count, 0, "the departed host's transfers all go");
+	kp_transfer_reset(&t);
+}
+
+/* The names a transfer takes (IsInvalidFileName 0x408300's, and Windows' device names with trailing spaces or a
+ * superscript digit, Koprulu's), and the offer's name in windows-1252: the path's UTF-8 converted, '_' for what
+ * windows-1252 lacks. */
+static void transfer_names_follow_windows(KpT *T)
+{
+	static const struct {
+		const char *name;
+		int valid;
+	} CASES[] = {
+		{ "map.scm", 1 }, { "a b.scx", 1 }, { "com10.scm", 1 }, { "comx.scm", 1 }, { "Caf\xe9.scm", 1 },
+		{ "con.scm", 0 }, { "COM1", 0 }, { "nul.a.b", 0 }, { "com1 .scm", 0 }, { "con  ", 0 }, { "lpt\xb2.scm", 0 },
+		{ "COM\xb9", 0 }, { "com\xb3 .scx", 0 }, { "a?.scm", 0 }, { "c:x.scm", 0 }, { "", 0 },
+	};
+	KpTransfer t;
+	KpTransferIo io;
+	SendLog log;
+	KpTransferOffer *o;
+	size_t k;
+	for (k = 0; k < sizeof CASES / sizeof CASES[0]; k++)
+		kp_t_eq(T, kp_transfer_name_valid(CASES[k].name, KP_TRANSFER_NAME), CASES[k].valid, "\"%s\"", CASES[k].name);
+	tx_begin(&t, &io, &log, TX_ORIGIN);
+	o = kp_transfer_offer(&t, "maps/Caf\xc3\xa9 \xe2\x98\x83.scm");
+	kp_t_ok(T, o != NULL, "the host's offer");
+	if (o) kp_transfer_add_peer(&t, o, TX_RECEIVER);
+	kp_t_eq(T, log.last_type, KP_TRANSFER_OFFER, "the offer is sent");
+	kp_t_ok(T, log.last_size == 10 + sizeof "Caf\xe9 _.scm" && memcmp(log.last + 10, "Caf\xe9 _.scm", sizeof "Caf\xe9 _.scm") == 0,
+		"the offer's name in windows-1252");
 	kp_transfer_reset(&t);
 }
 
@@ -969,13 +1187,19 @@ static const KpTest TESTS[] = {
 	{ "four_seats_reach_one_start", four_seats_reach_one_start, 0 },
 	{ "four_seats_reach_one_start_on_a_lossy_lan", four_seats_reach_one_start_on_a_lossy_lan, 0 },
 	{ "kick_and_ban", kick_and_ban, 0 },
+	{ "a_joiners_start_does_not_stop_the_countdown", a_joiners_start_does_not_stop_the_countdown, 0 },
+	{ "the_host_takes_no_race_after_its_start_info", the_host_takes_no_race_after_its_start_info, 0 },
+	{ "a_bad_start_info_ends_the_lobby_walk", a_bad_start_info_ends_the_lobby_walk, 0 },
 	{ "ums_ready_room", ums_ready_room, 0 },
+	{ "a_leave_in_the_ready_room_changes_the_records", a_leave_in_the_ready_room_changes_the_records, 0 },
 	{ "save_file_reads_back", save_file_reads_back, 0 },
 	{ "koprulu_save_reads_back", koprulu_save_reads_back, 0 },
 	{ "resumed_melee_save", resumed_melee_save, 0 },
 	{ "resumed_ums_save", resumed_ums_save, 0 },
 	{ "resumed_team_save", resumed_team_save, 0 },
 	{ "transfer_upload_obeys_only_its_receiver", transfer_upload_obeys_only_its_receiver, 0 },
+	{ "transfer_takes_offers_from_the_host_alone", transfer_takes_offers_from_the_host_alone, 0 },
+	{ "transfer_names_follow_windows", transfer_names_follow_windows, 0 },
 	{ "game_results_follow_the_original", game_results_follow_the_original, 0 },
 	{ "network_save_keeps_the_lobby_part", network_save_keeps_the_lobby_part, 0 },
 	{ "restored_slots_follow_the_original", restored_slots_follow_the_original, 0 },

@@ -367,3 +367,35 @@ The plan's acceptance without the web (the decisions of 2026-11-21): the product
   - a phone's Create Game with no maps opened in a folder named "replays" (seen once, not looked into);
   - from N4: `--seats` on the turn hub (the user's choice of 2026-11-21: kept, `TODO:` in `kp_hub.h`), Storm's pump during a load (measured above: not needed yet), the race ready room's result 100, `PollTurn`'s pacing after a wait, the next glue after a network score, the network game's turns not fuzzed;
   - the web's network play (the decisions of 2026-11-21).
+
+## Review (2026-11-21)
+
+A code review of the phase after N6, then its defects fixed with protections of the protocol, both asked by the user ([ADR 0026's addition](adr/0026-network-compatible-with-1-17.md#addition-the-review-of-the-network-play)). Each fix's test fails on the code before it, except where noted.
+
+- **Storm's receiver** (`kp_snet.c`, the list in `kp_snet.h`, [storm-udp.md](formats/storm-udp.md#koprulus-receiver-who-may-send-what-the-review-of-2026-11-21)):
+  - a host in no game stopped a running game with one command 8 or 6 (1 to 3 turns in 3 s instead of 300), and one relayed packet ran as the host's turn. The control commands and relays are now taken only from the addresses that may send them (`control_accepted`, `relay_accepted`, the join's address);
+  - 16,384 datagrams of class 3 from one address filled the global bound of kept packets, and every later packet was dropped, turns included (0 turns in 3 s). The bound is now per record (`KP_SNET_PEER_FILED`, `KP_SNET_UNKNOWN_FILED`, those without an id together under half of `KP_SNET_NODES`), and class 3 is not filed;
+  - `test_snet.strangers_cannot_steer_a_game` and `strangers_cannot_steer_a_join`. The socket driver reads at most 4,096 datagrams a pass (`DRAIN_MAX`), and the provider's own case-insensitive compare gave way to `kp_net_casecmp`.
+- **The core in a network game** (`kp_commands.c`, `kp_selection.c`): the restart command 0x08 ended the game on every Koprulu seat (the original's `ExecRestartGame` `0x472e20` is single player's only); a targeted order past orders.dat and the control group 18 of record 7 stopped every seat by a refusal. In a network game the three are ignored; offline the refusals stay (`test_multiplayer.restart_and_past_the_tables_in_a_network_game`).
+- **A failed session** (`kp_flow.c`'s `net_failed`): a seat whose session stopped stayed in Storm's game without turns, and the others waited until `timeout.bin` dropped it. It now leaves at once and shows network.tbl's 0x51 on the error line (`test_flow.a_failed_network_game_leaves_storms_game`).
+- **The lobby** (`kp_netgame.c`, `kp_transfer.c`):
+  - a host's bad 0x48 made a joiner leave Storm's game, which freed the turn its walk went on reading. The walk now ends after a leave inside it (`storm_leaves`; `test_netgame.a_bad_start_info_ends_the_lobby_walk`, which only ASan sees fail on the old code);
+  - any seat's 0x3c made the others outside the joined state leave as "unable": the sender is tested first (`a_joiners_start_does_not_stop_the_countdown`);
+  - the host took race, team and force requests after its 0x48, so a modified joiner could start the host with other slots than the others; it takes them only until then (`the_host_takes_no_race_after_its_start_info`);
+  - any seat could offer a file, and a failed save of it took even the host out of the lobby; only the host's offers count, and a departed seat's transfers all go (`transfer_takes_offers_from_the_host_alone`);
+  - a transfer's name took `com1 .scm` and `lpt²` (Windows' device names), and a map name outside windows-1252 lost its characters on the wire. Such names are refused, and the offer's name has `_` for what windows-1252 lacks; a received name is converted to UTF-8 for its path (`transfer_names_follow_windows`).
+- **The race ready room:** the session stood before the room, the original's game after it, so a player who left in the room stayed in Koprulu's game as a live player without "has left". At the room's Start a network game whose records changed is built again (`rebuild_network_game`, `kp_netgame_setup_changed`; `test_netgame.a_leave_in_the_ready_room_changes_the_records` checks the records, `ums_ready_room` that they stay without a leave; the flow's rebuild itself has no test).
+- **The text:** a name or a chat line lost what windows-1252 lacks, so a Cyrillic profile name was empty and Storm refused to create or join a game. `kp_text_to_legacy_or` puts `?` there (`KP_TEXT_LEGACY_DEFAULT`; `test_kp_ui`'s text test). A network save's name must be windows-1252, since the save command carries it and every seat writes its file under it: the save dialog shows network.tbl's 0x58 "Invalid character." otherwise (`test_kp_ui.network_save_names_are_windows_1252`); the save's file name is the name in UTF-8.
+- **A network game's replay** named every human after the local player; the humans keep their setup's names and the header the game's name (no test: the flow's replay start needs a network game).
+- **A failing socket** logged every frame and spun during a join. The reads stop until the provider is chosen again, the player sees network.tbl's 0x51 once, and Storm's waits sleep (`kp_net_sock_sleep`; no test: the sockets are the system's).
+- **`--lan-host`** longer than its 63 bytes is refused instead of cut.
+- **Withdrawn:** the network error latch is cleared at each connection screen, as the original's at the main menu; Koprulu's lobby is made again there, and every way to the game list passes it.
+- **Verified (2026-11-21):**
+  - `kp_test` with the install's data: `test_snet`, `test_netgame`, `test_netplay`, `test_multiplayer`, `test_flow`, `test_kp_ui`, `test_hud`, `test_net_trace` and `test_lobby_trace`, 324 passed (the trace goldens unchanged: no honest datagram changed); the C++11 check;
+  - `test_netgame`, `test_multiplayer` and `test_snet` under ASan and UBSan (65 passed);
+  - Linux in Docker, GCC 15: every target built, `test_snet`, `test_netgame`, `test_multiplayer`, `test_kp_ui`, `test_net_trace` and `test_lobby_trace` in public mode (148 passed); Ubuntu 24.04's GCC 13 as in the hosted job: every target built without a warning, `test_snet`, `test_netgame`, `test_multiplayer`, `test_session` and `test_netplay` in public mode (112 passed);
+  - the quick `tools/ci.sh` with the full install, the product and the web (1,077 s, every check passed): the suites on the host, under ASan and UBSan and in wasm (794 each), the Python tests (309), the product scripts and the web's replay script.
+- **Open:**
+  - forged addresses still fill the 1,024 remote records shared by all (Storm allocates without a bound): a flood of addresses can keep a new player from joining, not stop a game's turns;
+  - the flow's rebuild after a ready room's leave, a network replay's names and a failing socket are verified by reading only;
+  - not reviewed: the lobby's menus (`kp_ui_lobby.c`'s list and slot code) and `kp_ui_timeout.c`; not run on Windows and iOS.

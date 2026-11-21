@@ -75,6 +75,7 @@ struct KpSnet {
 	uint8_t local_id;                               /* 0x15066600 */
 	int joining;                                    /* 0x1506bad8 */
 	int in_join;                                    /* kp_snet_join_game runs: the pump waits */
+	KpNetAddr join_addr;                            /* while joining: the joined game's address (kp_snet.h) */
 	int seen[CMD_COUNT];                            /* 0x1506baf0 */
 	char name[KP_SNET_STRING], stats[KP_SNET_STRING], password[KP_SNET_STRING];
 	uint32_t mode, start_tick, game_type, ladder_type, max_players;
@@ -577,6 +578,28 @@ static void ack_turns(KpSnet *s, Player *r)
 
 static void on_control(KpSnet *s, const KpNetAddr *from, const uint8_t *p, uint32_t size, uint8_t sender, unsigned cmd);
 
+/* Koprulu's: whether a control command from record r (the datagram came from `from`) counts (kp_snet.h). An ignored
+ * one is consumed like any other but neither handled nor seen by a join's wait. */
+static int control_accepted(const KpSnet *s, const Player *r, const KpNetAddr *from, unsigned cmd)
+{
+	switch (cmd) {
+	case CMD_ACCEPT:
+	case CMD_GAME:
+	case CMD_TEMPLATE:
+	case CMD_REJECT:
+		return s->joining && kp_net_addr_eq(from, &s->join_addr);
+	case CMD_PLAYER:
+		return s->joining ? kp_net_addr_eq(from, &s->join_addr) : r->id != KP_SNET_NO_ID;
+	case CMD_DROP:
+	case CMD_HOST:
+	case CMD_MODE:
+	case CMD_LADDER:
+		return r->id != KP_SNET_NO_ID;
+	default:
+		return 1;
+	}
+}
+
 /* DispatchControlPackets 0x15023e40: the in-sequence control packets, each to its handler. */
 static void dispatch_control(KpSnet *s, Player *r)
 {
@@ -584,6 +607,11 @@ static void dispatch_control(KpSnet *s, Player *r)
 	while (r->in[CONTROL].head && seq_of(r->in[CONTROL].head) == r->recv_seq[CONTROL]) {
 		Node *n = list_pop(&r->in[CONTROL]);
 		unsigned cmd = n->p[9];
+		if (!control_accepted(s, r, &n->addr, cmd)) {
+			node_free(s, n);
+			r->recv_seq[CONTROL]++;
+			continue;
+		}
 		if (cmd < CMD_COUNT) s->seen[cmd] = 1;
 		on_control(s, &n->addr, n->p + KP_SNET_HEADER, n->size - KP_SNET_HEADER, n->p[10], cmd);
 		node_free(s, n);
@@ -625,6 +653,28 @@ static void on_resend_request(KpSnet *s, Player *r, const uint8_t *d, uint32_t l
 	resend(s, r, n->p);
 }
 
+/* Koprulu's: a relayed packet counts only in class 2 and only from the address of a record with a player id (kp_snet.h):
+ * an honest seat relays a turn only to a seat that asked it, and asks only seats it holds with an id. */
+static int relay_accepted(const KpSnet *s, const KpNetAddr *from, unsigned cls)
+{
+	const Player *x = cls == TURNS ? find_remote(s, from) : NULL;
+	return x && x->id != KP_SNET_NO_ID;
+}
+
+/* Koprulu's bounds on what a record files (kp_snet.h): the packets in its receive queues, then the whole stack's. */
+static int may_file(const KpSnet *s, const Player *r)
+{
+	uint32_t filed = 0, cap = r->id != KP_SNET_NO_ID ? KP_SNET_PEER_FILED : KP_SNET_UNKNOWN_FILED;
+	unsigned c;
+	if (s->nodes >= (r->id != KP_SNET_NO_ID ? KP_SNET_NODES : KP_SNET_NODES / 2)) return 0;
+	for (c = 0; c < KP_SNET_CLASSES; c++) {
+		const Node *n;
+		for (n = r->in[c].head; n; n = n->next)
+			if (++filed >= cap) return 0;
+	}
+	return 1;
+}
+
 /* ReceivePackets 0x15021fa0 for one datagram. It reads the clock anew where Storm calls GetTickCount (a connection's
  * repeat check, the sender heard, an old packet's ack timer, a new packet's time, the ack timer started), never
  * once for the datagram: a clock that moves while it is read (the network oracle's) gives the original's values. */
@@ -641,6 +691,7 @@ static void on_datagram(KpSnet *s, const KpNetAddr *from, const uint8_t *d, uint
 	len = kp_net_get16(d + 2);
 	cls = d[8];
 	if (len < KP_SNET_HEADER || len > size || cls >= KP_SNET_CLASSES || kp_net_sum(d, len) != 0) return;
+	if ((flags & FLAG_RELAYED) && !relay_accepted(s, from, cls)) return;
 	if (!s->joining && !(flags & FLAG_RELAYED) && d[10] != KP_SNET_NO_ID && find_by_id(s, d[10]) != r) return;
 	seq = (uint16_t)kp_net_get16(d + 4);
 	ack = (uint16_t)kp_net_get16(d + 6);
@@ -668,6 +719,7 @@ static void on_datagram(KpSnet *s, const KpNetAddr *from, const uint8_t *d, uint
 		on_resend_request(s, r, d, len, cls, seq);
 		return;
 	}
+	if (cls == DATAGRAMS) return; /* not filed: nothing reads it (kp_snet.h) */
 	next = r->recv_seq[cls];
 	if (next != seq && (uint16_t)(next - seq) < 0x7fff) {
 		if (cls != TURNS) {
@@ -676,7 +728,7 @@ static void on_datagram(KpSnet *s, const KpNetAddr *from, const uint8_t *d, uint
 		}
 		return;
 	}
-	if (s->nodes >= KP_SNET_NODES || !(n = node_new(s, from, d, len))) return;
+	if (!may_file(s, r) || !(n = node_new(s, from, d, len))) return;
 	n->tick = now = now_of(s);
 	n->timer = now - s->t_gap + s->t_ack;
 	for (prev = NULL, at = r->in[cls].head; at; prev = at, at = at->next) {
@@ -1146,6 +1198,7 @@ int kp_snet_join_game(KpSnet *s, uint32_t game_id, const char *name, const char 
 	if (g.program != s->program || g.version != s->version) return fail(s, KP_SNET_ERROR_VERSION);
 	s->joining = 1;
 	s->in_join = 1;
+	s->join_addr = g.addr;
 	if (!(host = find_or_create(s, &g.addr))) {
 		s->joining = s->in_join = 0;
 		kp_snet_leave_game(s, 1);

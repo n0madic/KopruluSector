@@ -46,6 +46,7 @@ typedef struct {
 struct World {
 	KpNetWorld n; /* its seats are seat[k].n */
 	Seat seat[SEATS];
+	uint32_t forged; /* strangers_cannot_steer_a_join: the control packets forged during the join */
 };
 
 #define fnv kp_net_world_fnv
@@ -923,6 +924,102 @@ static void garbage_is_ignored(KpT *T)
 	kp_t_ok(T, kp_snet_remote_count(w->seat[0].n.net) <= KP_SNET_RECORDS, "%d records", kp_snet_remote_count(w->seat[0].n.net));
 }
 
+/* A datagram of Storm's from a host in no game (its socket B at `ip`) to seat `to`, delivered at once. */
+static void forge(World *w, int to, uint32_t ip, unsigned cls, unsigned cmd, unsigned seq, unsigned sender,
+	unsigned flags, const uint8_t *payload, uint32_t size)
+{
+	uint8_t d[KP_SNP_DATAGRAM];
+	KpNetAddr from = kp_net_addr(ip, KP_NET_GAME_PORT);
+	kp_net_put16(d, 0);
+	kp_net_put16(d + 2, KP_SNET_HEADER + size);
+	kp_net_put16(d + 4, seq);
+	kp_net_put16(d + 6, 0);
+	d[8] = (uint8_t)cls;
+	d[9] = (uint8_t)cmd;
+	d[10] = (uint8_t)sender;
+	d[11] = (uint8_t)flags;
+	if (size) memcpy(d + KP_SNET_HEADER, payload, size);
+	kp_net_checksum(d, KP_SNET_HEADER + size);
+	kp_net_world_deliver(&w->seat[to].n, KP_NET_SOCKET_GAME, &from, d, KP_SNET_HEADER + size);
+}
+
+#define STRANGER(k) (0x0a000100u + (uint32_t)(k)) /* 10.0.1.k: hosts in no game */
+
+/* Hosts in no game cannot steer a running game (kp_snet.h's departures, the network review of 2026-11-21): a game info,
+ * a player info, a drop and a new host from their addresses are ignored, a relayed turn "of the host" is not the host's,
+ * and their floods of class 3 and of turns far ahead leave the seats' own turns room. Storm takes all of them. */
+static void strangers_cannot_steer_a_game(KpT *T)
+{
+	World *w = world_new(T, 22, 2);
+	uint8_t p[0x40], t[TURN_SIZE] = {0, 0x05, 0, 0, 0, 0, 0xee, 0xee};
+	uint32_t before[2], k;
+	host(w, 0, "Koprulu", "", 2);
+	join(w, 1, "Koprulu");
+	start_playing(&w->seat[0]);
+	start_playing(&w->seat[1]);
+	play(w, 1000);
+	memset(p, 0, sizeof p);
+	kp_net_put32(p, 1);          /* game info: the joiner's own id, its turns reset */
+	kp_net_put32(p + 4, 8);
+	kp_net_put32(p + 8, 0x4000);
+	forge(w, 1, STRANGER(1), 0, 8, 0, KP_SNET_NO_ID, 0, p, 23);
+	memset(p, 0, sizeof p);      /* player info: a player 5 at 10.0.0.77 */
+	kp_net_put32(p, 0x26);
+	kp_net_put32(p + 4, 5);
+	kp_net_put32(p + 16, kp_snet_local_turn(w->seat[1].n.net));
+	memcpy(p + 20, kp_net_addr(0x0a00004du, KP_NET_GAME_PORT).b, KP_NET_ADDR);
+	forge(w, 1, STRANGER(2), 0, 6, 0, KP_SNET_NO_ID, 0, p, 0x26);
+	memset(p, 0, sizeof p);      /* the host dropped at the joiner's turn */
+	kp_net_put32(p + 4, kp_snet_local_turn(w->seat[1].n.net));
+	kp_net_put32(p + 8, REASON_DROP);
+	forge(w, 1, STRANGER(3), 0, 12, 0, KP_SNET_NO_ID, 0, p, 12);
+	kp_net_put32(p, 1);          /* the joiner made host */
+	forge(w, 1, STRANGER(4), 0, 13, 0, KP_SNET_NO_ID, 0, p, 4);
+	forge(w, 1, STRANGER(5), 2, 0, kp_snet_local_turn(w->seat[1].n.net) + 40, 0, 4, t, sizeof t); /* "relayed" */
+	before[0] = w->seat[0].received;
+	before[1] = w->seat[1].received;
+	for (k = 0; k < KP_SNET_NODES + 4096; k++) {
+		if (k % 2) forge(w, 0, STRANGER(6), 3, 0, k, KP_SNET_NO_ID, 0, NULL, 0);
+		else forge(w, 0, STRANGER(7 + k % 64), 2, 0, 100 + k, KP_SNET_NO_ID, 0, t, sizeof t);
+		if (k % 256 == 255) play(w, 1); /* within the provider's queue */
+	}
+	play(w, 2000);
+	for (k = 0; k < 2; k++)
+		kp_t_ok(T, w->seat[k].received - before[k] > 100, "seat %u received %u turns after the strangers", k,
+			w->seat[k].received - before[k]);
+	kp_t_ok(T, kp_snet_local_id(w->seat[1].n.net) == 1 && w->seat[1].removed[0] == 0 && w->seat[0].removed[1] == 0,
+		"the joiner's id %d, removals %d and %d", kp_snet_local_id(w->seat[1].n.net), w->seat[1].removed[0],
+		w->seat[0].removed[1]);
+	kp_t_ok(T, w->seat[1].players == 0 && kp_snet_is_host(w->seat[1].n.net, 0) == 1 &&
+			kp_snet_is_host(w->seat[1].n.net, 1) == 0 && kp_snet_is_host(w->seat[1].n.net, 5) == -1,
+		"the joiner's player events %d, hosts %d %d %d", w->seat[1].players, kp_snet_is_host(w->seat[1].n.net, 0),
+		kp_snet_is_host(w->seat[1].n.net, 1), kp_snet_is_host(w->seat[1].n.net, 5));
+}
+
+/* While seat 1 joins, a host in no game sends it a reject each frame: Storm's join would end refused at the first. */
+static void frame_forging_rejects(KpNetSeat *s)
+{
+	World *w = (World *)s->w;
+	frame((Seat *)s);
+	if (s->index == 0 && w->n.in_join == 1) {
+		forge(w, 1, STRANGER(1), 0, 10, w->forged, KP_SNET_NO_ID, 0, NULL, 0);
+		forge(w, 1, STRANGER(2), 0, 9, w->forged, KP_SNET_NO_ID, 0, NULL, 0);
+		w->forged++;
+	}
+}
+
+static void strangers_cannot_steer_a_join(KpT *T)
+{
+	World *w = world_new(T, 23, 2);
+	kp_net_lan_link(w->n.lan, 50, 0, 0); /* the host's answers take several of the join's passes */
+	w->n.frame = frame_forging_rejects;
+	host(w, 0, "Koprulu", "", 2);
+	join(w, 1, "Koprulu");
+	kp_t_ok(T, w->forged > 0, "nothing forged during the join");
+	kp_t_ok(T, w->seat[1].id == 1 && w->seat[1].templates == 1, "the joiner's id %d, template events %d",
+		w->seat[1].id, w->seat[1].templates);
+}
+
 /* Three seats on the system's sockets over 127.0.0.1: the two hosts of a map (Koprulu's own games on one machine) and
  * a program the map does not hold (Koprulu against the network oracle's bridge), on the two ports above the map's.
  * They list and join the game, play in lockstep, and see a leave at one turn. */
@@ -1196,6 +1293,8 @@ static const KpTest TESTS[] = {
 	{ "a_silent_seat_is_dropped", a_silent_seat_is_dropped, 0 },
 	{ "timers_are_storms", timers_are_storms, 0 },
 	{ "garbage_is_ignored", garbage_is_ignored, 0 },
+	{ "strangers_cannot_steer_a_game", strangers_cannot_steer_a_game, 0 },
+	{ "strangers_cannot_steer_a_join", strangers_cannot_steer_a_join, 0 },
 	{ "sockets_carry_a_game", sockets_carry_a_game, 0 },
 	{ "sockets_reach_a_host_by_address", sockets_reach_a_host_by_address, 0 },
 	{ "live_bridge_join", live_bridge_join, 0 },

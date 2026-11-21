@@ -54,7 +54,7 @@ Every replay, save and map a player opens is untrusted, and so is every frame of
 - **The refusals the fuzzer reaches are known ones:**
   - the commands no game played alone sends: shared vision 0x0d, alliance 0x0e, 0x1d, 0x38-0x3b, leave game 0x57 and chat 0x5c (`kp_commands.c`'s handler table says why each has no sender offline);
   - a targeted order 0x15 past orders.dat (order 0xff). The original reads its tables past their end (`ExecTargetedOrder` 0x472270, tech `0x51b800[order]`). Koprulu's DAT read gives `KP_NIL` there, and the requirements' range check stops the game.
-  A network game must decide what a seat does with such a command (its turn source's TODO).
+  A network game ignores such an order instead (phase N's review, [ADR 0026](0026-network-compatible-with-1-17.md#addition-the-review-of-the-network-play)): a refusal there would stop every seat at once, so one modified seat could end everyone's game. The control group 18 of player record 7 (`kp_command_control_group`) is ignored there for the same reason; offline both stay refusals.
 - A save made by the game loads after `kp_save_seal` exactly as before: a save sealed again is the same bytes. The seal changes no save format and no `KP_SAVE_VERSION`.
 - Running a game on after a fuzzed load is not covered: the save target loads and goes back to its snapshot. A loaded state the walk accepts may still hold values the simulation never makes. `kp_load` checks the indexes and the lists' links it reads, but not every value's range (a TODO in `kp_fuzz.c`).
 

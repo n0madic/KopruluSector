@@ -498,6 +498,9 @@ static void select_control_group(KpGame *g, int64_t p, int64_t group)
 void kp_command_control_group(KpGame *g, int64_t p, int64_t action, int64_t group)
 {
 	if (group > KP_GROUPS) return;
+	/* Group 18 of the last record is past the original's array; offline group_row refuses the game, while a network
+	 * game ignores what only a hostile seat sends (its interface has no group 18; ADR 0026's review addition). */
+	if (group == KP_GROUPS && p == KP_SELECTION_PLAYERS - 1 && g->setup.multiplayer != 0) return;
 	if (p < 0 || p >= KP_SELECTION_PLAYERS) kp_game_fail(g, "selection: player %lld", (long long)p);
 	if (action == 0) assign_control_group(g, p, group, 1);
 	else if (action == 1) select_control_group(g, p, group);

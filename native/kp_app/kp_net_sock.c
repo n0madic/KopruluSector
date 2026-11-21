@@ -9,6 +9,7 @@
 #include <string.h>
 
 #define UNMAPPED_SELF 0x7f000002u /* 127.0.0.2: to itself, a program the map does not hold */
+#define DRAIN_MAX 4096            /* datagrams read from one socket a wait, at most (the provider queues as many) */
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -46,6 +47,19 @@ uint32_t kp_net_sock_now(void)
 	struct timespec t;
 	clock_gettime(CLOCK_MONOTONIC, &t);
 	return (uint32_t)((uint64_t)t.tv_sec * 1000u + (uint64_t)t.tv_nsec / 1000000u);
+#endif
+}
+
+void kp_net_sock_sleep(uint32_t ms)
+{
+#ifdef _WIN32
+	Sleep(ms);
+#else
+	struct timespec t;
+	t.tv_sec = (time_t)(ms / 1000u);
+	t.tv_nsec = (long)(ms % 1000u) * 1000000L;
+	while (nanosleep(&t, &t) != 0) { /* interrupted: the rest */
+	}
 #endif
 }
 
@@ -335,11 +349,12 @@ static KpNetAddr source(const KpNetSock *s, const struct sockaddr_in *a)
 	return kp_net_addr(ip, port);
 }
 
-/* Every datagram waiting on one socket; -1 on an error that is not transient. */
+/* The datagrams waiting on one socket, at most DRAIN_MAX reads a call, transient errors' included (a flood leaves the
+ * rest for the next: the caller's frame goes on); -1 on an error that is not transient. */
 static int drain(KpNetSock *s, int socket, KpNetSockDeliver fn, void *ud)
 {
-	int n = 0;
-	for (;;) {
+	int n = 0, reads;
+	for (reads = 0; reads < DRAIN_MAX; reads++) {
 		struct sockaddr_in a;
 		socklen_t len = sizeof a;
 		KpNetAddr from;
@@ -356,6 +371,7 @@ static int drain(KpNetSock *s, int socket, KpNetSockDeliver fn, void *ud)
 		fn(ud, socket, &from, s->buf, (size_t)got);
 		n++;
 	}
+	return n;
 }
 
 int kp_net_sock_wait(KpNetSock *s, uint32_t ms, KpNetSockDeliver fn, void *ud)

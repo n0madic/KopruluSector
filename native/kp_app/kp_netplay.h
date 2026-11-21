@@ -80,6 +80,7 @@ typedef struct KpNetPlay {
 	KpNetLookup *asked;       /* the Address popup's address (asked_text) being looked up, NULL none */
 	char asked_text[KP_NET_HOST];
 	int locked;      /* lan_lock(1) called */
+	int sock_failed; /* the sockets failed: read no more until the provider is chosen again (logged, told once) */
 } KpNetPlay;
 
 /* p over ui: its hooks set as ui->net, no provider chosen yet. */

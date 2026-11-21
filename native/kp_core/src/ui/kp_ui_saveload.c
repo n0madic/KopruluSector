@@ -39,6 +39,7 @@
 #define NET_RESERVED 6               /* "That file name is a reserved name..." */
 #define SAVE_NAME_LIMIT 28           /* IsInvalidFileName 0x408300's limit in SaveDialogConfirm */
 #define NET_FORBIDDEN 0x11
+#define NET_INVALID_CHARACTER 0x58   /* "Invalid character." */
 #define NET_SAVING 0x6d
 #define SAVE_COOLDOWN 120000u        /* IsSaveCooldownOver 0x49add0: ms after the last save command */
 #define VK_BACK 8
@@ -232,6 +233,13 @@ int kp_ui_delete_save(KpUi *ui, const char *name)
 	return 1;
 }
 
+/* Whether every character of the UTF-8 s has a windows-1252 byte. */
+static int legacy_only(const char *s)
+{
+	char legacy[KP_UI_SAVE_NAME];
+	return kp_text_to_legacy(s, legacy, sizeof legacy) == kp_text_chars((const uint8_t *)s);
+}
+
 static void send_save(KpUi *ui, const char *name)
 {
 	/* SendSaveGameCommand 0x4740e0 (the time stamp: the host's clock in seconds) */
@@ -243,7 +251,10 @@ static void send_save(KpUi *ui, const char *name)
 	cmd[2] = (uint8_t)(t >> 8);
 	cmd[3] = (uint8_t)(t >> 16);
 	cmd[4] = (uint8_t)(t >> 24);
-	snprintf((char *)cmd + 5, CMD_NAME, "%s", name);
+	/* a network game's name in the original's encoding, as the other seats (1.17 among them) take it: windows-1252,
+	 * its NUL within 28 bytes (save_confirm refused a character it lacks) */
+	if (ui->menus.multiplayer) (void)kp_text_to_legacy(name, (char *)cmd + 5, SAVE_NAME_LIMIT);
+	else snprintf((char *)cmd + 5, CMD_NAME, "%s", name);
 	kp_ui_queue_command(ui, cmd, 5 + strlen((const char *)cmd + 5) + 1);
 	ui->save.sent_tick = ui->now; /* 0x6a5ea0 = GetTickCount() */
 	ui->save.sent = 1;
@@ -455,6 +466,11 @@ static void save_confirm(KpUi *ui, int32_t dialog)
 	}
 	if (kp_ui_invalid_file_name(ui, ui->save.name, SAVE_NAME_LIMIT, 0)) {
 		message_box(ui, (const char *)kp_ui_tbl(ui, KP_UI_NETWORK, NET_RESERVED), reopen_save, "rez\\ok.bin");
+		return;
+	}
+	if (ui->menus.multiplayer && !legacy_only(ui->save.name)) {
+		/* Koprulu's: the original's ANSI edit box takes no character windows-1252 lacks, and its name travels as is */
+		message_box(ui, (const char *)kp_ui_tbl(ui, KP_UI_NETWORK, NET_INVALID_CHARACTER), reopen_save, "rez\\ok.bin");
 		return;
 	}
 	send_save(ui, ui->save.name);

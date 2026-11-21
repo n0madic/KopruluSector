@@ -12,6 +12,7 @@
 #define PROGRAM_VERSION 0xd5u    /* the version Storm's joins compare (0x66cca8) */
 #define PROVIDER_PLAYERS 8       /* the provider entry's min(caps' maximum players, 8) (0x4bad40) */
 #define NETTBL_PROVIDER 0x53     /* InitNetworkProvider 0x4757e0's report of a provider that did not initialize */
+#define NETTBL_NETWORK_ERROR 0x51 /* "A network error has occured." */
 
 static KpNetPlay *np(void *host) { return (KpNetPlay *)((KpNetUi *)host)->owner; }
 
@@ -34,9 +35,15 @@ static void deliver(void *ud, int socket, const KpNetAddr *from, const uint8_t *
 	if (kp_snp_udp_input(&p->snp, socket, from, data, size)) p->signalled = 1;
 }
 
+/* What arrived. Sockets that failed (a closed socket: a phone's system after the background) are read no more, and the
+ * player is told once with network.tbl's network error; choosing the provider again opens new ones. */
 static void read_sockets(KpNetPlay *p, uint32_t ms)
 {
-	if (kp_net_sock_wait(p->sock, ms, deliver, p) < 0) say(p, "network: the sockets failed");
+	if (p->sock_failed) return;
+	if (kp_net_sock_wait(p->sock, ms, deliver, p) >= 0) return;
+	p->sock_failed = 1;
+	say(p, "network: the sockets failed: no more reads until the provider is chosen again");
+	kp_ui_menus_net_error(p->nu.ui, NETTBL_NETWORK_ERROR);
 }
 
 static uint32_t s_now(void *ud)
@@ -51,7 +58,13 @@ static void s_sleep(void *ud, uint32_t ms)
 	KpNetPlay *p = (KpNetPlay *)ud;
 	uint32_t until = kp_net_sock_now() + ms;
 	int32_t left;
-	while ((left = (int32_t)(until - kp_net_sock_now())) > 0) read_sockets(p, (uint32_t)left);
+	while ((left = (int32_t)(until - kp_net_sock_now())) > 0) {
+		if (p->sock_failed) {
+			kp_net_sock_sleep((uint32_t)left); /* nothing to read: no spin until Storm's timeout */
+			return;
+		}
+		read_sockets(p, (uint32_t)left);
+	}
 }
 
 static void s_event(void *ud, const KpSnetEvent *e)
@@ -77,6 +90,7 @@ static void stop(KpNetPlay *p)
 	p->snp_on = 0;
 	kp_net_sock_close(p->sock);
 	p->sock = NULL;
+	p->sock_failed = 0;
 	if (p->locked && p->config.lan_lock) p->config.lan_lock(p->config.ctx, 0);
 	p->locked = 0;
 }
@@ -185,7 +199,8 @@ static int p_select(void *host, uint32_t id)
 	calls = kp_netgame_snet_calls(p->snet);
 	gh = kp_netui_game_hooks(&p->nu);
 	memset(&gc, 0, sizeof gc);
-	(void)kp_text_to_legacy(ui->menus.player, gc.player_name, sizeof gc.player_name); /* SetLocalPlayerName 0x475750 */
+	/* SetLocalPlayerName 0x475750 */
+	(void)kp_text_to_legacy_or(ui->menus.player, gc.player_name, sizeof gc.player_name, KP_TEXT_LEGACY_DEFAULT);
 	gc.templates = p->config.templates;
 	gc.transfer = p->config.transfer;
 	if (kp_netgame_init(&p->game, &calls, &gh, &gc) != 0) { /* the game reported why */

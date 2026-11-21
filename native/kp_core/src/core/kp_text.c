@@ -138,7 +138,7 @@ size_t kp_text_from_legacy(const char *legacy, char *out, size_t size)
 	return n;
 }
 
-size_t kp_text_to_legacy(const char *utf8, char *out, size_t size)
+size_t kp_text_to_legacy_or(const char *utf8, char *out, size_t size, char missing)
 {
 	const uint8_t *s = (const uint8_t *)utf8;
 	size_t at = 0, n = 0;
@@ -146,10 +146,13 @@ size_t kp_text_to_legacy(const char *utf8, char *out, size_t size)
 	while (s[at] != 0 && n + 1 < size) {
 		int byte = kp_text_byte(kp_text_next(s, KP_TEXT_NUL_TERMINATED, &at));
 		if (byte >= 0) out[n++] = (char)byte;
+		else if (missing != 0) out[n++] = missing;
 	}
 	out[n] = 0;
 	return n;
 }
+
+size_t kp_text_to_legacy(const char *utf8, char *out, size_t size) { return kp_text_to_legacy_or(utf8, out, size, 0); }
 
 /* --- the original files' text (ADR 0018, stage D3) --- */
 

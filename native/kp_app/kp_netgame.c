@@ -143,6 +143,7 @@ static void leave_storm(KpNetGame *ng, uint32_t code)
 {
 	reset_turn_state(ng);
 	if (ng->config.replay) code = LEAVE_ERROR;
+	ng->storm_leaves++;
 	ng->net.leave_game(ng->net.ud, code);
 }
 
@@ -1448,11 +1449,21 @@ static void on_player_info(KpNetGame *ng, const uint8_t *m, int sender)
 	add_net_player(ng, id, flags, (uint16_t)kp_net_get16(m + 4), (uint16_t)kp_net_get16(m + 6));
 }
 
+/* Whether the host takes a seat's race, team or force request (0x470f60, 0x471340 and 0x470a30 take one in any state
+ * from the joined one on). Koprulu's guard, not the original's: none once the host built the start info 0x48, as the
+ * slot updates it would send reach the others after their start (a modified client's desync, ADR 0026's review
+ * addition). An honest seat's controls lock 2 * transit + 4 turns before the start, so its last request arrives
+ * before then. */
+static int host_takes_requests(const KpNetGame *ng)
+{
+	return ng->host && ng->lobby_state >= KP_LOBBY_IN && ng->lobby_state < KP_LOBBY_START_INFO;
+}
+
 /* OnLobbyRaceChange 0x470f60 */
 static void on_race_change(KpNetGame *ng, const uint8_t *m, int sender)
 {
 	int q, target, f, j;
-	if (!ng->host || ng->lobby_state < KP_LOBBY_IN) return;
+	if (!host_takes_requests(ng)) return;
 	q = ng->storm_slot[sender];
 	target = m[1] == 8 ? (uint8_t)q : m[1];
 	if (!kp_netgame_can_set_race(ng, target, m[2], q)) return;
@@ -1510,15 +1521,17 @@ static void on_swap(KpNetGame *ng, const uint8_t *m, int sender)
 	refresh(ng);
 }
 
-/* OnLobbyStartGame 0x4712d0 (IsLadderMapAllowed 0x477e90 is Battle.net's: always allowed) */
+/* OnLobbyStartGame 0x4712d0 (IsLadderMapAllowed 0x477e90 is Battle.net's: always allowed). Koprulu tests the sender
+ * first: the original leaves with "unable" (4) on any seat's 0x3c outside the joined state, so one seat could make
+ * the others leave; only the host sends it (ADR 0026's review addition). */
 static void on_start_game(KpNetGame *ng, int sender)
 {
 	uint32_t c;
+	if (sender != 0) return;
 	if (ng->lobby_state != KP_LOBBY_IN) {
 		set_leave(ng, KP_LEAVE_UNABLE);
 		return;
 	}
-	if (sender != 0) return;
 	if (ng->config.replay) memcpy(ng->replay_slots, ng->slots, sizeof ng->slots);
 	ng->lobby_state = KP_LOBBY_STARTING;
 	c = 2 * ng->transit + 4;
@@ -1530,7 +1543,7 @@ static void on_start_game(KpNetGame *ng, int sender)
 static void on_team_change(KpNetGame *ng, const uint8_t *m, int sender)
 {
 	int t = m[1], s, d;
-	if (!ng->host || ng->lobby_state < KP_LOBBY_IN || !kp_netgame_team_game(ng)) return;
+	if (!host_takes_requests(ng) || !kp_netgame_team_game(ng)) return;
 	if (t == 0 || t > team_count(ng) || force_has_computer(ng, t)) return;
 	s = ng->storm_slot[sender];
 	if (s >= 8 || ng->slots[s].force == t || ng->slots[s].type != KP_CTRL_HUMAN) return;
@@ -1546,7 +1559,7 @@ static void on_team_change(KpNetGame *ng, const uint8_t *m, int sender)
 static void on_force_change(KpNetGame *ng, const uint8_t *m, int sender)
 {
 	int f = m[1], s, target;
-	if (!ng->host || ng->lobby_state < KP_LOBBY_IN || !kp_netgame_ums(ng)) return;
+	if (!host_takes_requests(ng) || !kp_netgame_ums(ng)) return;
 	if (f < 1 || f > 4 || force_has_computer_slot(ng, f)) return;
 	s = ng->storm_slot[sender];
 	if (s >= 8 || ng->slots[s].type != KP_CTRL_HUMAN) return;
@@ -1604,15 +1617,17 @@ static uint32_t lobby_command_size(uint8_t c)
 	}
 }
 
-/* ExecuteLobbyCommands 0x476650 */
+/* ExecuteLobbyCommands 0x476650. Koprulu's guard, not the original's: a command that leaves Storm (a fatal report,
+ * the start info's errors) ends the walk, as leaving frees the turn buffers it reads. */
 static void execute_lobby_commands(KpNetGame *ng)
 {
+	const uint32_t leaves = ng->storm_leaves;
 	int id;
-	for (id = KP_NETGAME_PLAYERS - 1; id >= 0; id--) {
+	for (id = KP_NETGAME_PLAYERS - 1; id >= 0 && ng->storm_leaves == leaves; id--) {
 		const uint8_t *d = ng->turn_data[id];
 		uint32_t size = ng->turn_size[id], at = 0;
 		if (!(ng->status[id] & STATUS_HAS_TURN) || !size || !d) continue;
-		while (at < size) {
+		while (at < size && ng->storm_leaves == leaves) {
 			const uint8_t *m = d + at;
 			uint32_t n;
 			if ((uint8_t)(m[0] - LOBBY_COMMAND_FIRST) > LOBBY_COMMAND_SPAN) break;
@@ -2612,6 +2627,13 @@ void kp_netgame_game_setup(const KpNetGame *ng, KpGameSetup *s)
 		s->user_select[k] = ng->user_select[k];
 		s->color[k] = k;
 	}
+}
+
+int kp_netgame_setup_changed(const KpNetGame *ng, const KpGameSetup *s)
+{
+	KpGameSetup now;
+	kp_netgame_game_setup(ng, &now); /* the struct has no padding: both made field by field over zeros */
+	return memcmp(&now, s, sizeof now) != 0;
 }
 
 int kp_netgame_resumes(const KpNetGame *ng) { return saving(ng) && ng->header.save_id != 0; }

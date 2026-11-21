@@ -18,7 +18,16 @@
  *   - Battle.net's branches (the server chat commands, the ladder checks, the /astat line) are not ported;
  *   - the RNG state a join request carries (GetSavedRngState 0x499860) is the one of the save this game's lobbies read
  *     last; the original's is the last save header any screen probed (the Create Game list's saved games included),
- *     so a seat that only looked at a saved game there sends 0 where the original sends that save's.
+ *     so a seat that only looked at a saved game there sends 0 where the original sends that save's;
+ *   - what another seat may make this one do (ADR 0026's review addition; an honest 1.17 or Koprulu seat sends none of
+ *     these):
+ *       - a start 0x3c counts only from the host, before any other test (the original leaves with "unable" on any
+ *         seat's 0x3c outside the joined state);
+ *       - the host takes race, team and force requests only until it builds the start information 0x48 (the
+ *         original takes them in any state from the joined one on: the slot update would reach the others after
+ *         their start);
+ *       - a walk of a turn's lobby messages ends once Storm's game was left inside it (the original reads on in the
+ *         turn Storm freed, after a fatal report on a bad 0x48).
  */
 #ifndef KP_NETGAME_H
 #define KP_NETGAME_H
@@ -323,6 +332,7 @@ typedef struct {
 	const uint8_t *turn_data[KP_NETGAME_PLAYERS]; /* 0x672994 */
 	uint32_t turn_size[KP_NETGAME_PLAYERS];       /* 0x6729b4 */
 	uint32_t extra_latency; /* 0x672990 (stage N4) */
+	uint32_t storm_leaves;  /* Koprulu's: the times leave_storm ran; a walk of turn_data stops after one (freed) */
 
 	/* the game's turns (stage N4) */
 	KpSync sync;          /* the sync ring 0x673f20..0x675008 */
@@ -421,6 +431,10 @@ int kp_netgame_ready_room(const KpNetGame *ng);
  * the multiplayer byte, the header's player slots and the player records 0x6726c8 (Storm ID, type, race, force, name)
  * with the User Select slots; the start resolves the random races and slots from the 0x48 seed. */
 void kp_netgame_game_setup(const KpNetGame *ng, KpGameSetup *s);
+/* Whether kp_netgame_game_setup would now give other records than s: a player left in the race ready room
+ * (HandlePlayerLeftLobby 0x477c20 in the glue restores the slot; RunGameSession 0x467ba0's StartGame builds the game
+ * from the records after the briefing). */
+int kp_netgame_setup_changed(const KpNetGame *ng, const KpGameSetup *s);
 /* Whether the lobby resumes a saved game (its header's save ID; InitJoinedLobby 0x474c60 found and read this seat's
  * copy): the game starts from that save, not from a map. */
 int kp_netgame_resumes(const KpNetGame *ng);

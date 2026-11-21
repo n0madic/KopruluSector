@@ -259,23 +259,29 @@ static void legacy_name(const char *text, char *out, size_t size)
 }
 
 /* The recorded game's header with the names StartGame 0x443f40 gives its records: the logged-in ID's (Anonymous
- * without one) and AssignDefaultComputerPlayerNames 0x4074a0's; and its tail: what the game started from. */
+ * without one) and AssignDefaultComputerPlayerNames 0x4074a0's; a network game's humans keep the lobby's names (the
+ * setup's, kp_session_replay_game) and its header the game's name; and its tail: what the game started from. */
 static void replay_start(KpFlow *f, const KpSessionStart *st)
 {
 	KpSession *s = f->session;
 	KpRepGame game;
 	char player[KP_REP_GAME_NAME_SIZE];
-	int p;
+	int p, network = f->net_game && f->netplay && f->netplay->game_on;
 	f->replay_saved = 0;
 	if (!s->rec) return;
 	kp_session_replay_game(s, st->seed, &game);
-	if (f->profile && f->profile->name[0]) {
+	if (network) {
+		snprintf(player, sizeof player, "%s", f->netplay->game.header.name);
+		game.player_name = player;
+	} else if (f->profile && f->profile->name[0]) {
 		legacy_name(f->profile->name, player, sizeof player);
 		game.player_name = player;
 	}
 	for (p = 0; p < 8; p++) {
 		KpRepPlayer *r = &game.players[p];
-		if (r->type == KP_CTRL_HUMAN) {
+		if (network && r->type == KP_CTRL_HUMAN) {
+			/* the lobby's name, as kp_session_replay_game took it */
+		} else if (r->type == KP_CTRL_HUMAN) {
 			snprintf(r->name, sizeof r->name, "%s", game.player_name);
 		} else {
 			legacy_name(kp_ui_default_player_name(f->ui, (int)s->g->expansion, st->mission_index, p,
@@ -344,10 +350,9 @@ static void free_seat_views(KpFlow *f);
 
 static void net_game_end(KpFlow *f);
 
-static void destroy_scene(KpFlow *f)
+/* The game's console, world, session and seats freed (Storm's game and the LastReplay left to destroy_scene). */
+static void free_scene(KpFlow *f)
 {
-	save_last_replay(f);
-	if (f->session) net_game_end(f); /* a network game that ends without the console's exit (a failure) */
 	if (f->hud_on && f->session && f->session->g) end_console(f);
 	end_hud(f);
 	/* only a world that stands (a build that fails frees its own): a flow freed before its host was set has none */
@@ -363,6 +368,13 @@ static void destroy_scene(KpFlow *f)
 	kp_seats_free(&f->seats); /* the hidden seats' sessions and the turn hub */
 	if (f->ui) f->ui->game = NULL; /* a ready room's game too */
 	f->result = 0;
+}
+
+static void destroy_scene(KpFlow *f)
+{
+	save_last_replay(f);
+	if (f->session) net_game_end(f); /* a network game that ends without the console's exit (a failure) */
+	free_scene(f);
 }
 
 static int net_save_name_ok(const char *name);
@@ -728,14 +740,15 @@ static int transfer_match(void *ctx, const char *path, const char *name)
 }
 
 /* FindLocalCopy 0x441080: each folder of map_roots in turn (the user's maps, its download folder included, before the
- * installs') */
+ * installs'). The offered name is windows-1252, the folders' names UTF-8. */
 static int transfer_find(void *ud, const char *name, uint32_t size, uint32_t crc, char *out, size_t out_size)
 {
 	const KpFlow *f = (const KpFlow *)ud;
-	char roots[CUSTOM_BASES][ENTRY_PATH];
+	char roots[CUSTOM_BASES][ENTRY_PATH], utf8[KP_TRANSFER_NAME * KP_TEXT_UTF8_MAX];
 	TransferMatch t;
 	int n = map_roots(f, roots), k;
-	t.name = name;
+	(void)kp_text_from_legacy(name, utf8, sizeof utf8);
+	t.name = utf8;
 	t.size = size;
 	t.crc = crc;
 	for (k = 0; k < n; k++) {
@@ -744,12 +757,14 @@ static int transfer_find(void *ud, const char *name, uint32_t size, uint32_t crc
 	return 0;
 }
 
-/* SaveDownloadedFile 0x4418c0: <user>maps/download/<name>, the folders made when missing */
+/* SaveDownloadedFile 0x4418c0: <user>maps/download/<name>, the folders made when missing; the offered name is
+ * windows-1252, the file's UTF-8 (APFS takes no other bytes) */
 static int transfer_save(void *ud, const char *name, const uint8_t *data, size_t size, char *out, size_t out_size)
 {
 	KpFlow *f = (KpFlow *)ud;
-	char dir[ENTRY_PATH];
+	char dir[ENTRY_PATH], utf8[KP_TRANSFER_NAME * KP_TEXT_UTF8_MAX];
 	KpError err;
+	(void)kp_text_from_legacy(name, utf8, sizeof utf8);
 	pref_path(f, MAP_DIR, dir, sizeof dir);
 	if (make_dir(dir) != 0) {
 		say(f, "map transfer: cannot create %s: %s", dir, strerror(errno));
@@ -761,7 +776,7 @@ static int transfer_save(void *ud, const char *name, const uint8_t *data, size_t
 		say(f, "map transfer: cannot create %s: %s", dir, strerror(errno));
 		return 0;
 	}
-	if (snprintf(out, out_size, "%s/%s", dir, name) >= (int)out_size) return 0;
+	if (snprintf(out, out_size, "%s/%s", dir, utf8) >= (int)out_size) return 0;
 	if (kp_write_file_atomic(out, data, size, &err) != 0) {
 		say(f, "map transfer: %s", err.msg);
 		return 0;
@@ -2360,15 +2375,21 @@ static int save_game(KpFlow *f, const char *file, char *why, size_t why_size)
 /* Whether the game in play is a network game still in Storm's game: its saves are the network's (kp_netsave.h). */
 static int net_saves(const KpFlow *f) { return f->net_game && !f->net_left && f->netplay && f->netplay->game_on; }
 
-/* Whether a network save's name (the save command's: another seat's input) names a file in maps/save and nothing else:
- * in the original's encoding shorter than the header's name field and a name IsInvalidFileName 0x408300 takes
- * (ExecSaveGame 0x472f50 and SaveGame 0x498d20 ask it: no separator, no character of network.tbl's set, no control
- * character, no DOS device name; kp_transfer_name_valid), and not "." or "..". */
+/* Whether a network save's name in the original's encoding (the save command's: another seat's input, windows-1252)
+ * names a file in maps/save and nothing else: shorter than the header's name field and a name IsInvalidFileName
+ * 0x408300 takes (ExecSaveGame 0x472f50 and SaveGame 0x498d20 ask it: no separator, no character of network.tbl's set,
+ * no control character, no DOS device name; kp_transfer_name_valid), and not "." or "..". */
+static int net_save_legacy_ok(const char *legacy)
+{
+	if (strcmp(legacy, ".") == 0 || strcmp(legacy, "..") == 0) return 0;
+	return kp_transfer_name_valid(legacy, KP_NETSAVE_NAME);
+}
+
+/* The same of a UTF-8 name (the dialogs', a file's): each of its characters windows-1252's. */
 static int net_save_name_ok(const char *name)
 {
 	char legacy[KP_NETSAVE_NAME + 8];
-	if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) return 0;
-	return kp_text_to_legacy(name, legacy, sizeof legacy) < KP_NETSAVE_NAME && kp_transfer_name_valid(legacy, KP_NETSAVE_NAME);
+	return kp_text_to_legacy(name, legacy, sizeof legacy) == kp_text_chars((const uint8_t *)name) && net_save_legacy_ok(legacy);
 }
 
 /* A network save's file: <pref>maps/save/<name>.mlt (.mlx with Brood War; BuildSaveFilePath 0x499f70 in multiplayer:
@@ -2386,9 +2407,10 @@ static int save_net_game(KpFlow *f, const char *name, uint32_t id, char *why, si
 {
 	KpNetGameSave rec;
 	uint8_t netg[KP_NETSAVE_NETG_SIZE];
-	char dir[ENTRY_PATH], path[ENTRY_PATH];
-	if (!net_save_name_ok(name)) {
-		snprintf(why, why_size, "no file can be named %s", name);
+	char dir[ENTRY_PATH], path[ENTRY_PATH], utf8[KP_NETSAVE_NAME * KP_TEXT_UTF8_MAX];
+	(void)kp_text_from_legacy(name, utf8, sizeof utf8); /* the command's windows-1252, the file's UTF-8 */
+	if (!net_save_legacy_ok(name)) {
+		snprintf(why, why_size, "no file can be named %s", utf8);
 		return -1;
 	}
 	pref_path(f, MAP_DIR, dir, sizeof dir);
@@ -2400,7 +2422,7 @@ static int save_net_game(KpFlow *f, const char *name, uint32_t id, char *why, si
 	}
 	kp_netgame_save_record(&f->netplay->game, f->session->g, id, &rec);
 	kp_netsave_netg_write(&rec, f->ui->menus.expansion, name, netg);
-	net_save_path(f, name, path, sizeof path);
+	net_save_path(f, utf8, path, sizeof path);
 	return save_game_to(f, path, 0, KP_NETSAVE_NETG, netg, sizeof netg, why, why_size);
 }
 
@@ -2646,6 +2668,17 @@ static void net_game_end(KpFlow *f)
 	if (f->netplay && f->netplay->game_on) kp_netgame_game_end(&f->netplay->game);
 }
 
+/* A network game whose session failed (a core refusal, a turn that does not split, its resumed save's load): Storm's
+ * game left at once, as the others would otherwise wait for this seat's turns until timeout.bin drops it, and the player
+ * told with network.tbl's network error. Koprulu's: the original has no refusal. */
+static void net_failed(KpFlow *f, const KpSession *s)
+{
+	if (!f->net_game || f->net_left) return;
+	say(f, "network: the game stopped, Storm's game left: %s", s->error);
+	net_game_end(f);
+	if (f->ui && f->hud_on) kp_ui_error_line(f->ui, kp_ui_tbl(f->ui, KP_UI_NETWORK, KP_NETTBL_NETWORK_ERROR));
+}
+
 /* A resumed network game's map and setup (StartGame 0x443f40 with a save open): the scenario and the started records of
  * the file the lobby found (its MAPC, custom_from_save), the lobby's players in their saved records
  * (kp_netgame_restore_slots), its state loaded before the first turn (net_resume). 0, or -1 with why. */
@@ -2715,6 +2748,24 @@ static int start_network_game(KpFlow *f, int state, char *why, size_t why_size)
 	say(f, "network %s: %s (Storm ID %d, seed %08x)", last_part(path), f->glue_room ? "the ready room" : "at once",
 		ng->local_storm, (unsigned)ng->seed);
 	return kp_flow_start_custom(f, why, why_size);
+}
+
+/* The ready room's Start of a network game whose lobby records changed in the room (a player left there:
+ * HandlePlayerLeftLobby 0x477c20 in the glue restores the slot, and RunGameSession 0x467ba0's StartGame builds the game
+ * from the records after the briefing): the session the room showed, which stood before it, built again from them
+ * before its first turn, with the console at once. 1 rebuilt (0, or -1 with why), 0 none needed. */
+static int rebuild_network_game(KpFlow *f, int *rc, char *why, size_t why_size)
+{
+	KpNetGame *ng;
+	if (!f->net_game || f->net_left || !f->netplay || !f->netplay->game_on || f->net_resume) return 0;
+	ng = &f->netplay->game;
+	if (!kp_netgame_setup_changed(ng, &f->custom_setup)) return 0;
+	say(f, "network: the lobby's records changed in the ready room, the game built again");
+	free_scene(f);
+	kp_netgame_game_setup(ng, &f->custom_setup);
+	f->glue_room = 0;
+	*rc = kp_flow_start_custom(f, why, why_size);
+	return 1;
 }
 
 /* A network game's part of a frame before its steps: RunGame 0x445310's first turn polled until it ran (the clock runs
@@ -2847,11 +2898,13 @@ static void save_requests(KpFlow *f)
 {
 	char why[256];
 	if (f->pending_save[0]) {
-		char file[KP_SAVE_FILE_NAME], name[KP_PROFILE_SAVE_NAME];
+		char file[KP_SAVE_FILE_NAME], name[KP_PROFILE_SAVE_NAME], shown[KP_PROFILE_SAVE_NAME * KP_TEXT_UTF8_MAX];
 		int rc;
 		snprintf(name, sizeof name, "%s", f->pending_save);
+		snprintf(shown, sizeof shown, "%s", name);
 		f->pending_save[0] = 0;
-		if (net_saves(f)) {
+		if (net_saves(f)) { /* the save command's windows-1252 name (kp_ui_saveload.c, or a 1.17 seat's) */
+			(void)kp_text_from_legacy(name, shown, sizeof shown);
 			rc = save_net_game(f, name, f->pending_save_id, why, sizeof why);
 		} else if (f->net_game) { /* the network game ended before its save was written: never the profile's */
 			snprintf(why, sizeof why, "the network game has ended");
@@ -2865,7 +2918,7 @@ static void save_requests(KpFlow *f)
 		}
 		if (rc == 0) {
 			game_saves(f, f->ui);
-			say(f, "saved %s", name);
+			say(f, "saved %s", shown);
 		} else {
 			say(f, "save failed: %s", why);
 		}
@@ -3442,6 +3495,15 @@ static void glue_frame(KpFlow *f)
 	}
 	case KP_GLUE_ROOM_START: { /* the game with the same interface's console */
 		char err[256];
+		int rc = 0;
+		if (rebuild_network_game(f, &rc, err, sizeof err)) {
+			if (rc != 0) {
+				say(f, "network: %s", err);
+				net_game_end(f); /* Storm's game left though the session is gone */
+				leave_glue_game(f, after_game_menu(f));
+			}
+			break;
+		}
 		if (start_hud(f, 0, err, sizeof err) != 0) {
 			say(f, "%s", err);
 			leave_glue_game(f, after_game_menu(f));
@@ -3539,8 +3601,10 @@ static void game_frame(KpFlow *f)
 		s->failed = 1;
 		snprintf(s->error, sizeof s->error, "%s", s->g->w->error);
 		stop(f, s->error);
+		net_failed(f, s);
 		return;
 	}
+	if (s->failed) net_failed(f, s); /* a failure outside the steps (the session's turns, a resumed save's load) */
 	if (!kp_flow_glue_active(f) && !s->failed && !f->flags->autotest /* the autotest steps the game itself */
 		&& (!f->net_game || net_frame(f, s))) {
 		ticks = kp_session_advance(s, now(f), &fraction, f->host.clock_ms);
