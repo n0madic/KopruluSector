@@ -1,0 +1,32 @@
+# Network play between two machines (docs/phase-network.md, stage N6), the joiner's side of net_host.kps: the join
+# screen lists the host's game as the local network's broadcast finds it, or as --lan-host NAME[:PORT] asks it (a host
+# on another --lan-port, so no broadcast reaches it), and Ok joins it. In the game the joiner moves a worker and logs the
+# shared hash at tick 400, which must equal the host's. Played between a desktop and a phone (Android: the debug
+# bundle's generated/scripts/net_lan_join.kps), not by tools/ci.sh: one machine's two programs are net_join.kps's.
+options originals
+clock real
+wait screen gluMain
+click control gluMain.4
+wait dialog gluGameMode and still
+click control glugamemode.original
+wait screen gluConn
+click control gluConn.9
+wait dialog gluPEdit and still
+text "Join"
+click control gluPEdit.1
+wait screen gluLogin
+click control glulogin.ok
+wait screen gluJoin
+wait list.count >= 1 within 120000
+until dialog gluChat every 2 click control gluJoin.13
+# the host's Start waits up to 300 s for the map to reach this program (net_host.kps), then the countdown
+wait game within 360000
+log started tick units:0 units:1
+wait tick >= 40
+select worker 96
+expect selected > 0
+rclick center -160 96
+wait tick >= 400 within 120000
+log played tick sim.shared units:0 units:1
+wait seconds 3
+quit

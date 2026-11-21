@@ -1,9 +1,9 @@
 # Network play by the host's address (docs/phase-network.md, stage N5), the host's side; net_join.kps is the other
 # program's. tools/ci.sh runs both at once over the install, each the one host of its own map of 127.0.0.1's ports
 # (this one --lan-map 42000:1:0, so its game list is UDP port 42000 and its game 42001), so no broadcast crosses and the
-# joiner finds the game only by this host's address. The host creates the install's first map's melee game, waits in
-# the chat room for the joiner, starts it and moves a worker; both programs log the shared hash at tick 400, which
-# tools/ci.sh compares.
+# joiner finds the game only by this host's address. The host creates the first map's melee game, waits in the chat
+# room for the joiner and for the map to reach it (a joiner without the map downloads it: a phone, net_lan_join.kps),
+# starts it and moves a worker; both programs log the shared hash at tick 400, which tools/ci.sh compares.
 options originals
 clock real
 wait screen gluMain
@@ -25,6 +25,7 @@ click control gluCreat.12
 wait screen gluChat
 wait lobby.humans >= 2 within 120000
 wait seconds 3
+wait lobby.distributed == 1 within 300000
 click control gluChat.7
 wait game within 30000
 log started tick units:0 units:1

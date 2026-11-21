@@ -459,7 +459,7 @@ static void host_address_lookups(KpT *T)
 	size_t k;
 	error[0] = 0;
 	r = lookup("127.0.0.1:7000", &first, &a, error, sizeof error);
-	kp_t_ok(T, first == 1 && r == 1 && kp_net_addr_ip(&a) == 0x7f000001u && kp_net_addr_port(&a) == 7000,
+	kp_t_ok(T, first == 1 && r == 1 && kp_net_addr_ip(&a) == KP_NET_LOOPBACK_IP && kp_net_addr_port(&a) == 7000,
 		"a dotted address at once: %d %s", first, error);
 	r = lookup("no address!", &first, &a, error, sizeof error);
 	kp_t_ok(T, first == 0 && r == 0 && strstr(error, "is not an address") != NULL, "no address at once: %s", error);
@@ -1031,7 +1031,7 @@ static void sockets_reach_a_host_by_address(KpT *T)
 	host(w, 0, "Koprulu", "", 2);
 	advance(w, now_of(w) + 600);
 	kp_t_ok(T, listing(w, 1).count == 0, "the game listed across the maps by a broadcast");
-	at = kp_net_addr(0x7f000001u, (uint16_t)base);
+	at = kp_net_addr(KP_NET_LOOPBACK_IP, (uint16_t)base);
 	kp_t_ok(T, kp_snp_udp_direct(&w->seat[1].n.snp, &at), "the host's address");
 	until = now_of(w) + 3000;
 	while (listing(w, 1).count == 0 && (int32_t)(now_of(w) - until) < 0) advance(w, now_of(w) + 20);
@@ -1074,7 +1074,7 @@ static void live_bridge_join(KpT *T)
 	int k, ok;
 	if (!env || !*env) kp_t_skip(T, "no " LIVE_ENV " (the emulator's --bridge base port)");
 	w = world_alloc(T);
-	w->seat[0].n.sock = kp_net_world_bridge_open(env, error, sizeof error);
+	w->seat[0].n.sock = kp_net_world_bridge_open(env, 0, error, sizeof error);
 	kp_t_ok(T, w->seat[0].n.sock != NULL, "the seat's sockets: %s", error);
 	io = kp_net_sock_io(w->seat[0].n.sock);
 	st = seat_add(w, &io);

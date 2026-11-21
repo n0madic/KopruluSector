@@ -20,7 +20,7 @@ enum {
 	V_PAD_COUNT, V_PAD_SHOWN, V_GAMMA, V_PORTRAITS, V_VIDEO_GRAPHICS, V_VIDEO_FOG, V_VIDEO_WATER, V_VIDEO_FONT,
 	V_VIDEO_LIGHTING, V_VIDEO_SERIAL, V_VIDEO_COMMITS, V_TEXT_VECTOR, V_SELECTION_HAS, V_SELECTION_FIRST, V_MOVED,
 	V_GROUP_HELD, V_REPLAY_ENDED, V_REPLAY_FRAMES, V_SIM_CRC, V_SIM_SHARED, V_LIST_TOP, V_LIST_SELECTED, V_LIST_COUNT, V_SEAT,
-	V_LOCAL_PLAYER, V_LOBBY_HUMANS, V_COUNT
+	V_LOCAL_PLAYER, V_LOBBY_HUMANS, V_LOBBY_DISTRIBUTED, V_COUNT
 };
 enum { NEED_UI, NEED_WORLD, NEED_GAME, NEED_CONSOLE }; /* what a value is read from */
 static const struct {
@@ -72,6 +72,9 @@ static const struct {
 	{ "local.player", KP_SCRIPT_ARG_NONE, NEED_GAME },     /* the game's local player (the seat's) */
 	{ "lobby.humans", KP_SCRIPT_ARG_NONE, NEED_UI },       /* the network game's human players (its lobby's, then
 	                                                        * its game's), 0 before a provider is chosen */
+	{ "lobby.distributed", KP_SCRIPT_ARG_NONE, NEED_UI },  /* the host's: 1 when every player holds its map (its
+	                                                        * Start needs it); 1 on a joiner, which offers no map; 0
+	                                                        * with no network game */
 };
 #define GROUPS 10
 #define PLAYERS 12
@@ -598,12 +601,17 @@ int kp_script_flow_value(const KpFlow *f, const KpScriptRun *run, const KpScript
 		*out = ref->id == V_LIST_TOP ? kp_ui_list_top(ui, x)
 			: ref->id == V_LIST_COUNT ? kp_ui_list_count(ui, x) : ui->controls[x].list->selected;
 		break;
-	case V_LOBBY_HUMANS: {
+	case V_LOBBY_HUMANS:
+	case V_LOBBY_DISTRIBUTED: {
 		KpUiLobby lobby;
 		int slot;
 		*out = 0;
 		if (!ui->net || !ui->net->lobby_view) break;
 		ui->net->lobby_view(ui->net->host, &lobby);
+		if (ref->id == V_LOBBY_DISTRIBUTED) { /* AllPeersHaveFile 0x440ba0, which the host's Start checks */
+			*out = lobby.transfer_done != 0;
+			break;
+		}
 		for (slot = 0; slot < KP_UI_LOBBY_SLOTS; slot++)
 			*out += lobby.slots[slot].type == KP_CTRL_HUMAN && lobby.slots[slot].storm >= 0;
 		break;

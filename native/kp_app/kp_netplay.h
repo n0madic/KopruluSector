@@ -7,7 +7,13 @@
  * Nothing runs a thread but a host name's lookup: the flow pumps the sockets and Storm's timers each frame
  * (kp_netplay_pump), and a join waits inside SNetJoinGame as the original's glue does (the sockets read meanwhile).
  * TODO: pump Storm on a thread of its own while a mission loads (the plan's native network thread), so a long load does
- * not miss Storm's timeouts.
+ * not miss Storm's timeouts. Not needed yet (stage N6): a melee map's load holds the pump about 0.2 s on a Mac and
+ * 0.3 s on a Galaxy Z Fold7, well inside Storm's one second.
+ *
+ * The lobby takes one message a pass (ReceiveChatRoomMessage 0x471860, as the original), and the flow makes one pass
+ * a frame where the original's modal loop makes hundreds a second: a map's transfer goes as fast as the slower seat
+ * draws (stage N6: 68 KB in under 15 s between a Mac and the Fold7 at 60 frames a second, about 55 s to the iOS
+ * Simulator).
  *
  * A host by its address (stage N5): the join screen's Address (and --lan-host) gives the provider a host to ask for its
  * game besides the broadcast (kp_snp_udp_direct), for a game over the internet or a network without broadcasts; the

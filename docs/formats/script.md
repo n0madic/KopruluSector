@@ -148,6 +148,7 @@ Names are in any case. A value read where what it is read from is missing has no
 | `list.top`, `list.selected`, `list.count` | the interface | The topmost visible dialog's first visible list (in a game the modeless dialog's, in the glue the popup's or the screen's): its first row shown; its selected row, 255 none; its number of rows. No value with no list shown |
 | `seat` | the game | The seat shown (`--seats`, `seat N`), 0 without seats |
 | `lobby.humans` | the interface | The network game's human players (its slots of a human with a Storm ID: the lobby's, then, once it starts, the game's), 0 before a network provider is chosen |
+| `lobby.distributed` | the interface | The host's: 1 when every player holds the network lobby's map (`AllPeersHaveFile` `0x440ba0`: the host's Start needs it, else "The scenario map file is still being distributed."). 1 on a joiner, which offers no map (even while its own download runs), 0 with no network game |
 | `local.player` | the game | The game's local player (the seat's) |
 | `portraits` | the interface | The portraits' mode: 0 none, 1 still, 2 animated |
 | `video.graphics`, `video.fog`, `video.water`, `video.font`, `video.lighting` | the interface | The video options: -1 auto, else the choice's value |

@@ -82,7 +82,10 @@ void kp_net_world_network(KpNetWorld *w, uint32_t to);
 void kp_net_world_advance(KpNetWorld *w, uint32_t to);
 /* The sockets of a seat outside the map of the network oracle's loopback bridge (the live checks; kp_net_sock.h): spec
  * "BASE[:HOSTS]" is the bridge's first port and its emulated hosts (default 1); the seat binds two adjacent ports of
- * its own above the bridge's. NULL with the reason in error. */
-KpNetSock *kp_net_world_bridge_open(const char *spec, char *error, size_t size);
+ * its own above the bridge's. With the bridge's map its emulated hosts are 10.0.0.1.. and its broadcasts reach them;
+ * `alone`, the seat is the one host of a map of its own: its broadcasts reach only itself, and an emulated host is
+ * the real address 127.0.0.1:BASE+2k it must be given (kp_snp_udp_direct), as a host over the internet is. NULL with
+ * the reason in error. */
+KpNetSock *kp_net_world_bridge_open(const char *spec, int alone, char *error, size_t size);
 
 #endif

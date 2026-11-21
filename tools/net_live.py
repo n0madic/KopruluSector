@@ -7,7 +7,11 @@ Each run starts the emulator (tools/research/sc_emulator net --bridge BASE --rea
 
 - join: the emulated host Alpha and joiner Gamma; Koprulu joins as Beta without the map and downloads it from Alpha
   (the original's upload). Alpha waits JOIN_HOST_WAIT_MS in the full room before its Start, for the transfer;
-- host: Koprulu hosts as Beta; the emulated Alpha joins without the map and downloads it from Koprulu.
+- host: Koprulu hosts as Beta; the emulated Alpha joins without the map and downloads it from Koprulu;
+- join-address (stage N6): the emulated host Alpha alone; Koprulu joins as Beta from outside the bridge's map, its
+  broadcasts reaching only itself, so it finds the game only by asking Alpha at its real address (127.0.0.1 and the
+  bridge's first port: kp_snp_udp_direct, the join screen's Address), as a 1.17 host is joined over the internet.
+  A game of two: Storm hands each peer the others' addresses as the host sees them, the bridge's virtual ones.
 
 Then the starts are compared: Koprulu's (the test's KOPRULU_NET_LIVE_OUT) with each emulated player's (net.py's
 setup.json, taken at StartGame 0x443f40):
@@ -31,7 +35,7 @@ writes its replay (koprulu.rep), copied to koprulu-private/replays-koprulu-net/l
 playback and `tools/state_check.py --kind koprulu-net` take it. --frames 0 leaves Koprulu's game at the start, as before N4. The recordings stay in
 koprulu-private/emu/net-live/ (never committed).
 
-    python3 tools/net_live.py [--map MAP] [--base PORT] [--frames N] [join] [host]
+    python3 tools/net_live.py [--map MAP] [--base PORT] [--frames N] [join] [host] [join-address]
 """
 from __future__ import annotations
 
@@ -77,6 +81,9 @@ RUNS = {
              "room": 3},
     "host": {"players": "Beta@10.0.1.1:external,Alpha@10.0.0.1:join", "actions": "", "no_map": "Alpha", "hosts": 1,
              "test": "lobby_host", "room": 2},
+    "join-address": {"players": "Alpha@10.0.0.1:host,Beta@10.0.1.1:external",
+                     "actions": f"Alpha:lobby:wait:{JOIN_HOST_WAIT_MS}", "no_map": "", "hosts": 1,
+                     "test": "lobby_join_by_address", "room": 2},
 }
 
 log = logging.getLogger("net_live")
@@ -252,7 +259,7 @@ def run(name: str, a) -> list[str]:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=(__doc__ or "").split("\n\n")[0])
-    ap.add_argument("runs", nargs="*", choices=[[], *RUNS], default=[], help="join, host (default both)")
+    ap.add_argument("runs", nargs="*", choices=[[], *RUNS], default=[], help="join, host, join-address (default all)")
     ap.add_argument("--map", default=str(DEFAULT_MAP), help="the map file both sides play")
     ap.add_argument("--base", type=int, default=DEFAULT_BASE, help="the bridge's first real port")
     ap.add_argument("--out-root", default=str(DEFAULT_OUT))

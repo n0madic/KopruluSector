@@ -6,6 +6,11 @@
  *
  * - lobby_join: Koprulu joins the emulated host's game ("Alpha") without the map, downloads it from the host (the
  *   original's upload, Koprulu's download), and plays the lobby to the start the host's Start gives.
+ * - lobby_join_by_address (phase N, stage N6): the same join with Koprulu outside the bridge's map, the one host of a
+ *   map of its own: its broadcasts reach only itself, so it lists the game only by asking the emulated host at its real
+ *   address (kp_snp_udp_direct: 127.0.0.1 and the bridge's first port, as a 1.17 host is asked over the internet), and
+ *   the game is at that port + 1. A game of two: Storm tells each peer the others' addresses as their host sees them,
+ *   the bridge's virtual ones, which a seat outside the map cannot reach.
  * - lobby_host: Koprulu hosts a melee game of the map (offered as "!<name>") under its player's name ("Beta"), waits
  *   for its room to fill (KOPRULU_NET_LIVE_PLAYERS players, Koprulu included; default 2), sends the map to the
  *   emulated players without it (Koprulu's upload, the original's download) and starts.
@@ -15,7 +20,7 @@
  * desync on its side (no sender out of sync, nobody dropped), then its replay written beside KOPRULU_NET_LIVE_OUT
  * (REPLAY_FILE: the emulator plays it, tools/net_live.py) and the game left by the menu's quit (EndGame 0x443db0).
  * Without the variable (or 0) it leaves Storm's game at the start, and the emulated players play on alone.
- * Both tests need the emulator running and the 1.17 data (the templates, the map's header): CI skips them without
+ * The tests need the emulator running and the 1.17 data (the templates, the map's header): CI skips them without
  * KOPRULU_NET_BRIDGE. KOPRULU_NET_LIVE_MAP names the map file both sides play (the host's; the joiner checks its
  * download against it, and plays it). */
 #include "kp_test.h"
@@ -93,8 +98,9 @@ static void live_free(void *p)
 static uint32_t now(const Live *v) { return kp_net_lobby_now(&v->l); }
 static int before(const Live *v, uint32_t until) { return (int32_t)(now(v) - until) < 0; }
 
-/* Koprulu's seat on the bridge with the 1.17 templates, and the map file when MAP_ENV names one (need_map: it must) */
-static Live *live_open(KpT *T, int need_map)
+/* Koprulu's seat on the bridge with the 1.17 templates, and the map file when MAP_ENV names one (need_map: it must);
+ * by_address: outside the bridge's map (kp_net_world_bridge_open's `alone`), its broadcasts reaching only itself */
+static Live *live_open(KpT *T, int need_map, int by_address)
 {
 	const char *bridge = getenv(BRIDGE_ENV), *map = getenv(MAP_ENV), *base;
 	const KpData *data;
@@ -109,7 +115,7 @@ static Live *live_open(KpT *T, int need_map)
 	kp_t_defer(T, live_free, v);
 	kp_net_lobby_init_sockets(&v->l, T, kp_t_fail_text, T);
 	v->l.templates = data->templates;
-	v->sock = kp_net_world_bridge_open(bridge, error, sizeof error);
+	v->sock = kp_net_world_bridge_open(bridge, by_address, error, sizeof error);
 	kp_t_ok(T, v->sock != NULL, "the seat's sockets: %s", error);
 	io = kp_net_sock_io(v->sock);
 	v->l.seat[0].n.sock = v->sock;
@@ -346,14 +352,23 @@ static void leave(KpT *T, Live *v)
 	kp_net_lobby_advance(&v->l, LEAVE_MS);
 }
 
-static void lobby_join(KpT *T)
+/* lobby_join and lobby_join_by_address: by_address, the emulated host is asked at its real address (the bridge's first
+ * port, its socket A) and no broadcast of Koprulu's reaches it */
+static void join_game(KpT *T, int by_address)
 {
-	Live *v = live_open(T, 0);
+	Live *v = live_open(T, 0, by_address);
 	KpNetLobbySeat *s = &v->l.seat[0];
 	KpNetGameHeader game;
 	const KpNetGameHeader *g = NULL;
 	uint32_t until;
+	uint16_t base = (uint16_t)strtoul(getenv(BRIDGE_ENV), NULL, 10);
 	kp_t_ok(T, kp_net_lobby_seat_init(s, NAME, &v->l.templates, NULL, 0, NULL), "the provider's caps refused");
+	if (by_address) {
+		KpNetAddr host = kp_net_addr(KP_NET_LOOPBACK_IP, base);
+		kp_t_ok(T, kp_snp_udp_direct(&s->n.snp, &host), "the host's address refused");
+		kp_t_log(T, "the host asked at 127.0.0.1:%u, Koprulu's broadcasts reach only itself (port %u)",
+			(unsigned)kp_net_addr_port(&host), (unsigned)kp_net_sock_port(v->sock, KP_NET_SOCKET_LIST));
+	}
 	until = now(v) + LIST_MS;
 	while (!(g = listed(&s->game, HOST_GAME)) && before(v, until)) {
 		kp_net_lobby_advance(&v->l, LIST_POLL_MS);
@@ -363,6 +378,13 @@ static void lobby_join(KpT *T)
 	game = *g;
 	kp_t_log(T, "listed: \"%s\", %d of %d players, template type %u", game.name, game.players, game.max_players,
 		(unsigned)game.type);
+	if (by_address) { /* the advertisement from the asked address: its game at that port + 1, the host's socket B */
+		KpSnpGame at;
+		kp_t_ok(T, kp_snp_udp_game_info(&s->n.snp, 0, HOST_GAME, &at), "the provider lists no \"%s\"", HOST_GAME);
+		kp_t_ok(T, kp_net_addr_ip(&at.addr) == KP_NET_LOOPBACK_IP && kp_net_addr_port(&at.addr) == base + 1,
+			"\"%s\" listed at %#lx:%u, not 127.0.0.1:%u", HOST_GAME, (unsigned long)kp_net_addr_ip(&at.addr),
+			(unsigned)kp_net_addr_port(&at.addr), (unsigned)(base + 1));
+	}
 	kp_net_lobby_advance(&v->l, KP_NET_LOBBY_LIST_MS); /* the host takes a connect again after max(4L, 1000) ms */
 	kp_t_ok(T, kp_net_lobby_enter(s, &game), "the join refused: leave reason %d, %d network errors", s->leave,
 		s->errors);
@@ -377,9 +399,12 @@ static void lobby_join(KpT *T)
 	leave(T, v);
 }
 
+static void lobby_join(KpT *T) { join_game(T, 0); }
+static void lobby_join_by_address(KpT *T) { join_game(T, 1); }
+
 static void lobby_host(KpT *T)
 {
-	Live *v = live_open(T, 1);
+	Live *v = live_open(T, 1, 0);
 	KpNetLobbySeat *s = &v->l.seat[0];
 	const KpData *data = kp_t_data_117(T);
 	const char *env = getenv(PLAYERS_ENV);
@@ -437,6 +462,7 @@ static void lobby_host(KpT *T)
 
 static const KpTest TESTS[] = {
 	{ "lobby_join", lobby_join, 0 },
+	{ "lobby_join_by_address", lobby_join_by_address, 0 },
 	{ "lobby_host", lobby_host, 0 },
 };
 

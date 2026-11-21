@@ -272,6 +272,9 @@ original 1.17 can join too (it has no Address of its own).
 On iOS, finding games by broadcast needs a permission Apple grants per app (the multicast entitlement), so an iPhone
 or iPad finds games by their address; the first search asks for access to the local network.
 
+A phone has no maps of its own. A phone that joins downloads the host's map, as any joiner does. To host, first copy a
+map in with Play Custom's **Import**; the network's Create Game then lists it.
+
 ## Status
 
 All 64 campaign missions can be played and won. Each one's state matches the original game, which runs in an

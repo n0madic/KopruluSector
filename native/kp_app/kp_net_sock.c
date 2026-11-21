@@ -8,7 +8,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define LOOPBACK_IP 0x7f000001u /* 127.0.0.1 */
 #define UNMAPPED_SELF 0x7f000002u /* 127.0.0.2: to itself, a program the map does not hold */
 
 #ifdef _WIN32
@@ -169,7 +168,7 @@ static int open_socket(KpNetSock *s, int k, uint32_t ip, uint16_t port, char *er
 		return 0;
 	}
 	if (bind(fd, (const struct sockaddr *)&a, sizeof a) != 0) {
-		snprintf(error, size, "bind %s port %u: error %d", ip == LOOPBACK_IP ? "127.0.0.1" : "0.0.0.0", port,
+		snprintf(error, size, "bind %s port %u: error %d", ip == KP_NET_LOOPBACK_IP ? "127.0.0.1" : "0.0.0.0", port,
 			last_error());
 		return 0;
 	}
@@ -214,7 +213,7 @@ void kp_net_sock_close(KpNetSock *s)
 KpNetSock *kp_net_sock_open(const KpNetSockConfig *c, char *error, size_t size)
 {
 	KpNetSock *s;
-	uint32_t bind_ip = c->map_base ? LOOPBACK_IP : 0; /* a map is 127.0.0.1's ports, else every interface */
+	uint32_t bind_ip = c->map_base ? KP_NET_LOOPBACK_IP : 0; /* a map is 127.0.0.1's ports, else every interface */
 	uint32_t port = c->port;
 	char scratch[1];
 	int k;
@@ -294,12 +293,12 @@ static void io_send(void *ud, int socket, const KpNetAddr *to, const uint8_t *da
 		 * sender on Windows) */
 		if (j < 0) return;
 		for (k = 0; k < s->map_hosts; k++)
-			send_real(s, socket, LOOPBACK_IP, (uint16_t)(s->map_base + 2 * k + j), data, size);
-		if (s->map_self < 0) send_real(s, socket, LOOPBACK_IP, s->port[j], data, size);
+			send_real(s, socket, KP_NET_LOOPBACK_IP, (uint16_t)(s->map_base + 2 * k + j), data, size);
+		if (s->map_self < 0) send_real(s, socket, KP_NET_LOOPBACK_IP, s->port[j], data, size);
 	} else if (ip == s->self_ip && j >= 0)
-		send_real(s, socket, LOOPBACK_IP, s->port[j], data, size);
+		send_real(s, socket, KP_NET_LOOPBACK_IP, s->port[j], data, size);
 	else if ((k = map_host(s, ip)) >= 0 && j >= 0)
-		send_real(s, socket, LOOPBACK_IP, (uint16_t)(s->map_base + 2 * k + j), data, size);
+		send_real(s, socket, KP_NET_LOOPBACK_IP, (uint16_t)(s->map_base + 2 * k + j), data, size);
 	else
 		send_real(s, socket, ip, port, data, size);
 }
@@ -324,7 +323,7 @@ static KpNetAddr source(const KpNetSock *s, const struct sockaddr_in *a)
 {
 	uint32_t ip = ntohl(a->sin_addr.s_addr);
 	uint16_t port = ntohs(a->sin_port);
-	if (s->map_base && ip == LOOPBACK_IP) {
+	if (s->map_base && ip == KP_NET_LOOPBACK_IP) {
 		int k;
 		for (k = 0; k < KP_NET_SOCKETS; k++)
 			if (port == s->port[k]) return kp_net_addr(s->self_ip, (uint16_t)(KP_NET_LIST_PORT + k));

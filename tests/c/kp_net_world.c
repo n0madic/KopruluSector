@@ -205,18 +205,26 @@ int kp_net_world_add_lan(KpNetWorld *w, KpNetSeat *s)
 	return kp_net_world_add(w, s, &io);
 }
 
-KpNetSock *kp_net_world_bridge_open(const char *spec, char *error, size_t size)
+KpNetSock *kp_net_world_bridge_open(const char *spec, int alone, char *error, size_t size)
 {
 	KpNetSockConfig c;
 	KpNetSock *s = NULL;
 	const char *colon = strchr(spec, ':');
-	int attempt;
+	uint16_t base = (uint16_t)strtoul(spec, NULL, 10);
+	int hosts = colon ? atoi(colon + 1) : 1, attempt;
 	memset(&c, 0, sizeof c);
-	c.map_base = (uint16_t)strtoul(spec, NULL, 10);
-	c.map_hosts = colon ? atoi(colon + 1) : 1;
-	c.map_self = -1;
 	for (attempt = 0; attempt < BRIDGE_ATTEMPTS && !s; attempt++) {
-		c.port = (uint16_t)(c.map_base + 2 * c.map_hosts + BRIDGE_GAP + 2 * attempt);
+		uint16_t port = (uint16_t)(base + 2 * hosts + BRIDGE_GAP + 2 * attempt);
+		if (alone) { /* the one host of a map of its own: socket A at `port`, B above it */
+			c.map_base = port;
+			c.map_hosts = 1;
+			c.map_self = 0;
+		} else {
+			c.map_base = base;
+			c.map_hosts = hosts;
+			c.map_self = -1;
+			c.port = port;
+		}
 		s = kp_net_sock_open(&c, error, size);
 	}
 	return s;

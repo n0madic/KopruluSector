@@ -4349,6 +4349,78 @@ static void a_script_observes_a_game(KpT *T)
 	kp_t_eq_str(T, why, "no game", NULL);
 }
 
+/* A network lobby as the screens see it (KpUiNet.lobby_view), the test's */
+typedef struct {
+	KpUiNet net;
+	KpUiLobby lobby;
+} LobbyNet;
+
+static void lobby_net_view(void *host, KpUiLobby *out) { *out = ((const LobbyNet *)host)->lobby; }
+
+static int64_t flow_value(KpT *T, Host *H, const char *word)
+{
+	KpScriptRef ref = script_ref(T, KP_SCRIPT_NAME_VALUE, word, 0);
+	char why[256] = "";
+	int64_t v = -1;
+	kp_t_ok(T, kp_script_flow_value(&H->f, NULL, &ref, &v, why, sizeof why) == 0, "%s: %s", word, why);
+	return v;
+}
+
+/* The network lobby's values (phase N): lobby.humans counts its humans with a Storm ID, lobby.distributed is the
+ * host's AllPeersHaveFile 0x440ba0 (the Start's check, which net_host.kps waits for); both 0 with no network game. */
+static void script_reads_the_network_lobby(KpT *T)
+{
+	Host *H = glue_host(T, 0);
+	const KpUiNet *own;
+	LobbyNet *n;
+	int k;
+	if (!H) return;
+	own = H->f.ui->net;
+	kp_t_eq(T, flow_value(T, H, "lobby.humans"), 0, "no network game: no humans");
+	kp_t_eq(T, flow_value(T, H, "lobby.distributed"), 0, "and nothing distributed");
+	n = (LobbyNet *)calloc(1, sizeof *n);
+	kp_t_ok(T, n != NULL, "out of memory");
+	kp_t_defer(T, free, n);
+	n->net.lobby_view = lobby_net_view;
+	n->net.host = n;
+	for (k = 0; k < KP_UI_LOBBY_SLOTS; k++) {
+		n->lobby.slots[k].storm = -1;
+		n->lobby.slots[k].type = KP_CTRL_OPEN;
+	}
+	n->lobby.slots[0].type = n->lobby.slots[3].type = n->lobby.slots[5].type = KP_CTRL_HUMAN;
+	n->lobby.slots[0].storm = 0;
+	n->lobby.slots[3].storm = 1; /* slot 5 is a human's without a Storm ID yet */
+	n->lobby.slots[1].type = KP_CTRL_LOBBY_COMPUTER;
+	n->lobby.host = 1;
+	H->f.ui->net = &n->net;
+	kp_t_eq(T, flow_value(T, H, "lobby.humans"), 2, "the humans with a Storm ID");
+	kp_t_eq(T, flow_value(T, H, "lobby.distributed"), 0, "a joiner still downloading the host's map");
+	n->lobby.transfer_done = 1;
+	kp_t_eq(T, flow_value(T, H, "lobby.distributed"), 1, "every player holds the map");
+	H->f.ui->net = own;
+}
+
+/* The network scripts of two programs parse over the flow's names: net_host.kps and net_join.kps, which tools/ci.sh
+ * plays, and net_lan_join.kps, which only a desktop and a phone play (docs/phase-network.md, stage N6). */
+static void network_scripts_parse(KpT *T)
+{
+	static const char *const SCRIPTS[] = { "tests/scripts/net_host.kps", "tests/scripts/net_join.kps",
+		"tests/scripts/net_lan_join.kps" };
+	char why[256];
+	int k;
+	for (k = 0; k < (int)(sizeof SCRIPTS / sizeof SCRIPTS[0]); k++) {
+		size_t size;
+		const uint8_t *bytes = kp_t_read(T, SCRIPTS[k], &size);
+		char *text = (char *)malloc(size + 1);
+		kp_t_ok(T, text != NULL, "out of memory");
+		kp_t_defer(T, free, text);
+		memcpy(text, bytes, size);
+		text[size] = '\0';
+		parse_error(text, why, sizeof why);
+		kp_t_eq_str(T, why, "", "%s", SCRIPTS[k]);
+	}
+}
+
 /* The names stage SC5 added over --mission's game: the choices', menus', options dialogs' and units' names, a pick and
  * the points and values over it, select's box over a worker taking it, the race's building key, the game menu's and an
  * options dialog opened and closed by an activated control, a save and a load asked of the flow; in the glue no pick. */
@@ -4580,6 +4652,8 @@ static const KpTest TESTS[] = {
 	{ "a_script_walks_the_glues_menus", a_script_walks_the_glues_menus, 0 },
 	{ "a_script_observes_a_game", a_script_observes_a_game, 0 },
 	{ "script_acts_over_a_game", script_acts_over_a_game, 0 },
+	{ "script_reads_the_network_lobby", script_reads_the_network_lobby, 0 },
+	{ "network_scripts_parse", network_scripts_parse, 0 },
 };
 
 KP_SUITE_SPLIT(kp_suite_flow, "test_flow", TESTS);

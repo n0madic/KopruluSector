@@ -1,6 +1,6 @@
 # ADR 0026: Network play compatible with 1.17
 
-Status: accepted (2026-11-17). The user approved phase N's design inline on 2026-11-17 ([phase N](../phase-network.md)). Stage N0 (the research of Storm's network layer and the UDP provider) is done, and so are stages N2 ([its additions](#addition-stage-n2-the-state-machines-and-their-transports)), N3 (the lobby), N4 ([its additions](#addition-stage-n4-the-game-over-the-network)) and N5, which replaced decision 6's relay ([its additions](#addition-stage-n5-a-host-by-its-address-instead-of-the-relay)); the later stages add their decisions here as they are built.
+Status: accepted (2026-11-17). The user approved phase N's design inline on 2026-11-17 ([phase N](../phase-network.md)). Stage N0 (the research of Storm's network layer and the UDP provider) is done, and so are stages N2 ([its additions](#addition-stage-n2-the-state-machines-and-their-transports)), N3 (the lobby), N4 ([its additions](#addition-stage-n4-the-game-over-the-network)), N5, which replaced decision 6's relay ([its additions](#addition-stage-n5-a-host-by-its-address-instead-of-the-relay)), and N6, the acceptance ([its additions](#addition-stage-n6-acceptance)).
 
 ## Context
 
@@ -63,3 +63,11 @@ Decided by the user and built on 2026-11-21 ([phase N](../phase-network.md#n5-a-
 2. **The internet by the host's address.** Koprulu's provider can be given a host's socket A (`kp_snp_udp_direct`): each of its game-list requests goes there besides the broadcast, and that host's game is listed at its port + 1. The request is the original's datagram, which a 1.17 host answers, so decision 7 holds: nothing of Koprulu's own goes on the wire. The host forwards its two UDP ports; three or more seats need each other reachable too, as Storm's peers send directly, so a virtual LAN (ZeroTier, Tailscale) is the documented way when a NAT is in between, and the one way for a 1.17 joiner.
 3. **The address is the player's.** The join screen gets Koprulu's Address, a record appended to `gluJoin.bin` and shown only when the network takes an address, with its own popup (`koprulu\address.bin`); `--lan-host` and the profile keep it. A name is resolved by the system's resolver, IPv4 only, on a thread of its own: the screens never wait for DNS, and the Address popup waits for the answer with Cancel still working.
 4. **The phones' local network.** Android declares `INTERNET` (SDL's template has it commented out) and `CHANGE_WIFI_MULTICAST_STATE`, and holds the Wi-Fi multicast lock while the provider's sockets are open. iOS declares `NSLocalNetworkUsageDescription`; without the multicast entitlement it finds games by their address.
+
+## Addition: stage N6, acceptance
+
+Decisions 1 and 2 are the user's (2026-11-21); all three were checked on 2026-11-21 ([phase N](../phase-network.md#n6-acceptance-2026-11-21)).
+
+1. **The native network thread waits for a need.** The plan's thread that pumps Storm while a mission loads is not built. A melee map's load holds the main loop about 0.2 s on a Mac and 0.3 s on a Galaxy Z Fold7, within Storm's one second of silence. `TODO:` in `kp_netplay.h` keeps it, with these figures.
+2. **`--seats` stays on the turn hub** (`TODO:` in `kp_hub.h`). The plan moved the hub onto the network's turn manager; the hub is a tool of the tests and the oracle that no player sees.
+3. **The lobby keeps the original's one message a pass.** One pass a frame makes a map's transfer as fast as the slower seat draws. Taking the messages more often is open in the tracker.

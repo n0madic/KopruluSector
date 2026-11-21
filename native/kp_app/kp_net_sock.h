@@ -26,7 +26,8 @@
 extern "C" {
 #endif
 
-#define KP_NET_MAP_IP 0x0a000001u /* 10.0.0.1, the map's first host */
+#define KP_NET_MAP_IP 0x0a000001u      /* 10.0.0.1, the map's first host */
+#define KP_NET_LOOPBACK_IP 0x7f000001u /* 127.0.0.1, whose ports a map's hosts are */
 
 typedef struct {
 	uint16_t port;     /* socket A's real port (0: 6111, or the map's port of map_self); B binds the next one */
