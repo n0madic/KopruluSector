@@ -1519,7 +1519,12 @@ static int preview_interact(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 	case KP_UI_KEY_DOWN: case KP_UI_KEY_REPEAT:
 		return 0;
 	case KP_UI_LEFT_DOWN: case KP_UI_LEFT_DOUBLE: case KP_UI_LEFT_UP: case KP_UI_RIGHT_DOWN:
-		/* TODO: the preview's image procedure (0x508c50) over the preview world */
+		/* The image's procedure (MinimapDialogInit 0x46db30's table 0x508c50: MinimapImageProc 0x46d6a0, whose Alt
+		 * press would queue a ping 0x58 into the lobby's turn) is not bound: no press reaches the preview. The chat
+		 * room opens it in its own post-load (OpenLobbyMapPreview 0x450760), before the chat room itself is linked
+		 * above it, and the full-screen chat room takes every press (DialogDefaultInteract 0x4c1470: one inside it is
+		 * handled); the image shows only while the pointer is over Map Preview, which it does not overlap
+		 * (test_hud.glue_chat_room_preview_takes_no_press). */
 		return kp_ui_hit_test(ui, (int32_t)(d - ui->controls), e) >= 0;
 	case KP_UI_USER:
 		if (e->code == KP_UI_CREATE) {

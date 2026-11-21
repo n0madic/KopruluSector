@@ -51,7 +51,10 @@ Phase 9 ran it on the browser pane. Phase S ([phaseS.md](phaseS.md)) moved the p
   640 × 400 in the oracles.
 - [x] The modeless dialogs (the in-game menus) centre on the logical screen, by their own width on a narrow one.
 - [x] The console art's holes keep a backdrop dialog under them (the game menu once showed only its title row).
-- [ ] The text lines' layer keeps the original's 640 columns: a long line is cut on a narrow screen.
+- [x] The text lines follow a narrow game view (2026-11-22): narrower than the original's 640 columns, the ring wraps
+  at the view's width less 20 and is clipped 10 from its right edge, line 11 keeps its distance from that edge, and the
+  lines wrapped wider are wrapped again when the view narrows (a window or a phone turned); a view of 640 columns or
+  more keeps the original's (`kp_ui_lines.c`, `test_hud.text_lines_follow_a_narrow_view`).
 - [x] The first view of a mission is the local player's start location, not the map's corner.
 - [x] The text box shows above the console's art on any screen but the original's (under it, it would be typed into but unseen).
 - [x] The console closes at every width: `test_hud.console_pieces_close_at_every_width` (3 races, `wide`, `edges`, `narrow`, 502..2000, in SD and in the HD art's pieces alone), `console_items_follow_the_pieces`, `console_of_the_original_screen_is_exact`; screenshots at 560, 640, 720, 800, 960, 1280 wide, SD and HD, each race.

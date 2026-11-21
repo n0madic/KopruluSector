@@ -283,9 +283,14 @@ typedef struct KpFlow {
 	int has_start_run;     /* the run the next game starts with when it continues none (a history's cinematic row's:
 	                        * its cached row, not the mission's first row) */
 	KpCampaignRun start_run;
+	/* a game's end, opened once the glue's Sleep is over (kp_glue_sleep): an in-game menu's exit (after_game), or the
+	 * result's score screen (after_score) with what the game's end knew */
 	int after_game, after_exit;
 	KpCarry after_carry;
 	int64_t after_cheats;
+	int after_score, after_result, after_from_save, after_network, after_local;
+	uint32_t after_elapsed;
+	uint8_t after_storm_results[KP_NETGAME_PLAYERS];
 	/* the cinematics the flow queued and what follows them: the mission to start, the main menu to open, or the next
 	 * step after a score screen */
 	struct { int kind; int64_t mission; int state; } cine_then;

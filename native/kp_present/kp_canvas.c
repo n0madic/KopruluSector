@@ -331,6 +331,15 @@ int kp_canvas_compose_screen(KpCanvas *c, KpUi *ui, int32_t w, int32_t h, int32_
 	return finish(c, ui);
 }
 
+int kp_canvas_compose_black(KpCanvas *c, KpUi *ui, int32_t w, int32_t h)
+{
+	if (resize(c, w, h) != 0) return -1;
+	c->place_count = 0;
+	kp_ui_canvas_begin(ui, &c->canvas);
+	kp_ui_canvas_fill(&c->canvas, 0, 0, w, h, 0);
+	return finish(c, ui);
+}
+
 void kp_canvas_pixel(const KpCanvas *c, int32_t x, int32_t y, uint8_t *index, uint8_t *alpha)
 {
 	const uint8_t *p;

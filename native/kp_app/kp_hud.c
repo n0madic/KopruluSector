@@ -748,9 +748,19 @@ void kp_glue_title(KpGlue *g, uint32_t now_ms)
 		return;
 	}
 	g->screen = KP_GLUE_TITLE;
-	g->title_timed = 0; /* its Sleep counts from its first frame (kp_glue_frame) */
+	g->sleep_timed = 0; /* its Sleep counts from its first frame (kp_glue_frame) */
 	g->has_composed = 0;
 }
+
+void kp_glue_sleep(KpGlue *g)
+{
+	g->screen = KP_GLUE_SLEEP;
+	g->sleep_timed = 0;
+	g->has_composed = 0; /* the shared canvas may hold a game's frame */
+}
+
+/* RunGlueLoop 0x457510's Sleep: the title's, or the black screen's after a game */
+static int sleeping(const KpGlue *g) { return g->screen == KP_GLUE_TITLE || g->screen == KP_GLUE_SLEEP; }
 
 void kp_glue_epilog(KpGlue *g, int expansion)
 {
@@ -880,7 +890,12 @@ static KpGlueEvent poll(KpGlue *g)
 			ev.kind = KP_GLUE_PROFILE;
 		}
 	} else if (g->screen == KP_GLUE_TITLE) {
-		if ((int32_t)(ui->now - g->title_until) >= 0) kp_glue_menus(g, KP_GLUE_MAIN); /* the Sleep over: state 0 */
+		if ((int32_t)(ui->now - g->sleep_until) >= 0) kp_glue_menus(g, KP_GLUE_MAIN); /* the Sleep over: state 0 */
+	} else if (g->screen == KP_GLUE_SLEEP) {
+		if ((int32_t)(ui->now - g->sleep_until) >= 0) {
+			g->screen = KP_GLUE_NONE;
+			ev.kind = KP_GLUE_AWAKE;
+		}
 	} else if (g->screen == KP_GLUE_CREDITS) {
 		if (kp_ui_credits_game_close(ui)) kp_glue_menus(g, ui->menus.state); /* the main menu again */
 	} else if (g->screen == KP_GLUE_EPILOG) {
@@ -915,10 +930,10 @@ KpGlueEvent kp_glue_frame(KpGlue *g, int32_t w, int32_t h, uint32_t now_ms, int 
 	int32_t d;
 	int draws, k;
 	ui->now = now_ms;
-	if (g->screen == KP_GLUE_TITLE) {
-		if (!g->title_timed) {
-			g->title_timed = 1;
-			g->title_until = now_ms + KP_UI_GLUE_SLEEP_MS;
+	if (sleeping(g)) {
+		if (!g->sleep_timed) {
+			g->sleep_timed = 1;
+			g->sleep_until = now_ms + KP_UI_GLUE_SLEEP_MS;
 		}
 		kp_ui_music_tick(ui); /* RunGlueLoop's Sleep: no timer, no idle work, but the music's fade in (kp_glue_title) */
 	} else {
@@ -927,6 +942,22 @@ KpGlueEvent kp_glue_frame(KpGlue *g, int32_t w, int32_t h, uint32_t now_ms, int 
 		if (ui->net != NULL) kp_ui_lobby_idle(ui); /* the chat room's LobbyUpdate, a popup over it or not */
 	}
 	ev = poll(g);
+	/* black: the dialogs a glue screen left open under the game stay unshown, on the Sleep's last frame too (the host
+	 * opens the next screen after it) */
+	if (g->screen == KP_GLUE_SLEEP || ev.kind == KP_GLUE_AWAKE) {
+		g->place_x = half_floor(w - KP_LAYOUT_MIN_W);
+		g->place_y = half_floor(h - KP_LAYOUT_MIN_H);
+		*changed = 0;
+		if (!g->has_composed || w != g->composed_w || h != g->composed_h) {
+			g->has_composed = 1;
+			g->composed_w = w;
+			g->composed_h = h;
+			g->composed_layers = 0;
+			*changed = kp_canvas_compose_black(&g->canvas, ui, w, h) > 0;
+		}
+		*palette = 0;
+		return ev;
+	}
 	draws = kp_ui_present(ui);
 	for (d = ui->open; d >= 0; d = ui->controls[d].next) { /* the screen's layers and their places */
 		const KpUiControl *c = &ui->controls[d];
@@ -976,8 +1007,8 @@ void kp_glue_input(KpGlue *g, int event, int32_t lx, int32_t ly)
 	e.type = (uint16_t)event;
 	e.x = (int16_t)(lx - g->place_x);
 	e.y = (int16_t)(ly - g->place_y);
-	if (g->screen == KP_GLUE_TITLE) {
-		/* the title takes no input (RunGlueLoop's Sleep); the main menu's idle events carry the pointer where it is */
+	if (sleeping(g)) {
+		/* the Sleep takes no input (RunGlueLoop's); the next screen's idle events carry the pointer where it is */
 		ui->mouse_x = e.x;
 		ui->mouse_y = e.y;
 		return;
@@ -987,23 +1018,23 @@ void kp_glue_input(KpGlue *g, int event, int32_t lx, int32_t ly)
 
 void kp_glue_wheel(KpGlue *g, int rows, int32_t lx, int32_t ly)
 {
-	if (g->screen != KP_GLUE_TITLE) kp_ui_wheel(g->ui, rows, lx - g->place_x, ly - g->place_y);
+	if (!sleeping(g)) kp_ui_wheel(g->ui, rows, lx - g->place_x, ly - g->place_y);
 }
 
 int32_t kp_glue_list_row(const KpGlue *g, int32_t lx, int32_t ly)
 {
-	if (g->screen == KP_GLUE_TITLE) return 0;
+	if (sleeping(g)) return 0;
 	return kp_ui_list_row_height(g->ui, kp_ui_scroll_list_at(g->ui, lx - g->place_x, ly - g->place_y, 0));
 }
 
 void kp_glue_key(KpGlue *g, int down, uint16_t vk, int repeating)
 {
-	if (g->screen != KP_GLUE_TITLE) kp_hud_key(g->ui, down, vk, repeating);
+	if (!sleeping(g)) kp_hud_key(g->ui, down, vk, repeating);
 }
 
 void kp_glue_text(KpGlue *g, const char *utf8, uint16_t vk)
 {
-	if (g->screen != KP_GLUE_TITLE) kp_hud_text_key(g->ui, utf8, vk);
+	if (!sleeping(g)) kp_hud_text_key(g->ui, utf8, vk);
 }
 
 void kp_glue_saves(KpUi *ui, const KpProfile *profile)

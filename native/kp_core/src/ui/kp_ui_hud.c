@@ -763,7 +763,9 @@ static void textbox_toggle(KpUi *ui, int submit, uint16_t mods)
 	int32_t edit = kp_ui_find_control(ui, ui->hud.textbox, TB_EDIT);
 	if (ui->hud.textbox_mode == 0) {
 		int allies = ui->game != NULL && kp_setup_alliances_allowed(&ui->game->setup);
-		/* TODO: the IME and the player name (Storm 146) */
+		/* SetKoreanImeEnabled 0x43f3f0(1) is the host's text input, which follows the edit box's focus (`text.input`:
+		 * on with the line, off when it closes); Storm ordinal 146 (SNetGetLeaguePlayerName into 0x6726ac, /reply's
+		 * name) leaves nothing over UDP or with no provider (kp_netgame.h), so neither has a call here */
 		kp_ui_set_accelerators(ui, KP_UI_ACCEL_TEXT); /* SetAccelerators102 0x43f120 */
 		if (!ui->menus.multiplayer) ui->hud.textbox_mode = TB_SINGLE;
 		else if (mods & TB_MOD_SHIFT) ui->hud.textbox_mode = TB_ALL;

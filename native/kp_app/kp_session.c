@@ -608,7 +608,7 @@ int kp_session_advance(KpSession *s, double now, double *alpha, double (*clock_m
 	return ran;
 }
 
-static int record_refused(const uint8_t *record, size_t record_size, size_t *at);
+static int record_refused(const uint8_t *record, size_t record_size, size_t *at, int growing);
 
 int kp_session_watch_grow(KpSession *s, const uint8_t *bytes, size_t size, uint32_t frames, int whole)
 {
@@ -619,7 +619,7 @@ int kp_session_watch_grow(KpSession *s, const uint8_t *bytes, size_t size, uint3
 		return -1;
 	}
 	r = s->turns.feed;
-	if (record_refused(r->buf, r->sentinel ? r->sentinel - 1 : r->used, &s->watch_checked)) {
+	if (record_refused(r->buf, r->sentinel ? r->sentinel - 1 : r->used, &s->watch_checked, 1)) {
 		fail(s, "watch: the record holds a command the playback refuses");
 		return -1;
 	}
@@ -643,18 +643,22 @@ static void refused_command(void *ud, const uint8_t *cmd, size_t n)
 /* The entries of a record from *at as the feed reads them (ReadRecordedFrame 0x478480, kp_record.c read_frame: an
  * entry's length may run past its block's size, the next block's header follows it; an unknown id or an entry past
  * the record ends the data), each walked as the dispatcher walks it; *at left at the first block not walked whole (a
- * growing record's next bytes go on there). 1 when one holds a refused command. */
-static int record_refused(const uint8_t *record, size_t record_size, size_t *at)
+ * growing record's next bytes go on there). 1 when one holds a refused command. A growing record's unknown id is
+ * refused too: the feed's read would go on past it as bytes come, where this walk cannot follow (the recorder never
+ * writes one, so only a forged record holds it); the feed drops a refused command besides (kp_turns.c feed). */
+static int record_refused(const uint8_t *record, size_t record_size, size_t *at, int growing)
 {
 	int refused = 0;
 	while (*at + 5 <= record_size) {
 		size_t pos = *at + 5, size = record[*at + 4], sum = 0;
 		while (sum < size) {
 			int len;
-			if (pos + 1 > record_size) return 0;
+			if (pos + 2 > record_size) return 0; /* the Storm ID and the command's id come */
 			pos++; /* the Storm ID */
 			len = kp_record_command_length(record + pos, record_size - pos);
+			if (len < 0 && record[pos] >= 9 && record[pos] <= 0xb) return 0; /* its count comes */
 			if (len < 0) {
+				if (growing) return 1;
 				*at = record_size;
 				return 0;
 			}
@@ -678,7 +682,7 @@ int kp_session_replay_start(KpSessionStart *st, const KpRep *rep)
 		kp_rep_player(rep, k, &p);
 		if (p.storm != -1 && p.slot >= KP_TURNS_SLOTS) return -1;
 	}
-	if (record_refused(rep->record, rep->record_size, &at)) return -1;
+	if (record_refused(rep->record, rep->record_size, &at, 0)) return -1;
 	st->seed = kp_rep_seed(rep);
 	st->expansion = kp_rep_brood_war(rep);
 	st->mission_index = kp_rep_campaign(rep);

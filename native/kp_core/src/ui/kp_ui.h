@@ -252,6 +252,7 @@ typedef struct {
 	uint16_t height, spacing;                   /* 0x670a6c, 0x670a68 */
 	KpUiSurface layer;                          /* the lines over a transparent 640 x 480 (index 0) */
 	int changed;                                /* the layer is out of date */
+	int32_t columns;                            /* ours: the columns the ring is wrapped at (a narrow view's) */
 } KpUiLines;
 
 /* The sound effects (kp_ui_sound.c; snd.cpp, atlas P34, P35): the sound records 0x6a61d0, the DirectSound buffers (a

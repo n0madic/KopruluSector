@@ -56,7 +56,10 @@ The parts:
 ## The playback
 
 - The viewer's session is a replay (`KpSessionStart.watch`). Its record grows by `kp_session_watch_grow`, which walks
-  the new bytes as a replay's start walks a record and refuses a save or a load.
+  the new bytes as a replay's start walks a record and refuses a save or a load. An entry cut before its command id
+  or its count waits for the next bytes; an unknown id is refused (only a forged record holds one, and the feed's read could go on
+  past it where the walk cannot follow). The feed drops every command the recorder never writes besides, so a forged
+  record that the walk reads otherwise than the feed still dispatches no save or load.
 - **The end header.** `kp_record_grow` appends an empty block's header of frame F after the received bytes, where F is
   the published frame count. `ReadRecordedFrame` `0x478480` takes a frame only when the next block's header follows
   it, so the header lets the feed dispatch the last block received. The next bytes replace it, and the read position

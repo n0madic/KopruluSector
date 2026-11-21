@@ -1,7 +1,12 @@
 /* The on-screen text lines (plan phase 9B; atlas P23 0x46a760..0x46b070): the 11-line message ring the game's texts
  * and messages go to, line 11 at (420, 24) and the error line, each with its expiry; DrawTextLines 0x46acd0 draws
  * them over the game view (DrawGameScreenLayer 0x445ea0). Koprulu draws them into a layer of their own, index 0
- * transparent; the screen's dirty cells (0x4cac50) are the layer's, not the dialogs' region. */
+ * transparent; the screen's dirty cells (0x4cac50) are the layer's, not the dialogs' region.
+ *
+ * Not the original's: a game view narrower than the original's 640 columns (the narrow layout, ui->view_w) narrows the
+ * lines' columns by the difference: the ring wraps at its width less 20 and is clipped 10 from its right edge, line 11
+ * keeps its distance from that edge. The ring's lines wrapped wider are wrapped again when the view narrows (a window
+ * or a phone turned); a wider view keeps them as they are. A view of 640 columns or more keeps the original's. */
 #include "kp_text.h"
 #include "kp_ui.h"
 
@@ -47,6 +52,15 @@ const uint8_t *kp_ui_force_name(KpUi *ui, int64_t force)
 	return t != NULL ? t : (const uint8_t *)"";
 }
 
+/* The lines' columns: the original's 640, or a narrower game view's */
+static int32_t columns(const KpUi *ui)
+{
+	return ui->view_w > 0 && ui->view_w < KP_UI_SCREEN_W ? ui->view_w : KP_UI_SCREEN_W;
+}
+
+/* How far the lines move left of the original's columns */
+static int32_t narrowed(const KpUi *ui) { return KP_UI_SCREEN_W - columns(ui); }
+
 static KpUiText *select_font(KpUi *ui)
 {
 	(void)kp_ui_text_select_font(&ui->text, ui->fonts[FONT_SLOT_10], ui->font_sizes[FONT_SLOT_10]);
@@ -76,8 +90,103 @@ int kp_ui_lines_reset(KpUi *ui)
 	l->layer.h = KP_UI_SCREEN_H;
 	l->layer.pixels = pixels;
 	l->changed = 1;
+	l->columns = KP_UI_SCREEN_W;
 	metrics(ui);
 	return 0;
+}
+
+/* The end of the line from text[at] that fits the wrap width (AddTextLines 0x46aae0's break, mid-word when no break
+ * fits); the font selected and its clip set. Ours: when not even a character fits (a view narrower than a glyph), the
+ * rest of the text, clipped where it is drawn. */
+static size_t line_end(KpUiText *t, const uint8_t *text, size_t at)
+{
+	size_t end;
+	t->x = 0;
+	end = kp_ui_find_line_break(t, text, at);
+	if (end == at) { /* no break: mid-word */
+		t->x = 0;
+		t->wrap = 0;
+		end = kp_ui_find_line_break(t, text, at);
+		t->wrap = 1;
+	}
+	return end > at ? end : at + strlen((const char *)text + at);
+}
+
+static void wrap_at(KpUiText *t, int32_t columns)
+{
+	t->clip_left = 0;
+	t->clip_top = 0;
+	t->clip_right = (int16_t)(WRAP_WIDTH - (KP_UI_SCREEN_W - columns));
+}
+
+/* A ring line's text: at most KP_UI_LINE_SIZE - 1 bytes of text[at..end) (SStrCopy 501), cut at a whole character */
+static void copy_line(uint8_t out[KP_UI_LINE_SIZE], const uint8_t *text, size_t at, size_t end)
+{
+	size_t n = end - at < KP_UI_LINE_SIZE - 1 ? end - at : kp_text_floor(text + at, KP_UI_LINE_SIZE - 1);
+	memcpy(out, text + at, n);
+	out[n] = 0;
+}
+
+/* A line of the ring as it is wrapped again */
+typedef struct {
+	uint8_t text[KP_UI_LINE_SIZE];
+	uint32_t expiry;
+	uint8_t colour, flag;
+} Rewrapped;
+
+/* The ring wrapped again at narrower columns: oldest to newest, each line split where it no longer fits, the newest
+ * RING rows kept (the oldest first, at the ring's slot 0). Out of memory, the lines stay as they are (cut). */
+static void rewrap(KpUi *ui, int32_t cols)
+{
+	KpUiLines *l = &ui->lines;
+	Rewrapped *r = (Rewrapped *)malloc(RING * sizeof *r); /* the last RING rows, row n at n % RING */
+	KpUiText *t;
+	size_t n = 0, first;
+	int k;
+	if (r == NULL) return;
+	t = select_font(ui);
+	wrap_at(t, cols);
+	for (k = 0; k < RING; k++) {
+		uint8_t s = (uint8_t)((l->next + k) % RING);
+		const uint8_t *line = l->text[s];
+		size_t at = 0;
+		do { /* an empty line keeps its row */
+			Rewrapped *row = &r[n++ % RING];
+			size_t end = line[0] != 0 ? line_end(t, line, at) : 0;
+			copy_line(row->text, line, at, end);
+			row->expiry = l->expiry[s];
+			row->colour = l->colour[s];
+			row->flag = l->flag[s];
+			at = end;
+		} while (line[at] != 0);
+	}
+	t->font = NULL;
+	first = n > RING ? n - RING : 0;
+	for (k = 0; k < RING; k++) {
+		if (first + (size_t)k < n) {
+			const Rewrapped *row = &r[(first + (size_t)k) % RING];
+			memcpy(l->text[k], row->text, KP_UI_LINE_SIZE);
+			l->expiry[k] = row->expiry;
+			l->colour[k] = row->colour;
+			l->flag[k] = row->flag;
+		} else {
+			l->text[k][0] = 0;
+		}
+	}
+	free(r);
+	l->next = (uint8_t)(n < RING ? n : 0);
+	l->changed = 1;
+}
+
+/* The lines' columns follow the game view's: narrower, the ring is wrapped again */
+static void follow_columns(KpUi *ui)
+{
+	KpUiLines *l = &ui->lines;
+	int32_t cols = columns(ui);
+	if (cols == l->columns) return;
+	if (cols < l->columns) rewrap(ui, cols);
+	l->columns = cols;
+	l->changed = 1;
 }
 
 void kp_ui_lines_add(KpUi *ui, const uint8_t *text, uint8_t colour, uint32_t expiry, uint8_t flag)
@@ -86,29 +195,17 @@ void kp_ui_lines_add(KpUi *ui, const uint8_t *text, uint8_t colour, uint32_t exp
 	KpUiText *t;
 	size_t at = 0;
 	if (l->layer.pixels == NULL || text == NULL) return;
+	follow_columns(ui); /* the ring at the columns this line wraps at */
 	t = select_font(ui);
-	t->clip_left = 0;
-	t->clip_top = 0;
-	t->clip_right = WRAP_WIDTH;
+	wrap_at(t, l->columns);
 	while (text[at] != 0) {
-		size_t end, n;
-		uint8_t s;
-		t->x = 0;
-		end = kp_ui_find_line_break(t, text, at);
-		if (end == at) { /* no break: mid-word */
-			t->x = 0;
-			t->wrap = 0;
-			end = kp_ui_find_line_break(t, text, at);
-			t->wrap = 1;
-		}
-		s = l->next;
+		size_t end = line_end(t, text, at);
+		uint8_t s = l->next;
 		l->next = (uint8_t)(s + 1 < RING ? s + 1 : 0);
 		l->expiry[s] = expiry;
 		l->flag[s] = flag;
 		l->colour[s] = colour;
-		n = end - at < KP_UI_LINE_SIZE - 1 ? end - at : kp_text_floor(text + at, KP_UI_LINE_SIZE - 1); /* SStrCopy 501 */
-		memcpy(l->text[s], text + at, n);
-		l->text[s][n] = 0;
+		copy_line(l->text[s], text, at, end);
 		at = end;
 	}
 	t->font = NULL;
@@ -172,24 +269,26 @@ const KpUiSurface *kp_ui_lines_layer(KpUi *ui)
 {
 	KpUiLines *l = &ui->lines;
 	KpUiSurface *target;
-	int32_t y = RING_Y;
+	int32_t y = RING_Y, left;
 	int k;
 	uint8_t s;
 	if (l->layer.pixels == NULL) return NULL;
+	follow_columns(ui);
 	if (!l->changed) return &l->layer;
+	left = narrowed(ui);
 	memset(l->layer.pixels, 0, (size_t)l->layer.w * (size_t)l->layer.h);
 	target = ui->text.target;
 	ui->text.target = &l->layer;
 	(void)select_font(ui);
 	for (k = 0, s = l->next; k < RING; k++, s = (uint8_t)((s + 1) % RING)) {
-		if (l->text[s][0] != 0) draw_line(ui, l->text[s], l->colour[s], RING_FORMAT, RING_X, y, RING_RIGHT);
+		if (l->text[s][0] != 0) draw_line(ui, l->text[s], l->colour[s], RING_FORMAT, RING_X, y, (int16_t)(RING_RIGHT - left));
 		y += l->spacing;
 	}
 	if (l->text[LINE_ERROR][0] != 0) {
-		draw_line(ui, l->text[LINE_ERROR], l->colour[LINE_ERROR], ERROR_FORMAT, RING_X, ERROR_Y, RING_RIGHT);
+		draw_line(ui, l->text[LINE_ERROR], l->colour[LINE_ERROR], ERROR_FORMAT, RING_X, ERROR_Y, (int16_t)(RING_RIGHT - left));
 	}
 	if (l->text[LINE_CHAT][0] != 0) {
-		draw_line(ui, l->text[LINE_CHAT], l->colour[LINE_CHAT], CHAT_FORMAT, CHAT_X, CHAT_Y, CHAT_RIGHT);
+		draw_line(ui, l->text[LINE_CHAT], l->colour[LINE_CHAT], CHAT_FORMAT, CHAT_X - left, CHAT_Y, (int16_t)(CHAT_RIGHT - left));
 	}
 	ui->text.font = NULL;
 	ui->text.target = target;

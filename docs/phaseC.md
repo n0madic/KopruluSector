@@ -728,15 +728,15 @@ once (`kp_flow_init`), as RunMainLoop `0x4679b0` opens it after cinematics 0 and
 - **Departures from the original:** the window closes during the title (the original's MainWindowProc ignores
   `SC_CLOSE` while IsTitleScreenOpen); the input during the title is dropped (the original's `Sleep` leaves it queued
   for the main menu); the low-memory mode's text (child −11, `0x66fd30`) is not modelled, as kp_ui has no such mode.
-  `TODO:` RunGlueLoop sleeps the same 1500 ms at every entry, after a game too; the flow enters the glue at once
-  there (`kp_hud.h`).
+  RunGlueLoop sleeps the same 1500 ms at every entry, after a game too: since 2026-11-22 the flow enters the glue
+  after a game through that Sleep (`kp_glue_sleep`, [phase N](phase-network.md#the-last-small-items-2026-11-22)).
 
 **The review's fixes (2026-11-12).**
 
 - **The input:** the keys and the text went past the title (the SDL host sends them through `kp_hud_key`, not
   `kp_glue_input`): `kp_glue_key` and `kp_glue_text` drop them while it stands, as `kp_glue_input` drops the mouse;
   the pointer's position is kept for the main menu's idle events.
-- **The Sleep counts from the title's first frame** (`KpGlue.title_timed`), not from `kp_flow_init`: a slow first
+- **The Sleep counts from the title's first frame** (`KpGlue.sleep_timed`, `title_timed` until 2026-11-22), not from `kp_flow_init`: a slow first
   frame (the window, the art, the web's groups) took the title's time, or all of it.
 - **A language chosen** (`start_over`) goes back to the main menu at once (`KpFlow.language_restart`), as before the
   title: the title is the start's.

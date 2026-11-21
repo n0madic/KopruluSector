@@ -3719,6 +3719,18 @@ static void glue_frame(KpFlow *f)
 	video_options(f);
 	if (committed_options(f) | ev.profile_changed) f->host.save_profile(f->host.ctx); /* once a frame */
 	switch (ev.kind) {
+	case KP_GLUE_AWAKE: /* the glue's Sleep after a game: what its end leads to */
+		if (f->after_score && f->session && f->session->g) { /* the game's state the score reads stands */
+			f->after_score = 0;
+			kp_glue_score(&f->glue, f->session->g, f->after_result, f->after_elapsed, f->after_from_save,
+				f->after_network ? f->after_storm_results : NULL, f->after_local);
+		} else if (f->after_game) {
+			glue_after_game(f);
+		} else {
+			f->after_score = 0;
+			kp_glue_menus(&f->glue, KP_GLUE_MAIN);
+		}
+		break;
 	case KP_GLUE_EXIT:
 		say(f, "glue: exit");
 		if (!f->exit_to_menu) f->host.quit(f->host.ctx);
@@ -3864,16 +3876,18 @@ static void hud_frame(KpFlow *f, int ticks)
 			f->host.quit(f->host.ctx);
 		} else if (f->glue_on) {
 			f->after_game = 1;
+			f->after_score = 0; /* the latest end's: not a score of a game whose Sleep did not end */
 			f->after_exit = exit;
 			kp_carry_take(f->session->g, &f->after_carry);
 			f->after_cheats = kp_cheats(f->session->g);
+			kp_glue_sleep(&f->glue); /* then glue_after_game */
 		}
 	} else if (exit != 0 && (f->result || (f->net_game && (exit == KP_UI_EXIT_VICTORY || exit == KP_UI_EXIT_DEFEAT)))) {
 		/* the result dialog's answer (RequestGameExit 0x444e00: 6 victory, 7 defeat) ends the game; a network game's
 		 * Quit Mission too (QuitMissionMenuHandler 0x47bff0: 6 after a victory, else 7, the result the exit's) */
 		int result = f->result ? f->result : exit == KP_UI_EXIT_VICTORY ? RESULT_VICTORY : RESULT_DEFEAT;
 		/* ComputeGameResults 0x477270 while Storm's game still runs (0x4bd220, before EndGame's leave) */
-		uint8_t storm_results[KP_NETGAME_PLAYERS];
+		uint8_t storm_results[KP_NETGAME_PLAYERS] = { 0 };
 		int network = f->net_game && !f->net_left && f->netplay && f->netplay->game_on, local = 0;
 		if (network) local = kp_netgame_game_results(&f->netplay->game, f->session->g, storm_results);
 		kp_ui_end_game(ui);
@@ -3883,9 +3897,16 @@ static void hud_frame(KpFlow *f, int ticks)
 		campaign_after_game(f, result);
 		kp_session_pause(f->session);
 		end_hud(f);
-		if (f->glue_on) {
-			kp_glue_score(&f->glue, f->session->g, result, (uint32_t)(now(f) - f->game_started_at),
-				f->session->loads > 0, network ? storm_results : NULL, local);
+		if (f->glue_on) { /* the score screen once the glue's Sleep is over (glue_frame's KP_GLUE_AWAKE) */
+			f->after_score = 1;
+			f->after_game = 0;
+			f->after_result = result;
+			f->after_elapsed = (uint32_t)(now(f) - f->game_started_at);
+			f->after_from_save = f->session->loads > 0;
+			f->after_network = network;
+			memcpy(f->after_storm_results, storm_results, sizeof storm_results);
+			f->after_local = local;
+			kp_glue_sleep(&f->glue);
 		}
 		f->result = 0;
 	}
@@ -3951,14 +3972,13 @@ void kp_flow_frame(KpFlow *f)
 	tell_missing_glyphs(f);
 	if (f->waiting) mission_wait(f);
 	if (f->cine_then.kind != THEN_NONE && !f->host.cine_active(f->host.ctx)) cine_continue(f); /* the cinematics ended */
-	if (f->after_game) glue_after_game(f);
 	f->fixed_screen = kp_flow_glue_active(f); /* a glue screen keeps the original's 640 x 480 */
 	layout(f);
 	if (f->netplay) kp_netplay_pump(f->netplay); /* what arrived, before the chat room's pass reads it */
 	watch_frame(f);
 	if (f->fixed_screen) {
 		glue_frame(f);
-		cursor(f, 1);
+		cursor(f, f->glue.screen != KP_GLUE_SLEEP); /* the Sleep's screen faded out: no cursor */
 		if (!kp_flow_glue_active(f)) { /* a game took over: its layout from its first frame */
 			f->fixed_screen = 0;
 			layout(f);

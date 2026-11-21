@@ -6,6 +6,7 @@
 
 #include "kp_record.h"
 #include "kp_rep.h"
+#include "kp_session.h"
 #include "kp_turns.h"
 #include "kp_watch.h"
 
@@ -454,6 +455,59 @@ static void a_pause_marks_nothing(KpT *T)
 	kp_t_ok(T, s->record_size == size && memcmp(s->record, bytes, size) == 0, "the published record is the closed one");
 }
 
+/* A forged record (a host's): an entry cut after its Storm ID, then before its count, then a save after it, is walked
+ * once the count comes and refused, as is an id the recorder never writes; the feed itself never dispatches a save. */
+static void free_bare_session(void *p)
+{
+	KpSession *s = (KpSession *)p;
+	kp_turns_free(&s->turns);
+	free(s->g);
+	free(s);
+}
+
+static KpSession *bare_viewer(KpT *T)
+{
+	KpSession *s = (KpSession *)calloc(1, sizeof *s);
+	KpRep rep;
+	if (!s || !(s->g = (KpGame *)calloc(1, sizeof *s->g))) kp_t_fail(T, "out of memory");
+	kp_t_defer(T, free_bare_session, s);
+	memset(&rep, 0, sizeof rep);
+	kp_t_eq(T, kp_turns_watch(&s->turns, &rep), 0, "the viewer's source");
+	return s;
+}
+
+static void a_forged_record_dispatches_no_save(KpT *T)
+{
+	/* frame 0's block: {Storm 0, 0x09 count 1, 2 bytes}, {Storm 0, 0x06 save, 32 bytes}: 5 + 34 bytes */
+	uint8_t block[5 + 39], unknown[5 + 2] = { 0, 0, 0, 0, 2, 0, 0x3c };
+	KpSession *s = bare_viewer(T), *u = bare_viewer(T);
+	KpTurns *t = turns_new(T);
+	KpRep rep;
+	const KpCommand *list;
+	int count, k;
+	memset(block, 0, sizeof block);
+	block[4] = 39;
+	block[6] = 0x09;
+	block[7] = 1;
+	block[11] = 0x06;
+	kp_t_eq(T, kp_session_watch_grow(s, block, 6, 1, 0), 0, "an entry cut after its Storm ID waits for its id");
+	kp_t_eq(T, kp_session_watch_grow(s, block + 6, 1, 1, 0), 0, "the cut command waits for its count");
+	kp_t_eq(T, kp_session_watch_grow(s, block + 7, sizeof block - 7, 2, 0), -1, "the save after it is refused");
+	kp_t_ok(T, s->failed, "the viewer fails");
+	kp_t_eq(T, kp_session_watch_grow(u, unknown, sizeof unknown, 1, 0), -1, "an unknown id is refused");
+	/* the feed alone, past no walk: frame 0's {Storm 0, 0x1a 0}, {Storm 0, 0x06 save} */
+	memset(&rep, 0, sizeof rep);
+	kp_t_eq(T, kp_turns_watch(t, &rep), 0, "the feed's source");
+	memset(block, 0, sizeof block);
+	block[4] = 37;
+	block[6] = STOP[0];
+	block[9] = 0x06;
+	kp_t_eq(T, kp_turns_watch_grow(t, block, 5 + 37, 1, 1), 0, "the record grows");
+	kp_t_eq(T, kp_turns_feed(t, 0, &list, &count), KP_TURNS_READY, "frame 0");
+	kp_t_eq(T, count, 1, "one command dispatched");
+	for (k = 0; k < count; k++) kp_t_ok(T, list[k].bytes[0] == STOP[0], "the save is dropped");
+}
+
 static const KpTest TESTS[] = {
 	{ "a_growing_record_plays_as_the_file", a_growing_record_plays_as_the_file, 0 },
 	{ "the_viewer_fetches_through_a_lossy_link", the_viewer_fetches_through_a_lossy_link, 0 },
@@ -462,6 +516,7 @@ static const KpTest TESTS[] = {
 	{ "a_load_ends_the_published_game", a_load_ends_the_published_game, 0 },
 	{ "a_load_ends_the_game_without_a_delay", a_load_ends_the_game_without_a_delay, 0 },
 	{ "a_pause_marks_nothing", a_pause_marks_nothing, 0 },
+	{ "a_forged_record_dispatches_no_save", a_forged_record_dispatches_no_save, 0 },
 };
 
 KP_SUITE(kp_suite_watch, "test_watch", TESTS);

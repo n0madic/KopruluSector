@@ -165,6 +165,14 @@ static void add_command(void *ud, const uint8_t *cmd, size_t n)
 	c->size = n;
 }
 
+/* A recorded command, but none the recorder never writes (kp_record_excluded: a save, a load): the start refused a
+ * file that holds one, and a growing record's walk refuses one (kp_session_watch_grow); a forged record that the walk
+ * reads otherwise than the feed still never dispatches one. */
+static void add_recorded(void *ud, const uint8_t *cmd, size_t n)
+{
+	if (!kp_record_excluded(cmd[0])) add_command(ud, cmd, n);
+}
+
 #define FEED_WAIT 2
 
 /* FeedReplayCommands 0x4769b0's part of a frame: the commands recorded for it, each buffer's player the one whose
@@ -185,7 +193,7 @@ static int feed(KpTurns *t, int64_t frame, Split *sp)
 			}
 		}
 		sp->player = t->feed_player;
-		(void)kp_record_split(e[k].bytes, e[k].size, add_command, sp);
+		(void)kp_record_split(e[k].bytes, e[k].size, add_recorded, sp);
 	}
 	return sp->failed ? -1 : 0;
 }

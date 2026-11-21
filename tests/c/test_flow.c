@@ -109,6 +109,7 @@ typedef struct {
 	size_t export_size;
 	const char *watch;       /* the log's lines that hold this text are counted in watched (NULL: none) */
 	int watched;
+	int cursor_shown;        /* the interface's cursor drawn by the last frame */
 } Host;
 
 /* --- the host --- */
@@ -254,11 +255,7 @@ static void host_canvas(void *ctx, KpCanvas *c)
 	(void)c;
 }
 
-static void host_cursor(void *ctx, KpUi *ui)
-{
-	(void)ctx;
-	(void)ui;
-}
+static void host_cursor(void *ctx, KpUi *ui) { ((Host *)ctx)->cursor_shown = ui != NULL; }
 
 static int host_pointer(void *ctx, int32_t *x, int32_t *y)
 {
@@ -556,6 +553,32 @@ static void game_event(Host *H, int64_t kind, int64_t a, const char *text)
 	frame(H);
 }
 
+/* RunGlueLoop 0x457510's Sleep after a game (kp_glue_sleep): KP_UI_GLUE_SLEEP_MS of the host's clock, black to its
+ * last frame (the next screen from the frame after), no cursor, the input dropped; then what the game's end leads to. */
+static void glue_sleep(Host *H)
+{
+	double from = H->now;
+	int k, x = H->f.glue.place_x + 320, y = H->f.glue.place_y + 240;
+	kp_t_eq(H->T, H->f.glue.screen, KP_GLUE_SLEEP, "the glue's Sleep after the game");
+	for (k = 0; k < END_FRAMES && H->f.glue.screen == KP_GLUE_SLEEP; k++) {
+		uint8_t index, alpha;
+		int32_t px, py;
+		kp_glue_input(&H->f.glue, KP_UI_LEFT_DOWN, x, y); /* dropped */
+		kp_glue_input(&H->f.glue, KP_UI_LEFT_UP, x, y);
+		kp_glue_key(&H->f.glue, 1, 0x1b, 0);
+		kp_glue_key(&H->f.glue, 0, 0x1b, 0);
+		frame(H);
+		if (H->f.glue.screen == KP_GLUE_SLEEP && H->cursor_shown) kp_t_fail(H->T, "a cursor over the Sleep's screen");
+		for (py = 0; py < H->f.glue.canvas.h; py += 7)
+			for (px = 0; px < H->f.glue.canvas.w; px += 7) {
+				kp_canvas_pixel(&H->f.glue.canvas, px, py, &index, &alpha);
+				if (index != 0) kp_t_fail(H->T, "the Sleep's screen is black: index %u at %d, %d", index, px, py);
+			}
+	}
+	kp_t_ok(H->T, H->now - from >= KP_UI_GLUE_SLEEP_MS / 1000.0 && H->now - from < KP_UI_GLUE_SLEEP_MS / 1000.0 + 3 * FRAME_S,
+		"the Sleep stands %u ms (%.3f s)", (unsigned)KP_UI_GLUE_SLEEP_MS, H->now - from);
+}
+
 static void track_save(Host *H, const char *name)
 {
 	if (H->save_count < (int)(sizeof H->saves / sizeof H->saves[0])) {
@@ -824,6 +847,7 @@ static void victory_goes_through_the_score_screen_to_the_next_game(KpT *T)
 	saves = H->profile_saves;
 	kp_event(H->f.session->g, KP_EVENT_GAME_RESULT, RESULT_VICTORY, 0, 0, NULL);
 	game_event(H, KP_EVENT_GAME_EXIT, KP_UI_EXIT_VICTORY, NULL);
+	glue_sleep(H);
 	kp_t_eq(T, H->f.hud_on, 0, "the console ended");
 	kp_t_eq(T, H->f.glue.screen, KP_GLUE_SCORE, "the score screen");
 	kp_t_ok(T, H->profile_saves > saves, "the profile kept");
@@ -864,6 +888,7 @@ static void victory_without_a_step_opens_the_main_menu(KpT *T)
 		H->f.step_glue = KP_GLUE_EXPANSION_CAMPAIGN; /* the end of the game before's campaign */
 		kp_event(H->f.session->g, KP_EVENT_GAME_RESULT, RESULT_VICTORY, 0, 0, NULL);
 		game_event(H, KP_EVENT_GAME_EXIT, KP_UI_EXIT_VICTORY, NULL);
+		glue_sleep(H);
 		kp_t_eq(T, H->f.glue.screen, KP_GLUE_SCORE, "the score screen");
 		kp_t_eq(T, H->f.has_next, 0, "no next game");
 		kp_t_eq(T, H->f.step_glue, KP_GLUE_MAIN, "no step of its own");
@@ -896,6 +921,7 @@ static void score_screen_lists_every_player_and_the_games_time(KpT *T)
 		for (k = 0; k < RESULT_FRAMES && !H->f.ui->result_open; k++) frame(H);
 		kp_t_ok(T, H->f.ui->result_open, "part %d: the result dialog", part);
 		game_event(H, KP_EVENT_GAME_EXIT, part == 0 ? KP_UI_EXIT_VICTORY : KP_UI_EXIT_DEFEAT, NULL);
+		glue_sleep(H);
 		kp_t_eq(T, H->f.glue.screen, KP_GLUE_SCORE, "part %d: the score screen", part);
 		d = &H->f.ui->score.data;
 		kp_t_ok(T, d->elapsed >= GAME_SECONDS && d->elapsed <= (uint32_t)(H->now - started),
@@ -941,6 +967,7 @@ static void win(Host *H)
 	memset(H->f.session->g->trig.next_scenario, 0, sizeof H->f.session->g->trig.next_scenario);
 	kp_event(H->f.session->g, KP_EVENT_GAME_RESULT, RESULT_VICTORY, 0, 0, NULL);
 	game_event(H, KP_EVENT_GAME_EXIT, KP_UI_EXIT_VICTORY, NULL);
+	glue_sleep(H);
 }
 
 /* A mission whose victory passes cinematic rows (the game's next scenario cleared, as the scan assumed): the score
@@ -982,8 +1009,9 @@ static void restart_plays_the_mission_again_from_its_room(KpT *T)
 	builds = H->builds;
 	game_event(H, KP_EVENT_GAME_EXIT, KP_UI_EXIT_RESTART, NULL);
 	kp_t_eq(T, H->f.hud_on, 0, "the console ended");
-	kp_t_ok(T, H->f.after_game, "the glue goes on at the next frame");
-	frame(H);
+	kp_t_ok(T, H->f.after_game, "the glue goes on after its Sleep");
+	kp_t_eq(T, H->builds, builds, "no game during the Sleep");
+	glue_sleep(H);
 	kp_t_eq(T, H->builds, builds + 1, "the game again");
 	kp_t_eq_str(T, current(H), EXPANSION_PROTOSS01, "the same mission");
 	kp_t_ok(T, memcmp(&H->f.run, &run, sizeof run) == 0, "the same run");
@@ -998,11 +1026,11 @@ static void quit_mission_opens_the_campaign_menu(KpT *T)
 	Host *H = glue_host(T, 0);
 	play(H, EXPANSION_PROTOSS01);
 	game_event(H, KP_EVENT_GAME_EXIT, KP_UI_EXIT_QUIT_MISSION, NULL);
-	frame(H);
+	glue_sleep(H);
 	in_menus(H, KP_GLUE_EXPANSION_CAMPAIGN, "Quit Mission in the expansion");
 	play(H, PROTOSS01);
 	game_event(H, KP_EVENT_GAME_EXIT, KP_UI_EXIT_QUIT_MISSION, NULL);
-	frame(H);
+	glue_sleep(H);
 	in_menus(H, KP_GLUE_CAMPAIGN, "Quit Mission in the original");
 	kp_t_eq(T, H->quits, 0, NULL);
 }
@@ -1050,7 +1078,7 @@ static void load_replay_lists_refuses_and_plays_the_last_game(KpT *T)
 	play(H, PROTOSS01);
 	frames(H, 30);
 	game_event(H, KP_EVENT_GAME_EXIT, KP_UI_EXIT_QUIT_MISSION, NULL);
-	frame(H);
+	glue_sleep(H);
 	in_menus(H, KP_GLUE_CAMPAIGN, "Quit Mission");
 	snprintf(path, sizeof path, "%sreplays/LastReplay.rep", H->pref);
 	kp_t_ok(T, (bytes = kp_read_file(path, &size)) != NULL && size > 0, "%s written", path);
@@ -1142,7 +1170,7 @@ static void load_replay_plays_a_custom_maps_replay(KpT *T)
 	play(H, PROTOSS01);
 	frames(H, 30);
 	game_event(H, KP_EVENT_GAME_EXIT, KP_UI_EXIT_QUIT_MISSION, NULL);
-	frame(H);
+	glue_sleep(H);
 	in_menus(H, KP_GLUE_CAMPAIGN, "Quit Mission");
 	snprintf(path, sizeof path, "%sreplays/LastReplay.rep", H->pref);
 	kp_t_ok(T, (bytes = kp_read_file(path, &size)) != NULL && size > 0, "%s written", path);
@@ -1223,7 +1251,7 @@ static void load_replay_imports_and_exports(KpT *T)
 	play(H, PROTOSS01);
 	frames(H, 30);
 	game_event(H, KP_EVENT_GAME_EXIT, KP_UI_EXIT_QUIT_MISSION, NULL);
-	frame(H);
+	glue_sleep(H);
 	in_menus(H, KP_GLUE_CAMPAIGN, "Quit Mission");
 	snprintf(path, sizeof path, "%sreplays/LastReplay.rep", H->pref);
 	kp_t_ok(T, (bytes = kp_read_file(path, &size)) != NULL && size > 0, "%s written", path);
@@ -1915,6 +1943,7 @@ static void custom_win(Host *H, const char *next)
 	memcpy(name, next, strlen(next));
 	kp_event(H->f.session->g, KP_EVENT_GAME_RESULT, RESULT_VICTORY, 0, 0, NULL);
 	game_event(H, KP_EVENT_GAME_EXIT, KP_UI_EXIT_VICTORY, NULL);
+	glue_sleep(H);
 	wait_for(H, "rez\\gluscore.bin", MENU_FRAMES);
 	click(H, SCORE_CONTINUE);
 }
@@ -2014,6 +2043,7 @@ static void custom_saves_find_their_maps_folder(KpT *T)
 	kp_t_eq_str(T, name, "maps/" CUSTOM_SUB NEXT_FIRST, "the native save's mission");
 	free(bytes);
 	game_event(H, KP_EVENT_GAME_EXIT, KP_UI_EXIT_QUIT_MISSION, NULL);
+	glue_sleep(H);
 	for (k = 0; k < END_FRAMES && H->f.glue.screen != KP_GLUE_MENUS; k++) frame(H);
 	frames(H, 2);
 	glue_load(H, "customsave");
@@ -2032,6 +2062,7 @@ static void custom_saves_find_their_maps_folder(KpT *T)
 	/* a map changed since its save */
 	save(H, "customchanged");
 	game_event(H, KP_EVENT_GAME_EXIT, KP_UI_EXIT_QUIT_MISSION, NULL);
+	glue_sleep(H);
 	for (k = 0; k < END_FRAMES && H->f.glue.screen != KP_GLUE_MENUS; k++) frame(H);
 	frames(H, 2);
 	kp_t_ok(T, (changed = (uint8_t *)malloc(size + sizeof extra)) != NULL, NULL);
@@ -2986,7 +3017,7 @@ static void exit_program_ends_the_program_or_opens_the_main_menu(KpT *T)
 	H->f.exit_to_menu = 1;
 	play(H, EXPANSION_PROTOSS01);
 	game_event(H, KP_EVENT_GAME_EXIT, KP_UI_EXIT_PROGRAM, NULL);
-	frame(H);
+	glue_sleep(H);
 	kp_t_eq(T, H->quits, 0, "the page goes on");
 	in_menus(H, KP_GLUE_MAIN, "Exit Program on the web");
 }
@@ -3962,7 +3993,7 @@ static void start_that_fails_leaves_no_scene(KpT *T)
 	play(H, EXPANSION_PROTOSS01);
 	save(H, "flowfail");
 	game_event(H, KP_EVENT_GAME_EXIT, KP_UI_EXIT_QUIT_MISSION, NULL);
-	frame(H);
+	glue_sleep(H);
 	H->fail_world = 1;
 	kp_t_ok(T, kp_flow_load_saved(&H->f, "flowfail", why, sizeof why) != 0, "the saved game does not start");
 	kp_t_ok(T, strstr(why, "does not build") != NULL, "%s", why);
@@ -3992,7 +4023,7 @@ static void save_is_written_and_the_glue_loads_it_before_the_first_frame(KpT *T)
 	kp_t_eq_str(T, H->profile.saves[0].name, "flowsave", NULL);
 	kp_t_eq(T, H->f.ui->menus.save_count, 1, "the interface's list");
 	game_event(H, KP_EVENT_GAME_EXIT, KP_UI_EXIT_QUIT_MISSION, NULL);
-	frame(H);
+	glue_sleep(H);
 	in_menus(H, KP_GLUE_EXPANSION_CAMPAIGN, "Quit Mission");
 	frame(H);
 	music_is(H, MUSIC_TITLE, MUSIC_TITLE, "the menus after the game");
@@ -4018,7 +4049,7 @@ static void load_of_another_missions_save_starts_its_game(KpT *T)
 	play(H, EXPANSION_PROTOSS01);
 	save(H, "flowother");
 	game_event(H, KP_EVENT_GAME_EXIT, KP_UI_EXIT_QUIT_MISSION, NULL);
-	frame(H);
+	glue_sleep(H);
 	play(H, PROTOSS01);
 	builds = H->builds;
 	request(H, KP_EVENT_LOAD_GAME, "flowother");
@@ -4043,7 +4074,7 @@ static void load_that_fails_keeps_the_game_or_opens_the_campaign_menu(KpT *T)
 	kp_t_ok(T, H->f.ui->box.open, "the player told (kp_ui_load_failed)");
 	kp_t_eq_str(T, H->f.ui->box.text, (const char *)kp_ui_tbl(H->f.ui, KP_UI_GLUALL, 66), "gluAll 66");
 	game_event(H, KP_EVENT_GAME_EXIT, KP_UI_EXIT_QUIT_MISSION, NULL);
-	frame(H);
+	glue_sleep(H);
 	play(H, EXPANSION_PROTOSS01);
 	H->fail_world = 1;
 	request(H, KP_EVENT_LOAD_GAME, "flowgone");
@@ -4107,7 +4138,7 @@ static void check_save_tells_why_a_save_does_not_load(KpT *T)
 	save_path(H, "flowold", path, sizeof path);
 	kp_t_ok(T, kp_write_file_atomic(path, old, old_size, &err) == 0, "%s", err.msg);
 	game_event(H, KP_EVENT_GAME_EXIT, KP_UI_EXIT_QUIT_MISSION, NULL);
-	frame(H);
+	glue_sleep(H);
 	kp_profile_add_save(&H->profile, "flowmissing");
 	ui = H->f.ui;
 	kp_glue_saves(ui, &H->profile);
@@ -4172,7 +4203,7 @@ static void saves_are_each_ids_and_leave_with_it(KpT *T)
 	save(H, "flowsame");
 	save_path(H, "flowsame", fenix, sizeof fenix);
 	game_event(H, KP_EVENT_GAME_EXIT, KP_UI_EXIT_QUIT_MISSION, NULL);
-	frame(H);
+	glue_sleep(H);
 	snprintf(H->f.ui->menus.player, sizeof H->f.ui->menus.player, "Zeratul"); /* the login's other ID */
 	play(H, PROTOSS01);
 	kp_t_eq_str(T, H->profile.name, "Zeratul", NULL);
@@ -4200,12 +4231,12 @@ static void glue_load_takes_the_row_of_the_logged_in_ids_list(KpT *T)
 	play(H, PROTOSS01);
 	save(H, "flowfenix");
 	game_event(H, KP_EVENT_GAME_EXIT, KP_UI_EXIT_QUIT_MISSION, NULL);
-	frame(H);
+	glue_sleep(H);
 	snprintf(H->f.ui->menus.player, sizeof H->f.ui->menus.player, "Zeratul");
 	play(H, PROTOSS01);
 	save(H, "flowzeratul");
 	game_event(H, KP_EVENT_GAME_EXIT, KP_UI_EXIT_QUIT_MISSION, NULL);
-	frame(H);
+	glue_sleep(H);
 	kp_t_eq_str(T, H->profile.saves[0].name, "flowzeratul", "the pool's newest, Zeratul's");
 	snprintf(H->f.ui->menus.player, sizeof H->f.ui->menus.player, "Fenix"); /* Fenix logs in again */
 	H->f.ui->menus.save_choice = 0;
@@ -4268,7 +4299,7 @@ static void game_failure_stops_the_game_and_the_flow_goes_on(KpT *T)
 	kp_t_eq(T, H->ticks, ticks, "no more steps");
 	kp_t_ok(T, H->f.playing && H->f.hud_on, "the console goes on");
 	game_event(H, KP_EVENT_GAME_EXIT, KP_UI_EXIT_QUIT_MISSION, NULL);
-	frame(H);
+	glue_sleep(H);
 	in_menus(H, KP_GLUE_EXPANSION_CAMPAIGN, "Quit Mission after the failure");
 }
 

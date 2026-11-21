@@ -430,7 +430,7 @@ The open items of N3–N6 that need no other machine, at the user's request:
 - **A ladder template's type** (`CreateMultiplayerGame` `0x475040`): a template of types 0x11..0x16 (`0x447ed0`) passes `SNetCreateLadderGame` the DWORD at its list entry's path + 0x124 (`FindTemplatePath` `0x447b10`) instead of the tournament byte's 0, 1, 3 or 5. `AddTemplate` `0x447850` allocates the entry zeroed (`SMemAlloc` flags 8) and fills that DWORD only from `ParseServerTemplates` `0x447220`, which only `battle.snp` calls, so a `templates.lst` template's is 0 (`test_netgame.ladder_type_follows_the_template`).
 - **The items' review:** a map side the minimap's layout does not name (`LayoutMinimap` `0x46d850` handles 64, 96, 128, 192 and 256 and keeps the previous size otherwise, kp_start takes any side up to 256) laid the preview out by the last game's size and read past the preview's W×H megatiles; the preview now starts from the 128×128 its close leaves (`MinimapDialogDestroy` `0x46dc80`), and the minimap's cells read no megatile past the array's count (`test_hud.glue_chat_room_previews_the_map` with a 48×48 map after a 96×96 game, under ASan too). A wait's pacing leaves the clock's accumulator below 0, which drew the sprites a step back; the interpolation's alpha now stops at 0 (`kp_clock_alpha`). The game target names a provider's caps that fail, and the UI's exit codes have one family (`KP_UI_EXIT_*`, `kp_ui.h`).
 - **The fatal dialog in a game** (2026-11-21, `ShowFatalErrorDialog` `0x43ec00`..`0x43f090`, `kp_ui_fatal.c`): in a game with the console open, `ShowNetErrorMessage` shows the report at once in `rez\dlgFatal.bin`, run modally over the game: network.tbl's string in control -10, the detail in -20 (a report that is not fatal has none), its background black with two outlines in UI colour 16 and OK's outlines white while pressed (`DrawFatalDialogBackground` `0x43edb0`, `0x43ed10`, `DrawFatalDialogText` `0x43ee70`); the placement and the targeting are cancelled and the modeless dialog closed before it, the cursor locked and the default accelerators set under it (`InitFatalDialog` `0x43ee90`, `DestroyFatalDialog` `0x43ef40`). The flow pauses the session's clock while it shows (`kp_ui_fatal_shown`, `KpFlow.fatal_held`): no step under it and no time to catch up after it, as the original's modal run. A fatal report's exits (`RequestGameExit` `0x444e00(4)`, `RequestGlueExit`) come at its OK, so the main menu follows with nothing deferred. With no dialog open the report is deferred as before. Not ported: the cursor's clip to the dialog (`0x4ce850`, the host's system cursor) and the swap of the current player `0x508d44`/`0x508d48` around it. Tests: `test_hud.glue_fatal_network_report_exits_the_glue`, `test_flow.a_fatal_network_error_returns_to_the_main_menu` (the game's frame stays while it shows). Checked: the dialog's bitmap from the test (the string, Storm's error and OK); not seen in the running app, which needs a Storm failure in a network game.
-- **Still open:** the preview's image has no click procedure (`0x508c50`, `TODO:` in `kp_ui_minimap.c`).
+- **Still open:** the preview's image has no click procedure (`0x508c50`): closed on 2026-11-22, no press reaches it ([the last small items](#the-last-small-items-2026-11-22)).
 
 ## Replays over the network and the viewers (2026-11-21)
 
@@ -452,7 +452,7 @@ The user's three items: the players' vision in a replay, a replay hosted in the 
   - Frame f runs once the blocks up to f + 1 are in. The feed then reads each block one call early, as in a file, and 1.17's loss of a frame of more than 0x200 bytes is the same.
   - `--watch` runs without the glue, as `--map` does. At the end the playback stays at its result.
   - Tests:
-    - `test_watch` (7): the growing record dispatches the file's commands at delays 0, 1, 7 and 25 (frame 20's loss included), and the published bytes are the closed record's. A lossy link (a quarter of the datagrams lost) brings the start file and the whole record. An answer is never larger than its request. A viewer stops when the server goes on to another game or goes silent. A load ends the published game, with no delay too. A paused game's steps mark nothing, and the game goes on being published after the pause.
+    - `test_watch` (8): the growing record dispatches the file's commands at delays 0, 1, 7 and 25 (frame 20's loss included), and the published bytes are the closed record's. A lossy link (a quarter of the datagrams lost) brings the start file and the whole record. An answer is never larger than its request. A viewer stops when the server goes on to another game or goes silent. A load ends the published game, with no delay too. A paused game's steps mark nothing, and the game goes on being published after the pause. A forged record (a command cut before its count with a save after it, an unknown id) is refused, and the feed alone never dispatches a save.
     - `test_netplay.a_network_game_is_watched_as_it_goes`: a two-seat network game, served 48 frames behind over a link that loses 10 %. The viewer starts during the game, never runs ahead of the delay, and ends at the game's last frame. Its hashes equal the finished replay's playback up to the last block.
     - `net_watch.kps` in `tools/ci.sh` beside `net_host.kps` and `net_join.kps`: three programs.
 - **Product-verified on macOS** (2026-11-21): `net_host.kps` (with `--watch-delay 2`: 30 frames at the game's speed), `net_join.kps` and `net_watch.kps` (`--watch 127.0.0.1`) at once. The viewer waited through the host's lobby, started its replay with the game, and reached tick 300 while the host played to 400.
@@ -466,3 +466,38 @@ The user's three items: the players' vision in a replay, a replay hosted in the 
     - the phones as hosts or viewers.
   - A save's load in a watched game ends what the viewers get.
   - The viewer's clock catches up after a wait in a burst of steps.
+
+## The last small items (2026-11-22)
+
+The user's list of what was left: the text lines on a narrow screen, the lobby preview's click, the IME and the player
+name of the message line, and RunGlueLoop's pause after a game. With them, an automated security review's finding on
+the viewers' record.
+
+- **A forged record of a viewer** (`kp_session_watch_grow`, `kp_turns.c` feed): the walk that refuses a save or a load
+  in a growing record gave up at a command cut before its count (ids 9..0xb) and at an unknown id, and went on from the
+  end of the bytes it held, so its later walks ran out of step with the feed; a host could have a viewer's playback
+  dispatch a save `0x06` (a file in the viewer's saves). The walk now waits at a cut command and refuses an unknown id
+  in a growing record (the recorder never writes one), an entry whose command id has not come waits too (no byte past
+  the record is read), and the feed drops every command the recorder never writes,
+  whatever the walk read (`test_watch.a_forged_record_dispatches_no_save`, which fails on the code before).
+- **RunGlueLoop's Sleep after a game** (`RunGlueLoop` `0x457510`'s `Sleep(1500)` at every entry; `RunGame` `0x445310`
+  faded the game out before it): a game's end goes through `kp_glue_sleep`, 1500 ms from its first frame over a black
+  screen (`kp_canvas_compose_black`: the glue screen left open under the game stays unshown, on the Sleep's last frame
+  too), no cursor, no timer, the input dropped as the title's; then the score screen, the menus, the epilog or a
+  Restart's ready room (`KpFlow.after_score`, `after_game`: the latest end's, the score only while the game's session
+  stands; `test_flow`'s `glue_sleep` after every game's exit checks the time, the black canvas to the last frame, no
+  cursor and the dropped presses and keys).
+- **The lobby preview's click** (`0x508c50` = {`MinimapImageProc` `0x46d6a0`}): not bound, as no press reaches it. The
+  chat room opens the preview in its own post-load (`OpenLobbyMapPreview` `0x450760`), before its own link puts the
+  full-screen chat room above it, and `DialogDefaultInteract` `0x4c1470` handles every press inside the chat room; the
+  image shows only while the pointer is over Map Preview, which it does not overlap. Its Alt press would have queued a
+  ping `0x58` into the lobby's turn, where every peer's `ExecuteLobbyCommands` `0x476650` stops the sender's commands
+  (`test_hud.glue_chat_room_preview_takes_no_press`).
+- **The message line's IME and player name** (`ToggleTextbox` `0x4b3bd0`): no call. `SetKoreanImeEnabled` `0x43f3f0` is
+  the host's text input, which follows the edit box's focus (`custom_victory.kps` checks `text.input` 1 with the line
+  and 0 after); Storm ordinal 146 (`SNetGetLeaguePlayerName` into `0x6726ac`, `/reply`'s name) leaves nothing over UDP
+  or with no provider.
+- **The text lines on a narrow screen** ([ui-checklist.md](ui-checklist.md)): a game view narrower than 640 columns
+  narrows the lines' columns by the difference, the ring's lines wrapped wider are wrapped again when the view narrows
+  (`kp_ui_lines.c`, `test_hud.text_lines_follow_a_narrow_view`; the newest 11 rows kept; a view narrower than a glyph
+  takes a line's rest on one row, clipped). Not the original's, which has no narrower screen.

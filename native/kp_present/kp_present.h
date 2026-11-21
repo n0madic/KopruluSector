@@ -1072,6 +1072,8 @@ int kp_canvas_compose(KpCanvas *c, KpUi *ui, int32_t w, int32_t h, const KpPanel
 /* A fixed screen's frame with the original's 640 x 480 screen at (x, y): the screen's layers (kp_ui_screen_layers),
  * each at its place on it, the glue's screen (kp_ui_glue_screen) with the margins; index 0 without a dialog. */
 int kp_canvas_compose_screen(KpCanvas *c, KpUi *ui, int32_t w, int32_t h, int32_t x, int32_t y);
+/* A w x h frame of index 0 alone, whatever dialogs are open (RunGlueLoop 0x457510's Sleep after a game). */
+int kp_canvas_compose_black(KpCanvas *c, KpUi *ui, int32_t w, int32_t h);
 /* The place of a dialog in the last arrangement, or 0. */
 int kp_canvas_place(const KpCanvas *c, int32_t dialog, int32_t *x, int32_t *y);
 /* The canvas's index and opacity at a logical point (0, 0 outside). */

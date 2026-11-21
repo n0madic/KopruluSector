@@ -6111,6 +6111,145 @@ static void vector_text_draws_lines_in_the_canvas_order(KpT *T)
 	kp_vtext_free(v);
 }
 
+/* No press reaches the chat room's map preview, so its image's procedure (MinimapDialogInit 0x46db30's table 0x508c50,
+ * MinimapImageProc 0x46d6a0) is not bound: the image shows only while the pointer is over Map Preview, which it does
+ * not overlap, and the full-screen chat room, linked above the preview it opened in its post-load, takes a press over
+ * the image even while it shows. */
+static void glue_chat_room_preview_takes_no_press(KpT *T)
+{
+	enum { CHAT = 3, FRAMES = 1000, SIDE = 64, SECONDS = 2, PREVIEW_BUTTON = 6 };
+	static const uint8_t MMNI[2] = { 5, 5 };
+	static uint16_t megatiles[SIDE * SIDE];
+	static uint8_t rgb[768], cycled[256];
+	KpUiPreview world;
+	KpUiControl *chat;
+	const KpUiControl *button, *dialog, *image;
+	KpUiEvent e;
+	Glue *G;
+	KpUi *ui;
+	FakeNet *n;
+	int32_t img, x, y, d;
+	int k, above = 0;
+	if (!kp_t_ready(T, "test_hud.glue_chat_room_preview_takes_no_press", GLUE_FILES)) return;
+	G = glue_bare(T);
+	ui = G->ui;
+	n = fake_net(T, ui);
+	memset(&world, 0, sizeof world);
+	world.map_w = world.map_h = SIDE;
+	world.megatiles = megatiles;
+	world.mmni = MMNI;
+	world.mmni_size = sizeof MMNI;
+	world.rgb = rgb;
+	world.cycled = cycled;
+	n->world = &world;
+	n->map_ready = 1;
+	kp_glue_menus(G->glue, CHAT);
+	wait_for(G, "rez\\gluchat.bin", FRAMES);
+	for (k = 0; k < SECONDS * 1000 / 16; k++) glue_frame(G);
+	kp_t_ok(T, ui->minimap.preview && ui->menus.chat.preview >= 0, "the preview's world");
+	img = kp_ui_find_control(ui, ui->menus.chat.preview, 1);
+	kp_t_ok(T, img >= 0, "the preview's image");
+	chat = &ui->controls[ui->menus.chat.dialog];
+	button = &ui->controls[child_of(ui, ui->menus.chat.dialog, PREVIEW_BUTTON)];
+	dialog = &ui->controls[ui->menus.chat.preview];
+	image = &ui->controls[img];
+	for (d = ui->open; d >= 0 && d != ui->menus.chat.preview; d = ui->controls[d].next) above |= d == ui->menus.chat.dialog;
+	kp_t_ok(T, above && d == ui->menus.chat.preview, "the chat room above its preview");
+	kp_t_ok(T, chat->left == 0 && chat->top == 0 && chat->right >= 639 && chat->bottom >= 479, "the chat room fills the screen");
+	kp_glue_input(G->glue, MOUSE_MOVE, G->glue->place_x + chat->left + half(button->left + button->right),
+		G->glue->place_y + chat->top + half(button->top + button->bottom));
+	glue_frame(G);
+	kp_t_ok(T, image->flags & KP_UI_VISIBLE, "shown over Map Preview");
+	x = dialog->left + half(image->left + image->right);
+	y = dialog->top + half(image->top + image->bottom);
+	kp_t_ok(T, x < chat->left + button->left || x > chat->left + button->right || y < chat->top + button->top
+		|| y > chat->top + button->bottom, "the image off Map Preview");
+	kp_glue_input(G->glue, MOUSE_MOVE, G->glue->place_x + x, G->glue->place_y + y);
+	glue_frame(G);
+	kp_t_ok(T, !(image->flags & KP_UI_VISIBLE), "hidden again with the pointer on it");
+	kp_ui_set_visible(ui, img, 1); /* shown anyway: the chat room still takes the press */
+	memset(&e, 0, sizeof e);
+	e.type = LEFT_DOWN;
+	e.x = (int16_t)x;
+	e.y = (int16_t)y;
+	kp_t_ok(T, chat->interact(ui, chat, &e) != 0, "the chat room takes a press over the image");
+	e.type = LEFT_UP;
+	(void)chat->interact(ui, chat, &e);
+}
+
+/* A game view narrower than the original's 640 columns (the narrow layout) narrows the text lines' columns: the ring's
+ * lines wrapped at the wide view's 620 are wrapped again when the view narrows, each drawn inside the view (none past
+ * its width less 10), the text whole in the ring's order; a line added there wraps at the narrow columns; a wide view
+ * again keeps the lines as they are and the original's columns. */
+enum { RING_ROWS = 11 }; /* the message ring's rows (kp_ui_lines.c RING) */
+
+static size_t ring_text(const KpUi *ui, char *out, size_t size, int *rows)
+{
+	const KpUiLines *l = &ui->lines;
+	size_t at = 0;
+	int k;
+	*rows = 0;
+	out[0] = 0;
+	for (k = 0; k < RING_ROWS; k++) {
+		const char *t = (const char *)l->text[(l->next + k) % RING_ROWS];
+		if (t[0] == 0) continue;
+		(*rows)++;
+		at += (size_t)snprintf(out + at, at < size ? size - at : 0, "%s", t);
+	}
+	return at;
+}
+
+static int32_t lines_right(const KpUiSurface *lines)
+{
+	int32_t x, y, right = -1;
+	for (y = 0; y < lines->h; y++)
+		for (x = 0; x < lines->w; x++)
+			if (lines->pixels[y * lines->w + x] != 0 && x > right) right = x;
+	return right;
+}
+
+static void text_lines_follow_a_narrow_view(KpT *T)
+{
+	static const char TEXT[] = "The quick brown fox jumps over the lazy dog while the zealots warp in near the nexus, "
+		"and the marines of the third company hold the ramp against the brood until the dropships arrive at dawn.";
+	enum { NARROW_W = 502, NARROW_H = 893, WIDE_W = 1280, WIDE_H = 720 };
+	char text[2048];
+	const KpUiSurface *lines;
+	Hud *H;
+	KpUi *ui;
+	uint32_t now = 1016;
+	int wide_rows, rows;
+	if (!ready(T, "test_hud.text_lines_follow_a_narrow_view", TERRAN01)) return;
+	H = with_hud(T, terran01(T), WIDE_W, WIDE_H);
+	ui = H->ui;
+	frame(H, WIDE_W, WIDE_H, now, 1, NO_CURSOR, CAMERA(0, 0));
+	kp_t_ok(T, ui->view_w >= 640, "a wide view (%d)", ui->view_w);
+	kp_ui_lines_add(ui, (const uint8_t *)TEXT, 2, now + 100000, 0);
+	ring_text(ui, text, sizeof text, &wide_rows);
+	kp_t_eq_str(T, text, TEXT, "the wide view's lines");
+	lines = kp_ui_lines_layer(ui);
+	kp_t_ok(T, lines_right(lines) > NARROW_W, "wider than the narrow view (to %d)", lines_right(lines));
+	now += 16;
+	frame(H, NARROW_W, NARROW_H, now, 0, NO_CURSOR, KEEP);
+	kp_t_ok(T, ui->view_w < 640, "a narrow view (%d)", ui->view_w);
+	lines = kp_ui_lines_layer(ui);
+	ring_text(ui, text, sizeof text, &rows);
+	kp_t_eq_str(T, text, TEXT, "the text whole, wrapped again");
+	kp_t_ok(T, rows > wide_rows, "on more rows (%d, %d)", rows, wide_rows);
+	kp_t_ok(T, lines_right(lines) <= ui->view_w - 10, "inside the view (to %d of %d)", lines_right(lines), ui->view_w);
+	kp_ui_lines_add(ui, (const uint8_t *)TEXT, 2, now + 100000, 0);
+	lines = kp_ui_lines_layer(ui);
+	kp_t_ok(T, lines_right(lines) <= ui->view_w - 10, "a narrow view's line inside it too");
+	ring_text(ui, text, sizeof text, &rows);
+	now += 16;
+	frame(H, WIDE_W, WIDE_H, now, 0, NO_CURSOR, KEEP);
+	kp_t_ok(T, ui->view_w >= 640, "wide again");
+	(void)kp_ui_lines_layer(ui);
+	ring_text(ui, text, sizeof text, &wide_rows);
+	kp_t_eq(T, wide_rows, rows, "the lines kept as they are");
+	kp_t_ok(T, strstr(text, TEXT) != NULL && strlen(text) == 2 * strlen(TEXT), "both texts whole");
+}
+
 static const KpTest TESTS[] = {
 	{ "a_load_ends_the_placement", a_load_ends_the_placement, 0 },
 	{ "a_load_places_the_saved_view", a_load_places_the_saved_view, 0 },
@@ -6133,6 +6272,7 @@ static const KpTest TESTS[] = {
 	{ "canvas_draws_the_drag_box_and_the_command_marker", canvas_draws_the_drag_box_and_the_command_marker, 0 },
 	{ "canvas_draws_the_placement_preview", canvas_draws_the_placement_preview, 0 },
 	{ "canvas_draws_the_text_lines_with_the_game_view", canvas_draws_the_text_lines_with_the_game_view, 0 },
+	{ "text_lines_follow_a_narrow_view", text_lines_follow_a_narrow_view, 0 },
 	{ "canvas_keeps_a_menu_under_the_console_art", canvas_keeps_a_menu_under_the_console_art, 0 },
 	{ "click_on_a_producer_flashes_its_rally_point", click_on_a_producer_flashes_its_rally_point, 0 },
 	{ "flag_portrait_takes_its_owners_colour", flag_portrait_takes_its_owners_colour, 0 },
@@ -6156,6 +6296,7 @@ static const KpTest TESTS[] = {
 	{ "glue_fatal_network_report_exits_the_glue", glue_fatal_network_report_exits_the_glue, 0 },
 	{ "glue_chat_room_takes_its_messages_as_they_arrive", glue_chat_room_takes_its_messages_as_they_arrive, 0 },
 	{ "glue_chat_room_previews_the_map", glue_chat_room_previews_the_map, 0 },
+	{ "glue_chat_room_preview_takes_no_press", glue_chat_room_preview_takes_no_press, 0 },
 	{ "destroyed_dialog_leaves_no_image", destroyed_dialog_leaves_no_image, 0 },
 	{ "glue_hands_the_cinematics_to_the_host", glue_hands_the_cinematics_to_the_host, 0 },
 	{ "main_menu_buttons_the_remake_lacks_are_inert", main_menu_buttons_the_remake_lacks_are_inert, 0 },
