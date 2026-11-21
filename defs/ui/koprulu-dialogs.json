@@ -8,10 +8,13 @@
   "animated), the lighting 60..62 (Auto, off, on). koprulu\\language.bin: the languages (ADR 0016; a glue",
   "popup over pDPopup.pcx, kp_ui_menus.c): OK 1, Cancel 3, the text's label 4 and its button 5, the speech's",
   "label 6 and button 7 (a button's text is the language's own name, set at run time; a click takes the next",
-  "language). \"extend\": records appended to an original's dialog after its own (their indices go on from its",
-  "last): rez\\gluMain.bin's Language (ID 11), shown when there is more than one language to choose; rez\\gluCustm.bin's",
-  "labels of an unverified replay (IDs 39..41, by reason), Load Replay's Import and Export (42, 43) and Play Custom's",
-  "Import (44, above Ok: its slots fill the space under the list), shown when the platform has a file picker. Each",
+  "language). koprulu\\address.bin: the host's address of the join screen (phase N, stage N5; an edit popup over",
+  "pEPopup.pcx in rez\\gluPEdit.bin's layout, kp_ui_menus.c): OK 1, the prompt 2, Cancel 3, the edit 4, the label 5",
+  "shown when the address has no host. \"extend\": records appended to an original's dialog after its own (their",
+  "indices go on from its last): rez\\gluMain.bin's Language (ID 11), shown when there is more than one language to",
+  "choose; rez\\gluCustm.bin's labels of an unverified replay (IDs 39..41, by reason), Load Replay's Import and Export",
+  "(42, 43) and Play Custom's Import (44, above Ok: its slots fill the space under the list), shown when the platform",
+  "has a file picker; rez\\gluJoin.bin's Address (16, beside Create Game), shown when the provider takes one. Each",
   "widget: type (the original's control types), id, flags, rect [x, y, width, height] (the container's on the",
   "original's 640 x 480 screen, the others in it) and text (with flag 0x200 its first byte the hotkey,",
   "\\u0004..\\u0001 the hotkey's colour). \"labels\": texts we give an original's records that have none, by",
@@ -63,6 +66,14 @@
    {"type": 14, "id": 5, "flags": 34619416, "rect": [150, 60, 190, 20]},
    {"type": 9, "id": 6, "flags": 8, "rect": [24, 100, 120, 20], "text": "Speech"},
    {"type": 14, "id": 7, "flags": 34619416, "rect": [150, 100, 190, 20]}
+  ],
+  "koprulu\\address.bin": [
+   {"type": 0, "id": 0, "flags": 8, "rect": [140, 140, 360, 200], "text": "Address"},
+   {"type": 14, "id": 1, "flags": 36176408, "rect": [17, 159, 158, 29], "text": "o\u0004O\u0001k"},
+   {"type": 9, "id": 2, "flags": 2056, "rect": [10, 10, 340, 64], "text": "The host's address: a name or an IP, then :port if not 6111"},
+   {"type": 14, "id": 3, "flags": 35652184, "rect": [186, 159, 158, 29], "text": "c\u0004C\u0001ancel"},
+   {"type": 8, "id": 4, "flags": 24, "rect": [23, 80, 322, 27]},
+   {"type": 9, "id": 5, "flags": 2048, "rect": [10, 114, 340, 20], "text": "No host was found at this address."}
   ]
  },
  "extend": {
@@ -76,6 +87,9 @@
    {"type": 14, "id": 42, "flags": 34619928, "rect": [40, 330, 150, 20], "text": "i\u0004I\u0001mport"},
    {"type": 14, "id": 43, "flags": 34619928, "rect": [190, 330, 150, 20], "text": "e\u0004E\u0001xport"},
    {"type": 14, "id": 44, "flags": 35668504, "rect": [442, 348, 150, 20], "text": "i\u0004I\u0001mport"}
+  ],
+  "rez\\gluJoin.bin": [
+   {"type": 14, "id": 16, "flags": 2114072, "rect": [212, 333, 146, 20], "text": "a\u0004A\u0001ddress"}
   ]
  },
  "labels": {

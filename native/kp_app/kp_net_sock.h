@@ -1,7 +1,7 @@
 /*
- * The provider's sockets over the system's UDP (phase N, stage N2; kp_net.h): POSIX and Winsock, none on the web (the
- * relay of stage N5 carries the web's datagrams). Socket A takes the game list (port 6111) and socket B Storm's packets
- * (port 6112, the one above A's), both with broadcasts allowed, as standard.snp binds them (atlas U01).
+ * The provider's sockets over the system's UDP (phase N, stage N2; kp_net.h): POSIX and Winsock, none on the web (no
+ * network play there: kp_netplay.h). Socket A takes the game list (port 6111) and socket B Storm's packets (port 6112,
+ * the one above A's), both with broadcasts allowed, as standard.snp binds them (atlas U01).
  *
  * Addresses. On a LAN a datagram's source is what the system reports, and a broadcast goes to 255.255.255.255:6111.
  * With a map (the network oracle's loopback bridge, tools/research/sc_emulator --bridge BASE, and Koprulu's own games
@@ -52,6 +52,10 @@ uint16_t kp_net_sock_port(const KpNetSock *s, int socket);
 uint32_t kp_net_sock_now(void);
 /* Datagrams the system refused to send (an unreachable host, a full buffer). */
 long kp_net_sock_send_errors(const KpNetSock *s);
+/* A host's address as the player gives it (kp_net_host_parse) as its socket A's provider address: a dotted IPv4
+ * address as it is, a name by the system's resolver (IPv4 only: Storm's addresses are sockaddr_in; the call waits for
+ * the resolver). 0 with the reason in `error` when it is no address or the name has none (and on the web). */
+int kp_net_sock_resolve(const char *text, KpNetAddr *out, char *error, size_t size);
 
 #ifdef __cplusplus
 }

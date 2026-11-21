@@ -4377,6 +4377,8 @@ typedef struct {
 	int room;     /* PollLobby's step 3: the race ready room's state, 0 none */
 	int ready;    /* PollBriefingTurn's answer */
 	int entered, released, aborted, armed, starts, start_aborts, polls;
+	char address[KP_UI_ADDRESS]; /* the host by its address the network keeps (KpUiNet.address) */
+	int address_sets, refuse_address;
 } FakeNet;
 
 static FakeNet *fake(void *host) { return (FakeNet *)host; }
@@ -4424,6 +4426,17 @@ static int fake_ready(void *host)
 {
 	fake(host)->polls++;
 	return fake(host)->ready;
+}
+
+static void fake_address(void *host, char *out, size_t size) { snprintf(out, size, "%s", fake(host)->address); }
+
+static int fake_set_address(void *host, const char *text)
+{
+	FakeNet *n = fake(host);
+	n->address_sets++;
+	if (n->refuse_address) return 0;
+	snprintf(n->address, sizeof n->address, "%s", text);
+	return 1;
 }
 
 /* The interface's network: the test's, the UDP provider chosen, in multiplayer */
@@ -4500,6 +4513,74 @@ static void glue_chat_room_follows_the_network(KpT *T)
 	kp_t_ok(T, G->has_last && G->last.kind == KP_GLUE_PROFILE, "the screens go on (%d)", G->last.kind);
 	kp_t_eq(T, ui->menus.state, JOIN, "the UDP provider's join screen next");
 	kp_t_eq(T, n->released, 3, "each room released the lobby");
+}
+
+/* Koprulu's host by its address (stage N5): the join screen's Address only when the network takes one; it opens
+ * koprulu\address.bin with the network's address, which takes the characters of an address only; Ok gives the text to
+ * the network, and one it does not take shows the popup's label (hidden again once the address changes) and keeps the
+ * popup; Cancel gives nothing. The join screen stays under the popup throughout. */
+static void glue_join_address_asks_the_host(KpT *T)
+{
+	enum { JOIN = 10, FRAMES = 1000, ADDRESS = 16, OK = 1, CANCEL = 3, EDIT = 4, NOT_FOUND = 5 };
+	static const char typed[] = "bad!host";
+	Glue *G;
+	KpUi *ui;
+	FakeNet *n;
+	char name[128];
+	int32_t c;
+	size_t k;
+	if (!kp_t_ready(T, "test_hud.glue_join_address_asks_the_host", GLUE_FILES)) return;
+	G = glue_bare(T);
+	ui = G->ui;
+	n = fake_net(T, ui);
+	kp_glue_menus(G->glue, JOIN);
+	wait_for(G, "rez\\glujoin.bin", FRAMES);
+	kp_t_ok(T, child_of(ui, ui->open, ADDRESS) < 0, "Address without the network's addresses");
+	n->net.address = fake_address;
+	n->net.set_address = fake_set_address;
+	snprintf(n->address, sizeof n->address, "old.host");
+	kp_glue_menus(G->glue, JOIN);
+	wait_for(G, "rez\\glujoin.bin", FRAMES);
+	c = child_of(ui, ui->open, ADDRESS);
+	kp_t_ok(T, c >= 0 && (ui->controls[c].flags & KP_UI_VISIBLE), "Address shown");
+	glue_click(G, ADDRESS, -1, -1);
+	wait_for(G, "koprulu\\address.bin", FRAMES);
+	c = child_of(ui, ui->open, EDIT);
+	kp_t_ok(T, c >= 0 && ui->controls[c].text && strcmp((const char *)ui->controls[c].text, "old.host") == 0,
+		"the network's address in the edit");
+	c = child_of(ui, ui->open, NOT_FOUND);
+	kp_t_ok(T, c >= 0 && !(ui->controls[c].flags & KP_UI_VISIBLE), "the label hidden at first");
+	for (k = 0; k < sizeof typed - 1; k++) glue_key(G, typed[k]);
+	glue_frame(G);
+	c = child_of(ui, ui->open, EDIT);
+	kp_t_eq_str(T, ui->controls[c].text ? (const char *)ui->controls[c].text : "", "badhost",
+		"the first character replaces the address, '!' is no address's");
+	n->refuse_address = 1;
+	glue_click(G, OK, -1, -1);
+	for (k = 0; k < 10; k++) glue_frame(G);
+	kp_t_eq(T, n->address_sets, 1, "Ok gave the address");
+	kp_t_eq_str(T, top(G, name, sizeof name), "koprulu\\address.bin", "the popup stays");
+	c = child_of(ui, ui->open, NOT_FOUND);
+	kp_t_ok(T, c >= 0 && (ui->controls[c].flags & KP_UI_VISIBLE), "the label shown");
+	n->refuse_address = 0;
+	glue_key(G, ':');
+	glue_frame(G);
+	c = child_of(ui, ui->open, NOT_FOUND);
+	kp_t_ok(T, c >= 0 && !(ui->controls[c].flags & KP_UI_VISIBLE), "the label hidden once the address changes");
+	glue_key(G, '7');
+	glue_click(G, OK, -1, -1);
+	for (k = 0; k < 150; k++) glue_frame(G);
+	kp_t_ok(T, n->address_sets == 2 && strcmp(n->address, "badhost:7") == 0, "the address kept: \"%s\"", n->address);
+	kp_t_eq_str(T, top(G, name, sizeof name), "rez\\glujoin.bin", "the join screen after Ok");
+	kp_t_ok(T, !G->has_last, "the screens ended (%d)", G->last.kind);
+	kp_t_eq(T, ui->menus.state, JOIN, "the join screen's state");
+	glue_click(G, ADDRESS, -1, -1);
+	wait_for(G, "koprulu\\address.bin", FRAMES);
+	glue_key(G, 'x');
+	glue_click(G, CANCEL, -1, -1);
+	for (k = 0; k < 150; k++) glue_frame(G);
+	kp_t_ok(T, n->address_sets == 2 && strcmp(n->address, "badhost:7") == 0, "Cancel gave \"%s\"", n->address);
+	kp_t_eq_str(T, top(G, name, sizeof name), "rez\\glujoin.bin", "the join screen after Cancel");
 }
 
 /* A network game's race ready room (ReadyRoomPostLoad 0x460c80, FinishBriefing 0x460a20, PollBriefingReady
@@ -5598,6 +5679,7 @@ static const KpTest TESTS[] = {
 		0 },
 	{ "glue_room_cancel_by_back_leaves_no_game_input", glue_room_cancel_by_back_leaves_no_game_input, 0 },
 	{ "glue_chat_room_follows_the_network", glue_chat_room_follows_the_network, 0 },
+	{ "glue_join_address_asks_the_host", glue_join_address_asks_the_host, 0 },
 	{ "message_dialog_chooses_the_chat_target", message_dialog_chooses_the_chat_target, 0 },
 	{ "alliance_dialog_queues_stances_and_vision", alliance_dialog_queues_stances_and_vision, 0 },
 	{ "glue_network_ready_room_waits_for_the_players", glue_network_ready_room_waits_for_the_players, 0 },

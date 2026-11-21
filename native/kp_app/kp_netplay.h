@@ -5,9 +5,15 @@
  * glue answers its screens, so a Koprulu seat lists, hosts and joins the lobbies of Koprulu and of the original.
  *
  * Nothing runs a thread: the flow pumps the sockets and Storm's timers each frame (kp_netplay_pump), and a join waits
- * inside SNetJoinGame as the original's glue does (the sockets read meanwhile). The web has no UDP sockets: no
- * provider there until the relay of stage N5. TODO: pump Storm on a thread of its own while a mission loads (the
- * plan's native network thread), so a long load does not miss Storm's timeouts.
+ * inside SNetJoinGame as the original's glue does (the sockets read meanwhile). TODO: pump Storm on a thread of its own
+ * while a mission loads (the plan's native network thread), so a long load does not miss Storm's timeouts.
+ *
+ * A host by its address (stage N5): the join screen's Address (and --lan-host) gives the provider a host to ask for its
+ * game besides the broadcast (kp_snp_udp_direct), for a game over the internet or a network without broadcasts; the
+ * host forwards UDP ports 6111 and 6112 (its --lan-port and the next one) to itself.
+ *
+ * TODO: the web has no UDP sockets and no network play (the user's decision of 2026-11-21: no relay for now; a relay
+ * or WebRTC later, docs/phase-network.md).
  */
 #ifndef KP_NETPLAY_H
 #define KP_NETPLAY_H
@@ -39,6 +45,12 @@ typedef struct {
 	int (*entry_save)(void *ctx, KpUi *ui, int index, KpNetGameHeader *h);
 	int (*find_save)(void *ctx, uint32_t id, KpNetGameSave *out);
 	void (*log)(void *ctx, const char *line); /* a line for the log, NULL none */
+	/* the host by its address at the start ("" none: kp_net.h's form) and the player's new one, to keep (NULL none) */
+	char host[KP_NET_HOST];
+	void (*host_changed)(void *ctx, const char *text);
+	/* the LAN provider's sockets opened (1) and closed (0): Android's Wi-Fi multicast lock, without which a phone
+	 * may drop the broadcasts of the game list (NULL none) */
+	void (*lan_lock)(void *ctx, int on);
 	void *ctx;
 } KpNetPlayConfig;
 
@@ -54,6 +66,8 @@ typedef struct KpNetPlay {
 	int game_on;
 	int signalled;   /* a datagram arrived since Storm's last pass */
 	uint32_t wake;   /* Storm's next timer pass, KP_SNET_INFINITE none */
+	char host[KP_NET_HOST]; /* the host by its address ("" none) */
+	int locked;      /* lan_lock(1) called */
 } KpNetPlay;
 
 /* p over ui: its hooks set as ui->net, no provider chosen yet. */

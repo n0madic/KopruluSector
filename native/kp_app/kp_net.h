@@ -4,7 +4,7 @@
  *
  * Layers (kp_snet.h, kp_snp_udp.h): Storm's SNet (kp_snet) over standard.snp's UDP provider (kp_snp_udp), both pure
  * state machines. The provider hands its datagrams to KpNetIo.send and is fed what arrives (kp_snp_udp_input); a
- * transport carries them: real sockets (kp_net_sock.h), the in-process LAN of the tests (kp_net_lan.h), later the relay.
+ * transport carries them: real sockets (kp_net_sock.h) or the in-process LAN of the tests (kp_net_lan.h).
  */
 #ifndef KP_NET_H
 #define KP_NET_H
@@ -37,6 +37,15 @@ uint16_t kp_net_addr_port(const KpNetAddr *a);
 int kp_net_addr_eq(const KpNetAddr *a, const KpNetAddr *b);
 /* "a.b.c.d:port" into out (at least 22 bytes). */
 const char *kp_net_addr_text(const KpNetAddr *a, char *out, size_t size);
+
+#define KP_NET_HOST 64 /* a host's address as the player gives it ("name[:port]"), its NUL included */
+/* A host's address as the player gives it (Koprulu's host by its address, kp_snp_udp_direct): a name or a dotted IPv4
+ * address of letters, digits, '.', '-' and '_' (digits and dots alone only as a whole a.b.c.d), then optionally ':' and
+ * its socket A's port (1..65534; 6111 without one), the spaces around it ignored. The name into name (at least KP_NET_HOST bytes), the port into *port; 0 when it
+ * is no such address. */
+int kp_net_host_parse(const char *text, char *name, size_t size, uint16_t *port);
+/* A dotted IPv4 address "a.b.c.d" (each 0..255, no other character) into *ip (host order); 0 when it is not one. */
+int kp_net_ipv4_parse(const char *text, uint32_t *ip);
 
 /* Storm's FletcherSum 0x15021c50 of n bytes, walked from the last to the first: 0 over a whole valid packet. */
 uint16_t kp_net_sum(const uint8_t *p, size_t n);

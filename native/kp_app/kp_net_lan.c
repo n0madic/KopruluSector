@@ -33,6 +33,7 @@ struct KpNetLan {
 	KpNetLanStats stats;
 	KpNetLanTap tap;
 	void *tap_ud;
+	int no_broadcasts; /* kp_net_lan_broadcasts off */
 };
 
 /* splitmix64 */
@@ -91,6 +92,8 @@ void kp_net_lan_cut(KpNetLan *lan, int host, int cut)
 {
 	if (host >= 0 && host < lan->host_count) lan->hosts[host].cut = cut;
 }
+
+void kp_net_lan_broadcasts(KpNetLan *lan, int on) { lan->no_broadcasts = !on; }
 
 KpNetIo kp_net_lan_io(KpNetLan *lan, int host)
 {
@@ -200,7 +203,7 @@ static void io_send(void *ud, int socket, const KpNetAddr *to, const uint8_t *da
 	}
 	for (k = 0; k < lan->host_count; k++) {
 		Host *h = &lan->hosts[k];
-		if (ip != KP_NET_BROADCAST && h->ip != ip) continue;
+		if (ip != KP_NET_BROADCAST ? h->ip != ip : lan->no_broadcasts && h != src) continue;
 		route(lan, src, h, dst_socket, &from, data, size);
 		routed = 1;
 	}

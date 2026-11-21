@@ -244,6 +244,15 @@ Each SNet packet is one datagram from socket B to the player's address; a send t
 
 One lock guards the advertisement, the game list and the receive queue. The wake datagrams of a shutdown reach every machine on the segment: port 6111 ignores them (too short), and on port 6112 Storm drops them (shorter than its 12-byte header). A shutdown closes socket A before it sends the stop, so that stop is not transmitted; a host that leaves normally has already sent it, and otherwise its entry ages out after 10 s.
 
+### Koprulu's addition: a host by its address (phase N, stage N5)
+
+Not the original's. Koprulu's provider can be given one host's address, its socket A (`kp_snp_udp_direct`, the join screen's Address, `--lan-host`). It sends nothing new on the wire:
+
+- each game-list request it broadcasts also goes to that address, and one more goes there as soon as the address is given: the original's type 2 datagram, which any 1.17 provider answers with its advertisement to the sender;
+- an advertisement that comes from exactly that address is filed with the game's address at that port + 1 (its socket B, as Koprulu's `--lan-port` binds it); every other advertisement keeps the original's port 6112. For the default port 6111 the two rules agree, so a 1.17 host is joined as the original would join it.
+
+The original's joiner has no such address: it lists only what the broadcast reaches.
+
 ## Runtime confirmation (2026-11-17)
 
 The full-game emulator's network recordings were checked against this page: 20 LAN games of two to four emulated StarCraft 1.17 seats on a virtual segment (two-player, free-for-all, team, capture-the-flag, top-versus-bottom and UMS games, a Brood War game, chat, a map transfer, save and load, leave, kick, ban, a cut link, a desync and a latency run), each with the segment's packet capture and every seat's SNet call log. No recorded datagram contradicts the page.

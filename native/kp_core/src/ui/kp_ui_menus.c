@@ -367,8 +367,22 @@ void kp_ui_menus_close_popup(KpUi *ui) { close_popup(ui); }
 
 /* --- the edit popup (RunEditPopup 0x45fd50) --- */
 
+#define ID_ADDRESS_NOT_FOUND 5 /* koprulu\address.bin's label (hidden) that the address has no host */
+
+/* Koprulu's address popup: its label that the address has no host hidden once the player changes the address */
+static void address_edited(KpUi *ui, const KpUiControl *edit, const char *before)
+{
+	int32_t c;
+	if (strcmp(before, edit->text != NULL ? (const char *)edit->text : "") == 0) return;
+	if ((c = kp_ui_find_control(ui, edit->parent, ID_ADDRESS_NOT_FOUND)) >= 0 && (ui->controls[c].flags & KP_UI_VISIBLE)) {
+		kp_ui_set_visible(ui, c, 0);
+		kp_ui_mark_dirty(ui, c);
+	}
+}
+
 static int forbidden(const KpUiMenus *m, uint16_t key)
 {
+	if (m->edit_allowed != NULL) return key >= ' ' && (key >= KP_TEXT_ASCII_END || strchr(m->edit_allowed, (int)key) == NULL);
 	if (key == 0 || key >= KP_TEXT_ASCII_END) return 0; /* the lists are ASCII: strchr takes a char */
 	return strchr(FORBIDDEN, (int)key) != NULL || (m->edit_extra != NULL && strchr((const char *)m->edit_extra, (int)key) != NULL);
 }
@@ -377,7 +391,7 @@ static void edit_ok_state(KpUi *ui, KpUiControl *edit)
 {
 	int32_t ok = kp_ui_find_control(ui, edit->parent, R_OK);
 	if (ok < 0) return;
-	if (edit->text == NULL || edit->text[0] == 0) ui->controls[ok].flags |= KP_UI_DISABLED;
+	if ((edit->text == NULL || edit->text[0] == 0) && !mn(ui)->edit_address) ui->controls[ok].flags |= KP_UI_DISABLED;
 	else ui->controls[ok].flags &= ~KP_UI_DISABLED;
 	kp_ui_mark_dirty(ui, ok);
 }
@@ -387,9 +401,13 @@ static int edit_interact(KpUi *ui, KpUiControl *c, KpUiEvent *e)
 	/* EditPopupEditInteract 0x45fcc0 with FilterEditPopupChar 0x45fb00 */
 	KpUiMenus *m = mn(ui);
 	KpUiInteract base = kp_ui_type_interact(8);
+	char before[KP_UI_ADDRESS]; /* the address popup's text before the key */
+	before[0] = 0;
+	if (m->edit_address && c->text != NULL) snprintf(before, sizeof before, "%s", (const char *)c->text);
 	if (e->type == KP_UI_KEY_DOWN || e->type == KP_UI_KEY_REPEAT) {
 		(void)base(ui, c, e);
 		edit_ok_state(ui, c);
+		if (m->edit_address) address_edited(ui, c, before);
 		return 1;
 	}
 	if (e->type == KP_UI_CHAR) {
@@ -404,6 +422,7 @@ static int edit_interact(KpUi *ui, KpUiControl *c, KpUiEvent *e)
 			if (!(e->key == ' ' && n == 0)) (void)base(ui, c, e);
 		}
 		edit_ok_state(ui, c);
+		if (m->edit_address) address_edited(ui, c, before);
 		return 1;
 	}
 	return base(ui, c, e);
@@ -417,7 +436,7 @@ static int edit_popup_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 	if (e->type == KP_UI_USER) {
 		switch (e->code) {
 		case KP_UI_CREATE: /* InitEditPopup 0x45fa70: the prompt keeps its control's font and drawing */
-			if ((edit = kp_ui_find_control(ui, self, ID_POPUP_TEXT)) >= 0) {
+			if (!m->edit_address && (edit = kp_ui_find_control(ui, self, ID_POPUP_TEXT)) >= 0) {
 				ui->controls[edit].text = (const uint8_t *)m->popup_text;
 				kp_ui_mark_dirty(ui, edit);
 			}
@@ -442,8 +461,9 @@ static int edit_popup_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 	return popup_proc(ui, d, e);
 }
 
-static void edit_popup(KpUi *ui, const uint8_t *prompt, const char *text, int max, const uint8_t *extra,
-	KpUiModalDone done)
+/* RunEditPopup 0x45fd50 over the dialog bin (gluPEdit's records: Ok 1, the prompt 2, Cancel 3, the edit 4) */
+static void edit_popup_in(KpUi *ui, const char *bin, const uint8_t *prompt, const char *text, int max,
+	const uint8_t *extra, KpUiInteract proc, KpUiModalDone done)
 {
 	KpUiMenus *m = mn(ui);
 	static const KpUiInteract PROCS[4] = { kp_ui_text_button_proc, NULL, kp_ui_text_button_proc, edit_interact };
@@ -456,7 +476,7 @@ static void edit_popup(KpUi *ui, const uint8_t *prompt, const char *text, int ma
 	popup_background(ui, "pEPopup.pcx");
 	memcpy(m->popup_procs, PROCS, sizeof PROCS);
 	m->popup_proc_count = 4;
-	d = kp_ui_load_dialog(ui, "rez\\gluPEdit.bin");
+	d = kp_ui_load_dialog(ui, bin);
 	if (d < 0) return;
 	if ((edit = kp_ui_find_control(ui, d, ID_EDIT)) >= 0) ui->controls[edit].user = (uint32_t)max;
 	m->modal[m->modal_count].dialog = d;
@@ -465,7 +485,60 @@ static void edit_popup(KpUi *ui, const uint8_t *prompt, const char *text, int ma
 	if (ui->timers.in_pass > 0) ui->timers.suspend = 1;
 	m->modal_count++;
 	m->popup = d;
-	kp_ui_init_dialog(ui, d, edit_popup_proc);
+	kp_ui_init_dialog(ui, d, proc);
+}
+
+static void edit_popup(KpUi *ui, const uint8_t *prompt, const char *text, int max, const uint8_t *extra,
+	KpUiModalDone done)
+{
+	KpUiMenus *m = mn(ui);
+	m->edit_allowed = NULL;
+	m->edit_address = 0;
+	edit_popup_in(ui, "rez\\gluPEdit.bin", prompt, text, max, extra, edit_popup_proc, done);
+}
+
+/* --- Koprulu's host by its address (phase N, stage N5): koprulu\address.bin over the join screen --- */
+
+#define ADDRESS_CHARS "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-_:" /* kp_net.h's form */
+
+/* Ok gives the address to the host: one it does not take shows the label and the popup stays */
+static int address_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
+{
+	int32_t self = (int32_t)(d - ui->controls), c;
+	if (e->type == KP_UI_USER && e->code == KP_UI_CLOSE && ui->result == R_OK && ui->net != NULL
+		&& ui->net->set_address != NULL) {
+		int32_t edit = kp_ui_find_control(ui, self, ID_EDIT);
+		const char *text = edit >= 0 && ui->controls[edit].text != NULL ? (const char *)ui->controls[edit].text : "";
+		if (!ui->net->set_address(ui->net->host, text)) {
+			if ((c = kp_ui_find_control(ui, self, ID_ADDRESS_NOT_FOUND)) >= 0) {
+				kp_ui_set_visible(ui, c, 1);
+				kp_ui_mark_dirty(ui, c);
+			}
+			return 1;
+		}
+	}
+	return edit_popup_proc(ui, d, e);
+}
+
+static void address_done(KpUi *ui, int32_t r)
+{
+	KpUiMenus *m = mn(ui);
+	(void)r;
+	ui->result = m->saved_result;
+	m->edit_allowed = NULL;
+	m->edit_address = 0;
+}
+
+static void address_popup(KpUi *ui)
+{
+	KpUiMenus *m = mn(ui);
+	char text[KP_UI_ADDRESS];
+	text[0] = 0;
+	if (ui->net->address != NULL) ui->net->address(ui->net->host, text, sizeof text);
+	m->saved_result = ui->result;
+	m->edit_allowed = ADDRESS_CHARS;
+	m->edit_address = 1;
+	edit_popup_in(ui, "koprulu\\address.bin", NULL, text, KP_UI_ADDRESS, NULL, address_proc, address_done);
 }
 
 /* --- the font resources' keys (grid.cpp, cimage.cpp; atlas P22, P04) --- */
@@ -3062,6 +3135,9 @@ int32_t kp_ui_create_open(KpUi *ui)
 #define R_JOIN 13
 #define R_JOIN_CANCEL 14
 #define R_JOIN_CREATE 15
+#define R_JOIN_ADDRESS 16         /* Koprulu's Address (defs/ui/koprulu-dialogs.json's extend), shown when the host
+                                   * takes an address (KpUiNet.set_address) */
+#define JOIN_CONTROLS R_JOIN_ADDRESS
 #define ID_JOIN_LIST 5
 #define ID_JOIN_LABEL 6           /* the value labels: the template's label slot, title, type, subtype, map, size, */
 #define ID_JOIN_TITLE 7           /* speed */
@@ -3288,7 +3364,7 @@ static int join_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 	switch (e->code) {
 	case KP_UI_POST_LOAD: {
 		static const uint16_t SLIDES[8] = { 1, 0, 2, 2, 3, 3, 4, 2 }; /* 0x508100 */
-		KpUiInteract procs[15];
+		KpUiInteract procs[JOIN_CONTROLS];
 		int k;
 		j->dialog = self;
 		kp_ui_glue_slide_in(ui, self, SLIDES, 4, 0);
@@ -3296,8 +3372,12 @@ static int join_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 		procs[ID_JOIN_LIST - 1] = game_list_proc;
 		procs[ID_JOIN_LABEL - 1] = kp_ui_type_interact(TYPE_STATIC);
 		for (k = ID_JOIN_TITLE; k <= ID_JOIN_SPEED; k++) procs[k - 1] = game_info_label_proc;
-		for (k = R_JOIN; k <= R_JOIN_CREATE; k++) procs[k - 1] = kp_ui_text_button_proc;
-		kp_ui_glue_init_dialog(ui, self, procs, 15, THEME_NONE);
+		for (k = R_JOIN; k <= R_JOIN_ADDRESS; k++) procs[k - 1] = kp_ui_text_button_proc;
+		/* without the host's addresses the screen is the original's */
+		if ((k = kp_ui_find_control(ui, self, R_JOIN_ADDRESS)) >= 0 && ui->net->set_address == NULL) {
+			kp_ui_drop_control(ui, self, k);
+		}
+		kp_ui_glue_init_dialog(ui, self, procs, JOIN_CONTROLS, THEME_NONE);
 		break;
 	}
 	case KP_UI_CREATE:
@@ -3306,6 +3386,10 @@ static int join_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 		kp_ui_glue_activate(ui, self, THEME_NONE);
 		break;
 	case KP_UI_CLOSE:
+		if (ui->result == R_JOIN_ADDRESS) { /* the screen stays */
+			address_popup(ui);
+			return 1;
+		}
 		if (ui->result == R_JOIN) {
 			join_enable_ok(ui, 0);
 			if (ui->net->join == NULL || !ui->net->join(ui->net->host, &j->selected)) return 1;

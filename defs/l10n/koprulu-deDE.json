@@ -47,6 +47,15 @@
    "Unit portraits": "Porträts",
    "Lighting": "Beleuchtung",
    "Video Options": "Videooptionen"
+  },
+  "rez\\gluJoin.bin": {
+   "a\u0004A\u0001ddress": "dA\u0004d\u0001resse"
+  },
+  "koprulu\\address.bin": {
+   "o\u0004O\u0001k": "o\u0004O\u0001k",
+   "The host's address: a name or an IP, then :port if not 6111": "Adresse des Hosts: Name oder IP, dazu :Port, wenn nicht 6111",
+   "c\u0004C\u0001ancel": "a\u0004A\u0001bbrechen",
+   "No host was found at this address.": "Kein Host unter dieser Adresse gefunden."
   }
  }
 }

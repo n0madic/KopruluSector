@@ -40,6 +40,8 @@ void kp_net_lan_link(KpNetLan *lan, uint32_t delay, uint32_t jitter, uint32_t lo
 int kp_net_lan_add(KpNetLan *lan, uint32_t ip, KpNetLanDeliver deliver, void *ud);
 /* While cut, nothing reaches the host or leaves it (its cable pulled). */
 void kp_net_lan_cut(KpNetLan *lan, int host, int cut);
+/* Off (0): a broadcast reaches its sender alone, as on the internet or a network that drops broadcasts (default on). */
+void kp_net_lan_broadcasts(KpNetLan *lan, int on);
 /* The I/O of a provider at the host: its sends enter the LAN, its clock is the LAN's. */
 KpNetIo kp_net_lan_io(KpNetLan *lan, int host);
 uint32_t kp_net_lan_now(const KpNetLan *lan);

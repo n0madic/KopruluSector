@@ -60,7 +60,7 @@ BUILD_TYPE=Release
 export ANDROID_HOME="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
 
 # The template's edition: a project of an earlier one is made again.
-TEMPLATE_EDITION=5
+TEMPLATE_EDITION=6
 if [ ! -d "$OUT/app/jni" ] || [ "$(cat "$OUT/.kp_template" 2>/dev/null)" != "$TEMPLATE_EDITION" ]; then
   rm -rf "$OUT"
   mkdir -p "$OUT"
@@ -73,6 +73,18 @@ if [ ! -d "$OUT/app/jni" ] || [ "$(cat "$OUT/.kp_template" 2>/dev/null)" != "$TE
     "$OUT/build.gradle"
   # the template's GLES 2 feature line: the runtime needs GLES 3.0
   sed -i '' 's/android:glEsVersion="0x00020000"/android:glEsVersion="0x00030000"/' "$OUT/app/src/main/AndroidManifest.xml"
+  # network play (kp_netplay.h): the sockets, and the Wi-Fi multicast lock without which a phone may drop the
+  # broadcasts of the LAN game list
+  python3 - "$OUT/app/src/main/AndroidManifest.xml" <<'PY'
+import sys
+p = sys.argv[1]
+s = open(p).read()
+old = "    <!--\n    <uses-permission android:name=\"android.permission.INTERNET\" />\n    -->\n"
+new = ("    <uses-permission android:name=\"android.permission.INTERNET\" />\n"
+       "    <uses-permission android:name=\"android.permission.CHANGE_WIFI_MULTICAST_STATE\" />\n")
+assert s.count(old) == 1, "AndroidManifest's INTERNET line changed"
+open(p, "w").write(s.replace(old, new))
+PY
   # the program's arguments from the intent extra "args" (the development checks and benchmarks)
   python3 - "$OUT/app/src/main/java/org/libsdl/app/SDLActivity.java" <<'PY'
 import sys
@@ -122,6 +134,29 @@ helpers = ("    /* Koprulu: the next save dialog's suggested name. */\n"
            "            return c != null && c.moveToFirst() ? c.getString(0) : null;\n"
            "        } catch (Exception e) {\n"
            "            return null;\n"
+           "        }\n"
+           "    }\n\n"
+           "    /* Koprulu: the Wi-Fi multicast lock while the LAN provider's sockets are open (\"1\") or not. */\n"
+           "    static android.net.wifi.WifiManager.MulticastLock kpMulticast;\n"
+           "    public static void kpMulticastLock(String on) {\n"
+           "        try {\n"
+           "            if (\"1\".equals(on)) {\n"
+           "                if (kpMulticast == null && mSingleton != null) {\n"
+           "                    android.net.wifi.WifiManager wifi = (android.net.wifi.WifiManager)\n"
+           "                        mSingleton.getApplicationContext().getSystemService(Context.WIFI_SERVICE);\n"
+           "                    if (wifi != null) {\n"
+           "                        kpMulticast = wifi.createMulticastLock(\"koprulu-lan\");\n"
+           "                        kpMulticast.setReferenceCounted(false);\n"
+           "                    }\n"
+           "                }\n"
+           "                if (kpMulticast != null) {\n"
+           "                    kpMulticast.acquire();\n"
+           "                }\n"
+           "            } else if (kpMulticast != null) {\n"
+           "                kpMulticast.release();\n"
+           "            }\n"
+           "        } catch (Exception e) {\n"
+           "            Log.w(TAG, \"multicast lock: \" + e);\n"
            "        }\n"
            "    }\n\n")
 assert s.count(old) == 1, "SDLActivity.showFileDialog changed"

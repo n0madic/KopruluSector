@@ -42,9 +42,9 @@ const int32_t KP_CLOCK_SPEED_MS[KP_CLOCK_SPEEDS] = { 167, 111, 83, 67, 56, 48, 4
 #define CORE_LEVEL 1   /* zlib's level of CORE (ADR 0021: 8 MB in about 10 ms to 1/47) */
 #define CORE_SCHEMA 2  /* CORE's section schema: the compressed form */
 #define PROFILE_KIND "PROF"
-#define PROFILE_SCHEMA 10 /* 1: one ID, its progress in PROG; 1 and 2: the saves without their IDs; 1..5: no SOPT; 1..3: no OPTS; 4: OPTS
+#define PROFILE_SCHEMA 11 /* 1: one ID, its progress in PROG; 1 and 2: the saves without their IDs; 1..5: no SOPT; 1..3: no OPTS; 4: OPTS
                           * with the intro's bit only; 1..6: the names in windows-1252, not UTF-8; 1..7: no LANG; 1..8: no
-                          * CUST; 9: CUST without the multiplayer values */
+                          * CUST; 9: CUST without the multiplayer values; 10: CUST without the host address */
 #define PROFILE_NAMES_UTF8 7
 #define PROFILE_ID "koprulu"
 #define PROFILE_SECTIONS 8     /* NAME, CHAR, SAVE, VOPT, OPTS, SOPT, LANG, CUST */
@@ -1686,8 +1686,9 @@ void kp_profile_from_words(KpCampaignProfile *p, const int64_t words[6])
  * the game speed, the tip, the CPU throttle; optional, a value absent or out of range has a new profile's), LANG (the
  * languages the player chose, u8 length + ASCII ID each: the text's, then the speech's; "" none; optional, schema 8,
  * a language that is not an ID of letters is none), CUST (Create Game's registry values, u8 length + UTF-8 each: Play
- * Custom's game type, then subtype; since schema 10 the multiplayer game type, then speed; optional, schema 9, a damaged
- * one or a value that is not UTF-8 below 32 bytes (the speed's 64) is none). Schema 1 had
+ * Custom's game type, then subtype; since schema 10 the multiplayer game type, then speed; since schema 11 the join
+ * screen's host address; optional, schema 9, a damaged one or a value that is not UTF-8 below 32 bytes (the speed's and
+ * the address's 64) is none). Schema 1 had
  * PROG (the progress) for the one ID NAME; schemas 1 and 2 had SAVE without the IDs (u8 length + name each), one list
  * for every ID. */
 int kp_profile_encode(const KpProfile *p, uint8_t **out, size_t *size)
@@ -1704,6 +1705,8 @@ int kp_profile_encode(const KpProfile *p, uint8_t **out, size_t *size)
 	put(&custom, p->net_type, strlen(p->net_type));
 	put8(&custom, (uint32_t)strlen(p->game_speed));
 	put(&custom, p->game_speed, strlen(p->game_speed));
+	put8(&custom, (uint32_t)strlen(p->lan_host));
+	put(&custom, p->lan_host, strlen(p->lan_host));
 	memset(&chars, 0, sizeof chars);
 	memset(&saves, 0, sizeof saves);
 	memset(&video, 0, sizeof video);
@@ -1990,6 +1993,8 @@ int kp_profile_decode(KpProfile *p, const uint8_t *data, size_t size, KpError *e
 		} else if (c.schema_version >= 10 && (read_custom_value(custom, &from, p->net_type, sizeof p->net_type) != 0
 			|| read_custom_value(custom, &from, p->game_speed, sizeof p->game_speed) != 0)) {
 			p->net_type[0] = p->game_speed[0] = 0;
+		} else if (c.schema_version >= 11 && read_custom_value(custom, &from, p->lan_host, sizeof p->lan_host) != 0) {
+			p->lan_host[0] = 0;
 		}
 	}
 	rc = 0;

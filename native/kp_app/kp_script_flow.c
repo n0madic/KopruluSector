@@ -10,6 +10,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "kp_ids.h"
+
 /* --- the values --- */
 
 enum {
@@ -18,7 +20,7 @@ enum {
 	V_PAD_COUNT, V_PAD_SHOWN, V_GAMMA, V_PORTRAITS, V_VIDEO_GRAPHICS, V_VIDEO_FOG, V_VIDEO_WATER, V_VIDEO_FONT,
 	V_VIDEO_LIGHTING, V_VIDEO_SERIAL, V_VIDEO_COMMITS, V_TEXT_VECTOR, V_SELECTION_HAS, V_SELECTION_FIRST, V_MOVED,
 	V_GROUP_HELD, V_REPLAY_ENDED, V_REPLAY_FRAMES, V_SIM_CRC, V_SIM_SHARED, V_LIST_TOP, V_LIST_SELECTED, V_LIST_COUNT, V_SEAT,
-	V_LOCAL_PLAYER, V_COUNT
+	V_LOCAL_PLAYER, V_LOBBY_HUMANS, V_COUNT
 };
 enum { NEED_UI, NEED_WORLD, NEED_GAME, NEED_CONSOLE }; /* what a value is read from */
 static const struct {
@@ -68,6 +70,8 @@ static const struct {
 	{ "list.count", KP_SCRIPT_ARG_NONE, NEED_UI },         /* its rows */
 	{ "seat", KP_SCRIPT_ARG_NONE, NEED_GAME },             /* --seats' seat shown (kp_flow_show_seat), 0 without seats */
 	{ "local.player", KP_SCRIPT_ARG_NONE, NEED_GAME },     /* the game's local player (the seat's) */
+	{ "lobby.humans", KP_SCRIPT_ARG_NONE, NEED_UI },       /* the network game's human players (its lobby's, then
+	                                                        * its game's), 0 before a provider is chosen */
 };
 #define GROUPS 10
 #define PLAYERS 12
@@ -122,7 +126,7 @@ static const char *const UNITS[UNIT_COUNT] = { "worker", "main", "group" };
 /* The dialogs by their BIN's name without its directory and .bin (any case): the glue's screens and popups, the game's
  * menus, ours (koprulu\); then, their indices from CONSOLE_FIRST, the console's own, which are no dialog to a script's
  * dialog, nodialog and screen (their controls are DIALOG.ID's, `ui` lists them). */
-static const char *const DIALOGS[] = { "abrtmenu", "allyfltr", "credits", "gamemenu", "gluChat", "gluCmpgn", "gluConn",
+static const char *const DIALOGS[] = { "abrtmenu", "address", "allyfltr", "credits", "gamemenu", "gluChat", "gluCmpgn", "gluConn",
 	"gluCreat", "gluCustm", "gluExpCmpgn", "gluGameMode", "gluHist", "gluJoin", "gluLoad", "gluLogin", "gluMain", "gluPEdit",
 	"gluPOk", "gluPOkCancel", "gluScore", "glurdyp", "glurdyt",
 	"glurdyz", "help", "helpmenu", "language", "lmission", "loadgame", "msgfltr", "netdlg", "objctdlg", "ok", "okcancel",
@@ -594,6 +598,16 @@ int kp_script_flow_value(const KpFlow *f, const KpScriptRun *run, const KpScript
 		*out = ref->id == V_LIST_TOP ? kp_ui_list_top(ui, x)
 			: ref->id == V_LIST_COUNT ? kp_ui_list_count(ui, x) : ui->controls[x].list->selected;
 		break;
+	case V_LOBBY_HUMANS: {
+		KpUiLobby lobby;
+		int slot;
+		*out = 0;
+		if (!ui->net || !ui->net->lobby_view) break;
+		ui->net->lobby_view(ui->net->host, &lobby);
+		for (slot = 0; slot < KP_UI_LOBBY_SLOTS; slot++)
+			*out += lobby.slots[slot].type == KP_CTRL_HUMAN && lobby.slots[slot].storm >= 0;
+		break;
+	}
 	case V_REPLAY_ENDED: *out = kp_session_replay_ended(f->session); break;
 	case V_REPLAY_FRAMES: *out = (int64_t)kp_session_replay_frames(f->session); break;
 	case V_SIM_CRC: {

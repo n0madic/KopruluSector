@@ -997,6 +997,7 @@ typedef struct {
 /* A game of the provider's list (the fields of its game header the join screen reads: EnumNetworkGames 0x475570's
  * records, atlas P19 and P26) */
 #define KP_UI_GAMES 64
+#define KP_UI_ADDRESS 64 /* Koprulu's host address, its NUL included (kp_net.h's KP_NET_HOST) */
 #define KP_UI_GAME_NAME 72   /* the header's 24 bytes as UTF-8 */
 #define KP_UI_GAME_TITLE 96  /* the map title's 32 bytes as UTF-8 */
 typedef struct {
@@ -1033,6 +1034,12 @@ typedef struct KpUiNet {
 	/* ClearGameList 0x475370: the listed games freed; with unhost, ClearGameListAndFlag 0x4755f0 (the host flag
 	 * 0x672970 cleared too) */
 	void (*clear_games)(void *host, int unhost);
+	/* Koprulu's host by its address (phase N, stage N5; the join screen's Address and koprulu\address.bin, shown only
+	 * when set_address is): the address the provider also asks for its game ("" none, at most KP_UI_ADDRESS - 1
+	 * bytes into out), and a new one the player gave: 1 taken (its game joins the list), 0 it is no address or has none
+	 * (the popup says so and stays) */
+	void (*address)(void *host, char *out, size_t size);
+	int (*set_address)(void *host, const char *text);
 	/* CreateGameFromEntry 0x45bfc0's multiplayer game of the Create Game screen's entry index (a map read and checked:
 	 * the host builds the header from it, the player's name, the screen's template, its class and the speed) through
 	 * CreateMultiplayerGame 0x475040: 0 created (the chat room follows), else Storm's error (SErrGetLastError; the
@@ -1255,6 +1262,11 @@ typedef struct {
 	char popup_text[KP_UI_POPUP_TEXT], popup_text2[KP_UI_POPUP_TEXT], edit_text[KP_UI_POPUP_TEXT]; /* 0x66b0f8, 0x66b1f8, 0x66b2f8 */
 	const uint8_t *edit_extra;       /* 0x66b400 */
 	int edit_max;
+	/* Koprulu's address popup (koprulu\address.bin): the only characters typed, in place of FilterEditPopupChar's
+	 * forbidden ones (NULL: the original's filter); edit_address: the prompt is the dialog's own text and Ok takes an
+	 * empty text (no host) */
+	const char *edit_allowed;
+	uint8_t edit_address;
 	KpUiSurface popup_image;         /* 0x66b3f8: the popup's background */
 	KpUiProfile profiles[KP_UI_PROFILES]; /* 0x5081a0, in the list's order */
 	int profile_count;

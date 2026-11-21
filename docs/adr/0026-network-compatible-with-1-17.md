@@ -1,6 +1,6 @@
 # ADR 0026: Network play compatible with 1.17
 
-Status: accepted (2026-11-17). The user approved phase N's design inline on 2026-11-17 ([phase N](../phase-network.md)). Stage N0 (the research of Storm's network layer and the UDP provider) is done, and so are stages N2 ([its additions](#addition-stage-n2-the-state-machines-and-their-transports)), N3 (the lobby) and N4 ([its additions](#addition-stage-n4-the-game-over-the-network)); the later stages add their decisions here as they are built.
+Status: accepted (2026-11-17). The user approved phase N's design inline on 2026-11-17 ([phase N](../phase-network.md)). Stage N0 (the research of Storm's network layer and the UDP provider) is done, and so are stages N2 ([its additions](#addition-stage-n2-the-state-machines-and-their-transports)), N3 (the lobby), N4 ([its additions](#addition-stage-n4-the-game-over-the-network)) and N5, which replaced decision 6's relay ([its additions](#addition-stage-n5-a-host-by-its-address-instead-of-the-relay)); the later stages add their decisions here as they are built.
 
 ## Context
 
@@ -22,7 +22,7 @@ Network play could follow the original's protocol or a protocol of the remake's 
    - **Sockets:** a thin driver per platform puts them on sockets.
    - **Threads:** on the native platforms a network thread runs the state machines (acknowledgements, resends, pings), so that a long mission load does not miss Storm's timeouts. On the web the main loop runs them.
    - **Determinism:** the time changes only when a turn arrives, never what it holds.
-6. **The web and the internet go through `koprulu-relay`.** It is a virtual LAN over TCP and WebSocket that carries Storm's UDP datagrams unchanged, broadcasts within a room, and does not understand the game. TLS is a proxy's (Caddy or nginx) in front of it; the native clients connect over plain TCP. Its framing gets its own format document with stage N5.
+6. **The web and the internet go through `koprulu-relay`** (not built: replaced on 2026-11-21 by [stage N5's addition](#addition-stage-n5-a-host-by-its-address-instead-of-the-relay)). It is a virtual LAN over TCP and WebSocket that carries Storm's UDP datagrams unchanged, broadcasts within a room, and does not understand the game. TLS is a proxy's (Caddy or nginx) in front of it; the native clients connect over plain TCP. Its framing gets its own format document with stage N5.
 7. **Nothing of Koprulu's own goes on the wire.** An original peer would not understand it. Desyncs are caught by the original's sync command and resolved by its `ResolveDesync` `0x47a630`, whose result in a split 1v1 (each side drops the other and wins) is kept. Between Koprulu seats in tests and in `--seats`, the shared state hash of ADR 0025 is compared besides.
 
 ## Consequences
@@ -30,7 +30,7 @@ Network play could follow the original's protocol or a protocol of the remake's 
 - Koprulu's network peers interoperate with 1.17. Data identity needs no check of its own: Koprulu's rule files equal 1.17's ([replay and network notes](../research/replay-network-notes.md#the-rule-files-of-117-and-remastered-2026-11-14)), and Storm's checks at join (program ID, version `0xD5`, the lobby's version 5) are the original's.
 - The original's provider has weaknesses a peer must never trigger: a receive error (a datagram over 504 bytes among them) ends that receiving thread for good, and an advertisement whose strings run past its length makes the receiver fail fatally. Koprulu's sender never produces either, and its receiver rejects both instead of failing.
 - Two instances cannot share one machine's port 6112 (the original sets no `SO_REUSEADDR`). Local tests use the in-process loop provider or the emulator's virtual LAN.
-- On iOS, broadcasting needs Apple's multicast entitlement. Without it an iOS seat plays through the relay.
+- On iOS, broadcasting needs Apple's multicast entitlement. Without it an iOS seat finds games by their address (stage N5).
 - The sync command makes Koprulu's simulation answerable to the original's every turn: any divergence from 1.17 in a mixed game drops a seat, which is the strongest check the remake has had.
 
 ## Addition: stage N2, the state machines and their transports
@@ -54,3 +54,12 @@ Built on 2026-11-18 ([phase N](../phase-network.md#n4-the-game-over-the-network-
 5. **No network thread yet.** The main loop pumps Storm each frame, the network's waits included; decision 5's thread for a long load is left as a `TODO:` (`kp_netplay.h`). The product's two-process game and the mixed games ran without a timeout.
 6. **`--seats` stays on the turn hub.** The network game is a fourth kind of turns (`KP_TURNS_NET`) beside the hub's, not the hub moved onto the network's turn manager as the plan had it. The seats keep the shared hash's check every frame but have no leave, drop or chat (`TODO:` in `kp_hub.h`: the seats as network games on the in-process LAN).
 7. **The mixed game's dumps are compared through the replay.** The oracle dumps the original's state before an object step, the session at a frame's end, so the emulated seats' dumps and Koprulu's do not line up step for step. Instead, the original's own `0x37` check passes on every turn of the mixed game, and the original's playback of Koprulu's replay equals Koprulu's at every step (`state_check.py --kind koprulu-net`). Koprulu's playback of a network replay equals its live game (`test_netplay`), once the fields a playback sets by design are set aside: the multiplayer byte, the slot summary, and the turn counter, which counts frames there.
+
+## Addition: stage N5, a host by its address instead of the relay
+
+Decided by the user and built on 2026-11-21 ([phase N](../phase-network.md#n5-a-host-by-its-address-and-the-phones-done-2026-11-21)).
+
+1. **No relay for now; the web has no network play.** Decision 6 is not built. The browser cannot send UDP, so the web keeps its Multiplayer unsupported (`TODO:` in `kp_netplay.h`: a relay or WebRTC later). The native programs reach each other directly.
+2. **The internet by the host's address.** Koprulu's provider can be given a host's socket A (`kp_snp_udp_direct`): each of its game-list requests goes there besides the broadcast, and that host's game is listed at its port + 1. The request is the original's datagram, which a 1.17 host answers, so decision 7 holds: nothing of Koprulu's own goes on the wire. The host forwards its two UDP ports; three or more seats need each other reachable too, as Storm's peers send directly, so a virtual LAN (ZeroTier, Tailscale) is the documented way when a NAT is in between, and the one way for a 1.17 joiner.
+3. **The address is the player's.** The join screen gets Koprulu's Address, a record appended to `gluJoin.bin` and shown only when the network takes an address, with its own popup (`koprulu\address.bin`); `--lan-host` and the profile keep it. A name is resolved by the system's resolver, IPv4 only.
+4. **The phones' local network.** Android declares `INTERNET` (SDL's template has it commented out) and `CHANGE_WIFI_MULTICAST_STATE`, and holds the Wi-Fi multicast lock while the provider's sockets are open. iOS declares `NSLocalNetworkUsageDescription`; without the multicast entitlement it finds games by their address.

@@ -305,6 +305,7 @@ void kp_list_files_free(char **names, int count);
 #define KP_PROFILE_LOCALE 8 /* a language's ID ("ruRU", ASCII) and its NUL */
 #define KP_PROFILE_CUSTOM 32 /* a Play Custom registry value (SRegLoadString's 32 bytes) and its NUL */
 #define KP_PROFILE_SPEED 64  /* the speed's registry value (a gluAll name in UTF-8; KP_UI_SPEED_TEXT) */
+#define KP_PROFILE_HOST 64   /* the join screen's host address (kp_net.h's KP_NET_HOST) */
 /* A saved game: its ID (the original's save\<name>\ folder, BuildSaveDirectory 0x499e80; "" a run's without a login)
  * and its name. */
 typedef struct {
@@ -363,6 +364,9 @@ typedef struct {
 	 * 10 */
 	char custom_type[KP_PROFILE_CUSTOM], game_subtype[KP_PROFILE_CUSTOM];
 	char net_type[KP_PROFILE_CUSTOM], game_speed[KP_PROFILE_SPEED];
+	/* the host the LAN provider also asks for its game (the join screen's Address, kp_netplay.h), "" none and in one
+	 * older than schema 11 */
+	char lan_host[KP_PROFILE_HOST];
 } KpProfile;
 
 void kp_profile_init(KpProfile *p);

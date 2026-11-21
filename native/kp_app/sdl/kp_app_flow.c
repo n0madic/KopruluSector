@@ -38,6 +38,16 @@ static void host_sync_files(void *ctx) { kp_app_sync_files((KpApp *)ctx); }
 
 static void host_quit(void *ctx) { ((KpApp *)ctx)->quit = 1; }
 
+#if defined(SDL_PLATFORM_ANDROID)
+/* the Wi-Fi multicast lock while the LAN provider's sockets are open: without it a phone may drop the broadcasts of
+ * the game list (tools/native/android_app.sh's kpMulticastLock) */
+static void host_lan_lock(void *ctx, int on)
+{
+	(void)ctx;
+	kp_app_android_call("kpMulticastLock", "V", on ? "1" : "0", NULL, 0);
+}
+#endif
+
 static int host_world_build(void *ctx, char *err, size_t err_size) { return kp_world_build((KpApp *)ctx, err, err_size); }
 
 static void host_world_free(void *ctx) { kp_world_free((KpApp *)ctx); }
@@ -282,6 +292,9 @@ static void flow_setup(KpApp *a)
 	h->language = host_language;
 	h->mission_files = host_mission_files;
 	h->language_files = host_language_files;
+#if defined(SDL_PLATFORM_ANDROID)
+	h->lan_lock = host_lan_lock;
+#endif
 	f->flags = &a->flags;
 	kp_app_pick_setup(a);
 	f->data = &a->data;

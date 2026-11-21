@@ -25,6 +25,7 @@ typedef SOCKET Fd;
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <netdb.h>
 #include <netinet/in.h>
 #include <poll.h>
 #include <sys/socket.h>
@@ -48,14 +49,36 @@ uint32_t kp_net_sock_now(void)
 #endif
 }
 
+/* The address's name and port, a dotted IPv4 name as its address: 1 resolved, 0 a name for the resolver, -1 no address
+ * (the reason in error). */
+static int parse_host(const char *text, KpNetAddr *out, char *name, uint16_t *port, char *error, size_t size)
+{
+	uint32_t ip;
+	if (!kp_net_host_parse(text, name, KP_NET_HOST, port)) {
+		if (size) snprintf(error, size, "\"%s\" is not an address (name or a.b.c.d, then :port)", text ? text : "");
+		return -1;
+	}
+	if (!kp_net_ipv4_parse(name, &ip)) return 0;
+	*out = kp_net_addr(ip, *port);
+	return 1;
+}
+
 #ifdef __EMSCRIPTEN__
 
-/* The web has no UDP: its datagrams go through the relay (stage N5). */
+/* The web has no UDP, and no network play (kp_netplay.h). */
 KpNetSock *kp_net_sock_open(const KpNetSockConfig *c, char *error, size_t size)
 {
 	(void)c;
 	if (size) snprintf(error, size, "no UDP sockets on the web");
 	return NULL;
+}
+int kp_net_sock_resolve(const char *text, KpNetAddr *out, char *error, size_t size)
+{
+	char name[KP_NET_HOST];
+	uint16_t port;
+	int r = parse_host(text, out, name, &port, error, size);
+	if (r == 0 && size) snprintf(error, size, "no resolver on the web");
+	return r > 0;
 }
 void kp_net_sock_close(KpNetSock *s) { (void)s; }
 KpNetIo kp_net_sock_io(KpNetSock *s)
@@ -372,6 +395,44 @@ int kp_net_sock_wait(KpNetSock *s, uint32_t ms, KpNetSockDeliver fn, void *ud)
 		n += got;
 	}
 	return n;
+}
+
+int kp_net_sock_resolve(const char *text, KpNetAddr *out, char *error, size_t size)
+{
+	char name[KP_NET_HOST], scratch[1];
+	uint16_t port;
+	struct addrinfo hints, *list = NULL, *a;
+	int r, found = 0;
+	if (!error || !size) {
+		error = scratch;
+		size = sizeof scratch;
+	}
+	if ((r = parse_host(text, out, name, &port, error, size)) != 0) return r > 0;
+#ifdef _WIN32
+	{
+		WSADATA wsa; /* getaddrinfo wants Winsock started, sockets open or not */
+		if ((r = WSAStartup(MAKEWORD(2, 2), &wsa)) != 0) {
+			snprintf(error, size, "WSAStartup: error %d", r);
+			return 0;
+		}
+	}
+#endif
+	memset(&hints, 0, sizeof hints);
+	hints.ai_family = AF_INET;
+	hints.ai_socktype = SOCK_DGRAM;
+	r = getaddrinfo(name, NULL, &hints, &list);
+	for (a = r == 0 ? list : NULL; a && !found; a = a->ai_next) {
+		if (a->ai_family == AF_INET && a->ai_addrlen >= (socklen_t)sizeof(struct sockaddr_in)) {
+			*out = kp_net_addr(ntohl(((const struct sockaddr_in *)(const void *)a->ai_addr)->sin_addr.s_addr), port);
+			found = 1;
+		}
+	}
+	if (list) freeaddrinfo(list);
+#ifdef _WIN32
+	WSACleanup();
+#endif
+	if (!found) snprintf(error, size, "%s has no IPv4 address (resolver: %d)", name, r);
+	return found;
 }
 
 #endif

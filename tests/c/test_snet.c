@@ -99,17 +99,21 @@ static Seat *seat_add(World *w, const KpNetIo *io)
 	return st;
 }
 
-static World *world_new(KpT *T, uint64_t seed, int seats)
+/* The LAN's seats; broadcasts 0: none crosses from the start (the seats' first game-list requests too). */
+static World *world_lan(KpT *T, uint64_t seed, int seats, int broadcasts)
 {
 	World *w = world_alloc(T);
 	int k;
 	kp_net_world_lan(&w->n, seed);
+	kp_net_lan_broadcasts(w->n.lan, broadcasts);
 	for (k = 0; k < seats; k++) {
 		w->seat[k].id = -1;
 		kp_net_world_add_lan(&w->n, &w->seat[k].n);
 	}
 	return w;
 }
+
+static World *world_new(KpT *T, uint64_t seed, int seats) { return world_lan(T, seed, seats, 1); }
 
 static void host(World *w, int k, const char *name, const char *password, uint32_t max_players)
 {
@@ -288,21 +292,25 @@ static void game_list_follows_the_advertisements(KpT *T)
 	kp_t_ok(T, listing(w, 2).count == 0, "the left game is listed");
 }
 
-/* A provider alone: what it sends is kept (the last datagram), its clock is `now`. */
+/* A provider alone: what it sends is kept (the last datagram, its socket and destination; the count), its clock is
+ * `now`. */
 typedef struct {
 	uint32_t now;
 	uint8_t last[KP_SNP_LIST_DATAGRAM];
 	size_t last_size;
+	int last_socket, sends;
+	KpNetAddr last_to;
 } Alone;
 
 static void alone_send(void *ud, int socket, const KpNetAddr *to, const uint8_t *data, size_t size)
 {
 	Alone *a = (Alone *)ud;
-	(void)socket;
-	(void)to;
 	if (size > sizeof a->last) size = sizeof a->last;
 	memcpy(a->last, data, size);
 	a->last_size = size;
+	a->last_socket = socket;
+	a->last_to = *to;
+	a->sends++;
 }
 
 static uint32_t alone_now(void *ud) { return ((Alone *)ud)->now; }
@@ -352,6 +360,176 @@ static void game_list_is_bounded(KpT *T)
 	}
 	kp_snp_udp_free(&p);
 	kp_snp_udp_free(&sender);
+}
+
+/* The host's address as the player gives it (kp_net_host_parse), a dotted IPv4 address (kp_net_ipv4_parse) and the
+ * provider address of either (kp_net_sock_resolve). */
+static void host_address_parsing(KpT *T)
+{
+	static const struct {
+		const char *text;
+		int ok;
+		const char *name;
+		uint16_t port;
+	} HOSTS[] = {
+		{"game.example.net", 1, "game.example.net", 6111},
+		{"  10.0.0.5:7000 ", 1, "10.0.0.5", 7000},
+		{"a_b-c:65534", 1, "a_b-c", 65534},
+		{"host:007", 1, "host", 7},
+		{"", 0, NULL, 0},
+		{"   ", 0, NULL, 0},
+		{":7000", 0, NULL, 0},
+		{"host:", 0, NULL, 0},
+		{"host:0", 0, NULL, 0},
+		{"host:65535", 0, NULL, 0},
+		{"host:99999999999", 0, NULL, 0},
+		{"host:70a", 0, NULL, 0},
+		{"host:1:2", 0, NULL, 0},
+		{"ho st", 0, NULL, 0},
+		{"[::1]", 0, NULL, 0},
+		{"h\xc3\xb6st", 0, NULL, 0},
+		{"1.2.3", 0, NULL, 0},
+		{"192.168.1:7000", 0, NULL, 0},
+		{"123", 0, NULL, 0},
+		{"256.1.1.1", 0, NULL, 0},
+		{"1.2.3.4x", 1, "1.2.3.4x", 6111},
+		{"3com.example", 1, "3com.example", 6111},
+	};
+	static const struct {
+		const char *text;
+		int ok;
+		uint32_t ip;
+	} IPS[] = {
+		{"10.0.0.5", 1, 0x0a000005u},
+		{"255.255.255.255", 1, 0xffffffffu},
+		{"0.0.0.0", 1, 0},
+		{"256.0.0.1", 0, 0},
+		{"0001.2.3.4", 0, 0},
+		{"1.2.3", 0, 0},
+		{"1.2.3.4.5", 0, 0},
+		{"1..2.3", 0, 0},
+		{"1.2.3.4 ", 0, 0},
+		{"a.b.c.d", 0, 0},
+		{"", 0, 0},
+	};
+	char name[KP_NET_HOST], error[128], text[KP_NET_HOST + 8];
+	uint16_t port;
+	uint32_t ip;
+	KpNetAddr a;
+	size_t k;
+	for (k = 0; k < sizeof HOSTS / sizeof HOSTS[0]; k++) {
+		int ok = kp_net_host_parse(HOSTS[k].text, name, sizeof name, &port);
+		kp_t_ok(T, ok == HOSTS[k].ok && (!ok || (strcmp(name, HOSTS[k].name) == 0 && port == HOSTS[k].port)),
+			"\"%s\": %d, \"%s\" port %u", HOSTS[k].text, ok, ok ? name : "", ok ? port : 0);
+	}
+	memset(text, 'n', KP_NET_HOST - 1);
+	text[KP_NET_HOST - 1] = 0;
+	kp_t_ok(T, kp_net_host_parse(text, name, sizeof name, &port), "a name of %d characters", KP_NET_HOST - 1);
+	strcat(text, "n");
+	kp_t_ok(T, !kp_net_host_parse(text, name, sizeof name, &port), "a name of %d characters", KP_NET_HOST);
+	kp_t_ok(T, !kp_net_host_parse("host", name, KP_NET_HOST - 1, &port), "a short name buffer");
+	for (k = 0; k < sizeof IPS / sizeof IPS[0]; k++) {
+		int ok = kp_net_ipv4_parse(IPS[k].text, &ip);
+		kp_t_ok(T, ok == IPS[k].ok && (!ok || ip == IPS[k].ip), "\"%s\": %d, %#x", IPS[k].text, ok, ok ? ip : 0);
+	}
+	kp_t_ok(T, kp_net_sock_resolve("127.0.0.1:7000", &a, error, sizeof error) && kp_net_addr_ip(&a) == 0x7f000001u &&
+			kp_net_addr_port(&a) == 7000,
+		"a dotted address: %s", error);
+	kp_t_ok(T, !kp_net_sock_resolve("no address!", &a, error, sizeof error) && error[0], "no address");
+#ifdef __EMSCRIPTEN__
+	kp_t_ok(T, !kp_net_sock_resolve("localhost", &a, error, sizeof error), "a name resolved on the web");
+#else
+	kp_t_ok(T, kp_net_sock_resolve("localhost", &a, error, sizeof error) && (kp_net_addr_ip(&a) >> 24) == 127 &&
+			kp_net_addr_port(&a) == KP_NET_LIST_PORT,
+		"localhost: %s", error);
+#endif
+}
+
+/* The port of the game the provider lists for an advertisement from `from` (0: none listed). */
+static uint16_t listed_port(KpSnpUdp *p, uint32_t ip, uint16_t port, const uint8_t *ad, size_t ad_size)
+{
+	KpNetAddr from = kp_net_addr(ip, port);
+	const KpSnpGame *g;
+	uint16_t at = 0;
+	kp_snp_udp_input(p, KP_NET_SOCKET_LIST, &from, ad, ad_size);
+	for (g = kp_snp_udp_lock_games(p); g; g = g->next)
+		if (kp_net_addr_ip(&g->addr) == ip) at = kp_net_addr_port(&g->addr);
+	kp_snp_udp_unlock_games(p);
+	return at;
+}
+
+/* Koprulu's host by its address (kp_snp_udp_direct): a game-list request to it at once and with each request after the
+ * broadcast; its game at its port + 1, every other advertiser's at port 6112 as the original lists them. */
+static void host_by_address_ports(KpT *T)
+{
+	Alone a;
+	KpSnpUdp sender, p;
+	KpNetIo io;
+	KpNetAddr host = kp_net_addr(IP(5), 7000), bad;
+	uint8_t ad[KP_SNP_LIST_DATAGRAM];
+	size_t ad_size;
+	int sends;
+	memset(&a, 0, sizeof a);
+	a.now = START;
+	io.send = alone_send;
+	io.now = alone_now;
+	io.ud = &a;
+	kp_snp_udp_init(&sender, &io, PROGRAM, VERSION, 8);
+	kp_t_ok(T, kp_snp_udp_advertise(&sender, "Far", "", KP_SNET_MODE_ADVERTISED, NULL, 0) && a.last_size > 0,
+		"an advertisement");
+	memcpy(ad, a.last, a.last_size);
+	ad_size = a.last_size;
+	kp_snp_udp_init(&p, &io, PROGRAM, VERSION, 8);
+	bad = kp_net_addr(IP(5), 0);
+	kp_t_ok(T, !kp_snp_udp_direct(&p, &bad), "port 0 taken");
+	bad = kp_net_addr(IP(5), 0xffff);
+	kp_t_ok(T, !kp_snp_udp_direct(&p, &bad), "port 65535 taken (its game would be at port 0)");
+	sends = a.sends;
+	kp_t_ok(T, kp_snp_udp_direct(&p, &host), "the host's address refused");
+	kp_t_ok(T, a.sends == sends + 1 && a.last_socket == KP_NET_SOCKET_LIST && kp_net_addr_eq(&a.last_to, &host) &&
+			a.last_size == KP_SNP_HEADER && kp_net_get16(a.last + 4) == KP_SNP_REQUEST && kp_net_sum(a.last, a.last_size) == 0,
+		"the request at once: %d sends, socket %d, %lu bytes", a.sends - sends, a.last_socket, (unsigned long)a.last_size);
+	/* the next request goes to the broadcast and then to the host */
+	a.now += KP_SNP_REQUEST_GAP + 1;
+	sends = a.sends;
+	kp_snp_udp_unlock_games(&p);
+	kp_t_ok(T, a.sends == sends + 2 && kp_net_addr_eq(&a.last_to, &host), "%d requests after the gap", a.sends - sends);
+	kp_t_ok(T, listed_port(&p, IP(5), 7000, ad, ad_size) == 7001, "the host's game at its port + 1");
+	kp_t_ok(T, listed_port(&p, IP(6), 7000, ad, ad_size) == KP_NET_GAME_PORT, "another advertiser's at 6112");
+	host = kp_net_addr(IP(7), KP_NET_LIST_PORT);
+	kp_t_ok(T, kp_snp_udp_direct(&p, &host), "the host on port 6111");
+	kp_t_ok(T, listed_port(&p, IP(7), KP_NET_LIST_PORT, ad, ad_size) == KP_NET_GAME_PORT, "6111's game at 6112");
+	kp_t_ok(T, kp_snp_udp_direct(&p, NULL), "no host");
+	sends = a.sends;
+	a.now += KP_SNP_REQUEST_GAP + 1;
+	kp_snp_udp_unlock_games(&p);
+	kp_t_ok(T, a.sends == sends + 1 && kp_net_addr_ip(&a.last_to) == KP_NET_BROADCAST, "the broadcast alone");
+	kp_t_ok(T, listed_port(&p, IP(8), 7000, ad, ad_size) == KP_NET_GAME_PORT, "no host: port 6112");
+	kp_snp_udp_free(&p);
+	kp_snp_udp_free(&sender);
+}
+
+/* A network without broadcasts (the internet): the joiners list the host's game only by its address, join it and play
+ * in lockstep, the joiners' Storms talking to each other directly. */
+static void host_by_address_without_broadcasts(KpT *T)
+{
+	World *w = world_lan(T, 21, 3, 0);
+	KpNetAddr at = kp_net_addr(IP(0), KP_NET_LIST_PORT);
+	int k;
+	host(w, 0, "Koprulu", "", 3);
+	advance(w, now_of(w) + 1000);
+	kp_t_ok(T, listing(w, 1).count == 0, "listed without broadcasts");
+	kp_t_ok(T, listing(w, 0).count == 1, "the host's own broadcast comes back to it");
+	for (k = 1; k < 3; k++) kp_t_ok(T, kp_snp_udp_direct(&w->seat[k].n.snp, &at), "seat %d's host address", k);
+	advance(w, now_of(w) + 100);
+	for (k = 1; k < 3; k++) kp_t_ok(T, listing(w, k).count == 1, "seat %d lists the host's game", k);
+	join(w, 1, "Koprulu");
+	join(w, 2, "Koprulu");
+	for (k = 0; k < 3; k++) start_playing(&w->seat[k]);
+	play(w, 2000);
+	for (k = 0; k < 3; k++) kp_t_ok(T, w->seat[k].received > 50, "seat %d received %u turns", k, w->seat[k].received);
+	for (k = 1; k < 3; k++)
+		kp_t_ok(T, w->seat[k].by_turn[40] == w->seat[0].by_turn[40], "seat %d's turns differ from the host's", k);
 }
 
 static void two_seats_play_in_lockstep(KpT *T)
@@ -719,7 +897,7 @@ static void sockets_carry_a_game(KpT *T)
 	char error[128] = "";
 	int attempt, k = 0, at = 0;
 #ifdef __EMSCRIPTEN__
-	kp_t_skip(T, "no UDP sockets on the web (kp_net_sock.h: its datagrams go through the relay of stage N5)");
+	kp_t_skip(T, "no UDP sockets on the web (kp_netplay.h)");
 #endif
 	w = world_alloc(T);
 	for (attempt = 0; attempt < 32; attempt++) {
@@ -777,6 +955,57 @@ static void sockets_carry_a_game(KpT *T)
 		kp_t_ok(T, w->seat[0].by_turn[least - 1] == w->seat[1].by_turn[least - 1], "the seats' turns differ");
 	}
 	for (k = 0; k < 3; k++)
+		kp_t_ok(T, kp_net_sock_send_errors(w->seat[k].n.sock) == 0, "seat %d: %ld datagrams refused", k,
+			kp_net_sock_send_errors(w->seat[k].n.sock));
+}
+
+/* Two programs on the system's sockets, each the one host of its own map: no broadcast crosses, so the joiner lists
+ * the host's game only by the host's address, a port that is not 6111 (its game at the next port), joins it and plays
+ * in lockstep (Koprulu's host by its address, stage N5). */
+static void sockets_reach_a_host_by_address(KpT *T)
+{
+	World *w;
+	char error[128] = "";
+	int attempt, k = 0;
+	uint32_t base = 0, until, e = 0;
+	KpNetAddr at;
+#ifdef __EMSCRIPTEN__
+	kp_t_skip(T, "no UDP sockets on the web (kp_netplay.h)");
+#endif
+	w = world_alloc(T);
+	for (attempt = 0; attempt < 32; attempt++) {
+		KpNetSockConfig c;
+		base = 20000u + (kp_net_sock_now() / 2u + (uint32_t)attempt * 7919u) % 20000u * 2u;
+		memset(&c, 0, sizeof c);
+		c.map_hosts = 1;
+		for (k = 0; k < 2; k++) {
+			c.map_base = (uint16_t)(base + 2u * (uint32_t)k);
+			if (!(w->seat[k].n.sock = kp_net_sock_open(&c, error, sizeof error))) break;
+		}
+		if (k == 2) break;
+		while (k--) {
+			kp_net_sock_close(w->seat[k].n.sock);
+			w->seat[k].n.sock = NULL;
+		}
+	}
+	kp_t_ok(T, attempt < 32, "no four free ports: %s", error);
+	for (k = 0; k < 2; k++) {
+		KpNetIo io = kp_net_sock_io(w->seat[k].n.sock);
+		seat_add(w, &io);
+	}
+	host(w, 0, "Koprulu", "", 2);
+	advance(w, now_of(w) + 600);
+	kp_t_ok(T, listing(w, 1).count == 0, "the game listed across the maps by a broadcast");
+	at = kp_net_addr(0x7f000001u, (uint16_t)base);
+	kp_t_ok(T, kp_snp_udp_direct(&w->seat[1].n.snp, &at), "the host's address");
+	until = now_of(w) + 3000;
+	while (listing(w, 1).count == 0 && (int32_t)(now_of(w) - until) < 0) advance(w, now_of(w) + 20);
+	kp_t_ok(T, enter(w, 1, "Koprulu", "", &e), "the join: error %#x", e);
+	for (k = 0; k < 2; k++) start_playing(&w->seat[k]);
+	play(w, 1000);
+	for (k = 0; k < 2; k++) kp_t_ok(T, w->seat[k].received > 20, "seat %d received %u turns", k, w->seat[k].received);
+	kp_t_ok(T, w->seat[0].by_turn[15] == w->seat[1].by_turn[15], "the seats' turns differ");
+	for (k = 0; k < 2; k++)
 		kp_t_ok(T, kp_net_sock_send_errors(w->seat[k].n.sock) == 0, "seat %d: %ld datagrams refused", k,
 			kp_net_sock_send_errors(w->seat[k].n.sock));
 }
@@ -918,6 +1147,9 @@ static const KpTest TESTS[] = {
 	{ "checksum_vectors", checksum_vectors, 0 },
 	{ "game_list_follows_the_advertisements", game_list_follows_the_advertisements, 0 },
 	{ "game_list_is_bounded", game_list_is_bounded, 0 },
+	{ "host_address_parsing", host_address_parsing, 0 },
+	{ "host_by_address_ports", host_by_address_ports, 0 },
+	{ "host_by_address_without_broadcasts", host_by_address_without_broadcasts, 0 },
 	{ "two_seats_play_in_lockstep", two_seats_play_in_lockstep, 0 },
 	{ "four_seats_with_loss_are_deterministic", four_seats_with_loss_are_deterministic, 0 },
 	{ "joiner_enters_a_running_game", joiner_enters_a_running_game, 0 },
@@ -929,6 +1161,7 @@ static const KpTest TESTS[] = {
 	{ "timers_are_storms", timers_are_storms, 0 },
 	{ "garbage_is_ignored", garbage_is_ignored, 0 },
 	{ "sockets_carry_a_game", sockets_carry_a_game, 0 },
+	{ "sockets_reach_a_host_by_address", sockets_reach_a_host_by_address, 0 },
 	{ "live_bridge_join", live_bridge_join, 0 },
 	{ "api_errors", api_errors, 0 },
 };

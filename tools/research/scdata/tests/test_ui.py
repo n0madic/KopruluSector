@@ -72,7 +72,7 @@ class UiTest(unittest.TestCase):
         """koprulu\\video.bin: one container, the gamma slider, OK and Cancel, and radio groups whose IDs run on
         (a group is the run of consecutive IDs: SelectOptionInGroup) within the original's 640 x 480 screen."""
         bins = kpd.koprulu_dialogs()
-        assert list(bins) == ["koprulu\\video.bin", "koprulu\\language.bin"]
+        assert list(bins) == ["koprulu\\video.bin", "koprulu\\language.bin", "koprulu\\address.bin"]
         widgets = dialog.parse(bins["koprulu\\video.bin"])
         root = widgets[0]
         x, y = root.rect[:2]
@@ -99,6 +99,24 @@ class UiTest(unittest.TestCase):
         assert language.responsive == (0, 0, 169, 19) and language.extra == (80, 370, 249, 389)
         with self.assertRaises(dialog.DialogError):
             kpd.dialogs_section({"rez\\x.bin": _synthetic()}, {"rez\\none.bin": [language]})
+
+    def test_the_address_dialog_and_the_join_screens_button(self):
+        """koprulu\\address.bin (phase N, stage N5): an edit popup in gluPEdit's records, OK 1, the prompt 2, Cancel 3,
+        the edit 4, and the label 5 that the address has no host, hidden until Ok's address has none, inside its
+        360 x 200; rez\\gluJoin.bin's Address (16) a text button beside Create Game."""
+        widgets = dialog.parse(kpd.koprulu_dialogs()["koprulu\\address.bin"])
+        root = widgets[0]
+        assert root.size == (360, 200)
+        by_id = {w.identifier: w for w in widgets[1:]}
+        assert sorted(by_id) == [1, 2, 3, 4, 5]
+        assert by_id[1].rect == (17, 159, 174, 187) and by_id[3].rect == (186, 159, 343, 187)
+        assert by_id[4].text is None and by_id[5].text == b"No host was found at this address."
+        assert by_id[2].flags & 0x8 and not by_id[5].flags & 0x8  # the prompt shown, the label hidden (flag 8: visible)
+        for w in widgets[1:]:
+            assert 0 <= w.rect[0] and w.rect[2] < root.size[0] and 0 <= w.rect[1] and w.rect[3] < root.size[1]
+        (address,) = kpd.koprulu_extensions()["rez\\gluJoin.bin"]
+        assert address.parent == 0 and address.identifier == 16 and address.type == dialog.TYPE_BUTTON
+        assert address.flags & dialog.FLAG_HOTKEY and address.text == b"a\x04A\x01ddress"
 
     def test_labels_give_an_originals_record_its_text(self):
         """koprulu-dialogs.json's labels: the main menu's version label, the text of a record that has none."""

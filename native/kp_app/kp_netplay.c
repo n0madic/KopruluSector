@@ -73,6 +73,29 @@ static void stop(KpNetPlay *p)
 	p->snp_on = 0;
 	kp_net_sock_close(p->sock);
 	p->sock = NULL;
+	if (p->locked && p->config.lan_lock) p->config.lan_lock(p->config.ctx, 0);
+	p->locked = 0;
+}
+
+/* The host by its address given to the provider (none for ""); 0 when it is no address or has none. TODO: a name is
+ * resolved here on the main thread (kp_net_sock_resolve waits for the system's resolver), at each provider selection
+ * and at the Address popup's Ok, so a slow or unreachable DNS server stalls the screens: resolve it off the main
+ * thread (kp_netplay_pump taking the answer) and let the popup wait for it. */
+static int direct_host(KpNetPlay *p, const char *text)
+{
+	KpNetAddr a;
+	char error[128];
+	if (!text[0]) {
+		if (p->snp_on) (void)kp_snp_udp_direct(&p->snp, NULL);
+		return 1;
+	}
+	if (!kp_net_sock_resolve(text, &a, error, sizeof error)) {
+		say(p, "network: %s", error);
+		return 0;
+	}
+	if (p->snp_on) (void)kp_snp_udp_direct(&p->snp, &a);
+	say(p, "network: the host %s asked at %s", text, kp_net_addr_text(&a, error, sizeof error));
+	return 1;
 }
 
 /* --- the provider hooks --- */
@@ -108,9 +131,14 @@ static int p_select(void *host, uint32_t id)
 		kp_ui_menus_net_error(ui, NETTBL_PROVIDER);
 		return 0;
 	}
+	if (p->config.lan_lock) {
+		p->config.lan_lock(p->config.ctx, 1);
+		p->locked = 1;
+	}
 	io = kp_net_sock_io(p->sock);
 	kp_snp_udp_init(&p->snp, &io, program, PROGRAM_VERSION, PROVIDER_PLAYERS);
 	p->snp_on = 1;
+	(void)direct_host(p, p->host); /* a host that has no address is only logged: the broadcast still lists */
 	memset(&sh, 0, sizeof sh);
 	sh.now = s_now;
 	sh.sleep = s_sleep;
@@ -143,6 +171,26 @@ static int p_select(void *host, uint32_t id)
 
 static void p_stop(void *host) { stop(np(host)); }
 
+static void p_address(void *host, char *out, size_t size)
+{
+	if (size) snprintf(out, size, "%s", np(host)->host);
+}
+
+static int p_set_address(void *host, const char *text)
+{
+	KpNetPlay *p = np(host);
+	char name[KP_NET_HOST];
+	uint16_t port;
+	if (!text || (text[0] && !kp_net_host_parse(text, name, sizeof name, &port))) {
+		say(p, "network: \"%s\" is not an address", text ? text : "");
+		return 0;
+	}
+	if (!direct_host(p, text)) return 0;
+	snprintf(p->host, sizeof p->host, "%s", text);
+	if (p->config.host_changed) p->config.host_changed(p->config.ctx, p->host);
+	return 1;
+}
+
 static int n_entry_map(void *owner, KpUi *ui, int index, KpMapHeader *h, char *path, size_t size)
 {
 	KpNetPlay *p = (KpNetPlay *)owner;
@@ -168,6 +216,7 @@ void kp_netplay_init(KpNetPlay *p, KpUi *ui, const KpNetPlayConfig *config)
 	memset(p, 0, sizeof *p);
 	p->config = *config;
 	p->wake = KP_SNET_INFINITE;
+	snprintf(p->host, sizeof p->host, "%s", config->host);
 	p->nu.ui = ui;
 	p->nu.owner = p;
 	p->nu.entry_map = n_entry_map;
@@ -178,6 +227,8 @@ void kp_netplay_init(KpNetPlay *p, KpUi *ui, const KpNetPlayConfig *config)
 	p->net.select_provider = p_select;
 	p->net.reset_provider = p_stop;
 	p->net.shutdown = p_stop;
+	p->net.address = p_address;
+	p->net.set_address = p_set_address;
 	ui->net = &p->net;
 }
 

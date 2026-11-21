@@ -25,14 +25,33 @@ static void put_header(const KpSnpUdp *p, uint8_t *d, uint32_t size, uint32_t ty
 	kp_net_put32(d + 16, mode);
 }
 
-/* BroadcastGameListRequest 0x1d009370. */
-static void broadcast_request(KpSnpUdp *p)
+/* BroadcastGameListRequest 0x1d009370's datagram to `to`. */
+static void send_request(KpSnpUdp *p, const KpNetAddr *to)
 {
 	uint8_t d[KP_SNP_HEADER];
-	KpNetAddr to = broadcast_list();
 	put_header(p, d, KP_SNP_HEADER, KP_SNP_REQUEST, 0);
 	kp_net_checksum(d, sizeof d);
-	send_on(p, KP_NET_SOCKET_LIST, &to, d, sizeof d);
+	send_on(p, KP_NET_SOCKET_LIST, to, d, sizeof d);
+}
+
+/* BroadcastGameListRequest 0x1d009370, and Koprulu's host by its address after it. */
+static void broadcast_request(KpSnpUdp *p)
+{
+	KpNetAddr to = broadcast_list();
+	send_request(p, &to);
+	if (p->direct_on) send_request(p, &p->direct);
+}
+
+int kp_snp_udp_direct(KpSnpUdp *p, const KpNetAddr *host)
+{
+	p->direct_on = 0;
+	memset(&p->direct, 0, sizeof p->direct);
+	if (!host) return 1;
+	if (kp_net_addr_port(host) == 0 || kp_net_addr_port(host) == 0xffff) return 0;
+	p->direct = kp_net_addr(kp_net_addr_ip(host), kp_net_addr_port(host));
+	p->direct_on = 1;
+	send_request(p, &p->direct);
+	return 1;
 }
 
 void kp_snp_udp_init(KpSnpUdp *p, const KpNetIo *io, uint32_t program, uint32_t version, uint32_t max_players)
@@ -87,8 +106,11 @@ static void on_advertisement(KpSnpUdp *p, KpNetAddr from, const uint8_t *d, size
 	uint32_t id = 0;
 	int removed = 0, others = 0, n;
 	size_t off;
-	from.b[2] = (uint8_t)(KP_NET_GAME_PORT >> 8);
-	from.b[3] = (uint8_t)KP_NET_GAME_PORT;
+	/* the game's address: the advertiser's with port 6112; Koprulu's host by its address at its port + 1 */
+	uint32_t game_port = p->direct_on && kp_net_addr_eq(&from, &p->direct) ? kp_net_addr_port(&from) + 1u
+		: (uint32_t)KP_NET_GAME_PORT;
+	from.b[2] = (uint8_t)(game_port >> 8);
+	from.b[3] = (uint8_t)game_port;
 	while (*at) {
 		if (kp_net_addr_eq(&(*at)->addr, &from)) {
 			g = *at;

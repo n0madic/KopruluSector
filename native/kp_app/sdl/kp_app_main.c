@@ -13,7 +13,7 @@
  *           [--graphics original|hd2|hd|auto] [--hd-budget MB] [--hd-decode] [--lighting on|off]
  *           [--cine-check DIR] [--headless] [--locale LOC] [--speech LOC]
  *           [--script FILE --script-out DIR] [--script-live FIFO --script-out DIR]
- *           [--lan-port PORT] [--lan-map BASE:HOSTS:SELF]
+ *           [--lan-port PORT] [--lan-map BASE:HOSTS:SELF] [--lan-host NAME[:PORT]]
  */
 #define SDL_MAIN_USE_CALLBACKS 1
 #include <SDL3/SDL.h>
@@ -106,6 +106,7 @@ static void usage_flags(KpAppFlags *f, int argc, char **argv)
 		else if (strcmp(s, "--seats") == 0 && next) f->seats = atoi(argv[++k]);
 		else if (strcmp(s, "--lan-port") == 0 && next) f->lan_port = atoi(argv[++k]);
 		else if (strcmp(s, "--lan-map") == 0 && next) snprintf(f->lan_map, sizeof f->lan_map, "%s", argv[++k]);
+		else if (strcmp(s, "--lan-host") == 0 && next) snprintf(f->lan_host, sizeof f->lan_host, "%s", argv[++k]);
 		else if (strcmp(s, "--console") == 0 && next) {
 			const char *m = argv[++k];
 			f->console_edges = strcmp(m, "edges") == 0 ? 1 : strcmp(m, "ornaments") == 0 ? 0 : KP_CONSOLE_EDGES;

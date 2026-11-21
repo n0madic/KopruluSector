@@ -1,0 +1,38 @@
+# Network play by the host's address (docs/phase-network.md, stage N5), the joiner's side of net_host.kps. tools/ci.sh
+# runs it with --lan-map 42010:1:0, a map of its own: the host's broadcasts never reach it, so the join screen lists
+# nothing until the host's address is given in the Address popup (koprulu\address.bin, the host's game list on
+# 127.0.0.1's port 42000, its game on the next port). The game listed, Ok joins it; in the game the joiner moves a
+# worker and logs the shared hash at tick 400, which tools/ci.sh compares with the host's.
+options originals
+clock real
+wait screen gluMain
+click control gluMain.4
+wait dialog gluGameMode and still
+click control glugamemode.original
+wait screen gluConn
+click control gluConn.9
+wait dialog gluPEdit and still
+text "Join"
+click control gluPEdit.1
+wait screen gluLogin
+click control glulogin.ok
+wait screen gluJoin
+wait seconds 2
+expect list.count == 0
+click control gluJoin.16
+wait dialog address and still
+text "127.0.0.1:42000"
+click control address.1
+wait screen gluJoin
+wait list.count >= 1 within 10000
+until dialog gluChat every 2 click control gluJoin.13
+wait game within 60000
+log started tick units:0 units:1
+wait tick >= 40
+select worker 96
+expect selected > 0
+rclick center -160 96
+wait tick >= 400 within 120000
+log played tick sim.shared units:0 units:1
+wait seconds 3
+quit

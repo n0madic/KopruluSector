@@ -48,6 +48,9 @@ typedef struct {
 	 * 127.0.0.1's ports from BASE, -1 a program the map does not hold, on --lan-port) */
 	int lan_port;
 	char lan_map[32];
+	/* --lan-host ADDRESS: a host the LAN provider also asks for its game, "name[:port]" (kp_net.h; the profile's, which
+	 * the join screen's Address sets, when not given) */
+	char lan_host[KP_NET_HOST];
 	/* Create Game reads StarCraft 1.17's saved network games (.mlt, .mlx; kp_netsave.h) besides Koprulu's own, and a
 	 * resumed lobby finds them: the network oracle's runs only (no option sets it; the product resumes Koprulu's) */
 	int original_saves;
@@ -148,6 +151,8 @@ typedef struct {
 	 * replay's bytes go, under its name (the host copies the bytes) */
 	void (*pick_file)(void *ctx, int kind);
 	void (*export_replay)(void *ctx, const char *name, const uint8_t *bytes, size_t size);
+	/* the LAN provider's sockets opened (1) and closed (0): Android's Wi-Fi multicast lock (NULL: nothing to do) */
+	void (*lan_lock)(void *ctx, int on);
 } KpFlowHost;
 
 /* The kinds of file Import picks: Load Replay's replays, Play Custom's maps. */

@@ -33,6 +33,69 @@ const char *kp_net_addr_text(const KpNetAddr *a, char *out, size_t size)
 	return out;
 }
 
+static int host_char(int c)
+{
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '-' || c == '_';
+}
+
+int kp_net_host_parse(const char *text, char *name, size_t size, uint16_t *port)
+{
+	const char *s = text, *end, *colon = NULL;
+	size_t n;
+	uint32_t value = KP_NET_LIST_PORT;
+	if (!text || !name || size < KP_NET_HOST || !port) return 0;
+	while (*s == ' ') s++;
+	end = s + strlen(s);
+	while (end > s && end[-1] == ' ') end--;
+	for (n = 0; s + n < end; n++) {
+		if (s[n] == ':') {
+			colon = s + n;
+			break;
+		}
+		if (!host_char((unsigned char)s[n])) return 0;
+	}
+	if (n == 0 || n >= KP_NET_HOST) return 0;
+	memcpy(name, s, n);
+	name[n] = 0;
+	/* digits and dots alone are an IPv4 address, whole (a resolver reads "1.2.3" as 1.2.0.3) */
+	if (name[strspn(name, "0123456789.")] == 0 && !kp_net_ipv4_parse(name, &value)) return 0;
+	value = KP_NET_LIST_PORT;
+	if (colon) {
+		const char *d = colon + 1;
+		if (d == end) return 0;
+		for (value = 0; d < end; d++) {
+			if (*d < '0' || *d > '9') return 0;
+			value = value * 10u + (uint32_t)(*d - '0');
+			if (value > 0xfffeu) return 0;
+		}
+		if (value == 0) return 0;
+	}
+	*port = (uint16_t)value;
+	return 1;
+}
+
+int kp_net_ipv4_parse(const char *text, uint32_t *ip)
+{
+	uint32_t v = 0;
+	int part;
+	const char *s = text;
+	if (!text || !ip) return 0;
+	for (part = 0; part < 4; part++) {
+		uint32_t b = 0;
+		int digits = 0;
+		while (*s >= '0' && *s <= '9') {
+			b = b * 10u + (uint32_t)(*s++ - '0');
+			if (++digits > 3 || b > 255) return 0;
+		}
+		if (!digits) return 0;
+		v = v << 8 | b;
+		if (part < 3 && *s++ != '.') return 0;
+	}
+	if (*s) return 0;
+	*ip = v;
+	return 1;
+}
+
 uint16_t kp_net_sum(const uint8_t *p, size_t n)
 {
 	uint32_t a = 0, b = 0;

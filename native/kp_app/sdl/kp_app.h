@@ -380,6 +380,12 @@ void kp_app_sync_files(KpApp *a);
 void kp_app_pick_setup(KpApp *a);
 void kp_app_pick_frame(KpApp *a);
 void kp_app_pick_free(void);
+#if defined(SDL_PLATFORM_ANDROID)
+/* SDLActivity's static method of Koprulu's (one String in; tools/native/android_app.sh's patches): its String answer in
+ * out (returns "Ljava/lang/String;"; empty: none), or none (returns "V", out NULL); NULL text passes null. On the main
+ * thread, which SDL attached to the VM. */
+void kp_app_android_call(const char *method, const char *returns, const char *text, char *out, size_t size);
+#endif
 
 /* kp_app_audio.c: the mixer of the interface's sound commands */
 int kp_audio_init(KpAudio *au);

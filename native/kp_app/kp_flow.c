@@ -3931,8 +3931,25 @@ int kp_flow_languages_ready(KpFlow *f)
 
 /* --- the multiplayer screens' network (kp_netplay.h) --- */
 
-#ifndef __EMSCRIPTEN__ /* the web has no provider until the relay (stage N5) */
+/* The host address's buffers (the profile's, the join screen's popup) hold kp_net.h's form whole. */
+typedef char kp_flow_host_sizes_agree[KP_PROFILE_HOST == KP_NET_HOST && KP_UI_ADDRESS == KP_NET_HOST ? 1 : -1];
+
+#ifndef __EMSCRIPTEN__ /* the web has no network play (kp_netplay.h's TODO) */
 static void netplay_log(void *ctx, const char *line) { say((KpFlow *)ctx, "%s", line); }
+
+/* The join screen's Address: kept in the profile */
+static void netplay_host_changed(void *ctx, const char *text)
+{
+	KpFlow *f = (KpFlow *)ctx;
+	snprintf(f->profile->lan_host, sizeof f->profile->lan_host, "%s", text);
+	f->host.save_profile(f->host.ctx);
+}
+
+static void netplay_lan_lock(void *ctx, int on)
+{
+	KpFlow *f = (KpFlow *)ctx;
+	if (f->host.lan_lock) f->host.lan_lock(f->host.ctx, on);
+}
 
 static int netplay_entry_map(void *ctx, KpUi *ui, int index, KpMapHeader *h, char *path, size_t size)
 {
@@ -3949,7 +3966,7 @@ static int netplay_entry_save(void *ctx, KpUi *ui, int index, KpNetGameHeader *h
 static int netplay_find_save(void *ctx, uint32_t id, KpNetGameSave *out) { return kp_flow_find_save((KpFlow *)ctx, id, out); }
 #endif
 
-/* The glue's network over the system's sockets (none on the web: its relay is stage N5's) */
+/* The glue's network over the system's sockets (none on the web) */
 static void netplay_open(KpFlow *f)
 {
 #ifndef __EMSCRIPTEN__
@@ -3978,6 +3995,10 @@ static void netplay_open(KpFlow *f)
 	c.entry_save = netplay_entry_save;
 	c.find_save = netplay_find_save;
 	c.log = netplay_log;
+	/* the host by its address: --lan-host's for the run, else the profile's */
+	snprintf(c.host, sizeof c.host, "%s", f->flags->lan_host[0] ? f->flags->lan_host : f->profile->lan_host);
+	c.host_changed = netplay_host_changed;
+	c.lan_lock = netplay_lan_lock;
 	c.ctx = f;
 	if (!(f->netplay = (KpNetPlay *)malloc(sizeof *f->netplay))) {
 		say(f, "flow: no network: out of memory");

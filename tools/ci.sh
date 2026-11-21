@@ -55,7 +55,9 @@
 #     the game, its replay through Load Replay to the same state; custom_victory.kps: a game won, its score screen and
 #     its replay to its end) and a network game's two seats in one process
 #     (seats_melee.kps with --map on its (2)Boxer.scm and --seats 2: each seat's orders, the seat switched, the seats'
-#     shared hashes the same every frame) and, with KOPRULU_SCR,
+#     shared hashes the same every frame) and a network game of two programs over UDP on 127.0.0.1 (net_host.kps and
+#     net_join.kps: the host found only by its address, typed in the join screen's Address popup; the shared hash the
+#     same at tick 400) and, with KOPRULU_SCR,
 #     the HD art (hd_glue.kps, hd_game.kps on each race, hd_replay.kps: the glue's screens, the game's screens and menus and a replay's with no SD
 #     pixel where HD art exists, over Remastered's install, the world's packs laid out from its anims and the
 #     interface's frames by the placement table, and over its repack's sets and interface groups; each language's walk
@@ -740,6 +742,20 @@ if [ -n "${KOPRULU_APP:-}" ]; then
           break
         fi
       done
+      # network play by the host's address (phase N, stage N5): two programs, each the one host of its own map of
+      # 127.0.0.1's ports (the host's game list on 42000, net_join.kps types that address), so no broadcast crosses;
+      # the game reaches tick 400 with the same shared hash in both; a joiner that fails stops the host, which would
+      # otherwise wait for it (holding its ports) to its own time limit
+      app_script net_host 0 "$APP" --data "$KOPRULU_ORIGINAL" --lan-map 42000:1:0 &
+      local host_pid=$! join_pid net_status=0 shared
+      app_script net_join 0 "$APP" --data "$KOPRULU_ORIGINAL" --lan-map 42010:1:0 &
+      join_pid=$!
+      wait "$join_pid" || net_status=$?
+      [ "$net_status" -eq 0 ] || pkill -P "$host_pid" 2>/dev/null || true # the app, the subshell's child
+      wait "$host_pid" || net_status=$?
+      [ "$net_status" -eq 0 ]
+      shared="$(grep -oE 'played: tick 400, sim\.shared [0-9]+' build/script_net_host.log)"
+      [ -n "$shared" ] && grep -qF "$shared" build/script_net_join.log
     fi
   }
   # the same runs over the repack with no install beside it write the same files and play the same sounds

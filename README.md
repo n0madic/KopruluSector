@@ -18,8 +18,9 @@ on your own copy of the original data.
   zoom.
 - **Network play on a local network,** compatible with StarCraft 1.17.0.1 itself: Multiplayer → Local Area Network
   (UDP/IP) lists, hosts and joins the games of Koprulu and of the original, transfers the map and plays the game with
-  them ([phase N](docs/phase-network.md)). Games among Koprulu's players can be saved and resumed. This works on the
-  desktops; the web and the phones need the relay, which is still to come.
+  them ([phase N](docs/phase-network.md)). Games among Koprulu's players can be saved and resumed. The join screen's
+  Address finds a host by its name or IP, for a game [over the internet](#network-play-over-the-internet). This works
+  on the desktops and the phones; the web has no network play yet.
 
 Not included: Battle.net.
 
@@ -250,9 +251,26 @@ the settings for one run:
 | `--no-vsync` | turns vertical sync off |
 | `--lan-port PORT` | the local network's UDP port (default 6111, the original's; the next port is used too) |
 | `--lan-map BASE:HOSTS:SELF` | several games on one machine: game SELF of HOSTS, on the ports from BASE (for testing) |
+| `--lan-host NAME[:PORT]` | the host to ask for its game besides the local network's broadcast, as the join screen's Address sets it (PORT: the host's `--lan-port`, default 6111) |
 
 Your profile, saves and settings are kept in the system's per-user application folder. Saves do not carry over between
 builds whose saved state differs: the load screen says that such a save is of another version.
+
+### Network play over the internet
+
+The original's Local Area Network provider finds games by a broadcast, which does not cross the internet. In Koprulu
+the join screen's **Address** (or `--lan-host`) names the host, by its name or IP and its port when it is not 6111;
+the game list then asks that host too, and its game is listed beside the local ones. The address is kept in the
+profile. For this the host forwards UDP ports 6111 and 6112 (its `--lan-port` and the next port) from its router to
+its machine.
+
+In a game of three or more, the joiners talk to each other directly, as the original does: that may pass most home
+routers, since both sides send to each other, but not a carrier-grade or symmetric NAT. A virtual LAN such as
+ZeroTier or Tailscale avoids all of this: every player is on one network, the game list works as on a LAN, and the
+original 1.17 can join too (it has no Address of its own).
+
+On iOS, finding games by broadcast needs a permission Apple grants per app (the multicast entitlement), so an iPhone
+or iPad finds games by their address; the first search asks for access to the local network.
 
 ## Status
 

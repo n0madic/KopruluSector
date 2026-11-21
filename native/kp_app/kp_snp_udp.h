@@ -15,6 +15,13 @@
  *   - names and stat strings are cut at 127 characters for the advertisement's length too (the original counts their
  *     whole length while it copies 127, a datagram its receivers misread); StarCraft's are far shorter;
  *   - the shutdown sends neither its wake datagrams (they woke its own blocked threads) nor the stop it fails to send.
+ *
+ * Koprulu's addition (phase N, stage N5): a host by its address (kp_snp_udp_direct), for a network that does not carry
+ * the broadcasts (the internet, iOS without Apple's multicast entitlement). Each game-list request also goes to that
+ * address, a datagram the original sends to 255.255.255.255:6111; the original's receiving thread answers a request to
+ * whoever sent it (AdvertReceiveThread 0x1d0089d0), so a 1.17 host lists its game too. The game of an advertisement from
+ * that address is at its port + 1 (6112 for the default 6111: the original's), where a Koprulu host on --lan-port
+ * PORT binds socket B.
  */
 #ifndef KP_SNP_UDP_H
 #define KP_SNP_UDP_H
@@ -75,6 +82,8 @@ typedef struct {
 	KpSnpDatagram *queue, *queue_tail;
 	int queued;
 	long oversized, overflowed, crowded, malformed; /* datagrams dropped where the original fails (above) */
+	KpNetAddr direct;          /* Koprulu's host by its address (its socket A), when direct_on */
+	int direct_on;
 } KpSnpUdp;
 
 /* UdpInitialize 0x1d007fa0 (the sockets are the transport's): the provider's program and version, its maximum players,
@@ -105,6 +114,9 @@ const KpSnpGame *kp_snp_udp_lock_games(KpSnpUdp *p);
 /* UdpUnlockGameList 0x1d007930: a game-list request broadcast when more than KP_SNP_REQUEST_GAP ms passed since the
  * last one sent here. */
 void kp_snp_udp_unlock_games(KpSnpUdp *p);
+/* Koprulu's host by its address (above): `host` is its socket A (a port of 1..65534), NULL none. A game-list request
+ * goes to it at once and with every request after; 0 for a port that has no port above it. */
+int kp_snp_udp_direct(KpSnpUdp *p, const KpNetAddr *host);
 /* UdpGetGameInfo 0x1d007ed0: the first listed game with that id (0: any) and that name (empty: any, else compared
  * without case) into *out; 0 when there is none. */
 int kp_snp_udp_game_info(KpSnpUdp *p, uint32_t id, const char *name, KpSnpGame *out);

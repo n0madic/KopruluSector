@@ -928,7 +928,7 @@ static void session_profile_options(KpT *T)
 	kp_t_ok(T, kp_profile_decode(&q, bytes, size, &err) == 0, "%s", err.msg);
 	free(bytes);
 	kp_t_eq(T, q.options, KP_UI_OPTION_EXPANSION_INTRO | KP_UI_OPTIONS_DEFAULT, "its intro to play kept");
-	kp_t_ok(T, kp_kpf_build("PROF", 11, 0, "koprulu", NULL, old, 3, &bytes, &size) == 0, "a later schema's profile");
+	kp_t_ok(T, kp_kpf_build("PROF", 12, 0, "koprulu", NULL, old, 3, &bytes, &size) == 0, "a later schema's profile");
 	kp_t_ok(T, kp_profile_decode(&q, bytes, size, &err) != 0, "is not read");
 	free(bytes);
 }
@@ -1115,6 +1115,7 @@ static void session_profile_custom_choices(KpT *T)
 	snprintf(p.game_subtype, sizeof p.game_subtype, "3 vs 1");
 	snprintf(p.net_type, sizeof p.net_type, "Melee");
 	snprintf(p.game_speed, sizeof p.game_speed, "Fastest");
+	snprintf(p.lan_host, sizeof p.lan_host, "game.example.net:7000");
 	kp_t_ok(T, kp_profile_encode(&p, &bytes, &size) == 0, "encoded");
 	kp_t_ok(T, kp_profile_decode(&q, bytes, size, &err) == 0, "%s", err.msg);
 	free(bytes);
@@ -1122,6 +1123,7 @@ static void session_profile_custom_choices(KpT *T)
 	kp_t_eq_str(T, q.game_subtype, "3 vs 1", NULL);
 	kp_t_eq_str(T, q.net_type, "Melee", NULL);
 	kp_t_eq_str(T, q.game_speed, "Fastest", NULL);
+	kp_t_eq_str(T, q.lan_host, "game.example.net:7000", "the host address");
 	memset(old, 0, sizeof old);
 	old[0].fourcc = "NAME";
 	old[0].payload = (const uint8_t *)"";
@@ -1152,6 +1154,11 @@ static void session_profile_custom_choices(KpT *T)
 	free(bytes);
 	kp_t_eq_str(T, q.net_type, "Melee", "schema 10: the game type");
 	kp_t_eq_str(T, q.game_speed, "Fast", "and the speed");
+	kp_t_eq_str(T, q.lan_host, "", "schema 10: no host address");
+	kp_t_ok(T, kp_kpf_build("PROF", 11, 0, "koprulu", NULL, old, 4, &bytes, &size) == 0, "a schema 11 profile");
+	kp_t_ok(T, kp_profile_decode(&q, bytes, size, &err) == 0, "%s", err.msg);
+	free(bytes);
+	kp_t_ok(T, strcmp(q.net_type, "Melee") == 0 && q.lan_host[0] == 0, "schema 11 without the address: the rest kept");
 	old[3].payload = SPEED_PAST_ITS_END;
 	old[3].size = sizeof SPEED_PAST_ITS_END;
 	kp_t_ok(T, kp_kpf_build("PROF", 10, 0, "koprulu", NULL, old, 4, &bytes, &size) == 0, "a damaged speed");

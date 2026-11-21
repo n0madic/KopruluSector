@@ -114,9 +114,7 @@ EM_JS(int, web_take_import, (char *out, int size), {
 #endif
 
 #ifdef SDL_PLATFORM_ANDROID
-/* SDLActivity's static method of Koprulu's (one String in): its String answer in out (empty: none); NULL text passes
- * null. On the main thread, which SDL attached to the VM. */
-static void android_call(const char *method, const char *returns, const char *text, char *out, size_t size)
+void kp_app_android_call(const char *method, const char *returns, const char *text, char *out, size_t size)
 {
 	JNIEnv *env = (JNIEnv *)SDL_GetAndroidJNIEnv();
 	jobject activity = env ? (jobject)SDL_GetAndroidActivity() : NULL;
@@ -141,7 +139,7 @@ static void android_call(const char *method, const char *returns, const char *te
 		}
 	}
 	if (env && (*env)->ExceptionCheck(env)) {
-		SDL_Log("file picker: %s failed", method);
+		SDL_Log("android: %s failed", method);
 		(*env)->ExceptionClear(env);
 	}
 	if (arg) (*env)->DeleteLocalRef(env, arg);
@@ -200,7 +198,7 @@ static void host_export_replay(void *ctx, const char *name, const uint8_t *bytes
 	 * document picker takes the name alone) */
 	snprintf(location, sizeof location, "%s%s", docs ? docs : "", name);
 #ifdef SDL_PLATFORM_ANDROID
-	android_call("kpSetFileDialogName", "V", name, NULL, 0);
+	kp_app_android_call("kpSetFileDialogName", "V", name, NULL, 0);
 #endif
 	SDL_ShowSaveFileDialog(dialog_answer, NULL, a->window, REPLAY_FILTERS, 1, location);
 #endif
@@ -272,7 +270,7 @@ void kp_app_pick_frame(KpApp *a)
 #ifdef SDL_PLATFORM_ANDROID
 		if (strncmp(path, "content:", 8) == 0) { /* the URI names no file: the document's display name, if it has one */
 			char shown[PICK_PATH];
-			android_call("kpDisplayName", "Ljava/lang/String;", path, shown, sizeof shown);
+			kp_app_android_call("kpDisplayName", "Ljava/lang/String;", path, shown, sizeof shown);
 			if (shown[0]) snprintf(name, sizeof name, "%s", shown);
 		}
 #endif
