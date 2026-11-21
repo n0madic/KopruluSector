@@ -225,6 +225,12 @@ static int pan_remainder(KpUi *ui)
 	return moved;
 }
 
+uint32_t *kp_ui_scroll_speed(KpUi *ui, int key)
+{
+	if (kp_ui_multiplayer(ui)) return key ? &ui->multi_key_scroll_speed : &ui->multi_mouse_scroll_speed;
+	return key ? &ui->key_scroll_speed : &ui->mouse_scroll_speed;
+}
+
 int kp_ui_update_scroll(KpUi *ui, int32_t cursor_x, int32_t cursor_y)
 {
 	KpUiScroll *s = sc(ui);
@@ -241,12 +247,12 @@ int kp_ui_update_scroll(KpUi *ui, int32_t cursor_x, int32_t cursor_y)
 	}
 	key_direction(ui, &dx, &dy);
 	if (dx != 0 || dy != 0) {
-		speed = ui->key_scroll_speed; /* TODO: the multiplayer speeds 0x6d3150, 0x6d314c */
+		speed = *kp_ui_scroll_speed(ui, 1);
 		s->suppressed = 1;
 		moving = 1;
 	} else {
 		kp_ui_edge_scroll(ui, cursor_x, cursor_y, &dx, &dy);
-		speed = ui->mouse_scroll_speed;
+		speed = *kp_ui_scroll_speed(ui, 0);
 		moving = dx != 0 || dy != 0;
 		if (!moving) s->step = 0;
 	}

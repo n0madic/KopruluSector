@@ -1827,6 +1827,9 @@ void kp_ui_menus_net_report(KpUi *ui, uint16_t network, const char *detail, int 
 {
 	/* ReportNetError 0x474a00: a report that is not fatal shows without its detail */
 	if (!fatal) detail = NULL;
+	if (in_game && ui->open >= 0 && kp_ui_fatal_open(ui, kp_ui_tbl(ui, KP_UI_NETWORK, network), detail, fatal) >= 0) {
+		return; /* ShowNetErrorMessage 0x474a70 in a game: the exits once its modal run ended */
+	}
 	if (in_game || ui->open < 0) defer_net_error(ui, network, detail);
 	else show_net_error(ui, network, detail);
 	if (!fatal) return;

@@ -940,6 +940,8 @@ static int create_console(KpUi *ui, KpGame *g, const uint32_t *create_ticks)
 	ui->hud.replay_viewer = -1;
 	ui->ally.dialog = -1; /* the alliance dialog: none open */
 	ui->timeout.dialog = -1;
+	ui->fatal.dialog = -1;
+	ui->fatal.exit = 0;
 	ui->hud.leaderboard = -1;
 	ui->hud.textbox = -1;
 	ui->status.panel = -1;

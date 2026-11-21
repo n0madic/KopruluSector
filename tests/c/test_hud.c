@@ -1324,6 +1324,49 @@ static void camera_pan_arrives_in_a_wide_view(KpT *T)
 	kp_t_ok(T, p.steps != 0, "the pan from the limits arrives and releases the trigger's wait");
 }
 
+/* The rows the Down key scrolls the view in 6 calls of UpdateMapScroll from the map's top left. */
+static int64_t key_scroll_rows(KpUi *ui)
+{
+	int64_t x = 0, y = 0;
+	int k;
+	kp_ui_set_screen(ui, 0, 0);
+	(void)kp_hud_take_camera(ui, &x, &y);
+	kp_t_ui_input(ui, KEY_DOWN, 0x28, 0);
+	for (k = 0; k < 6; k++) kp_ui_update_scroll(ui, 320, 240);
+	kp_t_ui_input(ui, KEY_UP, 0x28, 0);
+	kp_ui_update_scroll(ui, 320, 240); /* no key, no edge: the step back at 0 */
+	return kp_hud_take_camera(ui, &x, &y) ? y : 0;
+}
+
+/* UpdateMapScroll 0x49bf10 takes the options' multiplayer scroll speeds 0x6d314c, 0x6d3150 under the multiplayer byte
+ * 0x672664 (the registry's m_mscroll, m_kscroll), the single player's 0x6d3134, 0x6d3138 otherwise. */
+static void multiplayer_scrolls_by_its_own_speeds(KpT *T)
+{
+	Hud *H;
+	KpUi *ui;
+	int64_t fast, slow;
+	if (!ready(T, "test_hud.multiplayer_scrolls_by_its_own_speeds", TERRAN01)) return;
+	H = with_hud(T, terran01(T), 640, 480);
+	ui = H->ui;
+	kp_ui_set_view(ui, 640, 400);
+	ui->key_scroll_speed = 6;
+	ui->multi_key_scroll_speed = 0;
+	fast = key_scroll_rows(ui);
+	ui->key_scroll_speed = 0;
+	slow = key_scroll_rows(ui);
+	kp_t_ok(T, fast > slow && slow > 0, "a single player's game by its key speed: %d, %d", (int)fast, (int)slow);
+	ui->multi_key_scroll_speed = 6;
+	kp_t_eq(T, key_scroll_rows(ui), slow, "the multiplayer speed unused out of multiplayer");
+	H->g->setup.multiplayer = 1;
+	kp_t_eq(T, key_scroll_rows(ui), fast, "a multiplayer game by the multiplayer key speed");
+	ui->multi_key_scroll_speed = 0;
+	ui->key_scroll_speed = 6;
+	kp_t_eq(T, key_scroll_rows(ui), slow, "the single player's unused in multiplayer");
+	kp_t_ok(T, kp_ui_scroll_speed(ui, 0) == &ui->multi_mouse_scroll_speed, "the mouse's too");
+	H->g->setup.multiplayer = 0;
+	kp_t_ok(T, kp_ui_scroll_speed(ui, 0) == &ui->mouse_scroll_speed, "the single player's mouse speed");
+}
+
 /* The interface's pending ends of the trigger waits that a save keeps (kp_session.h's PRES): a trigger portrait's
  * milliseconds left and a camera pan's arrival; after a load replaced the game they end without releasing its waits. */
 static void pending_releases_reach_the_save(KpT *T)
@@ -4896,11 +4939,20 @@ static void glue_network_ready_room_waits_for_the_players(KpT *T)
 	}
 }
 
+/* The fatal dialog's OK by its key (Enter), the frames until it closed. */
+static void fatal_ok(Glue *G)
+{
+	int k;
+	glue_vk(G->ui, 0x0d);
+	for (k = 0; k < 200 && kp_ui_fatal_shown(G->ui); k++) glue_frame(G);
+}
+
 /* ReportNetError 0x474a00's screens (ShowNetErrorMessage 0x474a70, RequestGlueExit 0x457cf0, GlueExitHook 0x458440):
  * a report over an open screen shows at once, the string alone when it is not fatal (rez\gluPOk.bin, the screen
  * kept), with the detail when it is (rez\gluPOkSplit.bin); a fatal one's Ok closes the chat room and the main menu
- * follows; a race ready room whose turn step reports it answers 100 after the popup's Ok; with no dialog open, or in a
- * game, the report is deferred with its detail and shown by the next screen, and a game's ends (Quit Mission). */
+ * follows; a race ready room whose turn step reports it answers 100 after the popup's Ok; with no dialog open the
+ * report is deferred with its detail and shown by the next screen; in a game it shows at once in rez\dlgFatal.bin
+ * (ShowFatalErrorDialog 0x43ec00), whose OK ends the game (Quit Mission) and the glue, or deferred with no dialog open. */
 static void glue_fatal_network_report_exits_the_glue(KpT *T)
 {
 	enum { CHAT = 3, PROTOSS_ROOM = 9, START = 13, TEXT = 2, TEXT2 = 5, FRAMES = 4000 };
@@ -4946,6 +4998,31 @@ static void glue_fatal_network_report_exits_the_glue(KpT *T)
 	kp_t_eq(T, n->released, 1, "the room released the lobby");
 	kp_t_eq(T, kp_ui_menus_glue_exit(ui, 0), 0, "the exit taken");
 	wait_for(G, "rez\\glumain.bin", FRAMES);
+	/* in a game: the fatal dialog over it at once, the exits at its OK */
+	ui->game_exit = 0;
+	kp_ui_menus_net_report(ui, NETTBL_NETWORK_ERROR, detail, 1, 1);
+	kp_t_eq_str(T, top(G, name, sizeof name), "rez\\dlgfatal.bin", "the fatal dialog at once");
+	kp_t_ok(T, kp_ui_fatal_shown(ui), "shown");
+	c = child_of(ui, ui->open, -10);
+	kp_t_ok(T, c >= 0 && ui->controls[c].text && strcmp((const char *)ui->controls[c].text, network) == 0, "the string");
+	c = child_of(ui, ui->open, -20);
+	kp_t_ok(T, c >= 0 && ui->controls[c].text && strcmp((const char *)ui->controls[c].text, detail) == 0, "the detail");
+	kp_t_eq(T, ui->menus.net_error, 0, "not deferred");
+	kp_t_eq(T, ui->game_exit, 0, "the game goes on until its OK");
+	kp_t_eq(T, kp_ui_menus_glue_exit(ui, 0), 0, "the glue too");
+	kp_t_ok(T, ui->cursor_locked, "LockCursor");
+	fatal_ok(G);
+	kp_t_ok(T, !kp_ui_fatal_shown(ui), "its OK closes it");
+	kp_t_ok(T, !ui->cursor_locked, "UnlockCursor");
+	kp_t_eq(T, ui->game_exit, KP_UI_EXIT_QUIT_MISSION, "RequestGameExit(4)");
+	kp_t_eq(T, kp_ui_menus_glue_exit(ui, 1), 1, "the glue's exit after the game");
+	ui->game_exit = 0;
+	/* not fatal: the string alone, no exit */
+	kp_ui_menus_net_report(ui, NETTBL_NETWORK_ERROR, detail, 0, 1);
+	c = child_of(ui, ui->open, -20);
+	kp_t_ok(T, kp_ui_fatal_shown(ui) && c >= 0 && ui->controls[c].text == NULL, "the string alone");
+	fatal_ok(G);
+	kp_t_ok(T, !kp_ui_fatal_shown(ui) && ui->game_exit == 0 && !kp_ui_menus_glue_exit(ui, 0), "closed, no exit");
 	/* with no dialog open: deferred with its detail, shown by the next screen */
 	while (ui->open >= 0) kp_ui_end_dialog(ui, ui->open);
 	kp_ui_menus_net_report(ui, NETTBL_NETWORK_ERROR, detail, 1, 0);
@@ -4956,11 +5033,10 @@ static void glue_fatal_network_report_exits_the_glue(KpT *T)
 	kp_t_eq_str(T, ui->menus.popup_text2, detail, "the flush shows the detail");
 	kp_t_eq(T, ui->menus.net_error, 0, "shown once");
 	kp_ui_menus_close_popup(ui);
-	/* in a game: deferred, and the game ends */
-	ui->game_exit = 0;
+	/* in a game with no dialog open: deferred, and the game ends */
 	kp_ui_menus_net_report(ui, NETTBL_NETWORK_ERROR, detail, 1, 1);
 	kp_t_eq(T, ui->game_exit, KP_UI_EXIT_QUIT_MISSION, "RequestGameExit(4)");
-	kp_t_eq(T, ui->menus.net_error, NETTBL_NETWORK_ERROR, "deferred in a game");
+	kp_t_eq(T, ui->menus.net_error, NETTBL_NETWORK_ERROR, "deferred");
 	kp_t_eq(T, kp_ui_menus_glue_exit(ui, 1), 1, "the glue's exit after the game");
 	ui->game_exit = 0;
 	ui->menus.net_error = 0;
@@ -6018,6 +6094,7 @@ static const KpTest TESTS[] = {
 	{ "vector_text_draws_lines_in_the_canvas_order", vector_text_draws_lines_in_the_canvas_order, 0 },
 	{ "caption_lays_out_a_subtitle", caption_lays_out_a_subtitle, 0 },
 	{ "camera_pan_arrives_in_a_wide_view", camera_pan_arrives_in_a_wide_view, 0 },
+	{ "multiplayer_scrolls_by_its_own_speeds", multiplayer_scrolls_by_its_own_speeds, 0 },
 	{ "canvas_blends_a_menu_over_the_text_lines", canvas_blends_a_menu_over_the_text_lines, 0 },
 	{ "canvas_composes_the_classic_screen", canvas_composes_the_classic_screen, 0 },
 	{ "console_pieces_close_at_every_width", console_pieces_close_at_every_width, 0 },

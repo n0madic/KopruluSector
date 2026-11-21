@@ -1879,6 +1879,8 @@ static void options_to_ui(const KpFlow *f, KpUi *ui)
 	ui->sound.effects = s->effects;
 	ui->mouse_scroll_speed = s->mouse_scroll;
 	ui->key_scroll_speed = s->key_scroll;
+	ui->multi_mouse_scroll_speed = s->multi_mouse_scroll;
+	ui->multi_key_scroll_speed = s->multi_key_scroll;
 	ui->tip_index = s->tip;
 	ui->cpu_throttle = (uint8_t)s->cpu_throttle;
 	kp_ui_apply_volumes(ui); /* a profile's silence closes the music before its first track */
@@ -1942,6 +1944,7 @@ static int seat_consoles(KpFlow *f, int from_save, char *err, size_t err_size);
 
 static int start_hud(KpFlow *f, int from_save, char *err, size_t err_size)
 {
+	f->fatal_held = 0; /* the new console has no fatal dialog */
 	if (!f->glue_on) { /* without the glue each game's console has an interface of its own */
 		KpUi *ui = game_interface(f, err, err_size);
 		if (!ui) return -1;
@@ -3370,6 +3373,8 @@ static int keep_settings(KpFlow *f, uint32_t sections)
 	if (sections & KP_UI_SECTION_SPEED) {
 		changed |= keep_setting(&s->mouse_scroll, ui->mouse_scroll_speed);
 		changed |= keep_setting(&s->key_scroll, ui->key_scroll_speed);
+		changed |= keep_setting(&s->multi_mouse_scroll, ui->multi_mouse_scroll_speed);
+		changed |= keep_setting(&s->multi_key_scroll, ui->multi_key_scroll_speed);
 		changed |= keep_setting(&s->cpu_throttle, ui->cpu_throttle);
 		if (ui->speed_chosen != 0) changed |= keep_setting(&s->game_speed, ui->speed_chosen - 1);
 	}
@@ -3611,6 +3616,12 @@ static void game_frame(KpFlow *f)
 		return;
 	}
 	if (s->failed) net_failed(f, s); /* a failure outside the steps (the session's turns, a resumed save's load) */
+	if (f->ui != NULL && kp_ui_fatal_shown(f->ui) != f->fatal_held) {
+		/* the fatal dialog runs modally over the game: no step under it, and no time to catch up after it */
+		f->fatal_held = !f->fatal_held;
+		if (f->fatal_held) kp_session_pause(s);
+		else kp_session_resume(s);
+	}
 	if (!kp_flow_glue_active(f) && !s->failed && !f->flags->autotest /* the autotest steps the game itself */
 		&& (!f->net_game || net_frame(f, s))) {
 		ticks = kp_session_advance(s, now(f), &fraction, f->host.clock_ms);

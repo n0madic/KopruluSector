@@ -1,6 +1,7 @@
 /* The dialog framework of kp_ui (kp_ui.h; dlg.cpp, ctrl.cpp: atlas P42 0x4c1470..0x4c3770, P43): the containers,
  * the control pool, loading, initializing and destroying dialogs, the default procedures' user events, and painting
  * a dialog into its off-screen bitmap. */
+#include "kp_game.h"
 #include "kp_text.h"
 #include "kp_ui.h"
 #include "kp_ui_data.h"
@@ -150,6 +151,8 @@ KpUi *kp_ui_new_data(const KpUiData *d, char *err, size_t err_size)
 	ui->hud.resources = ui->hud.leaderboard = -1;
 	ui->input.over_console = -1;
 	ui->mouse_scroll_speed = ui->key_scroll_speed = KP_UI_SCROLL_SPEED;
+	ui->multi_mouse_scroll_speed = ui->multi_key_scroll_speed = KP_UI_SCROLL_SPEED;
+	ui->fatal.dialog = -1;
 	ui->options = KP_UI_OPTIONS_DEFAULT;
 	ui->gamma = KP_UI_GAMMA_DEFAULT;
 	{
@@ -562,6 +565,11 @@ int32_t kp_ui_load_dialog(KpUi *ui, const char *name)
 		bin->loads++;
 	}
 	return first;
+}
+
+int kp_ui_multiplayer(const KpUi *ui)
+{
+	return ui->menus.multiplayer || (ui->game != NULL && ui->game->setup.multiplayer != 0);
 }
 
 int kp_ui_send_user(KpUi *ui, int32_t control, uint32_t code, uint32_t param)

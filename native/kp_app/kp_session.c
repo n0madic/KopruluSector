@@ -1591,6 +1591,7 @@ void kp_profile_init(KpProfile *p)
 	p->settings.music = KP_UI_MUSIC_VOLUME;
 	p->settings.effects = KP_UI_EFFECTS_VOLUME;
 	p->settings.mouse_scroll = p->settings.key_scroll = KP_UI_SCROLL_SPEED;
+	p->settings.multi_mouse_scroll = p->settings.multi_key_scroll = KP_UI_SCROLL_SPEED;
 	p->settings.game_speed = KP_DEFAULT_SPEED;
 }
 
@@ -1751,6 +1752,8 @@ int kp_profile_encode(const KpProfile *p, uint8_t **out, size_t *size)
 	put32(&settings, p->settings.game_speed);
 	put32(&settings, p->settings.tip);
 	put32(&settings, p->settings.cpu_throttle);
+	put32(&settings, p->settings.multi_mouse_scroll); /* appended: an older SOPT keeps the defaults */
+	put32(&settings, p->settings.multi_key_scroll);
 	put32(&options, p->options);
 	put16(&video, (uint32_t)(uint16_t)p->video.gamma);
 	put16(&video, (uint32_t)(uint16_t)p->video.portraits);
@@ -2004,6 +2007,8 @@ int kp_profile_decode(KpProfile *p, const uint8_t *data, size_t size, KpError *e
 	sopt_value(settings, 4, KP_UI_SPEED_MAX, &p->settings.game_speed);
 	sopt_value(settings, 5, SOPT_ANY, &p->settings.tip);
 	sopt_value(settings, 6, SOPT_ANY, &p->settings.cpu_throttle);
+	sopt_value(settings, 7, KP_UI_SPEED_MAX, &p->settings.multi_mouse_scroll);
+	sopt_value(settings, 8, KP_UI_SPEED_MAX, &p->settings.multi_key_scroll);
 	p->settings.cpu_throttle = p->settings.cpu_throttle != 0; /* 0x49f180: non-zero is on */
 	if ((languages = kp_kpf_find(&c, "LANG")) != NULL) { /* a damaged one: no choice, the rest stays */
 		size_t from = 0;

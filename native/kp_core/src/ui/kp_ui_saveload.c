@@ -240,16 +240,6 @@ static int legacy_only(const char *s)
 	return kp_text_to_legacy(s, legacy, sizeof legacy) == kp_text_chars((const uint8_t *)s);
 }
 
-/* Whether the save command reaches the game through a turn's dispatcher: a multiplayer game's, over the network or
- * --seats' hub (the menus' multiplayer, or the game's own when no menu chose it). ExecuteTurnCommands 0x475d30 takes
- * the name only as ValidateNetString 0x476e20 does, its NUL within 0x1c bytes, so the name travels as the original's
- * (windows-1252). A single player's command runs as it was queued, and the recorder never writes it (RecordCommand
- * 0x478340's table), so its name stays UTF-8. */
-static int dispatched_name(const KpUi *ui)
-{
-	return ui->menus.multiplayer || (ui->game != NULL && ui->game->setup.multiplayer != 0);
-}
-
 static void send_save(KpUi *ui, const char *name)
 {
 	/* SendSaveGameCommand 0x4740e0 (the time stamp: the host's clock in seconds) */
@@ -261,9 +251,12 @@ static void send_save(KpUi *ui, const char *name)
 	cmd[2] = (uint8_t)(t >> 8);
 	cmd[3] = (uint8_t)(t >> 16);
 	cmd[4] = (uint8_t)(t >> 24);
-	/* a multiplayer game's name in the original's encoding, as the other seats (1.17 among them) take it:
-	 * windows-1252, its NUL within 28 bytes (save_confirm refused a character it lacks) */
-	if (dispatched_name(ui)) (void)kp_text_to_legacy(name, (char *)cmd + 5, SAVE_NAME_LIMIT);
+	/* Under the multiplayer byte the save command reaches the game through a turn's dispatcher, over the network or
+	 * --seats' hub. ExecuteTurnCommands 0x475d30 takes the name only as ValidateNetString 0x476e20 does, its NUL within
+	 * 0x1c bytes, so the name travels as the original's: windows-1252, as the other seats (1.17 among them) take it
+	 * (save_confirm refused a character it lacks). A single player's command runs as it was queued, and the recorder
+	 * never writes it (RecordCommand 0x478340's table), so its name stays UTF-8. */
+	if (kp_ui_multiplayer(ui)) (void)kp_text_to_legacy(name, (char *)cmd + 5, SAVE_NAME_LIMIT);
 	else snprintf((char *)cmd + 5, CMD_NAME, "%s", name);
 	kp_ui_queue_command(ui, cmd, 5 + strlen((const char *)cmd + 5) + 1);
 	ui->save.sent_tick = ui->now; /* 0x6a5ea0 = GetTickCount() */
@@ -478,7 +471,7 @@ static void save_confirm(KpUi *ui, int32_t dialog)
 		message_box(ui, (const char *)kp_ui_tbl(ui, KP_UI_NETWORK, NET_RESERVED), reopen_save, "rez\\ok.bin");
 		return;
 	}
-	if (dispatched_name(ui) && !legacy_only(ui->save.name)) {
+	if (kp_ui_multiplayer(ui) && !legacy_only(ui->save.name)) {
 		/* Koprulu's: the original's ANSI edit box takes no character windows-1252 lacks, and its name travels as is */
 		message_box(ui, (const char *)kp_ui_tbl(ui, KP_UI_NETWORK, NET_INVALID_CHARACTER), reopen_save, "rez\\ok.bin");
 		return;

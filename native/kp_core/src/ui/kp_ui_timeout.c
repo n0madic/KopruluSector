@@ -115,6 +115,7 @@ void kp_ui_net_wait(KpUi *ui)
 	int slots[SLOTS], n;
 	uint32_t seconds = 0;
 	if (!ui->hud.live || net == NULL || net->game_lagging == NULL) return;
+	if (kp_ui_fatal_shown(ui)) return; /* the fatal dialog's modal run: the game loop and its wait stop under it */
 	n = net->game_lagging(net->host, slots, &seconds);
 	if (n < 0) { /* the turn came: the dialog goes (WaitForLaggingPlayers' end) */
 		if (ui->timeout.dialog >= 0) kp_ui_destroy_dialog(ui, ui->timeout.dialog);

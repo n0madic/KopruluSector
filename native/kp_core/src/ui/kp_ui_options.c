@@ -48,6 +48,8 @@ static void snapshot(KpUi *ui, struct KpUiOptionsBlock *b)
 	b->speed = ui->game != NULL ? (int32_t)kp_scalar(ui->game, KP_SPEED) : 0;
 	b->mouse_scroll = ui->mouse_scroll_speed;
 	b->key_scroll = ui->key_scroll_speed;
+	b->multi_mouse_scroll = ui->multi_mouse_scroll_speed;
+	b->multi_key_scroll = ui->multi_key_scroll_speed;
 	b->music = ui->sound.music;
 	b->effects = ui->sound.effects;
 	b->tip = ui->tip_index;
@@ -64,6 +66,8 @@ static void restore(KpUi *ui, const struct KpUiOptionsBlock *b)
 	if (ui->game != NULL && kp_scalar(ui->game, KP_SPEED) != b->speed) kp_scalar_set(ui->game, KP_SPEED, b->speed);
 	ui->mouse_scroll_speed = b->mouse_scroll;
 	ui->key_scroll_speed = b->key_scroll;
+	ui->multi_mouse_scroll_speed = b->multi_mouse_scroll;
+	ui->multi_key_scroll_speed = b->multi_key_scroll;
 	ui->sound.music = b->music;
 	ui->sound.effects = b->effects;
 	ui->tip_index = b->tip;
@@ -248,10 +252,10 @@ static int sound_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 
 static void scroll_speeds_changed(KpUi *ui, uint32_t dialog, int32_t value)
 {
-	/* SpeedSliderChanged 0x49f360: the scroll speeds apply at once */
+	/* SpeedSliderChanged 0x49f360: the scroll speeds apply at once, the multiplayer pair's under the multiplayer byte */
 	(void)value;
-	ui->mouse_scroll_speed = (uint32_t)(uint16_t)pos_of(ui, (int32_t)dialog, ID_MOUSE_SCROLL);
-	ui->key_scroll_speed = (uint32_t)(uint16_t)pos_of(ui, (int32_t)dialog, ID_KEY_SCROLL);
+	*kp_ui_scroll_speed(ui, 0) = (uint32_t)(uint16_t)pos_of(ui, (int32_t)dialog, ID_MOUSE_SCROLL);
+	*kp_ui_scroll_speed(ui, 1) = (uint32_t)(uint16_t)pos_of(ui, (int32_t)dialog, ID_KEY_SCROLL);
 }
 
 static int speed_slider(KpUi *ui, KpUiControl *c, KpUiEvent *e)
@@ -261,13 +265,13 @@ static int speed_slider(KpUi *ui, KpUiControl *c, KpUiEvent *e)
 	if (e->type == KP_UI_USER && e->code == KP_UI_CREATE) {
 		int32_t v = -1;
 		if (c->id == ID_GAME_SPEED) v = ui->game != NULL ? (int32_t)kp_scalar(ui->game, KP_SPEED) : 0;
-		else if (c->id == ID_MOUSE_SCROLL) v = (int32_t)ui->mouse_scroll_speed;
-		else if (c->id == ID_KEY_SCROLL) v = (int32_t)ui->key_scroll_speed;
+		else if (c->id == ID_MOUSE_SCROLL) v = (int32_t)*kp_ui_scroll_speed(ui, 0);
+		else if (c->id == ID_KEY_SCROLL) v = (int32_t)*kp_ui_scroll_speed(ui, 1);
 		if (v >= 0) {
 			kp_ui_scrollbar_set_range(ui, self, 0, KP_UI_SPEED_MAX);
 			kp_ui_scrollbar_set_steps(ui, self, 1, 1);
 			(void)kp_ui_send_user(ui, self, KP_UI_VALUE_CHANGED, (uint32_t)v);
-			if (c->id == ID_GAME_SPEED && ui->menus.multiplayer) kp_ui_set_enabled(ui, self, 0);
+			if (c->id == ID_GAME_SPEED && kp_ui_multiplayer(ui)) kp_ui_set_enabled(ui, self, 0);
 		}
 		kp_ui_scrollbar_set_callback(ui, self, scroll_speeds_changed);
 		c->user = (uint32_t)c->parent;
@@ -564,7 +568,7 @@ static int tips_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 			uint32_t last = ui->menus.expansion ? TIPS_EXPANSION : TIPS_ORIGINAL;
 			int64_t key = ui->game != NULL ? kp_scalar(ui->game, KP_MISSION_INDEX) : 0;
 			int step = 1; /* the next tip; the mission's own when opened at its start */
-			if (!ui->menus.multiplayer && key > 0 && key < 66 && ui->tips_automatic) {
+			if (!kp_ui_multiplayer(ui) && key > 0 && key < 66 && ui->tips_automatic) {
 				ui->tip_index = MISSION_TIPS[key];
 				step = 0;
 			}

@@ -238,6 +238,7 @@ typedef struct KpFlow {
 	/* the network's game (stage N4): the game in play is the chat room's (its turns netplay's KpNetGame), its first
 	 * turn ran (RunGame 0x445310's step 8: the frames run after it), Storm's game left (EndGame 0x443db0) */
 	int net_game, net_running, net_left;
+	int fatal_held;              /* ShowFatalErrorDialog 0x43ec00's modal run: the session's clock paused under it */
 	char pending_save[KP_PROFILE_SAVE_NAME], pending_load[KP_PROFILE_SAVE_NAME], load_on_start[KP_PROFILE_SAVE_NAME];
 	uint32_t pending_save_id; /* the save command's DWORD (a network save's ID, FindMultiplayerSaveById 0x4995e0) */
 	/* the network save this seat's lobby found (its path; kp_flow_find_save), "" none; a resumed game's start loads it

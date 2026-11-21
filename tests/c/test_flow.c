@@ -2507,9 +2507,8 @@ static void network_ready_room_builds_the_game_again(KpT *T)
 
 /* A fatal network error (ReportNetError 0x474a00: a turn Storm does not send) leaves Storm's game and exits the glue to
  * the main menu (glue state 25): in the race ready room its report shows over the room, whose end after the popup's Ok
- * (100) leads to the main menu; in the game the game ends (RequestGameExit 0x444e00(4)) and the main menu shows the
- * deferred report with Storm's error (the leave's ResetTurnState cleared the game's flag before the report: it showed
- * over the console and the game went on without Storm). */
+ * (100) leads to the main menu; in the game the report shows over the stopped game in rez\dlgFatal.bin with Storm's
+ * error (ShowFatalErrorDialog 0x43ec00), and its OK ends the game (RequestGameExit 0x444e00(4)) for the main menu. */
 static void a_fatal_network_error_returns_to_the_main_menu(KpT *T)
 {
 	int pass;
@@ -2535,16 +2534,22 @@ static void a_fatal_network_error_returns_to_the_main_menu(KpT *T)
 			loop_room_start(H);
 			frames(H, 10);
 			kp_t_ok(T, H->f.hud_on && !H->f.net_left, "the game runs (%s)", H->last_log);
+			uint32_t frame_at;
 			l->refuse_turns = 1;
-			for (k = 0; k < END_FRAMES && H->f.hud_on; k++) frame(H);
-			kp_t_ok(T, !H->f.hud_on, "the game ended (%s)", H->last_log);
+			wait_for(H, "rez\\dlgfatal.bin", END_FRAMES);
 			kp_t_ok(T, H->f.netplay->game.error_latch, "the report latched");
-			wait_for(H, "rez\\glupoksplit.bin", END_FRAMES);
-			kp_t_ok(T, strstr(H->f.ui->menus.popup_text2, "Storm error") != NULL, "Storm's error: \"%s\"",
-				H->f.ui->menus.popup_text2);
-			key(H, '\r');
+			kp_t_ok(T, strstr(H->f.ui->fatal.detail, "Storm error") != NULL, "Storm's error: \"%s\"",
+				H->f.ui->fatal.detail);
+			frame_at = (uint32_t)kp_scalar(H->f.session->g, KP_FRAME);
 			frames(H, SETTLE_FRAMES);
-			kp_t_eq_str(T, top(H, name, sizeof name), "rez\\glumain.bin", "the main menu under it");
+			kp_t_ok(T, H->f.hud_on && H->f.fatal_held, "the game under it (%s)", H->last_log);
+			kp_t_eq(T, (uint32_t)kp_scalar(H->f.session->g, KP_FRAME), frame_at, "stopped");
+			key(H, '\r');
+			for (k = 0; k < END_FRAMES && H->f.hud_on; k++) frame(H);
+			kp_t_ok(T, !H->f.hud_on, "its OK ended the game (%s)", H->last_log);
+			frames(H, SETTLE_FRAMES);
+			kp_t_eq_str(T, top(H, name, sizeof name), "rez\\glumain.bin", "the main menu, the report shown once");
+			kp_t_eq(T, H->f.ui->menus.net_error, 0, "nothing deferred");
 		}
 		kp_t_eq(T, H->f.ui->menus.state, KP_GLUE_MAIN, "the main menu's state");
 		kp_t_eq(T, kp_ui_menus_glue_exit(H->f.ui, 0), 0, "the glue's exit taken");
@@ -3586,7 +3591,7 @@ static void a_box_is_written_at_its_dialogs_ok(KpT *T)
 }
 
 /* The profile's options of the sound and speed dialogs and the tips, none of the originals'. */
-static const KpGameSettings KEPT_SETTINGS = { 40, 60, 1, 5, 2, 7, 1 };
+static const KpGameSettings KEPT_SETTINGS = { 40, 60, 1, 5, 2, 7, 1, 4, 0 };
 
 static void settings_are_in_the_interface(KpT *T, const KpUi *ui, const KpGameSettings *s, const char *what)
 {
@@ -3594,6 +3599,8 @@ static void settings_are_in_the_interface(KpT *T, const KpUi *ui, const KpGameSe
 	kp_t_eq(T, ui->sound.effects, s->effects, "%s: the effects", what);
 	kp_t_eq(T, ui->mouse_scroll_speed, s->mouse_scroll, "%s: the mouse's scroll", what);
 	kp_t_eq(T, ui->key_scroll_speed, s->key_scroll, "%s: the keys' scroll", what);
+	kp_t_eq(T, ui->multi_mouse_scroll_speed, s->multi_mouse_scroll, "%s: the multiplayer mouse's scroll", what);
+	kp_t_eq(T, ui->multi_key_scroll_speed, s->multi_key_scroll, "%s: the multiplayer keys' scroll", what);
 	kp_t_eq(T, ui->tip_index, s->tip, "%s: the tip", what);
 	kp_t_eq(T, ui->cpu_throttle, s->cpu_throttle, "%s: the throttle", what);
 }
@@ -3730,6 +3737,20 @@ static void slider_at(KpT *T, KpUi *ui, int id, int32_t value)
 	if (c >= 0) (void)kp_ui_send_user(ui, c, KP_UI_VALUE_CHANGED, (uint32_t)value);
 }
 
+static uint32_t slider_pos(KpT *T, KpUi *ui, int id)
+{
+	int32_t c = kp_ui_find_control(ui, ui->modeless, (int16_t)id);
+	kp_t_ok(T, c >= 0, "the slider %d", id);
+	return c >= 0 ? (uint32_t)kp_ui_scrollbar_pos(&ui->controls[c]) : 0xffffffffu;
+}
+
+static int slider_enabled(KpT *T, KpUi *ui, int id)
+{
+	int32_t c = kp_ui_find_control(ui, ui->modeless, (int16_t)id);
+	kp_t_ok(T, c >= 0, "the slider %d", id);
+	return c >= 0 && !(ui->controls[c].flags & KP_UI_DISABLED);
+}
+
 static void answer_dialog(KpT *T, KpUi *ui, int32_t answer)
 {
 	ui->result = answer;
@@ -3746,6 +3767,8 @@ static void settings_written(KpT *T, Host *H, const KpGameSettings *want, int sa
 	kp_t_eq(T, s->effects, want->effects, "%s: the effects", what);
 	kp_t_eq(T, s->mouse_scroll, want->mouse_scroll, "%s: the mouse's scroll", what);
 	kp_t_eq(T, s->key_scroll, want->key_scroll, "%s: the keys' scroll", what);
+	kp_t_eq(T, s->multi_mouse_scroll, want->multi_mouse_scroll, "%s: the multiplayer mouse's scroll", what);
+	kp_t_eq(T, s->multi_key_scroll, want->multi_key_scroll, "%s: the multiplayer keys' scroll", what);
 	kp_t_eq(T, s->game_speed, want->game_speed, "%s: the game speed", what);
 	kp_t_eq(T, s->tip, want->tip, "%s: the tip", what);
 	kp_t_eq(T, s->cpu_throttle, want->cpu_throttle, "%s: the throttle", what);
@@ -3754,7 +3777,7 @@ static void settings_written(KpT *T, Host *H, const KpGameSettings *want, int sa
 /* Open dialog, Cancel, closed with no answer: nothing written, all put back; OK: its own section, once. */
 static void settings_are_written_at_their_dialogs_ok(KpT *T)
 {
-	enum { ID_OK = -2, ID_CANCEL = -3, SOUND_MUSIC = 1, SOUND_EFFECTS = 2, SPEED_GAME = 1 };
+	enum { ID_OK = -2, ID_CANCEL = -3, SOUND_MUSIC = 1, SOUND_EFFECTS = 2, SPEED_GAME = 1, SPEED_MOUSE = 2, SPEED_KEY = 3 };
 	Host *H;
 	KpUi *ui;
 	KpGameSettings want;
@@ -3764,6 +3787,8 @@ static void settings_are_written_at_their_dialogs_ok(KpT *T)
 	kp_ui_options_dialog(H->f.ui, KP_UI_OPTIONS_SPEED); /* no game: its slider says nothing of the game speed */
 	H->f.ui->mouse_scroll_speed = want.mouse_scroll;
 	H->f.ui->key_scroll_speed = want.key_scroll;
+	H->f.ui->multi_mouse_scroll_speed = want.multi_mouse_scroll;
+	H->f.ui->multi_key_scroll_speed = want.multi_key_scroll;
 	H->f.ui->cpu_throttle = (uint8_t)want.cpu_throttle;
 	answer_dialog(T, H->f.ui, ID_OK);
 	frames(H, 2);
@@ -3772,6 +3797,8 @@ static void settings_are_written_at_their_dialogs_ok(KpT *T)
 	ui = H->f.ui;
 	ui->mouse_scroll_speed = want.mouse_scroll;
 	ui->key_scroll_speed = want.key_scroll;
+	ui->multi_mouse_scroll_speed = want.multi_mouse_scroll;
+	ui->multi_key_scroll_speed = want.multi_key_scroll;
 	ui->sound.music = want.music;
 	ui->sound.effects = want.effects;
 	ui->tip_index = want.tip;
@@ -3837,6 +3864,33 @@ static void settings_are_written_at_their_dialogs_ok(KpT *T)
 	kp_ui_options_dialog(ui, KP_UI_OPTIONS_SPEED);
 	answer_dialog(T, ui, ID_OK);
 	settings_written(T, H, &want, 3, "the speed's OK under a silence");
+
+	/* under the multiplayer byte the scroll sliders show and move the multiplayer pair (InitSpeedSlider 0x49f240,
+	 * SpeedSliderChanged 0x49f360), the game speed's is disabled */
+	ui->menus.multiplayer = 1;
+	kp_ui_options_dialog(ui, KP_UI_OPTIONS_SPEED);
+	kp_t_eq(T, slider_pos(T, ui, SPEED_MOUSE), want.multi_mouse_scroll, "the multiplayer mouse's slider");
+	kp_t_eq(T, slider_pos(T, ui, SPEED_KEY), want.multi_key_scroll, "the multiplayer keys' slider");
+	kp_t_ok(T, !slider_enabled(T, ui, SPEED_GAME), "the game speed's slider disabled");
+	slider_at(T, ui, SPEED_MOUSE, 2);
+	slider_at(T, ui, SPEED_KEY, 6);
+	kp_t_eq(T, ui->multi_mouse_scroll_speed, 2, "the multiplayer mouse's speed at once");
+	kp_t_eq(T, ui->multi_key_scroll_speed, 6, "the multiplayer keys' speed at once");
+	kp_t_eq(T, *kp_ui_scroll_speed(ui, 1), 6, "the view's");
+	kp_t_eq(T, ui->mouse_scroll_speed, want.mouse_scroll, "the single player's mouse speed as it was");
+	kp_t_eq(T, ui->key_scroll_speed, want.key_scroll, "the single player's key speed as it was");
+	answer_dialog(T, ui, ID_CANCEL);
+	kp_t_eq(T, ui->multi_mouse_scroll_speed, want.multi_mouse_scroll, "Cancel puts the multiplayer pair back");
+	kp_t_eq(T, ui->multi_key_scroll_speed, want.multi_key_scroll, NULL);
+	kp_ui_options_dialog(ui, KP_UI_OPTIONS_SPEED);
+	slider_at(T, ui, SPEED_MOUSE, 2);
+	slider_at(T, ui, SPEED_KEY, 6);
+	answer_dialog(T, ui, ID_OK);
+	want.multi_mouse_scroll = 2;
+	want.multi_key_scroll = 6;
+	settings_written(T, H, &want, 4, "the multiplayer speed dialog's OK");
+	ui->menus.multiplayer = 0;
+	kp_t_eq(T, *kp_ui_scroll_speed(ui, 1), want.key_scroll, "out of multiplayer the single player's");
 
 	/* the next run: the file written, read back, in a new interface */
 	{

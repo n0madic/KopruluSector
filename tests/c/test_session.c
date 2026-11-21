@@ -965,10 +965,12 @@ static void session_profile_options(KpT *T)
 }
 
 /* SOPT's bytes of its seven values. */
-static void sopt_bytes(uint8_t *out, const uint32_t values[7])
+#define SOPT_VALUES 9
+
+static void sopt_bytes(uint8_t *out, const uint32_t values[SOPT_VALUES])
 {
 	int k;
-	for (k = 0; k < 7; k++) {
+	for (k = 0; k < SOPT_VALUES; k++) {
 		out[4 * k] = (uint8_t)values[k];
 		out[4 * k + 1] = (uint8_t)(values[k] >> 8);
 		out[4 * k + 2] = (uint8_t)(values[k] >> 16);
@@ -976,18 +978,18 @@ static void sopt_bytes(uint8_t *out, const uint32_t values[7])
 	}
 }
 
-/* The options of the sound and speed dialogs and the tips (SOPT, schema 6): the original's defaults in a new profile and
- * in one before the section, the round trip, a value out of the original's range alone a new profile's, a short section's
- * missing values too. */
+/* The options of the sound and speed dialogs and the tips (SOPT, schema 6; the multiplayer scroll speeds appended): the
+ * original's defaults in a new profile and in one before the section, the round trip, a value out of the original's range
+ * alone a new profile's, a short section's missing values too. */
 static void session_profile_settings(KpT *T)
 {
 	static const uint8_t CHARS[2] = { 0, 0 };
 	static const uint8_t SAVES[2] = { 0, 0 };
-	static const uint32_t IN_RANGE[7] = { 100, 100, 6, 0, 6, 0xfffffffeu, 2 }; /* each range's ends */
-	static const uint32_t OUT_OF_RANGE[7] = { 101, 101, 7, 7, 7, 1, 0 };
+	static const uint32_t IN_RANGE[SOPT_VALUES] = { 100, 100, 6, 0, 6, 0xfffffffeu, 2, 0, 6 }; /* each range's ends */
+	static const uint32_t OUT_OF_RANGE[SOPT_VALUES] = { 101, 101, 7, 7, 7, 1, 0, 7, 7 };
 	KpProfile p, q;
 	KpKpfOut old[4];
-	uint8_t values[4 * 7];
+	uint8_t values[4 * SOPT_VALUES];
 	KpError err;
 	uint8_t *bytes;
 	size_t size;
@@ -1000,6 +1002,8 @@ static void session_profile_settings(KpT *T)
 	kp_t_eq(T, p.settings.game_speed, 4, NULL);
 	kp_t_eq(T, p.settings.tip, 0, NULL);
 	kp_t_eq(T, p.settings.cpu_throttle, 0, NULL);
+	kp_t_eq(T, p.settings.multi_mouse_scroll, 3, "m_mscroll's default");
+	kp_t_eq(T, p.settings.multi_key_scroll, 3, "m_kscroll's default");
 	p.settings.music = 0;
 	p.settings.effects = 100;
 	p.settings.mouse_scroll = 6;
@@ -1007,6 +1011,8 @@ static void session_profile_settings(KpT *T)
 	p.settings.game_speed = 2;
 	p.settings.tip = 77;
 	p.settings.cpu_throttle = 1;
+	p.settings.multi_mouse_scroll = 0;
+	p.settings.multi_key_scroll = 5;
 	kp_t_ok(T, kp_profile_encode(&p, &bytes, &size) == 0, "encoded");
 	kp_t_ok(T, kp_profile_decode(&q, bytes, size, &err) == 0, "%s", err.msg);
 	free(bytes);
@@ -1017,6 +1023,8 @@ static void session_profile_settings(KpT *T)
 	kp_t_eq(T, q.settings.game_speed, 2, NULL);
 	kp_t_eq(T, q.settings.tip, 77, NULL);
 	kp_t_eq(T, q.settings.cpu_throttle, 1, NULL);
+	kp_t_eq(T, q.settings.multi_mouse_scroll, 0, NULL);
+	kp_t_eq(T, q.settings.multi_key_scroll, 5, NULL);
 	memset(old, 0, sizeof old);
 	old[0].fourcc = "NAME";
 	old[0].payload = (const uint8_t *)"";
@@ -1046,6 +1054,8 @@ static void session_profile_settings(KpT *T)
 	kp_t_eq(T, q.settings.game_speed, 6, NULL);
 	kp_t_eq(T, q.settings.tip, 0xfffffffeu, "any tip");
 	kp_t_eq(T, q.settings.cpu_throttle, 1, "non-zero is on");
+	kp_t_eq(T, q.settings.multi_mouse_scroll, 0, NULL);
+	kp_t_eq(T, q.settings.multi_key_scroll, 6, NULL);
 	sopt_bytes(values, OUT_OF_RANGE);
 	kp_t_ok(T, kp_kpf_build("PROF", 6, 0, "koprulu", NULL, old, 4, &bytes, &size) == 0, "values out of range");
 	kp_t_ok(T, kp_profile_decode(&q, bytes, size, &err) == 0, "%s", err.msg);
@@ -1057,6 +1067,8 @@ static void session_profile_settings(KpT *T)
 	kp_t_eq(T, q.settings.game_speed, 4, "7: the default");
 	kp_t_eq(T, q.settings.tip, 1, "the others read");
 	kp_t_eq(T, q.settings.cpu_throttle, 0, NULL);
+	kp_t_eq(T, q.settings.multi_mouse_scroll, 3, "7: the default");
+	kp_t_eq(T, q.settings.multi_key_scroll, 3, "7: the default");
 	sopt_bytes(values, IN_RANGE);
 	old[3].size = 4 * 2;
 	kp_t_ok(T, kp_kpf_build("PROF", 6, 0, "koprulu", NULL, old, 4, &bytes, &size) == 0, "a short section");
@@ -1065,6 +1077,13 @@ static void session_profile_settings(KpT *T)
 	kp_t_eq(T, q.settings.effects, 100, "what it has");
 	kp_t_eq(T, q.settings.game_speed, 4, "the rest a new profile's");
 	kp_t_eq(T, q.settings.cpu_throttle, 0, NULL);
+	old[3].size = 4 * 7;
+	kp_t_ok(T, kp_kpf_build("PROF", 6, 0, "koprulu", NULL, old, 4, &bytes, &size) == 0, "before the multiplayer pair");
+	kp_t_ok(T, kp_profile_decode(&q, bytes, size, &err) == 0, "%s", err.msg);
+	free(bytes);
+	kp_t_eq(T, q.settings.cpu_throttle, 1, "its seven read");
+	kp_t_eq(T, q.settings.multi_mouse_scroll, 3, "the appended pair a new profile's");
+	kp_t_eq(T, q.settings.multi_key_scroll, 3, NULL);
 }
 
 /* LANG keeps the languages the player chose (ADR 0016): a profile before it, a damaged section or an ID that is not

@@ -345,9 +345,10 @@ typedef struct {
 #define KP_VIDEO_GIVEN_LIGHTING 0x10
 /* The options of the sound and speed dialogs and the tips (the original's registry table 0x50f168, CPUThrottle apart):
  * the music's and the effects' percent (0..100), the mouse and key scroll speeds and the game speed (0..6), the tip, the
- * CPU throttle (0 or 1). */
+ * CPU throttle (0 or 1), the multiplayer game's mouse and key scroll speeds (0..6: m_mscroll, m_kscroll). */
 typedef struct {
 	uint32_t music, effects, mouse_scroll, key_scroll, game_speed, tip, cpu_throttle;
+	uint32_t multi_mouse_scroll, multi_key_scroll;
 } KpGameSettings;
 typedef struct {
 	char name[KP_PROFILE_NAME]; /* the logged-in ID's; "" before the login and after its deletion */

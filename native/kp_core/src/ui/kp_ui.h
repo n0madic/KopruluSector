@@ -419,7 +419,7 @@ typedef struct {
  * option bits), 0x6aaa68's throttle, 0x6ca798's gamma, 0x6ca79c's portraits and our video choices. */
 struct KpUiOptionsBlock {
 	int32_t speed;
-	uint32_t mouse_scroll, key_scroll, music, effects, tip, bits;
+	uint32_t mouse_scroll, key_scroll, multi_mouse_scroll, multi_key_scroll, music, effects, tip, bits;
 	uint32_t gamma, portrait;
 	uint8_t cpu_throttle;
 	KpUiVideoOptions video;
@@ -1553,6 +1553,8 @@ struct KpUi {
 	KpUiMinimap minimap;
 	uint32_t options;                /* 0x6d3148: the game options word (KP_UI_OPTION_*) */
 	uint32_t mouse_scroll_speed, key_scroll_speed; /* 0x6d3134, 0x6d3138: the options' scroll speeds, 0..6 */
+	uint32_t multi_mouse_scroll_speed, multi_key_scroll_speed; /* 0x6d314c, 0x6d3150: the same in a multiplayer game
+	                                  * (the registry's m_mscroll, m_kscroll; kp_ui_multiplayer) */
 	uint32_t tip_index;              /* 0x6d3144 */
 	uint8_t tips_automatic;          /* 0x6c46e0: the tips opened at a mission's start (the mission's tip) */
 	uint32_t gamma;                  /* GetGamma 0x4cf870 (60..140; the host applies it to the palette) */
@@ -1675,6 +1677,12 @@ struct KpUi {
 		char countdown[16];              /* 0x675030: "%d:%02d" */
 		int lagging[8], lagging_count;   /* the lagging slots as last listed (the rows redrawn when they change) */
 	} timeout;
+	struct {
+		int32_t dialog;                  /* 0x665dd4: rez\dlgFatal.bin (-1 none) */
+		char text[KP_UI_POPUP_TEXT], detail[KP_UI_POPUP_TEXT]; /* 0x665dd8, 0x665ddc: the copies of its strings */
+		uint8_t has_text, has_detail;    /* the strings given (the original's NULLs) */
+		uint8_t exit;                    /* ours: a fatal report's exits wait for its end (the original's modal run) */
+	} fatal;
 	uint8_t addon_anchor;            /* a layout host's (phase 10): an add-on's preview starts beside its parent */
 	void (*menu_handler)(struct KpUi *ui, int32_t dialog); /* 0x675068: the open in-game menu's handler */
 	uint32_t pause_tick;             /* 0x675180: the interface clock at the pause (PauseGame 0x47cbb0) */
@@ -2253,15 +2261,16 @@ void kp_ui_menus_refused(KpUi *ui, uint16_t gluall);
 void kp_ui_menus_net_error(KpUi *ui, uint16_t network);
 /* ReportNetError 0x474a00's screens for a report of the network game (the game's own report, which left Storm's game
  * and set its latch when fatal):
- *   - ShowNetErrorMessage 0x474a70: in a game (in_game), or with no dialog open, the report is deferred with its detail
- *     (StoreDeferredNetError 0x4748d0); otherwise it shows at once over the screen: network.tbl's string index and the
- *     detail in rez\gluPOkSplit.bin (ShowGlueMessageBox2 0x456fb0 -> 0x460100), or the string alone in rez\gluPOk.bin;
+ *   - ShowNetErrorMessage 0x474a70: in a game (in_game) with a dialog open (the console) the report shows at once
+ *     with ShowFatalErrorDialog 0x43ec00 (kp_ui_fatal_open), whose end asks for a fatal report's exits below; with no
+ *     dialog open, or in a game whose fatal dialog cannot open, it is deferred with its detail (StoreDeferredNetError
+ *     0x4748d0); otherwise it shows at once over the screen: network.tbl's string index and the detail in
+ *     rez\gluPOkSplit.bin (ShowGlueMessageBox2 0x456fb0 -> 0x460100), or the string alone in rez\gluPOk.bin. The
+ *     original's black-screen byte 0x50f0f0, which defers a report too, belongs to its DirectDraw fade (none here);
  *   - fatal: in a game RequestGameExit 0x444e00(4) (ui->game_exit), then RequestGlueExit 0x457cf0 (glue state 25):
  *     once no popup is open (the original's popup is modal and returns before the exit), GlueExitHook 0x458440 closes
  *     the glue's screen with result -1 and the main menu follows (kp_ui_menus_glue_exit); a race ready room waiting for
- *     its players answers 100 (PollBriefingReady 0x461120).
- * TODO: in a game ShowFatalErrorDialog 0x43ec00 (rez\dlgFatal.bin) shows the report before the game ends; Koprulu
- * shows it over the main menu the glue exit leads to. */
+ *     its players answers 100 (PollBriefingReady 0x461120). */
 void kp_ui_menus_net_report(KpUi *ui, uint16_t network, const char *detail, int fatal, int in_game);
 /* Whether a fatal network report asked for the glue's exit (glue state 25) that no screen has taken yet; take: it is
  * taken (the host's main menu follows a game or a ready room the report ended). */
@@ -2615,12 +2624,24 @@ void kp_ui_player_item_draw(KpUi *ui, KpUiControl *c, int32_t x, int32_t y, cons
 /* WaitForLaggingPlayers 0x47a810's dialog, each frame of a network game: timeout.bin opens while a turn is overdue
  * (ui->net's game_lagging), its lagging players and countdown refreshed, and closes when the turn came. */
 void kp_ui_net_wait(KpUi *ui);
+/* ShowFatalErrorDialog 0x43ec00 (kp_ui_fatal.c): rez\dlgFatal.bin modal over the game with text (control -10) and
+ * detail (control -20; NULL leaves a control empty); exit: its end asks for the game's exit (RequestGameExit 0x444e00(4))
+ * and the glue's (RequestGlueExit 0x457cf0). The dialog, -1 when it cannot open. The game stays stopped while it shows
+ * (the original's modal run): kp_ui_fatal_shown. */
+int32_t kp_ui_fatal_open(KpUi *ui, const uint8_t *text, const char *detail, int exit);
+int kp_ui_fatal_shown(const KpUi *ui);
 void kp_ui_set_textbox_prompt(KpUi *ui, const uint8_t *text);
 /* CenterScreenOnUnit 0x422b10: the unit's tile at the view's centre (nothing for a unit without a sprite). */
 void kp_ui_centre_on_unit(KpUi *ui, int64_t unit);
 /* The game's first view: on the local player's start location (0x46a280, InitScreenPosition 0x445810); the camera
  * moves (kp_ui take_camera). */
 void kp_ui_start_screen(KpUi *ui);
+/* The multiplayer byte 0x672664: the menus' multiplayer, or the game's own when no menu chose it (--seats' hub); 0 in a
+ * replay, which plays without it. */
+int kp_ui_multiplayer(const KpUi *ui);
+/* The options' mouse or key scroll speed the view takes: UpdateMapScroll and InitSpeedSlider 0x49f240 take the
+ * multiplayer pair 0x6d314c, 0x6d3150 under the multiplayer byte, the single player's 0x6d3134, 0x6d3138 otherwise. */
+uint32_t *kp_ui_scroll_speed(KpUi *ui, int key);
 /* UpdateMapScroll 0x49bf10, which the game loop runs every 10 ms or more of its clock (not every frame): the scroll
  * keys, else the cursor at the screen's edge (the system cursor's position cursor_x, cursor_y: GetCursorPos), move the
  * view with the step's acceleration; the camera pan moves it to its target. Returns 1 when the view moved. */
