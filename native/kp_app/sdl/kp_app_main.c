@@ -415,31 +415,33 @@ static int gl_start(KpApp *a, KpGfxApi *api)
  * hardware (ADR 0028 decision 7, stage S9.6): Metal on macOS; GL on the other desktops until measured there. */
 #ifdef SDL_PLATFORM_MACOS
 #define KP_GFX_GPU_DEFAULT 1
+#define KP_GFX_GPU_HARDWARE_ONLY "" /* Metal has no software device */
 #else
 #define KP_GFX_GPU_DEFAULT 0
+#define KP_GFX_GPU_HARDWARE_ONLY " (a hardware Vulkan device wanted: software Vulkan only under --gfx gpu)"
 #endif
 
 /* The drawing on SDL_GPU (ADR 0028): its device (Metal on macOS, Vulkan elsewhere: named, as SDL would try D3D12
- * before Vulkan; auto takes no software Vulkan while GL is there), the window without GL claimed by it, kp_gfx over
- * it. 0, else -1 with nothing left made: GL draws. */
+ * before Vulkan; a software Vulkan device only under a given --gfx gpu, kp_flow_software_gpu), the window without GL
+ * claimed by it, kp_gfx over it. 0, else -1 with nothing left made: GL draws. */
 static int gpu_start(KpApp *a, KpGfxApi *api)
 {
 	SDL_PropertiesID p = SDL_CreateProperties();
+	int software = kp_flow_software_gpu(&a->flags);
 	char err[512];
 	if (!p) return -1;
 #ifdef SDL_PLATFORM_MACOS
 	SDL_SetBooleanProperty(p, SDL_PROP_GPU_DEVICE_CREATE_SHADERS_MSL_BOOLEAN, true);
 #else
 	SDL_SetBooleanProperty(p, SDL_PROP_GPU_DEVICE_CREATE_SHADERS_SPIRV_BOOLEAN, true);
-	SDL_SetBooleanProperty(p, SDL_PROP_GPU_DEVICE_CREATE_VULKAN_REQUIRE_HARDWARE_ACCELERATION_BOOLEAN,
-		a->flags.renderer != KP_RENDERER_GPU);
+	SDL_SetBooleanProperty(p, SDL_PROP_GPU_DEVICE_CREATE_VULKAN_REQUIRE_HARDWARE_ACCELERATION_BOOLEAN, !software);
 #endif
 	SDL_SetStringProperty(p, SDL_PROP_GPU_DEVICE_CREATE_NAME_STRING, KP_GFX_GPU_DRIVER);
 	SDL_SetBooleanProperty(p, SDL_PROP_GPU_DEVICE_CREATE_DEBUGMODE_BOOLEAN, a->flags.gfx_debug != 0);
 	a->gpu = SDL_CreateGPUDeviceWithProperties(p);
 	SDL_DestroyProperties(p);
 	if (!a->gpu) {
-		SDL_Log("SDL_GPU: no device: %s", SDL_GetError());
+		SDL_Log("SDL_GPU: no device: %s%s", SDL_GetError(), software ? "" : KP_GFX_GPU_HARDWARE_ONLY);
 		return -1;
 	}
 	if (make_window(a, 0) == 0 && SDL_ClaimWindowForGPUDevice(a->gpu, a->window)) {

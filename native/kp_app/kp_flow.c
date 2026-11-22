@@ -2127,6 +2127,12 @@ int kp_flow_dev_checks(const KpAppFlags *fl)
 
 int kp_flow_scripted(const KpAppFlags *fl) { return fl->script[0] || fl->script_live[0]; }
 
+int kp_flow_software_gpu(const KpAppFlags *fl)
+{
+	/* the flow copies the profile's renderer into the flags (video_flags): only the given bit tells the flag's */
+	return (fl->video_given & KP_VIDEO_GIVEN_RENDERER) && fl->renderer == KP_RENDERER_GPU;
+}
+
 static int dev_checks(const KpFlow *f) { return kp_flow_dev_checks(f->flags); }
 
 /* A run that checks, measures or captures has the originals' options and the clock's speed, and writes none of the

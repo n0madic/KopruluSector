@@ -394,6 +394,10 @@ int kp_flow_glue_active(const KpFlow *f);
 int kp_flow_dev_checks(const KpAppFlags *fl);
 /* Whether a script drives the run (--script, --script-live). */
 int kp_flow_scripted(const KpAppFlags *fl);
+/* Whether a software Vulkan device (lavapipe, SwiftShader) may draw (ADR 0028): only under a given --gfx gpu (the checks
+ * in a container). It draws on the CPU, many times slower than GL on the machine's GPU: auto and the video options'
+ * Vulkan, the profile's choice, want a hardware device and fall back to GL without one. */
+int kp_flow_software_gpu(const KpAppFlags *fl);
 /* The language of languages wanted names ("ru_RU", "ru-RU", "ruRU", "ru"; ADR 0016) that is installed for the text:
  * its language and country, else the first of its language; -1 none. */
 int kp_flow_match_language(const KpUiLanguages *languages, const char *wanted);

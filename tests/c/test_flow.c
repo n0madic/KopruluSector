@@ -4357,9 +4357,34 @@ static void video_options_come_from_the_profile_under_the_flags(KpT *T)
 			kp_t_eq(T, H->flags.font_mode, KP_VTEXT_VECTOR, NULL);
 			kp_t_eq(T, H->flags.lighting, KP_LIGHTING_OFF, NULL);
 			kp_t_eq(T, H->flags.renderer, KP_RENDERER_GPU, "the profile's renderer (the host's start read it too)");
+			kp_t_eq(T, kp_flow_software_gpu(&H->flags), 0, "the profile's Vulkan wants a hardware device");
 			kp_t_eq(T, ui->video_options.fog, KP_FOG_SMOOTH, NULL);
 			kp_t_eq(T, ui->video_options.renderer, KP_RENDERER_GPU, NULL);
 		}
+	}
+}
+
+/* A software Vulkan device draws only under a given --gfx gpu: not under auto or gl, nor for the profile's choice the
+ * flow copied into the flags (ADR 0028). */
+static void software_gpu_only_under_the_given_flag(KpT *T)
+{
+	static const struct {
+		int renderer, given, software;
+	} cases[] = {
+		{ KP_RENDERER_GPU, 1, 1 },
+		{ KP_RENDERER_GPU, 0, 0 },
+		{ KP_RENDERER_GL, 1, 0 },
+		{ KP_VIDEO_AUTO, 1, 0 },
+		{ KP_VIDEO_AUTO, 0, 0 },
+	};
+	size_t k;
+	for (k = 0; k < sizeof cases / sizeof cases[0]; k++) {
+		KpAppFlags fl;
+		memset(&fl, 0, sizeof fl);
+		fl.renderer = cases[k].renderer;
+		fl.video_given = KP_VIDEO_GIVEN_GRAPHICS | (cases[k].given ? KP_VIDEO_GIVEN_RENDERER : 0);
+		kp_t_eq(T, kp_flow_software_gpu(&fl), cases[k].software, "renderer %d, given %d", cases[k].renderer,
+			cases[k].given);
 	}
 }
 
@@ -5263,6 +5288,7 @@ static const KpTest TESTS[] = {
 	{ "old_save_files_get_their_ids_names", old_save_files_get_their_ids_names, 0 },
 	{ "game_failure_stops_the_game_and_the_flow_goes_on", game_failure_stops_the_game_and_the_flow_goes_on, 0 },
 	{ "video_options_come_from_the_profile_under_the_flags", video_options_come_from_the_profile_under_the_flags, 0 },
+	{ "software_gpu_only_under_the_given_flag", software_gpu_only_under_the_given_flag, 0 },
 	{ "video_dialog_applies_and_keeps_its_options", video_dialog_applies_and_keeps_its_options, 0 },
 	{ "camera_keeps_to_the_view_and_its_centre", camera_keeps_to_the_view_and_its_centre, 0 },
 	{ "free_before_the_host_asks_it_nothing", free_before_the_host_asks_it_nothing, 0 },

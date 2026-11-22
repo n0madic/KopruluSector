@@ -48,7 +48,10 @@ tiles and water in ETC2 ([ADR 0013](0013-remastered-data-source-and-hd.md)). SDL
    OK does not keep unless the dialog changed it). `auto` is GL until the oracles and the benchmarks show, per
    platform, that SDL_GPU draws the same frames and is not slower; GL stays the fallback. Since stage S9.7 `auto` is
    SDL_GPU on macOS (S9.6: the same frames, fewer cycles with vsync); Windows and Linux stay on GL until measured on
-   real hardware. `--gfx-debug` turns on SDL_GPU's checks.
+   real hardware. A software Vulkan device (lavapipe, SwiftShader: the CPU's drawing, many times slower than GL on the
+   machine's GPU) draws only under a given `--gfx gpu`, for the checks in a container; auto and the option's Vulkan
+   want a hardware device and fall back to GL without one (`kp_flow_software_gpu`). `--gfx-debug` turns on SDL_GPU's
+   checks.
 8. **The frame check against GL** runs one script on the fixed clock under each backend and compares the frames
    (`tools/gfx_compare.py`): the index path's byte for byte, the HD path's within one level a channel. Geometry whose
    edges fall on pixels' centres is avoided in the passes: each API breaks such ties its own way (the vector text's
