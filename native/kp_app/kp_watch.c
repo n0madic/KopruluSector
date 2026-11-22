@@ -57,7 +57,8 @@ static int publish(KpWatchServer *s, const KpRecorder *rec, size_t used, uint32_
 		s->record = g;
 		s->record_cap = cap;
 	}
-	memcpy(s->record + s->record_size, rec->buf + s->record_size, used - s->record_size);
+	/* nothing new before the first block: no buffer yet, and NULL + 0 is undefined before C2y (clang 18's UBSan) */
+	if (used > s->record_size) memcpy(s->record + s->record_size, rec->buf + s->record_size, used - s->record_size);
 	if (rec->open && rec->open <= used) s->record[rec->open - 1] = (uint8_t)(used - rec->open);
 	s->record_size = used;
 	if (frames > s->frames) s->frames = frames;

@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """The documents' links: every relative link of a tracked Markdown file names a file that exists and, with a
 fragment into a Markdown file, one of its headings by GitHub's slug (or an explicit `<a id>`). A link inside code (a
-fence or a span) is no link; a URL with a scheme is not checked.
+fence or a span) is no link; a URL with a scheme is not checked. A link into a directory the repository ignores
+(private data, such as docs/research/evidence) that this checkout lacks is counted, not broken: a clean clone (the
+hosted CI's) has none of it, while a checkout that has the directory checks its files.
 
     python3 tools/doc_links.py [ROOT]
 
@@ -62,9 +64,32 @@ def anchors(text: str) -> set[str]:
     return found
 
 
-def broken_links(root: Path, files: list[str]) -> list[str]:
-    """Each broken link of files (paths relative to root) as 'FILE:LINE: what'."""
+def private_absent(root: Path, dest: Path, ignored: dict[Path, bool]) -> bool:
+    """Whether the missing dest lies in a directory that git ignores and this checkout lacks (its topmost missing
+    ancestor, not dest itself, is ignored). A missing file of an ignored directory that is here stays broken. ignored
+    caches git's answers."""
+    top = dest
+    while not top.parent.exists():
+        top = top.parent
+    if top == dest:
+        return False
+    if top not in ignored:
+        try:
+            rel = top.relative_to(root)
+        except ValueError:  # outside the repository
+            ignored[top] = False
+        else:
+            done = subprocess.run(["git", "check-ignore", "-q", "--", str(rel)], cwd=root, capture_output=True)
+            ignored[top] = done.returncode == 0
+    return ignored[top]
+
+
+def broken_links(root: Path, files: list[str], private: list[str] | None = None) -> list[str]:
+    """Each broken link of files (paths relative to root) as 'FILE:LINE: what'; the links into ignored directories
+    absent here go to private, when given, the same way."""
     cache: dict[Path, set[str]] = {}
+    ignored: dict[Path, bool] = {}
+    base = root.resolve()  # the targets are resolved (a temporary directory under a symbolic link)
     broken = []
     for rel in files:
         src = root / rel
@@ -75,7 +100,11 @@ def broken_links(root: Path, files: list[str]) -> list[str]:
                 file_part, _, fragment = target.partition("#")
                 dest = src if not file_part else (src.parent / unquote(file_part)).resolve()
                 if file_part and not dest.exists():
-                    broken.append(f"{rel}:{no}: no file {target}")
+                    if private_absent(base, dest, ignored):
+                        if private is not None:
+                            private.append(f"{rel}:{no}: {target}")
+                    else:
+                        broken.append(f"{rel}:{no}: no file {target}")
                     continue
                 if not fragment or dest.suffix != ".md":
                     continue
@@ -91,10 +120,12 @@ def main(argv: list[str]) -> int:
     root = Path(argv[1] if len(argv) > 1 else Path(__file__).resolve().parents[1]).resolve()
     listed = subprocess.run(["git", "ls-files", "*.md"], cwd=root, capture_output=True, text=True, check=True)
     files = listed.stdout.split()
-    broken = broken_links(root, files)
+    private: list[str] = []
+    broken = broken_links(root, files, private)
     for line in broken:
         log.error("%s", line)
-    log.info("doc_links: %d documents, %d broken links", len(files), len(broken))
+    log.info("doc_links: %d documents, %d broken links%s", len(files), len(broken),
+             f", {len(private)} into ignored directories absent here" if private else "")
     return 1 if broken else 0
 
 

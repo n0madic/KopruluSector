@@ -1,6 +1,7 @@
 """tools/doc_links.py: GitHub's heading anchors and the broken links it reports."""
 from __future__ import annotations
 
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -33,6 +34,27 @@ class BrokenLinksTest(unittest.TestCase):
                 "[file](gone.md)\n[heading](b.md#no-such-part)\n[self](#top)\n\n# Top\n", encoding="utf-8")
             broken = doc_links.broken_links(root, ["a.md", "b.md"])
         self.assertEqual(broken, ["a.md:2: no file gone.md", "a.md:3: no heading b.md#no-such-part"])
+
+    def test_ignored_directory_absent_is_private(self) -> None:
+        """A clean clone lacks the ignored evidence: its links are counted, not broken; once the directory is here,
+        a file missing from it is broken, and an ignored file of a directory that is here is checked too."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+            (root / ".gitignore").write_text("docs/evidence\n*PLAN*\n", encoding="utf-8")
+            (root / "docs").mkdir()
+            (root / "docs" / "a.md").write_text(
+                "[x](evidence/x.json)\n[deep](evidence/sub/y.json)\n[plan](PLAN.md)\n[gone](gone/z.json)\n",
+                encoding="utf-8")
+            private: list[str] = []
+            broken = doc_links.broken_links(root, ["docs/a.md"], private)
+            self.assertEqual(private, ["docs/a.md:1: evidence/x.json", "docs/a.md:2: evidence/sub/y.json"])
+            self.assertEqual(broken, ["docs/a.md:3: no file PLAN.md", "docs/a.md:4: no file gone/z.json"])
+            (root / "docs" / "evidence").mkdir()
+            private.clear()
+            broken = doc_links.broken_links(root, ["docs/a.md"], private)
+            self.assertEqual(private, ["docs/a.md:2: evidence/sub/y.json"])
+            self.assertEqual(broken[0], "docs/a.md:1: no file evidence/x.json")
 
 
 if __name__ == "__main__":

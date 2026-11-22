@@ -113,7 +113,9 @@ static int64_t play_on(KpT *T, KpTurns *t, Trace *tr, int64_t f, int *ended)
 /* The record grown by what the server published since, its frames and whether it is final */
 static size_t grow(KpT *T, KpTurns *t, const KpWatchServer *s, size_t taken)
 {
-	kp_t_eq(T, kp_turns_watch_grow(t, s->record + taken, s->record_size - taken, s->frames, s->final), 0, "the record grows");
+	/* nothing published yet: no buffer, and NULL + 0 is undefined before C2y (clang 18's UBSan) */
+	const uint8_t *more = s->record_size > taken ? s->record + taken : NULL;
+	kp_t_eq(T, kp_turns_watch_grow(t, more, s->record_size - taken, s->frames, s->final), 0, "the record grows");
 	return s->record_size;
 }
 

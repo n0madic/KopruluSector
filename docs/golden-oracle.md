@@ -15,6 +15,8 @@
 > Until the folder is restored, `tools/ci.sh` runs in its public mode (on by itself without `tests/golden/oracle`, or
 > with `KOPRULU_PUBLIC=1`; hosted CI uses it): the golden steps and `kp_replay` are left out, and the C and converter
 > tests that need a golden or the private research evidence skip (`KP_TEST_PUBLIC`, `tools/research/scdata/tests/private.py`).
+> `tools/doc_links.py` counts the documents' links into the evidence (`docs/research/evidence`, ignored by git) where
+> the folder is absent instead of reporting them broken; a checkout that has it checks them.
 
 Every golden of `tests/golden/oracle/` is JSON. The C suites (`tests/c`, `kp_test`), the oracle tools (`kp_oracle`) and the Python
 checkers read them. The writers: `tools/oracle/oracle_common.py` (`golden_json` renders a golden's data,
