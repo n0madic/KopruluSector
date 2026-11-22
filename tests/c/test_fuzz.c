@@ -141,14 +141,30 @@ static void game_seeds_reach_their_paths(KpT *T)
 	kp_t_ok(T, l->fatal, "a failing send is fatal");
 }
 
+/* The refusals of a reason holding `needle` since `before` (the stats, cumulative, taken earlier) */
+static long refused_since(const KpFuzzStats *before, const char *needle)
+{
+	const KpFuzzStats *st = kp_fuzz_stats();
+	long n = 0;
+	int r, b;
+	for (r = 0; r < st->reasons; r++) {
+		if (!strstr(st->reason[r], needle)) continue;
+		n += st->reason_count[r];
+		for (b = 0; b < before->reasons; b++) {
+			if (strcmp(before->reason[b], st->reason[r]) == 0) n -= before->reason_count[b];
+		}
+	}
+	return n;
+}
+
 /* The seeds made from the data (kp_fuzz_write_seeds, as tools/fuzz.sh makes build/fuzz/seeds) through their
  * targets: none fails, every save the game made loads (both forms), and each target has the seeds it should. */
 static void data_seeds_run(KpT *T)
 {
-	/* rep: + recorded; chk: + 7 maps; save: a file and a native save a point; commands: + a player's units and an
+	/* rep: + recorded; chk: + 7 maps; save: a file and a native save a point, + a queued order past orders.dat; commands: + a player's units and an
 	 * order past orders.dat a map; turns: the synthetic one; udp: the provider's session; snet: hosting and joining;
 	 * lobby: six lobbies (a resumed save among them); transfer: four transfers; game: the synthetic six */
-	static const int AT_LEAST[KP_FUZZ_TARGETS] = { 2, 8, 2 * KP_FUZZ_SAVE_SEED_POINTS, 9, 1, 1, 2, 6, 4, 6 };
+	static const int AT_LEAST[KP_FUZZ_TARGETS] = { 2, 8, 2 * KP_FUZZ_SAVE_SEED_POINTS + 1, 9, 1, 1, 2, 6, 4, 6 };
 	const char *root;
 	char why[KP_ERROR_SIZE];
 	int target, written;
@@ -158,7 +174,7 @@ static void data_seeds_run(KpT *T)
 	if ((written = kp_fuzz_write_seeds(root, 1, why, sizeof why)) < 0) kp_t_fail(T, "seeds: %s", why);
 	for (target = 0; target < KP_FUZZ_TARGETS; target++) {
 		char dir[KP_T_PATH];
-		long loaded = kp_fuzz_stats()->loaded;
+		KpFuzzStats before = *kp_fuzz_stats();
 		int count;
 		if (kp_fuzz_init(target, why, sizeof why) != 0) kp_t_fail(T, "%s: %s", kp_fuzz_name(target), why);
 		snprintf(dir, sizeof dir, "%s/%s", root, kp_fuzz_name(target));
@@ -166,8 +182,12 @@ static void data_seeds_run(KpT *T)
 		kp_t_log(T, "%s: %d seeds", kp_fuzz_name(target), count);
 		kp_t_ok(T, count >= AT_LEAST[target], "%s: %d seeds, %d at least", kp_fuzz_name(target), count, AT_LEAST[target]);
 		if (target == KP_FUZZ_SAVE) {
-			kp_t_ok(T, kp_fuzz_stats()->loaded - loaded == count, "every save loads: %ld of %d",
-				kp_fuzz_stats()->loaded - loaded, count);
+			/* a loaded game runs: the queued order past orders.dat refused by its steps, nothing else */
+			const KpFuzzStats *st = kp_fuzz_stats();
+			kp_t_ok(T, st->loaded - before.loaded == count, "every save loads: %ld of %d", st->loaded - before.loaded,
+				count);
+			kp_t_ok(T, st->refused - before.refused == 1 && refused_since(&before, "of tech_use") == 1,
+				"the queued order refused by the loaded game's steps, nothing else: %ld", st->refused - before.refused);
 		}
 		if (target == KP_FUZZ_COMMANDS) {
 			/* a single player's three orders past orders.dat refused, the network game's ignored (run_dir fails a
@@ -175,8 +195,8 @@ static void data_seeds_run(KpT *T)
 			const KpFuzzStats *st = kp_fuzz_stats();
 			int r;
 			for (r = 0; r < st->reasons; r++) kp_t_log(T, "refused %ld: %s", st->reason_count[r], st->reason[r]);
-			kp_t_ok(T, st->refused == 3 && st->reasons == 1 && strstr(st->reason[0], "of tech_use") != NULL,
-				"the three orders past orders.dat refused, nothing else: %ld", st->refused);
+			kp_t_ok(T, st->refused - before.refused == 3 && refused_since(&before, "of tech_use") == 3,
+				"the three orders past orders.dat refused, nothing else: %ld", st->refused - before.refused);
 		}
 	}
 	kp_t_log(T, "%d seeds", written);

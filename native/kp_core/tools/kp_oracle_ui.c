@@ -87,6 +87,49 @@ const char *kp_oracle_race_theme(int64_t race)
 	return race >= 0 && race < 3 ? THEMES[race] : THEMES[1];
 }
 
+/* --- the score screen's data --- */
+
+const char *const KP_ORACLE_SCORE_ARRAYS[KP_UI_SCORE_ARRAYS] = { "minerals", "gas", "cumulative_gas", "cumulative_minerals",
+	"men_produced", "men_lost", "men_killed", "unit_score", "kill_score", "buildings_constructed", "buildings_lost",
+	"buildings_razed", "structure_score", "razing_score" };
+
+void kp_oracle_score_data(const KpJson *d, KpUiScoreData *out)
+{
+	const KpJson *roster = kp_json_get(d, "roster"), *arrays = kp_json_get(d, "arrays");
+	int k, j;
+	memset(out, 0, sizeof *out);
+	for (k = 0; k < KP_UI_SCORE_SLOTS && k < kp_json_len(roster); k++) {
+		const KpJson *e = kp_json_at(roster, k);
+		if (!kp_json_is(e, KP_JSON_OBJECT)) continue;
+		snprintf(out->roster[k].name, sizeof out->roster[k].name, "%s", kp_json_field_str(e, "name", ""));
+		snprintf(out->roster[k].force, sizeof out->roster[k].force, "%s", kp_json_field_str(e, "force", ""));
+		out->roster[k].index = (uint32_t)kp_json_field_int(e, "index", 0);
+		out->roster[k].storm = (uint32_t)kp_json_field_int(e, "storm", 0);
+		out->roster[k].type = (uint32_t)kp_json_field_int(e, "type", 0);
+		out->roster[k].race = (uint8_t)kp_json_field_int(e, "race", 0);
+	}
+	for (k = 0; k < KP_UI_SCORE_ARRAYS; k++) {
+		const KpJson *a = kp_json_get(arrays, KP_ORACLE_SCORE_ARRAYS[k]);
+		for (j = 0; j < 12 && j < kp_json_len(a); j++) out->arrays[k][j] = (int32_t)kp_json_int(kp_json_at(a, j), 0);
+	}
+	for (k = 0; k < 12 && k < kp_json_len(kp_json_get(d, "colours")); k++) {
+		out->colours[k] = (uint8_t)kp_json_int(kp_json_at(kp_json_get(d, "colours"), k), 0);
+	}
+	for (k = 0; k < 8 && k < kp_json_len(kp_json_get(d, "player_colours")); k++) {
+		out->player_colours[k] = (uint8_t)kp_json_int(kp_json_at(kp_json_get(d, "player_colours"), k), 0);
+	}
+	out->count = (int)kp_json_field_int(d, "count", 0);
+	out->result = (int)kp_json_field_int(d, "result", 0);
+	out->race = (int)kp_json_field_int(d, "race", 0);
+	out->local_storm = (uint32_t)kp_json_field_int(d, "local_storm", 0);
+	out->elapsed = (uint32_t)kp_json_field_int(d, "elapsed", 0);
+	out->replay = (int)kp_json_field_int(d, "replay", 0);
+	out->network = (int)kp_json_field_int(d, "network", 0);
+	for (k = 0; k < 8 && k < kp_json_len(kp_json_get(d, "results")); k++) {
+		out->storm_results[k] = (uint8_t)kp_json_int(kp_json_at(kp_json_get(d, "results"), k), 0);
+	}
+}
+
 /* --- the input log's entries --- */
 
 int kp_hud_log_parse(KpHudLog *h, const char *text, size_t size, KpError *err)

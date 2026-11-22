@@ -50,6 +50,12 @@ void kp_oracle_ui_bin_name(const KpUi *ui, int32_t bin, int lower, char *out, si
 /* The console's theme of a race (dlgs\<race>.grp; any other race: Terran's). */
 const char *kp_oracle_race_theme(int64_t race);
 
+/* The score screen's data of uilog.py's "score" record (RunScoreScreen 0x461940's): the roster, the arrays by their
+ * names (KP_ORACLE_SCORE_ARRAYS), the colours and the results by Storm ID ("results"); the rest as the oracle's tools
+ * give it ("result", "race", "local_storm", "elapsed", "replay", "network"). */
+extern const char *const KP_ORACLE_SCORE_ARRAYS[KP_UI_SCORE_ARRAYS];
+void kp_oracle_score_data(const KpJson *d, KpUiScoreData *out);
+
 /* --- the console over a replayed game --- */
 
 /* tools/hud_log.py's entry kinds (an entry: frame, kind, values...). */

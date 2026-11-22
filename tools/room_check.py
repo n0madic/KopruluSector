@@ -162,9 +162,10 @@ def result_segment(path: Path) -> dict | None:
     return {"result": result, "owners": owners, "records": records}
 
 
-def score_segment(path: Path) -> dict | None:
-    """The records of the game's score screen: from RunScoreScreen's "score" record to the first record outside the
-    score states (14..19), with the screen's data (uilog.py's "score" and "elapsed" records)."""
+def score_segment(path: Path, at: int | None = None) -> dict | None:
+    """The records of the game's score screen: from RunScoreScreen's "score" record (the first, or the one at tick at)
+    to the first record outside the score states (14..19), with the screen's data (uilog.py's "score" and "elapsed"
+    records)."""
     owners, records, data = {}, [], None
     for line in path.read_text().splitlines():
         r = json.loads(line)
@@ -172,7 +173,7 @@ def score_segment(path: Path) -> dict | None:
             owners[r["owner"]] = r["ref"]
             continue
         if data is None:
-            if "score" in r:
+            if "score" in r and (at is None or r["t"] == at):
                 data = dict(r["score"], t=r["t"])
             continue
         if "elapsed" in r:
@@ -187,16 +188,27 @@ def score_segment(path: Path) -> dict | None:
     return {"data": data, "owners": owners, "records": records}
 
 
-def captures(screens: Path, start: int, end: int, out: Path, pattern: str = "glue0[789]-*.cap") -> list[str]:
-    """The captures (uiscreen.py) taken in [start, end], decompressed into out: `cap TICK PATH NAME` and the cursor's
-    rectangle, for a modeless capture also the result dialog's rectangle and the game view under it."""
+def score_screen_data(d: dict, local_storm: int | None = None) -> dict:
+    """The score screen's data as kp_oracle's score replays read it (kp_oracle_score_data): score_segment's with the
+    result and race of its score state and the local player's Storm ID (offline the first human's)."""
+    state = d["glue_state"]
+    if local_storm is None:
+        local_storm = next((e for e in d["roster"] if e["type"] in (2, 10)), {"storm": 0})["storm"]
+    return dict(d, result=1 if state % 2 else 2, race=(state - 14) // 2, local_storm=local_storm)
+
+
+def captures(screens: Path, start: int, end: int, out: Path, pattern: str = "glue0[789]-*.cap",
+             gaps: list[tuple[int, int]] | None = None) -> list[str]:
+    """The captures (uiscreen.py) taken in [start, end] and in none of the gaps' [first, last), decompressed into out:
+    `cap TICK PATH NAME` and the cursor's rectangle, for a modeless capture also the result dialog's rectangle and the
+    game view under it."""
     from sc_emulator.uiscreen import ScreenCapture  # noqa: E402
     from sc_emulator.hle.kernel32 import TICK_BASE_MS  # noqa: E402
     lines = []
     for path in sorted(screens.glob(pattern)):
         cap = ScreenCapture(path)
         tick = cap.header["clock_ms"] + TICK_BASE_MS
-        if not start <= tick <= end:
+        if not start <= tick <= end or any(first <= tick < last for first, last in gaps or []):
             continue
         raw = out / (path.stem + ".raw")
         raw.write_bytes(cap.pixels)
@@ -214,13 +226,13 @@ def captures(screens: Path, start: int, end: int, out: Path, pattern: str = "glu
 
 
 def replay(name: str, tool: list[str], lines: list[str], screens: Path, records: list[dict], pattern: str,
-           encoding: str = "utf-8") -> bool:
+           encoding: str = "utf-8", gaps: list[tuple[int, int]] | None = None) -> bool:
     """Runs a replay tool (oracle_cli.command) over the lines (written in the encoding: latin-1 for the original's
-    bytes) and the captures of the records' time; logs its output."""
+    bytes) and the captures of the records' time outside the gaps; logs its output."""
     with tempfile.TemporaryDirectory() as tmp:
         ticks = [r.get("t", r.get("tpass", 0)) for r in records if "t" in r or "tpass" in r]
         if ticks:
-            lines = lines + captures(screens, min(ticks), max(ticks), Path(tmp), pattern)
+            lines = lines + captures(screens, min(ticks), max(ticks), Path(tmp), pattern, gaps)
         data = Path(tmp) / "records.txt"
         data.write_text("\n".join(lines) + "\n", encoding=encoding)
         r = subprocess.run(tool + [str(data)], cwd=ROOT, capture_output=True, text=True)
@@ -274,9 +286,8 @@ def check_game(game: Path, expansion: int, kinds: tuple[str, ...]) -> bool:
         log.info("%s: no result dialog", name)
     score = score_segment(log_path) if "score" in kinds else None
     if score is not None:
-        d, state = score["data"], score["data"]["glue_state"]
-        human = next((e for e in d["roster"] if e["type"] in (2, 10)), {"storm": 0})
-        data = dict(d, result=1 if state % 2 else 2, race=(state - 14) // 2, local_storm=human["storm"])
+        d = score["data"]
+        data = score_screen_data(d)
         lines = head + [f"start {d['t']}", "data " + json.dumps(data, separators=(",", ":"))]  # the score data
         for r in score["records"]:
             lines += record_lines(r, score["owners"])

@@ -786,7 +786,9 @@ void kp_ui_score_data(KpUi *ui, struct KpGame *g, int result, const char *player
 			const char *name = computer_name(ui, (int)g->expansion, kp_ui_map_colour(ui, p), (int)g->players.race[p]);
 			(void)kp_text_copy_chars(e->name, sizeof e->name, name != NULL ? name : "", ROSTER_NAME_CHARS);
 			if (e->name[0] == 0) continue; /* offline: a computer without a name is not listed */
-		} else {
+		} else { /* not listed, its type and Storm ID kept as every type's but a skipped computer's */
+			e->type = c;
+			e->storm = NO_STORM_PLAYER;
 			continue;
 		}
 		e->type = c;

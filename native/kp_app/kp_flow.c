@@ -361,6 +361,7 @@ static KpNetSock *watch_socket(KpFlow *f, int port)
 	c.single = 1;
 	c.port = (uint16_t)port;
 	c.map_self = -1;
+	f->watch_sock_failed = 0;
 	if (!(f->watch_sock = kp_net_sock_open(&c, why, sizeof why))) say(f, "watch: no socket: %s", why);
 	else say(f, "watch: UDP port %u", (unsigned)kp_net_sock_port(f->watch_sock, KP_NET_SOCKET_LIST));
 	return f->watch_sock;
@@ -524,7 +525,11 @@ static void watch_view(KpFlow *f)
 /* The viewers' part of a frame: what arrived on their socket, the viewer's turn */
 static void watch_frame(KpFlow *f)
 {
-	if (f->watch_sock && kp_net_sock_wait(f->watch_sock, 0, watch_arrived, f) < 0) say(f, "watch: the socket failed");
+	/* a failed socket is said once: a viewer then times out (KP_WATCH_TIMEOUT_MS), a server answers no more */
+	if (f->watch_sock && kp_net_sock_wait(f->watch_sock, 0, watch_arrived, f) < 0 && !f->watch_sock_failed) {
+		f->watch_sock_failed = 1;
+		say(f, "watch: the socket failed");
+	}
 	if (f->watching) watch_view(f);
 }
 

@@ -133,11 +133,12 @@ void kp_creep_init(KpGame *g)
 	KpTerrain *t = &g->terrain;
 	int64_t i, b;
 	for (i = 0; i < KP_TILES; i++) t->creep_backup[i] = t->creep_border[i] = 0;
-	/* InitRecedingCreepPool 0x4b44a0: every node, in ascending order, at the front of the free list; empty buckets,
-	 * both timers 0. */
+	/* InitRecedingCreepPool 0x4b44a0: the zeroed nodes (no tile), every one, in ascending order, at the front of the
+	 * free list; empty buckets, both timers 0. */
 	for (b = 0; b < RECEDE_BUCKETS; b++) t->recede_buckets[b] = 0;
 	for (b = 0; b <= FREE_BUCKET; b++) t->recede_head[b] = 0;
 	for (i = 0; i < KP_TILES; i++) t->recede_node[i] = 0;
+	for (i = 0; i <= RECEDE_NODES; i++) t->recede_x[i] = t->recede_y[i] = 0;
 	t->recede_free = 0;
 	for (i = 1; i <= RECEDE_NODES; i++) recede_push(t, i, FREE_BUCKET);
 	t->recede_timer = 0;

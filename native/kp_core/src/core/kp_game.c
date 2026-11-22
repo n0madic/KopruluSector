@@ -131,15 +131,18 @@ void kp_list64_insert_before(int64_t *prev, int64_t *next, KpList *list, int64_t
 	prev[existing] = node;
 }
 
+/* Not held: the command's player (set by the first turn), the second order (by the first command that gives one),
+ * the screen (by the host's view) and the placement's order and type (by the first placement). */
 const KpScalarInfo KP_SCALARS[KP_SCALAR_COUNT] = {
-	{ "units_allocated", 0 }, { "error_code", 0 }, { "cloaked_head", 0 }, { "tile_countdown", 0 },
-	{ "update_tiles", 1 }, { "move_reveal", 1 }, { "order_spread", 0 }, { "secondary_spread", 0 },
-	{ "interceptor_alerted", 1 }, { "hit_slot", 0 }, { "frame", 0 }, { "turn", 0 }, { "elapsed", 0 },
-	{ "command_player", 0 }, { "second_order", 0 }, { "order_marker", 1 },
-	{ "power_dirty", 1 }, { "placement_active", 1 }, { "cheats", 0 },
-	{ "requirement_error", 0 }, { "path_free_head", 0 }, { "path_subject", 0 },
-	{ "path_all_units", 0 }, { "screen_x", 0 }, { "screen_y", 0 }, { "screen_w", 0 }, { "screen_h", 0 },
-	{ "paused", 0 }, { "speed", 0 }, { "mission_index", 0 }, { "placement_order", 0 }, { "placement_type", 0 },
+	{ "units_allocated", 0, 1 }, { "error_code", 0, 1 }, { "cloaked_head", 0, 1 }, { "tile_countdown", 0, 1 },
+	{ "update_tiles", 1, 1 }, { "move_reveal", 1, 1 }, { "order_spread", 0, 1 }, { "secondary_spread", 0, 1 },
+	{ "interceptor_alerted", 1, 1 }, { "hit_slot", 0, 1 }, { "frame", 0, 1 }, { "turn", 0, 1 }, { "elapsed", 0, 1 },
+	{ "command_player", 0, 0 }, { "second_order", 0, 0 }, { "order_marker", 1, 1 },
+	{ "power_dirty", 1, 1 }, { "placement_active", 1, 1 }, { "cheats", 0, 1 },
+	{ "requirement_error", 0, 1 }, { "path_free_head", 0, 1 }, { "path_subject", 0, 1 },
+	{ "path_all_units", 0, 1 }, { "screen_x", 0, 0 }, { "screen_y", 0, 0 }, { "screen_w", 0, 0 }, { "screen_h", 0, 0 },
+	{ "paused", 0, 1 }, { "speed", 0, 1 }, { "mission_index", 0, 1 }, { "placement_order", 0, 0 },
+	{ "placement_type", 0, 0 },
 };
 
 int64_t kp_scalar(const KpGame *g, KpScalar s) { return g->scalar_present[s] ? g->scalar[s] : KP_NIL; }

@@ -928,7 +928,15 @@ static void score_screen_lists_every_player_and_the_games_time(KpT *T)
 			"part %d: the game's %u s (%u)", part, (unsigned)GAME_SECONDS, (unsigned)d->elapsed);
 		for (p = 0; p < 8; p++) {
 			int64_t c = g->players.controller[p];
-			if (d->roster[p].type != 0) listed++;
+			uint32_t type = d->roster[p].type;
+			/* the screen lists the humans and the named computers; the other slots keep their type with Storm ID -1
+			 * (CaptureScoreRoster 0x461e00) */
+			if (type == KP_CTRL_HUMAN || type == KP_CTRL_DEFEATED_HUMAN || type == KP_CTRL_COMPUTER
+				|| type == KP_CTRL_DEFEATED_COMPUTER) {
+				listed++;
+			} else {
+				kp_t_eq(T, d->roster[p].storm, 0xffffffffu, "part %d: player %d unlisted, no Storm ID", part, p);
+			}
 			if (c == KP_CTRL_DEFEATED_COMPUTER) {
 				computers++;
 				kp_t_eq(T, d->roster[p].type, KP_CTRL_DEFEATED_COMPUTER, "part %d: player %d, a retired computer", part, p);

@@ -249,8 +249,10 @@ typedef struct KpFlow {
 	int net_game, net_running, net_left;
 	/* the viewers (kp_watch.h): the socket (owned, NULL none), the server of the network game this seat hosts (kept
 	 * after the game: its viewers fetch its end), and this program's viewer: the host's address being looked up, the
-	 * address, the viewer, its playback asked for (build_scene takes it), begun, and whether the game in play is it */
+	 * address, the viewer, its playback asked for (build_scene takes it), begun, and whether the game in play is it;
+	 * watch_sock_failed: the socket's failure said (once per socket) */
 	struct KpNetSock *watch_sock;
+	int watch_sock_failed;
 	KpWatchServer watch_server;
 	int watch_serving;
 	struct KpNetLookup *watch_lookup;

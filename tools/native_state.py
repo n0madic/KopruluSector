@@ -187,6 +187,24 @@ FLINGY_BULLETS = UNITS  # a bullet's flingy number in Koprulu: UNITS + its index
 # prev +0) and the sprite rows' previous links.
 IMAGE_FREE, IMAGE_FREE_TAIL, SPRITE_FREE, SPRITE_FREE_TAIL = 0x544694, 0x592898, 0x5C51C8, 0x5C51CC
 MAIN_IMAGES = IMAGE_POOLS[0][1]
+# "image_pools": the free lists of the other image pools (InitImagePools 0x40f8b0; head, tail; next +4, prev +0), the
+# local interface's like "sprite_lists" (a viewer's health bars and selection circles, a building's placement preview).
+IMAGE_POOL_LISTS = (("health", 0x59289C, 0x592BA0), ("circles", 0x592BA4, 0x594050), ("ghosts", 0x59406C, 0x595070),
+                    ("boxes", 0x595074, 0x596078))
+ALL_IMAGES = sum(count for _, count, _ in IMAGE_POOLS)
+# "lone_thingies" and "fog_thingies": the thingy pools (InitThingies 0x4183e0; 500 records of 16 bytes {prev +0, next +4,
+# param +8, sprite +0xc}): the lone sprites' LONE_BASE (lists: free head, free tail, active head, active tail; the
+# placement cursor's record 0x5c9984) and the fog ghosts' (the local player's: a building's last seen image).
+THINGIES = 500
+LONE_LISTS, THINGY_CURSOR = (0x5C7A20, 0x5C7A24, 0x5C7A28, 0x5C7A2C), 0x5C9984
+FOG_BASE, FOG_LISTS = 0x5C7A30, (0x5C9970, 0x5C9974, 0x5C9978, 0x5C997C)
+# "receding": the receding creep's chains (InitRecedingCreepPool 0x4b44a0; nodes of 20 bytes: next +0, prev +4, x +0x10,
+# y +0x11, bucket +0x12; the heads of the 9 buckets and the free list, 0x6c46bc), each node as node:x:y:bucket (a free
+# node keeps the tile it had), Koprulu's node k the original's k - 1.
+RECEDE_NODE_BASE, RECEDE_NODE_SIZE, RECEDE_NODES, RECEDE_HEADS = 0x6BE698, 20, 1024, 0x6C4698
+# "dat_writes": the DAT values the game writes while it runs: weapons.dat's forward offsets (attkshiftproj 0x411023).
+WEAPON_FORWARD_OFFSETS, WEAPON_IDS = 0x5260B0, 130
+RECEDE_BUCKET_NAMES = tuple(map(str, range(9))) + ("free",)
 # "ai_military": the military records (pool 0x6acc50, links +0/+4, type +8, harass region +0xa, unit +0xc, AI region
 # record +0x10), the pool's free head +0x4e20, an AI region record's list head +0x30.
 MILITARY_BASE, MILITARY_SIZE, MILITARY_COUNT, MILITARY_FREE, AI_REGION_MILITARY = 0x6ACC50, 20, 1000, 0x6B1A70, 0x30
@@ -456,8 +474,34 @@ class Decoder:
             p = self.u32(p + next_offset)
         return ",".join(map(str, out))
 
+    def thingies(self, base: int, lists: tuple, cursor: int | None) -> dict:
+        """A thingy pool's lists as kp_dump.c thingy_lines writes them."""
+        index = lambda p: self.pool_index(p, base, LONE_SIZE, THINGIES, "thingy")
+        free_head, free_tail, active_head, active_tail = (self.u32(a) for a in lists)
+        record = lambda p: f"{index(p)}:{self.u32(p + 8)}:{self.sprite_index(self.u32(p + 0xC))}"
+        f = {"active": ",".join(self.chain(active_head, 4, record, THINGIES)),
+             "active_prev": self.prevs(active_head, 4, 0, index, THINGIES), "active_tail": index(active_tail),
+             "free": ",".join(self.chain(free_head, 4, record, THINGIES)),
+             "free_prev": self.prevs(free_head, 4, 0, index, THINGIES), "free_tail": index(free_tail)}
+        if cursor is not None:
+            f["cursor"] = index(self.u32(cursor))
+        return f
+
+    def receding(self) -> list:
+        """The receding creep's chains as kp_dump.c "receding" writes them."""
+        index = lambda p: 0 if p == 0 else 1 + self.pool_index(p, RECEDE_NODE_BASE, RECEDE_NODE_SIZE, RECEDE_NODES,
+                                                               "receding node")
+        record = lambda p: "{}:{}:{}:{}".format(index(p), *self.s.read(p + 0x10, 3))
+        rows = []
+        for b, name in enumerate(RECEDE_BUCKET_NAMES):
+            head = self.u32(RECEDE_HEADS + 4 * b)
+            rows.append((name, {"nodes": ",".join(self.chain(head, 0, record, RECEDE_NODES)),
+                                "prev": self.prevs(head, 0, 4, index, RECEDE_NODES)}))
+        return rows
+
     def later(self, m: dict, units: list) -> None:
-        """The categories of stage T3 (kp_dump.c "step_state", "sprite_lists", "links", "ai_military")."""
+        """The categories of stage T3 (kp_dump.c "step_state", "sprite_lists", "image_pools", "lone_thingies",
+        "fog_thingies", "receding", "dat_writes", "links", "ai_military")."""
         f = {"bullet_spawner": self.unit_index(self.u32(BULLET_SPAWNER)), "bullet_spin": self.u32(BULLET_SPIN),
              "hit_used": self.u32(HIT_USED), "spell_reactive": self.u32(SPELL_REACTIVE),
              "rng_enabled": self.u32(RNG_ENABLED), "rng_total": self.u32(RNG_TOTAL),
@@ -482,6 +526,14 @@ class Decoder:
             ("sprites", {"nodes": ",".join(map(str, self.chain(self.u32(SPRITE_FREE), 4, self.sprite_index, SPRITES))),
                          "prev": self.prevs(self.u32(SPRITE_FREE), 4, 0, self.sprite_index, SPRITES),
                          "tail": self.sprite_index(self.u32(SPRITE_FREE_TAIL))})]
+        m["image_pools"] = [
+            (name, {"nodes": ",".join(map(str, self.chain(self.u32(head), 4, self.image_index, ALL_IMAGES))),
+                    "prev": self.prevs(self.u32(head), 4, 0, self.image_index, ALL_IMAGES),
+                    "tail": self.image_index(self.u32(tail))}) for name, head, tail in IMAGE_POOL_LISTS]
+        m["receding"] = self.receding()
+        m["dat_writes"] = [("weapons", {"forward_offset": self.s.read(WEAPON_FORWARD_OFFSETS, WEAPON_IDS).hex()})]
+        m["lone_thingies"] = [("0", self.thingies(LONE_BASE, LONE_LISTS, THINGY_CURSOR))]
+        m["fog_thingies"] = [("0", self.thingies(FOG_BASE, FOG_LISTS, None))]
         links = [(f"unit.{name}", {"prev": self.prevs(self.u32(head), 4, 0, self.unit_index, UNITS)})
                  for name, head in UNIT_LISTS]
         links += [(f"bullet.{name[7:]}", {"prev": self.prevs(self.u32(head), 4, 0, self.bullet_index, BULLETS)})

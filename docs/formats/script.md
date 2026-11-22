@@ -141,7 +141,7 @@ Names are in any case. A value read where what it is read from is missing has no
 | `groups.held` | the console | The groups that hold units, a bit each (group 0 the lowest) |
 | `group.held:N` | the console | 1 when group N (0..9) holds units |
 | `replay.ended`, `replay.frames` | the game | 1 once a replay's playback passed its record (the victory dialog's "The replay has finished." opens); the replay's frames (its header's), 0 outside a replay |
-| `sim.crc` | the game | The state's category CRCs (`kp_dump_crcs`, tools/state_check.py's) folded in dump order, but the local interface's a replay's viewer does not share: `step` (the result dialog's clock), `selection`, `sprite`, `image`, `sprite_lists` (the selection circles, the right click's ground marker). A game and its replay have the same at the same step |
+| `sim.crc` | the game | The state's category CRCs (`kp_dump_crcs`, tools/state_check.py's) folded in dump order, but the local interface's a replay's viewer does not share: `step` (the result dialog's clock), `selection`, `sprite`, `image`, `sprite_lists`, `image_pools` (the selection circles and health bars, the right click's ground marker), `fog_thingies` (the fog ghosts of the local player's view). A game and its replay have the same at the same step |
 | `selection.has:PICK`, `selection.first:PICK` | the game | 1 when the picked unit is in the local selection; is its first |
 | `moved:PICK` | the game | The world pixels the picked unit moved since its pick (rounded down); no value with no pick, or with its unit gone |
 | `pad.open`, `pad.count`, `pad.shown:N` | the console | The touch pad's groups opened; its buttons shown; 1 when its button N (0..11, `KP_UI_PAD_*`) is; another N is a parse error |

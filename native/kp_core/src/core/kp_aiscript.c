@@ -855,20 +855,60 @@ static void debug_text(KpGame *g, int64_t p, int64_t pc)
 #define AIOP_ADDRESS 0x80
 #define AIOP_WIDTH 0x7f
 #define CHECK_STACK 64
+#define CHECK_SEEN 1024 /* the visited states' first table size (a power of two) */
 
+/* A state of the closure: a PC of a binary and the return address every script shares (KpScripts.ret) there. */
 typedef struct {
-	uint32_t pc;
+	uint32_t pc, ret;
 	uint8_t bin;
 } CheckEntry;
 
 typedef struct {
 	const KpAiBins *b;
 	uint32_t at[LAST_OPCODE + 1]; /* each ordinal's flags byte in b->operands */
-	uint8_t *seen[KP_AI_BINS];
+	uint64_t *seen; /* the visited states (seen_key), open addressing; 0 free */
+	size_t seen_count, seen_cap;
 	CheckEntry *work;
 	size_t top, cap;
 	char id[16];
 } Check;
+
+static uint64_t seen_key(int bin, uint32_t pc, uint32_t ret)
+{
+	return (uint64_t)1 << 63 | (uint64_t)(bin & 1) << 62 | (uint64_t)(pc & 0x7fffffff) << 31 | (ret & 0x7fffffff);
+}
+
+static size_t seen_slot(uint64_t key, size_t cap)
+{
+	return (size_t)((key * 0x9e3779b97f4a7c15ULL) >> 32) & (cap - 1);
+}
+
+/* Marks the state visited: 1 when it was already, 0 newly, -1 out of memory. */
+static int visit(Check *c, int bin, uint32_t pc, uint32_t ret)
+{
+	uint64_t key = seen_key(bin, pc, ret);
+	size_t k;
+	if (2 * (c->seen_count + 1) > c->seen_cap) {
+		size_t cap = c->seen_cap ? 2 * c->seen_cap : CHECK_SEEN, j;
+		uint64_t *t = (uint64_t *)calloc(cap, sizeof *t);
+		if (!t) return -1;
+		for (j = 0; j < c->seen_cap; j++) {
+			if (c->seen[j] == 0) continue;
+			for (k = seen_slot(c->seen[j], cap); t[k] != 0; k = (k + 1) & (cap - 1)) {
+			}
+			t[k] = c->seen[j];
+		}
+		free(c->seen);
+		c->seen = t;
+		c->seen_cap = cap;
+	}
+	for (k = seen_slot(key, c->seen_cap); c->seen[k] != 0; k = (k + 1) & (c->seen_cap - 1)) {
+		if (c->seen[k] == key) return 1;
+	}
+	c->seen[k] = key;
+	c->seen_count++;
+	return 0;
+}
 
 static void script_name(char out[16], uint32_t id)
 {
@@ -902,7 +942,7 @@ static int index_operands(Check *c)
 	return at == size ? 0 : -1;
 }
 
-static int push(Check *c, int bin, uint32_t pc)
+static int push(Check *c, int bin, uint32_t pc, uint32_t ret)
 {
 	if (c->top == c->cap) {
 		size_t cap = c->cap ? 2 * c->cap : CHECK_STACK;
@@ -912,13 +952,20 @@ static int push(Check *c, int bin, uint32_t pc)
 		c->cap = cap;
 	}
 	c->work[c->top].pc = pc;
+	c->work[c->top].ret = ret;
 	c->work[c->top].bin = (uint8_t)bin;
 	c->top++;
 	return 0;
 }
 
-/* The run of instructions from (bin, pc) up to a terminator or one already seen; the address operands pushed. */
-static int check_run(Check *c, int bin, uint32_t pc, char *why, size_t why_size)
+/* The run of instructions from (bin, pc) with the shared return address ret up to a terminator or a state already
+ * seen; the address operands pushed. The return address follows the interpreter: call sets it to its continuation
+ * (which runs when its routine returns), return jumps to it and sets it to 0, so a return without its call, or the
+ * outer one of nested calls, runs from PC 0. A script that waits inside a call lets the others run and their calls
+ * set the address too: which one a return then takes depends on the order the scripts run in, not on the code, so the
+ * closure follows the script alone (a script started by multirun takes the address its starter has; a panic block,
+ * which a town starts later, 0). */
+static int check_run(Check *c, int bin, uint32_t pc, uint32_t ret, char *why, size_t why_size)
 {
 	static const char *const BINS[KP_AI_BINS] = { "aiscript.bin", "bwscript.bin" };
 	const uint8_t *code = c->b->bin[bin], *t = c->b->operands;
@@ -926,12 +973,16 @@ static int check_run(Check *c, int bin, uint32_t pc, char *why, size_t why_size)
 	for (;;) {
 		uint32_t at, n, i, next;
 		uint8_t op;
+		int seen;
 		if (pc >= size) {
 			snprintf(why, why_size, "AI script %s reads PC 0x%x outside %s", c->id, (unsigned)pc, BINS[bin]);
 			return -1;
 		}
-		if (c->seen[bin][pc >> 3] & (1u << (pc & 7))) return 0;
-		c->seen[bin][pc >> 3] |= (uint8_t)(1u << (pc & 7));
+		if ((seen = visit(c, bin, pc, ret)) != 0) {
+			if (seen > 0) return 0;
+			snprintf(why, why_size, "out of memory");
+			return -1;
+		}
 		op = code[pc];
 		if (op > LAST_OPCODE) return 0; /* freed as stop does */
 		if (op == OP_FATAL_ERROR) { /* the original's fatal error (0x4cc190) */
@@ -953,15 +1004,17 @@ static int check_run(Check *c, int bin, uint32_t pc, char *why, size_t why_size)
 			/* the panic block runs from aiscript.bin whichever binary set it (kp_ai_town.c, 0x494e80); a block of 0
 			 * is none (GetPanicBlock 0x482c10: panic_expansion starts nothing) */
 			if ((d & AIOP_ADDRESS) && !(op == OP_PANIC && value == 0)
-				&& push(c, op == OP_PANIC ? 0 : bin, value) != 0) {
+				&& push(c, op == OP_PANIC ? 0 : bin, value, op == OP_CALL ? next : op == OP_PANIC ? 0 : ret) != 0) {
 				snprintf(why, why_size, "out of memory");
 				return -1;
 			}
 		}
-		/* TODO: return jumps to the one return address every script shares (sc->ret: the last call's, 0 after any
-		 * return), which the closure does not follow: a return without its call, or the outer one of nested calls,
-		 * runs from PC 0 or from another script's call site (scdata/analyze/ai.py's closure stops there too). */
-		if (t[at] & AIOP_TERMINATOR) return 0;
+		if (op == OP_RETURN) { /* the jump to the shared address, then 0 */
+			pc = ret;
+			ret = 0;
+			continue;
+		}
+		if (op == OP_CALL || (t[at] & AIOP_TERMINATOR)) return 0; /* a call goes on from its routine's return */
 		pc = next;
 	}
 }
@@ -969,7 +1022,7 @@ static int check_run(Check *c, int bin, uint32_t pc, char *why, size_t why_size)
 int kp_aiscript_check(const KpAiBins *b, uint32_t id, char *why, size_t why_size)
 {
 	Check c;
-	int bin, k, rc = 0;
+	int bin, rc = 0;
 	uint32_t entry = kp_ai_bins_find(b, id, &bin);
 	if (entry == 0) return 0;
 	memset(&c, 0, sizeof c);
@@ -979,18 +1032,15 @@ int kp_aiscript_check(const KpAiBins *b, uint32_t id, char *why, size_t why_size
 		snprintf(why, why_size, "the profile's opcode table (AIOP) is damaged");
 		return -1;
 	}
-	for (k = 0; k < KP_AI_BINS; k++) {
-		if (!(c.seen[k] = (uint8_t *)calloc((size_t)b->bin_size[k] / 8 + 1, 1))) rc = -1;
-	}
-	if (rc != 0 || push(&c, bin, entry) != 0) {
+	if (push(&c, bin, entry, 0) != 0) {
 		snprintf(why, why_size, "out of memory");
 		rc = -1;
 	}
 	while (rc == 0 && c.top > 0) {
 		CheckEntry e = c.work[--c.top];
-		rc = check_run(&c, e.bin, e.pc, why, why_size);
+		rc = check_run(&c, e.bin, e.pc, e.ret, why, why_size);
 	}
-	for (k = 0; k < KP_AI_BINS; k++) free(c.seen[k]);
+	free(c.seen);
 	free(c.work);
 	return rc;
 }

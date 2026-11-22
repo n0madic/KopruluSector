@@ -86,7 +86,7 @@ Design: [ADR 0020](adr/0020-campaign-replays.md); the format: [docs/formats/rep.
   - Quit opens `quitrepl.bin` (0x47b380, 0x47bed0).
 - **The end:** at the record's end the session sends a result of kind 3 (`KP_REPLAY_RESULT`). The victory dialog then shows "The replay has finished." with Exit Replay (`InitVictoryDialog` 0x4bd220: gluAll 0xb5, 0xbc).
 - **The score screen of a replay:** index 1, title 0xb2, the elapsed time by 0x480d70, and the humans' names from the slots.
-- **Scripts:** the action `replay "NAME"`, the condition `replay`, and the values `replay.ended`, `replay.frames` and `sim.crc` (the state's CRCs without the step's result clock, the selection, the sprites, the images and their lists (`sprite_lists`, stage T3): a playback has no local selection or markers).
+- **Scripts:** the action `replay "NAME"`, the condition `replay`, and the values `replay.ended`, `replay.frames` and `sim.crc` (the state's CRCs without the step's result clock, the selection, the sprites, the images and their lists and pools (`sprite_lists`, stage T3; `image_pools`), the fog ghosts (`fog_thingies`): a playback has no local selection or markers, and its viewer's fog is not the player's).
 - **Data:**
   - `defs/ui` lists `nconover.pcx`, and the input manifest has the new rows.
   - Remastered has no `rez\statbtnn.bin`: `defs/scr/texts-bw-1.17.0.1.json` now rebuilds it from Remastered's texts (byte for byte the 1.17 file). Its `SD/game/nconover.DDS` gives `nconover.pcx`. Remastered's HD `glue/create/icreate.dds.grp` is in the HD interface's placement table (`defs/scr/hd-ui-bw-1.17.0.1.json`, `kp_convert hd-ui-table`).

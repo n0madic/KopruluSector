@@ -24,7 +24,11 @@ entry (`seq`) and a call with the order at its return (`end`). Each player becom
   `at` "lobby" for the chat room's, a frame number for the game's; `kind`, `value`);
 - preload: the files the driver put in the player's folders before the game, each `guest` (its Windows path) and
   `file` (relative to the repository's root, "" outside it): a resumed game's save (stage N3's lobby replay finds the
-  game's save among them, FindMultiplayerSaveById 0x4995e0).
+  game's save among them, FindMultiplayerSaveById 0x4995e0);
+- score: the score screen the player saw after the game (its input.jsonl's, uilog.py's "score" record: the roster,
+  the arrays, the colours, the results by Storm ID and the local one's; with its "elapsed" and `glue_state`, the score
+  state that followed: race * 2 + 14, + 1 for a victory), null when it saw none. The lobby replay compares Koprulu's
+  score data with it where the player left the game (version 8).
 
 A game has its map (`map`: the file the host played, relative to the repository's root) and `expansion`; stage N3's
 lobby replay (test_lobby_trace) reads the map's header and the transfer's bytes from it.
@@ -46,10 +50,13 @@ import struct
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import room_check  # noqa: E402
+
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_RECORDINGS = ROOT / "koprulu-private" / "emu" / "net-n2"
 GOLDEN = ROOT / "tests" / "golden" / "oracle" / "net"
-GOLDEN_VERSION = 7
+GOLDEN_VERSION = 8
 PCAP_MAGIC, PCAP_LINKTYPE_IPV4 = 0xA1B2C3D4, 228
 PCAP_HEADER, PCAP_RECORD, IPV4_UDP_HEADERS = 24, 16, 28
 LIST_PORT, GAME_PORT = 6111, 6112
@@ -150,7 +157,16 @@ def player_golden(d: Path, spec_player: dict, datagrams: list[dict], payloads: l
     taken_by(who, passes, arrivals)
     return {"name": name, "ip": ip, "program": program, "calls": calls, "arrivals": arrivals, "sends": sends,
             "has_map": bool(spec_player.get("has_map", True)), "actions": spec_player.get("actions", []),
-            "preload": [{"guest": guest, "file": repo_path(host)} for guest, host in spec_player.get("preload", [])]}
+            "preload": [{"guest": guest, "file": repo_path(host)} for guest, host in spec_player.get("preload", [])],
+            "score": score_of(d / name / "input.jsonl")}
+
+
+def score_of(log_path: Path) -> dict | None:
+    """The score screen's data the player saw after the game (room_check.score_segment's), None when it saw none."""
+    if not log_path.is_file():
+        return None
+    seg = room_check.score_segment(log_path)
+    return seg["data"] if seg else None
 
 
 def repo_path(path: str) -> str:

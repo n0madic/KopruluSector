@@ -954,6 +954,7 @@ typedef struct {
 	int game_count;
 	int room, room_state, room_opened, room_net;
 	int chat_open; /* the chat room's first modal pass made (menus_chat_first_pass) */
+	int score;     /* the score screen after a network game shows (menus_score) */
 	Progress saved;
 } Menus;
 
@@ -1052,6 +1053,15 @@ static KpOracleGame *start_net_game(const KpNetGame *ng, int expansion)
 	return og;
 }
 
+/* Whether dialog is in the open list (shown, not only loaded). */
+static int dialog_open(const KpUi *ui, int32_t dialog)
+{
+	int32_t d;
+	for (d = ui->open; d >= 0; d = ui->controls[d].next)
+		if (d == dialog) return 1;
+	return 0;
+}
+
 static void menus_follow(Menus *m)
 {
 	Glue *g = &m->g;
@@ -1076,7 +1086,8 @@ static void menus_follow(Menus *m)
 			take(g);
 			return;
 		}
-		/* TODO: stage N4 plays the network game the chat room or its ready room started; the run's menus end there */
+		/* the chat room's start: the game is test_lobby_trace's, its records left out to its score screen (menus_check.py's
+		 * "score" line) */
 		if (action == KP_UI_MENU_NETWORK) return;
 		if (action == KP_UI_MENU_MISSION && room_race(state) >= 0) {
 			KpOracleGame *og;
@@ -1105,21 +1116,52 @@ static void menus_follow(Menus *m)
 		take(g);
 	}
 	if (m->room) {
-		int32_t d;
-		int open = 0;
 		kp_ui_ready_room_continue(ui);
-		for (d = ui->open; d >= 0; d = ui->controls[d].next) open |= d == ui->briefing.dialog;
-		if (open) {
+		if (dialog_open(ui, ui->briefing.dialog)) {
 			m->room_opened = 1;
 		} else if (m->room_opened) { /* the room ended: Cancel goes back to the campaign menu, a network game's by its
 		                               * provider (SetGlueStateFromProvider 0x457e50) */
 			m->room = 0;
-			if (m->room_net && ui->result == RESULT_START) return; /* TODO: stage N4's network game */
+			if (m->room_net && ui->result == RESULT_START) { /* the game, as the chat room's start's */
+				m->room_net = 0;
+				return;
+			}
 			kp_ui_menus_enter(ui, m->room_net ? kp_ui_menus_provider_state(ui) : m->expansion == 0 ? 6 : 22);
 			m->room_net = 0;
 			take(g);
 		}
 	}
+}
+
+/* The score screen after a network game (RunScoreScreen 0x461940) over the original's data of the "score" line
+ * (menus_check.py: room_check.score_screen_data's, at its record's tick) */
+static void menus_score(Menus *m, const char *rest)
+{
+	KpUi *ui = m->g.u.ui;
+	KpJsonDoc doc;
+	KpUiScoreData d;
+	const KpJson *data;
+	char why[200];
+	kp_json_doc_init(&doc);
+	if (!(data = kp_json_parse(&doc, rest, strlen(rest), why, sizeof why))) exit(kp_cli_fail("menus_replay: the score line: %s", why));
+	kp_oracle_score_data(data, &d);
+	ui->now = (uint32_t)kp_json_field_int(data, "t", 0);
+	ui->game = NULL;
+	if (kp_ui_score_open(ui, &d) < 0) exit(kp_cli_fail("ui: the score screen: %s", ui->error));
+	kp_json_doc_free(&doc);
+	m->score = 1;
+	take(&m->g);
+}
+
+/* The score screen's end: its Ok goes back by the provider in multiplayer (RunScoreScreen 0x461940's result 7,
+ * SetGlueStateFromProvider 0x457e50) */
+static void menus_score_end(Menus *m)
+{
+	KpUi *ui = m->g.u.ui;
+	if (!m->score || dialog_open(ui, ui->score.dialog) || !ui->score.answered) return;
+	m->score = 0;
+	kp_ui_menus_enter(ui, kp_ui_menus_provider_state(ui));
+	take(&m->g);
 }
 
 /* RunModalDialog 0x4c35c0's first pass over the chat room: its idle callback (LobbyUpdate 0x450d80, installed by
@@ -1301,7 +1343,10 @@ int kp_cli_menus_replay(int argc, char **argv)
 			kp_ui_ready_room_turn(ui);
 			if (ui->net != NULL) kp_ui_lobby_idle(ui); /* the chat room's pass that made the turn */
 			take(g);
+		} else if (strcmp(r->word, "score") == 0) {
+			menus_score(m, r->rest);
 		}
+		menus_score_end(m);
 		menus_follow(m);
 		menus_chat_first_pass(m);
 	}
@@ -1341,10 +1386,7 @@ static void room_captures(Glue *g, int64_t before)
 	KpUi *ui = g->u.ui;
 	while (g->next_cap < g->cap_count && g->caps[g->next_cap].tick < before) {
 		const KpTraceCapture *cap = &g->caps[g->next_cap++];
-		int32_t d;
-		int open = 0;
-		for (d = ui->open; d >= 0; d = ui->controls[d].next) open |= d == ui->briefing.dialog;
-		if (ui->briefing.dialog >= 0 && open) {
+		if (ui->briefing.dialog >= 0 && dialog_open(ui, ui->briefing.dialog)) {
 			const KpUiSurface *s = &ui->controls[ui->briefing.dialog].bitmap; /* as the last repaint left it */
 			Bitmap b;
 			int64_t differ;
@@ -1598,44 +1640,6 @@ int kp_cli_result_replay(int argc, char **argv)
 
 /* --- score_replay --- */
 
-static const char *const SCORE_ARRAYS[KP_UI_SCORE_ARRAYS] = { "minerals", "gas", "cumulative_gas", "cumulative_minerals",
-	"men_produced", "men_lost", "men_killed", "unit_score", "kill_score", "buildings_constructed", "buildings_lost",
-	"buildings_razed", "structure_score", "razing_score" };
-
-/* The score data of uilog.py's "score" record (tools/room_check.py). */
-static void score_data(const KpJson *d, KpUiScoreData *out)
-{
-	const KpJson *roster = kp_json_get(d, "roster"), *arrays = kp_json_get(d, "arrays");
-	int k, j;
-	memset(out, 0, sizeof *out);
-	for (k = 0; k < KP_UI_SCORE_SLOTS && k < kp_json_len(roster); k++) {
-		const KpJson *e = kp_json_at(roster, k);
-		if (!kp_json_is(e, KP_JSON_OBJECT)) continue;
-		snprintf(out->roster[k].name, sizeof out->roster[k].name, "%s", kp_json_field_str(e, "name", ""));
-		snprintf(out->roster[k].force, sizeof out->roster[k].force, "%s", kp_json_field_str(e, "force", ""));
-		out->roster[k].index = (uint32_t)kp_json_field_int(e, "index", 0);
-		out->roster[k].storm = (uint32_t)kp_json_field_int(e, "storm", 0);
-		out->roster[k].type = (uint32_t)kp_json_field_int(e, "type", 0);
-		out->roster[k].race = (uint8_t)kp_json_field_int(e, "race", 0);
-	}
-	for (k = 0; k < KP_UI_SCORE_ARRAYS; k++) {
-		const KpJson *a = kp_json_get(arrays, SCORE_ARRAYS[k]);
-		for (j = 0; j < 12 && j < kp_json_len(a); j++) out->arrays[k][j] = (int32_t)kp_json_int(kp_json_at(a, j), 0);
-	}
-	for (k = 0; k < 12 && k < kp_json_len(kp_json_get(d, "colours")); k++) {
-		out->colours[k] = (uint8_t)kp_json_int(kp_json_at(kp_json_get(d, "colours"), k), 0);
-	}
-	for (k = 0; k < 8 && k < kp_json_len(kp_json_get(d, "player_colours")); k++) {
-		out->player_colours[k] = (uint8_t)kp_json_int(kp_json_at(kp_json_get(d, "player_colours"), k), 0);
-	}
-	out->count = (int)kp_json_field_int(d, "count", 0);
-	out->result = (int)kp_json_field_int(d, "result", 0);
-	out->race = (int)kp_json_field_int(d, "race", 0);
-	out->local_storm = (uint32_t)kp_json_field_int(d, "local_storm", 0);
-	out->elapsed = (uint32_t)kp_json_field_int(d, "elapsed", 0);
-	out->replay = (int)kp_json_field_int(d, "replay", 0);
-}
-
 /* The score dialog's pixels against a capture's. */
 static void score_capture(Glue *g, const KpTraceCapture *cap, void *ud)
 {
@@ -1676,7 +1680,7 @@ int kp_cli_score_replay(int argc, char **argv)
 	only_timers(&g.want);
 	kp_trace_clocks(&g.u, &g.clocks);
 	ui->now = (uint32_t)kp_trace_header(&g.file, "start", 0);
-	score_data(data, &d);
+	kp_oracle_score_data(data, &d);
 	d.mission = kp_trace_header(&g.file, "mission", 0); /* 0x526524: the chains' campaign rows keep Save Replay off */
 	kp_ui_score_open(ui, &d);
 	take(&g);

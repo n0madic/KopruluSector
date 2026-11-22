@@ -133,6 +133,10 @@ def write_join(game):
     (game / "lan.pcap").write_bytes(pcap([CONNECT, ANSWER]))
     (game / "net.json").write_text(json.dumps({"reason": "every driver finished"}))
     (game / "Alpha" / "snet.jsonl").write_text("".join(json.dumps(r) + "\n" for r in recs))
+    score = {"roster": [], "count": 2, "arrays": {}, "results": [2, 1, 0, 0, 0, 0, 0, 0], "local_result": 2}
+    log = [{"f": 9, "tset": [1, 7, 20, 1], "t": 100, "glue": 3}, {"f": 9, "score": score, "t": 200, "glue": 17},
+           {"f": 9, "music": [0, 15], "t": 200, "glue": 18}, {"f": 9, "elapsed": 17, "glue": 18}]
+    (game / "Alpha" / "input.jsonl").write_text("".join(json.dumps(r) + "\n" for r in log))
 
 
 class GameTest(unittest.TestCase):
@@ -162,6 +166,16 @@ class GameTest(unittest.TestCase):
         self.assertEqual([(a["t"], a["socket"]) for a in alpha["arrivals"]], [(3000, 1), (4000, 0)])
         self.assertEqual(alpha["arrivals"][0]["pass"], 0)
         self.assertEqual(alpha["calls"][1]["take"], [0])
+        # the score screen after the game: its data, its seconds and the score state that followed (not the record's)
+        self.assertEqual((alpha["score"]["results"], alpha["score"]["local_result"]), ([2, 1, 0, 0, 0, 0, 0, 0], 2))
+        self.assertEqual((alpha["score"]["elapsed"], alpha["score"]["glue_state"]), (17, 18))
+
+    def test_a_player_without_a_score_screen_has_none(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "input.jsonl"
+            self.assertIsNone(net_check.score_of(log))  # no input log
+            log.write_text(json.dumps({"f": 1, "tset": [1, 7, 20, 1], "t": 100, "glue": 3}) + "\n")
+            self.assertIsNone(net_check.score_of(log))  # a game that ended without one
 
     def test_the_index_keeps_only_its_own_versions_goldens(self):
         with tempfile.TemporaryDirectory() as tmp:

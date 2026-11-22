@@ -19,7 +19,9 @@
  * its messages and the frames until one polls where it polled; it plays the player's in-game actions where the
  * recording shows them: the local commands (the bytes after a sent turn's 0x37), the chat lines (SNetSendMessage),
  * net.py's memory poke at a frame's end (desync), Drop Players once timeout.bin's countdown ended (drop) and the menu's
- * quit (SNetLeaveGame). The replay ends at the end of the recording (a kicked or banned player, the host that kicked it,
+ * quit (SNetLeaveGame), where a player that saw the score screen has Koprulu's score data compared with the original's
+ * (the results by Storm ID, the roster, the arrays and the colours; net_check.py's "score"). The replay ends at the end
+ * of the recording (a kicked or banned player, the host that kicked it,
  * a game the driver stopped), or at the start of a resumed game: its world is the original's save, which Koprulu does
  * not load (the plan leaves a mixed resume out), so RestoreMultiplayerSaveSlots 0x4790b0 is checked on Koprulu's own
  * saves (test_netgame). */
@@ -28,12 +30,14 @@
 #include <stdarg.h>
 
 #include "kp_data.h"
+#include "kp_hud.h"
 #include "kp_ids.h"
 #include "kp_json.h"
 #include "kp_net.h"
 #include "kp_netgame.h"
 #include "kp_netsave.h"
 #include "kp_oracle_net.h"
+#include "kp_oracle_ui.h"
 #include "kp_session.h"
 #include "kp_sha256.h"
 
@@ -47,6 +51,7 @@
 #define VIRTUAL_MAPS "maps\\"          /* where the replay's map files are, for the transfer's paths */
 #define VIRTUAL_DOWNLOAD "maps\\download\\"
 #define NETWORK_TBL "rez\\network.tbl"
+#define SCORE_STATE_FIRST 14 /* the score screens' glue states: race * 2 + 14, + 1 for a victory (RunScoreScreen) */
 
 typedef struct {
 	const KpJson *items;
@@ -91,6 +96,7 @@ typedef struct {
 	int map_open;
 	long commands_queued;
 	uint32_t game_done; /* the in-game actions played (bit k: action k) */
+	int scored;         /* the score screen's data equal to the original's */
 	uint8_t message[DATA_MAX];
 	uint8_t turns[KP_NETGAME_PLAYERS][KP_NETGAME_TURN_MAX];
 } Replay;
@@ -772,6 +778,90 @@ static void game_chat(Replay *r)
 	kp_netgame_game_chat(&r->ng, kp_json_field_str(a, "value", ""), recipients);
 }
 
+/* The score screen's data (have: Koprulu's, want: the original's in score state state, its local result local): the
+ * first difference fails the replay (fail keeps the first) */
+static void score_compare(Replay *r, const KpUiScoreData *have, const KpUiScoreData *want, int state, int local)
+{
+	int k, j;
+	if (have->result != local || have->race != (state - SCORE_STATE_FIRST) / 2 ||
+		(have->result == KP_NETGAME_WIN) != ((state - SCORE_STATE_FIRST) % 2 == 1))
+		fail(r, "the score's local result %d and race %d, the original's %d in state %d", have->result, have->race, local,
+			state);
+	for (k = 0; k < KP_NETGAME_PLAYERS; k++)
+		if (have->storm_results[k] != want->storm_results[k])
+			fail(r, "Storm player %d's result %d, the original's %d", k, have->storm_results[k], want->storm_results[k]);
+	if (have->count != want->count) fail(r, "the roster's %d entries, the original's %d", have->count, want->count);
+	for (k = 0; k < KP_UI_SCORE_SLOTS; k++) {
+		const KpUiRosterEntry *h = &have->roster[k], *w = &want->roster[k];
+		if (strcmp(h->name, w->name) != 0 || strcmp(h->force, w->force) != 0 || h->index != w->index ||
+			h->storm != w->storm || h->type != w->type || h->race != w->race)
+			fail(r, "the roster's slot %d: \"%s\" \"%s\" index %u storm %#x type %u race %u, the original's \"%s\" \"%s\" %u "
+				"%#x %u %u", k, h->name, h->force, h->index, h->storm, h->type, h->race, w->name, w->force, w->index, w->storm,
+				w->type, w->race);
+	}
+	for (k = 0; k < KP_UI_SCORE_ARRAYS; k++)
+		for (j = 0; j < 12; j++)
+			if (have->arrays[k][j] != want->arrays[k][j])
+				fail(r, "the score's %s of player %d: %d, the original's %d", KP_ORACLE_SCORE_ARRAYS[k], j, have->arrays[k][j],
+					want->arrays[k][j]);
+	if (memcmp(have->colours, want->colours, sizeof have->colours) != 0)
+		fail(r, "the score's colour indexes differ from the original's");
+	if (memcmp(have->player_colours, want->player_colours, sizeof have->player_colours) != 0)
+		fail(r, "the score's slot colours differ from the original's");
+}
+
+/* The score screen the player saw after leaving the game (net_check.py's "score": RunScoreScreen 0x461940's data
+ * past its ComputeGameResults 0x477270) against Koprulu's where the player quits: the network results as the flow
+ * takes them, while Storm's game still runs (kp_netgame_game_results), then the score screen's data (kp_glue_score_data)
+ * over an interface that shows the game with its colours, as the flow's console does. The seconds are the interface's
+ * clock (GetElapsedSeconds 0x47a780), not the game's: menus_check.py shows the original's. */
+static void score_check(Replay *r, const Job *job)
+{
+	const KpJson *score = kp_json_get(r->player, "score");
+	const KpData *d = job->data;
+	const KpMission *mission = kp_session_mission(r->session);
+	KpGame *g = r->session->g;
+	KpUiScoreData have, want;
+	uint8_t results[KP_NETGAME_PLAYERS] = { 0 };
+	KpTileset tileset;
+	KpHudMap map;
+	KpError e;
+	KpUi *ui;
+	char why[KP_ERROR_SIZE];
+	int local;
+	if (!score || !kp_json_is(score, KP_JSON_OBJECT)) return;
+	local = kp_netgame_game_results(&r->ng, g, results);
+	if (kp_tileset_from_files(&tileset, &d->files, (int)(mission->tileset & 7), &e) != 0) {
+		fail(r, "the score's tileset: %s", e.msg);
+		return;
+	}
+	if (!(ui = kp_interface_new_data(&d->ui, NULL, why, sizeof why))) {
+		kp_tileset_free(&tileset);
+		fail(r, "the score's interface: %s", why);
+		return;
+	}
+	ui->game = g;
+	ui->menus.multiplayer = 1;
+	memset(&map, 0, sizeof map);
+	map.tileset = &tileset;
+	map.palettes = &d->palettes;
+	map.tileset_index = (int)(mission->tileset & 7);
+	map.colors = mission->has_colors ? mission->colors : NULL;
+	map.player_colors = g->setup.color; /* the game's colours (0x5264fc), as the flow's console_init gives them */
+	if (kp_hud_colours(ui, &map) != 0) {
+		fail(r, "the score's colours: %s", ui->error);
+	} else {
+		kp_glue_score_data(ui, g, 0, "", 0, 0, results, local, &have);
+		kp_oracle_score_data(score, &want);
+		score_compare(r, &have, &want, (int)kp_json_field_int(score, "glue_state", 0),
+			(int)kp_json_field_int(score, "local_result", -1));
+		r->scored = !r->failed;
+	}
+	ui->game = NULL;
+	kp_ui_free(ui);
+	kp_tileset_free(&tileset);
+}
+
 /* One step of the screens at the top frame's next record; 0 when the replay ends */
 static int step(Replay *r, const Job *job)
 {
@@ -867,7 +957,8 @@ static int step(Replay *r, const Job *job)
 			return fail(r, "Drop Players is not enabled (%s, %u seconds left)", r->ng.lagging ? "waiting" : "no wait",
 				r->ng.timeout_seconds);
 	} else if (strcmp(fn, "SNetLeaveGame") == 0 && r->phase == PHASE_GAME) {
-		kp_netgame_game_end(&r->ng); /* the game menu's quit: EndGame 0x443db0 */
+		score_check(r, job); /* the game menu's quit: RequestGameExit 0x444e00's results, then EndGame 0x443db0 */
+		kp_netgame_game_end(&r->ng);
 		r->phase = PHASE_LEFT;
 	} else if (strcmp(fn, "SNetLeaveGame") == 0 && (r->phase == PHASE_ROOM || r->phase == PHASE_READY_ROOM)) {
 		/* the room closed (the player left, or a leave reason's popup was dismissed) */
@@ -901,7 +992,7 @@ static void replay_player(KpT *T, void *ud)
 	const Job *job = (const Job *)ud;
 	Replay *r = (Replay *)calloc(1, sizeof *r);
 	char who[96];
-	const KpJson *next;
+	const KpJson *next, *score;
 	kp_t_ok(T, r != NULL, "out of memory");
 	kp_t_defer(T, replay_free, r);
 	snprintf(who, sizeof who, "%s/%s", job->game, kp_json_field_str(job->player, "name", "?"));
@@ -944,6 +1035,10 @@ static void replay_player(KpT *T, void *ud)
 		kp_t_log(T, "%s: the game at frame %lld, turn %lld, %ld turns with local commands", r->who,
 			(long long)kp_scalar(r->session->g, KP_FRAME), (long long)kp_scalar(r->session->g, KP_TURN),
 			r->commands_queued);
+	score = kp_json_get(r->player, "score");
+	if (!r->failed && score && kp_json_is(score, KP_JSON_OBJECT) && !r->scored)
+		fail(r, "the original's score screen, where the replay never left the game");
+	if (r->scored) kp_t_log(T, "%s: the score screen's data equal the original's", r->who);
 	kp_t_ok(T, !r->failed, "%s", r->why);
 }
 

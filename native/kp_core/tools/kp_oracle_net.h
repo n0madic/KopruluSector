@@ -29,7 +29,7 @@
 extern "C" {
 #endif
 
-#define KP_ORACLE_NET_VERSION 7        /* tools/net_check.py's golden version */
+#define KP_ORACLE_NET_VERSION 8        /* tools/net_check.py's golden version */
 #define KP_ORACLE_NET_TICK_BASE 3600000u /* the emulator's GetTickCount at virtual time 0 (hle/kernel32.py) */
 /* GetTickCount at a record's t (microseconds of virtual time) */
 #define KP_ORACLE_NET_TICK(t_us) (KP_ORACLE_NET_TICK_BASE + (uint32_t)((t_us) / 1000))

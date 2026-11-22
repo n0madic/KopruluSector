@@ -673,6 +673,7 @@ static void a_turn_after_a_wait_paces_the_next_step(KpT *T)
 		}
 		kp_t_ok(T, s->net_waiting, "pass %d: still waiting after %u ms", pass, (unsigned)silence);
 		p->seat[1].stopped = 0;
+		before = s->net_wait_start;
 		for (k = 0; k < 2000 && s->net_waiting; k++) {
 			before = s->net_wait_start;
 			play_run(p, 1);

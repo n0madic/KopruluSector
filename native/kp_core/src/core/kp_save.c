@@ -64,6 +64,10 @@ typedef struct {
 	size_t size, cap, at;
 	int failed; /* writing: out of memory or past the caller's buffer; reading: past the end or a wrong section */
 	char error[KP_ERROR_SIZE];
+	/* reading: the first value the game cannot hold (the walk goes on; kp_load refuses it once the hashes passed, so
+	 * a damaged save is told as damaged) */
+	int refused;
+	char refusal[KP_ERROR_SIZE];
 	/* BYTES and HASH: the sections walked; BYTES also where each one's bytes start (after its tag) */
 	int sections;
 	uint32_t section_tag[KP_SAVE_SECTIONS_MAX];
@@ -905,6 +909,33 @@ static void walk_world(Codec *c, KpImages *w)
 	SEAT_PART(ints(c, &w->has_circle_colors, 1));
 }
 
+/* A save's scalars, checked even in a dry walk: each presence 0 or 1, the scalars a started game holds present
+ * (KP_SCALARS' held: the step's arithmetic on an absent one's KP_NIL would overflow) and a present one's value within
+ * the original global's 32 bits, signed or not (a value the game cannot make, whose arithmetic could overflow). */
+static void scalars_read(Codec *c, KpGame *g)
+{
+	int64_t value[KP_SCALAR_COUNT];
+	uint8_t present[KP_SCALAR_COUNT];
+	int dry = c->dry;
+	size_t k;
+	c->dry = 0;
+	i64s(c, value, KP_SCALAR_COUNT);
+	u8s(c, present, KP_SCALAR_COUNT);
+	c->dry = dry;
+	for (k = 0; k < KP_SCALAR_COUNT && !c->failed && !c->refused; k++) {
+		if (present[k] > 1 || (KP_SCALARS[k].held && !present[k])
+			|| (present[k] && (value[k] < INT32_MIN || value[k] > (int64_t)UINT32_MAX))) {
+			c->refused = 1;
+			snprintf(c->refusal, sizeof c->refusal, "save: the scalar %s (present %u, %lld)", KP_SCALARS[k].name,
+				(unsigned)present[k], (long long)value[k]);
+		}
+	}
+	if (!c->failed && !c->refused && !c->dry) {
+		memcpy(g->scalar, value, sizeof value);
+		memcpy(g->scalar_present, present, sizeof present);
+	}
+}
+
 static void walk(Codec *c, KpGame *g)
 {
 	KpTerrain *t = &g->terrain;
@@ -918,6 +949,8 @@ static void walk(Codec *c, KpGame *g)
 		for (k = 0; k < KP_SCALAR_COUNT; k++) {
 			if (!seat_scalar(k)) hash_put(c, g->scalar_present[k], 1);
 		}
+	} else if (c->reading && c->mode == MODE_BYTES) {
+		scalars_read(c, g);
 	} else {
 		I64S(g->scalar);
 		u8s(c, g->scalar_present, sizeof g->scalar_present);
@@ -1414,7 +1447,8 @@ int kp_load(KpGame *g, const uint8_t *bytes, size_t size, const char *mission, c
 		return -1;
 	}
 	/* A dry walk checks every section, the region count, the generators, the length and the hashes of the sections'
-	 * bytes first, so a refused save leaves the game as it was; the second walk writes. */
+	 * bytes, then the values it checks (the scalars), first, so a refused save leaves the game as it was; the second
+	 * walk writes. */
 	start = c.at;
 	c.dry = 1;
 	if (!c.failed) walk(&c, g);
@@ -1423,6 +1457,7 @@ int kp_load(KpGame *g, const uint8_t *bytes, size_t size, const char *mission, c
 		c.failed = 1;
 		snprintf(c.error, sizeof c.error, "save: %u bytes past the state", (unsigned)(c.size - c.at));
 	}
+	if (!c.failed && c.refused) fail(&c, c.refusal);
 	if (!c.failed) {
 		c.dry = 0;
 		c.at = start;

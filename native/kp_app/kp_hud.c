@@ -786,16 +786,23 @@ int kp_glue_room(KpGlue *g, KpGame *game, int state)
 	return 0;
 }
 
+void kp_glue_score_data(KpUi *ui, KpGame *game, int result, const char *player, uint32_t elapsed, int from_save,
+	const uint8_t *storm_results, int local_result, KpUiScoreData *out)
+{
+	kp_ui_score_data(ui, game, result, player, elapsed, out);
+	out->from_save = from_save;
+	if (storm_results != NULL) {
+		memcpy(out->storm_results, storm_results, sizeof out->storm_results);
+		out->result = local_result;
+	}
+}
+
 void kp_glue_score(KpGlue *g, KpGame *game, int result, uint32_t elapsed, int from_save, const uint8_t *storm_results,
 	int local_result)
 {
 	KpUiScoreData d;
-	kp_ui_score_data(g->ui, game, result, g->profile->name[0] ? g->profile->name : DEFAULT_NAME, elapsed, &d);
-	d.from_save = from_save;
-	if (storm_results != NULL) {
-		memcpy(d.storm_results, storm_results, sizeof d.storm_results);
-		d.result = local_result;
-	}
+	kp_glue_score_data(g->ui, game, result, g->profile->name[0] ? g->profile->name : DEFAULT_NAME, elapsed, from_save,
+		storm_results, local_result, &d);
 	kp_ui_score_open(g->ui, &d);
 	g->screen = KP_GLUE_SCORE;
 	g->has_composed = 0;

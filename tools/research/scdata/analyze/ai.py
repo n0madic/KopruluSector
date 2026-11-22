@@ -118,7 +118,8 @@ ADDRESS = 0x80
 def section(table: Table) -> bytes:
     """The runtime's operand table (AIOP, tools/defs_c.py): u8 count of ordinals from 0; per ordinal u8 flags (1: a
     terminator, local fallthrough ends after it), u8 operand count, then per operand u8 width (1, 2 or 4) | 0x80 for an
-    address operand. kp_aiscript_check builds the closure above from it."""
+    address operand. kp_aiscript_check builds its closure from it, with the return address the scripts share (a call
+    goes on where its routine returns, a return without its call from PC 0), which the upper bound above omits."""
     codes = sorted(table.opcodes)
     if codes != list(range(len(codes))) or len(codes) > 255:
         raise AiError("the opcodes are not the ordinals 0..n-1")

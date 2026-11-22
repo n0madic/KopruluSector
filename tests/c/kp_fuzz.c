@@ -34,6 +34,7 @@
 #define EDIT_HEADER 5             /* a save edit's {u8 section, u24 offset, u8 n} before its n bytes */
 #define EDIT_SEED_MAX (256u << 10) /* a native save seed's edits, at most */
 #define SAVE_SEED_STEPS 20        /* the steps between the save target's seed points (KP_FUZZ_SAVE_SEED_POINTS) */
+#define SAVE_LOAD_STEPS 8         /* the steps a loaded save's game runs */
 
 /* the commands target's scenarios (the first byte picks one): workers and buildings, a fight, a computer's spells */
 static const char *const COMMAND_MAPS[] = { "scenarios/build_terran", "scenarios/bench_combat", "scenarios/ai_queen" };
@@ -161,6 +162,11 @@ static int game_start(FuzzGame *fg, const char *key, int record, int steps, int 
 		}
 	}
 	if (multiplayer) fg->s->g->setup.multiplayer = 1;
+	/* game_reset empties the record: a recorded game's snapshot comes before any command */
+	if (fg->s->rec && fg->s->rec->used != 0) {
+		game_free(fg);
+		return failed(why, size, "%s: commands recorded before the snapshot", key);
+	}
 	fg->snap_size = kp_snapshot_size(fg->s->g);
 	if (!(fg->snap = (uint8_t *)malloc(fg->snap_size)) || kp_snapshot(fg->s->g, fg->snap, fg->snap_size, &err) != 0) {
 		game_free(fg);
@@ -169,15 +175,18 @@ static int game_start(FuzzGame *fg, const char *key, int record, int steps, int 
 	return 0;
 }
 
-/* The game back at its snapshot: its state, no failure, no queued commands, no events. */
+/* The game back at its snapshot: its state, no failure, no queued commands, no events, a recorded game's record empty
+ * as at the snapshot (a load restores the save's, the steps after it record its queued commands). */
 static int game_reset(FuzzGame *fg, char *why, size_t size)
 {
 	KpSession *s = fg->s;
 	KpEvent e;
 	KpError err;
 	if (kp_restore(s->g, fg->snap, fg->snap_size, &err) != 0) return failed(why, size, "the snapshot's restore: %s", err.msg);
+	if (s->rec && kp_record_restore(s->rec, NULL, 0, -1) != 0) return failed(why, size, "the record's reset: out of memory");
 	s->failed = 0;
 	s->error[0] = 0;
+	s->rec_lost = 0;
 	kp_turns_done(&s->turns);
 	while (kp_event_take(s->g, &e)) {
 	}
@@ -344,13 +353,15 @@ static uint8_t *edit_save(const uint8_t *d, size_t size)
 	return b;
 }
 
+static void note_refusal(const char *msg);
+
 static int run_save(const uint8_t *d, size_t size, char *why, size_t why_size)
 {
 	KpSession *s = save_game.s;
 	KpError err;
 	uint8_t *copy;
 	size_t n;
-	int loaded = 0;
+	int loaded = 0, k;
 	if (!s || size == 0) return 0;
 	n = size - 1;
 	if (!(copy = (uint8_t *)malloc(n ? n : 1))) return 0;
@@ -375,9 +386,15 @@ static int run_save(const uint8_t *d, size_t size, char *why, size_t why_size)
 	free(copy);
 	if (!loaded) return 0;
 	stats.loaded++;
-	/* TODO: step the game a few frames after a load (a refusal counted, a crash a finding): kp_load checks the indexes
-	 * and the links it reads, not every value's range, so a state the walk accepts may hold values the simulation
-	 * never makes (ADR 0022, stage T2). */
+	/* kp_load checks the indexes and the links it reads, not every value's range, so a state the walk accepts may hold
+	 * values the simulation never makes: the loaded game runs a few frames (with the save's queued commands), a stop
+	 * by the game's own checks counted as a refusal, a crash a finding */
+	for (k = 0; k < SAVE_LOAD_STEPS; k++) {
+		if (!kp_session_step(s, NULL)) {
+			if (s->failed) note_refusal(s->error);
+			break;
+		}
+	}
 	return game_reset(&save_game, why, why_size);
 }
 
@@ -790,25 +807,42 @@ static void synthetic_seeds(Seeds *sd)
  * (0xff): the original reads its tables past their end (ExecTargetedOrder 0x472270, tech 0x51b800[order]); Koprulu's
  * DAT read gives KP_NIL and the requirements' range check stops a single player's game, a refusal, while the input's
  * network game ignores the order (test_fuzz.data_seeds_run). */
+/* The select command 0x09 of player p's first units (their refs): its count of them (0: none, no command). */
+static int select_units(KpGame *g, int64_t p, uint8_t select[2 + 2 * KP_SLOTS])
+{
+	int64_t n;
+	int count = 0;
+	for (n = g->lists[KP_LIST_ACTIVE].head; n != 0 && count < KP_SLOTS; n = g->u.next[n]) {
+		if (g->u.owner[n] != p) continue;
+		kp_le_put16(select + 2 + 2 * count, (uint16_t)kp_unit_ref(g, n));
+		count++;
+	}
+	select[0] = 0x09;
+	select[1] = (uint8_t)count;
+	return count;
+}
+
+/* The targeted order past orders.dat (0xff) at the first active unit plus (64, 32) */
+static void order_past(KpGame *g, uint8_t past[11])
+{
+	static const uint8_t PAST[11] = { 0x15, 0, 0, 0, 0, 0, 0, 0xe4, 0, 0xff, 0 };
+	int64_t n = g->lists[KP_LIST_ACTIVE].head;
+	memcpy(past, PAST, sizeof PAST);
+	kp_le_put16(past + 1, (uint16_t)(g->u.x[n] + 64));
+	kp_le_put16(past + 3, (uint16_t)(g->u.y[n] + 32));
+}
+
 static void unit_seeds(Seeds *sd, int map)
 {
 	KpGame *g = command_games[0][map].s->g;
-	uint8_t buf[256], select[2 + 2 * KP_SLOTS], click[10] = { 0x14, 0, 0, 0, 0, 0, 0, 0xe4, 0, 0 };
-	uint8_t past[11] = { 0x15, 0, 0, 0, 0, 0, 0, 0xe4, 0, 0xff, 0 };
+	uint8_t buf[256], select[2 + 2 * KP_SLOTS], click[10] = { 0x14, 0, 0, 0, 0, 0, 0, 0xe4, 0, 0 }, past[11];
 	int64_t p, n;
 	int first = 1;
 	for (p = 0; p < 8; p++) {
-		int count = 0;
+		int count = select_units(g, p, select);
 		size_t at;
 		char name[48];
-		for (n = g->lists[KP_LIST_ACTIVE].head; n != 0 && count < KP_SLOTS; n = g->u.next[n]) {
-			if (g->u.owner[n] != p) continue;
-			kp_le_put16(select + 2 + 2 * count, (uint16_t)kp_unit_ref(g, n));
-			count++;
-		}
 		if (count == 0) continue;
-		select[0] = 0x09;
-		select[1] = (uint8_t)count;
 		n = g->lists[KP_LIST_ACTIVE].head;
 		kp_le_put16(click + 1, (uint16_t)(g->u.x[n] + 64));
 		kp_le_put16(click + 3, (uint16_t)(g->u.y[n] + 32));
@@ -819,7 +853,7 @@ static void unit_seeds(Seeds *sd, int map)
 		snprintf(name, sizeof name, "units-%d-player-%d", map, (int)p);
 		seed(sd, KP_FUZZ_COMMANDS, name, map, buf, at);
 		if (first) {
-			memcpy(past + 1, click + 1, 4);
+			order_past(g, past);
 			at = chunk(buf, 0, (int)p, 1, select, (size_t)(2 + 2 * count));
 			at = chunk(buf, at, (int)p, 1, past, sizeof past);
 			snprintf(name, sizeof name, "order-past-orders-dat-%d", map);
@@ -866,7 +900,8 @@ static uint8_t *save_edits(KpGame *g, const uint8_t *save, size_t size, size_t *
 }
 
 /* The save target's seeds: its game's save file and native save (as edits of its base) at the snapshot and a few
- * steps on; and the replay of a recorded game with commands. */
+ * steps on, and a save file whose queue holds a player's units selected and an order past orders.dat (the loaded
+ * game's steps run it: a refusal); and the replay of a recorded game with commands. */
 static void game_seeds(Seeds *sd)
 {
 	KpSession *s = save_game.s;
@@ -894,6 +929,20 @@ static void game_seeds(Seeds *sd)
 		}
 		(void)kp_session_command(s, at == 0 ? STOP : HOLD, 2, -1);
 		for (k = 0; k < SAVE_SEED_STEPS; k++) (void)kp_session_step(s, NULL);
+	}
+	{
+		uint8_t select[2 + 2 * KP_SLOTS], past[11];
+		int64_t p;
+		for (p = 0; p < 8 && select_units(s->g, p, select) == 0; p++) {
+		}
+		order_past(s->g, past);
+		if (p < 8 && kp_session_command(s, select, (size_t)(2 + 2 * select[1]), p) == 0
+			&& kp_session_command(s, past, sizeof past, p) == 0
+			&& kp_save_encode(s, &identity, NULL, NULL, &out, &size, &err) == 0) {
+			seed(sd, KP_FUZZ_SAVE, "file-queued-order-past-orders-dat.kpsave", 0, out, size);
+			free(out);
+		}
+		kp_turns_done(&s->turns);
 	}
 	{
 		KpRep rep;

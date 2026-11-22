@@ -523,6 +523,61 @@ static void loads_reject_other_saves(KpT *T)
 		"other files are refused: %s", err.msg);
 }
 
+/* A save's scalars must be ones a started game holds (a sealed save of someone's making may hold any): a held scalar
+ * absent, a presence other than 0 or 1 and a value past the original's 32 bits are refused, the game left as it was;
+ * damaged as well, the save is told as damaged (its hashes come first). */
+static void loads_refuse_scalars_a_game_cannot_hold(KpT *T)
+{
+	static const struct {
+		KpScalar s;
+		uint8_t present;
+		int64_t value;
+	} BAD[] = {
+		{ KP_TILE_COUNTDOWN, 0, 0 },          /* held, absent: the step's countdown would run from KP_NIL */
+		{ KP_SCREEN_X, 2, 0 },                /* a presence 2 */
+		{ KP_FRAME, 1, KP_NIL },              /* present with no value */
+		{ KP_ELAPSED, 1, (int64_t)UINT32_MAX + 1 },
+		{ KP_COMMAND_PLAYER, 1, (int64_t)INT32_MIN - 1 },
+	};
+	const char *path = "scenarios/marine_group";
+	KpOracleGame *game, *into;
+	KpBuf *before, *after;
+	KpError err;
+	size_t k;
+	if (!kp_t_ready(T, "test_save", FILES)) return;
+	game = kp_t_game(T, path, 1, 0, NULL);
+	into = kp_t_game(T, path, 1, 0, NULL);
+	before = kp_t_buf(T);
+	after = kp_t_buf(T);
+	kp_t_ok(T, kp_state_lines(into->g, 0, before) == 0, "out of memory");
+	for (k = 0; k < sizeof BAD / sizeof BAD[0]; k++) {
+		const char *name = KP_SCALARS[BAD[k].s].name;
+		int64_t value = game->g->scalar[BAD[k].s];
+		uint8_t present = game->g->scalar_present[BAD[k].s], *bytes;
+		size_t size;
+		game->g->scalar[BAD[k].s] = BAD[k].value;
+		game->g->scalar_present[BAD[k].s] = BAD[k].present;
+		bytes = save(T, game->g, "a", DATA, &size);
+		game->g->scalar[BAD[k].s] = value;
+		game->g->scalar_present[BAD[k].s] = present;
+		kp_t_ok(T, refused(into->g, bytes, size, "a", DATA, &err) && strstr(err.msg, "the scalar ") && strstr(err.msg, name),
+			"%s (present %u, %lld) refused: %s", name, (unsigned)BAD[k].present, (long long)BAD[k].value, err.msg);
+		bytes[size / 2] = (uint8_t)(bytes[size / 2] + 1);
+		kp_t_ok(T, refused(into->g, bytes, size, "a", DATA, &err) && strstr(err.msg, "damaged"),
+			"%s damaged too: told as damaged: %s", name, err.msg);
+	}
+	kp_t_ok(T, kp_state_lines(into->g, 0, after) == 0, "out of memory");
+	kp_t_ok(T, before->size == after->size && memcmp(before->data, after->data, before->size) == 0,
+		"the refused saves changed nothing");
+	/* the game's own save loads */
+	{
+		uint8_t *bytes;
+		size_t size;
+		bytes = save(T, game->g, "a", DATA, &size);
+		kp_t_ok(T, !refused(into->g, bytes, size, "a", DATA, &err), "the game's own save loads: %s", err.msg);
+	}
+}
+
 /* The countdown's text is not saved: a load sets it from the loaded countdown, not the game's before the load (an
  * in-game load writes into the game shown). */
 static void loads_show_the_loaded_countdown(KpT *T)
@@ -781,6 +836,7 @@ typedef struct {
 	int line;
 	int differed, shown, rebuilt; /* rebuilt: the restore puts back what it derives from the rest */
 	int confirmed;                /* a KP_DUMP_SHOWN field's check passed */
+	int scratched;                /* a KP_DUMP_SCRATCH field taken from another state in a game that ran on */
 	size_t first, count;          /* its visits in `order` */
 } DumpGroup;
 
@@ -789,6 +845,8 @@ typedef struct {
 	size_t n, cap;
 	size_t *order; /* the visits by group */
 	size_t nfields;
+	int scratch_runs;  /* the games run on with their scratch from another state */
+	KpBuf *scratch_bad; /* those that ran on differently */
 } DumpGroups;
 
 /* The games whose states show every field the dump shows changing (each shows at least one field first, in this
@@ -806,6 +864,7 @@ static const char *const DUMP_DONORS[] = { "replays/defeat-terran02.01-m02", "re
 	"scenarios/medic_flare", "scenarios/queen_spells", "scenarios/stim_marines", "scenarios/terran_landing",
 	"scenarios/trigger_outcome", "scenarios/vessel_matrix" };
 #define DUMP_COVER_POINTS 5 /* the states of a game the fields are taken between: its start, its quarters, its end */
+#define DUMP_SCRATCH_STEPS 128 /* the steps a game runs on after its scratch came from another state */
 
 static DumpGroup *dump_group(KpT *T, DumpGroups *gs, const KpSnapshotField *f)
 {
@@ -903,8 +962,55 @@ static void dump_bump(uint8_t *snap, const DumpGroups *gs, const DumpGroup *d, c
 	}
 }
 
+/* The game restored from snap and run on from run's step by DUMP_SCRATCH_STEPS steps (to the replay's last at most):
+ * its dump's hash. */
+static uint64_t dump_run_on(KpT *T, KpGame *g, const KpReplay *r, const KpRunner *run, const uint8_t *snap, size_t size,
+	const char *path)
+{
+	KpRunner cont;
+	KpError err;
+	uint64_t hash;
+	kp_t_ok(T, kp_restore(g, snap, size, &err) == 0, "%s: %s", path, err.msg);
+	kp_runner_init(&cont, g, r);
+	cont.step = run->step;
+	cont.next_command = run->next_command;
+	cont.next_ui = run->next_ui;
+	kp_runner_to(&cont, run->step + DUMP_SCRATCH_STEPS < r->last ? run->step + DUMP_SCRATCH_STEPS : r->last);
+	kp_t_ok(T, kp_dump_hash(g, 0, &hash) == 0, "out of memory");
+	return hash;
+}
+
+/* State `into` (run's step) with every KP_DUMP_SCRATCH field taken from state `from` of the same game runs on as into
+ * itself does: no later step reads what a search or a cache left. */
+static void dump_scratch_from(KpT *T, DumpGroups *gs, const KpSnapshotField *fields, KpGame *g, const KpReplay *r,
+	const KpRunner *run, const uint8_t *into, const uint8_t *from, uint8_t *mix, size_t size, const char *path)
+{
+	size_t k, j;
+	int differs = 0;
+	if (run->step >= r->last) return; /* nothing runs on */
+	memcpy(mix, into, size);
+	for (k = 0; k < gs->n; k++) {
+		DumpGroup *d = &gs->g[k];
+		const KpDumpField *row = dump_row(d->name);
+		if (!row || row->klass != KP_DUMP_SCRATCH) continue;
+		for (j = 0; j < d->count; j++) {
+			const KpSnapshotField *f = &fields[gs->order[d->first + j]];
+			if (memcmp(into + f->offset, from + f->offset, f->bytes) == 0) continue;
+			memcpy(mix + f->offset, from + f->offset, f->bytes);
+			d->scratched = differs = 1;
+		}
+	}
+	if (!differs) return;
+	gs->scratch_runs++;
+	if (dump_run_on(T, g, r, run, mix, size, path) != dump_run_on(T, g, r, run, into, size, path)) {
+		kp_buf_printf(gs->scratch_bad, "\n  %s: the state of step %lld with another state's scratch runs on differently",
+			path, (long long)run->step);
+	}
+}
+
 /* Golden path's game at DUMP_COVER_POINTS steps; between each two, every group not yet shown taken alone from the later
- * one into the earlier; and each KP_DUMP_SHOWN row's field one more, until a state shows it. */
+ * one into the earlier; and each KP_DUMP_SHOWN row's field one more, until a state shows it. Then each state with the
+ * KP_DUMP_SCRATCH fields of its neighbours runs on (dump_scratch_from). */
 static void dump_cover_game(KpT *T, DumpGroups *gs, const char *path)
 {
 	const KpReplay *r;
@@ -912,6 +1018,7 @@ static void dump_cover_game(KpT *T, DumpGroups *gs, const char *path)
 	KpGame *g;
 	KpSnapshotField *fields;
 	uint8_t *at_point[DUMP_COVER_POINTS], *mix, *back;
+	KpRunner at_run[DUMP_COVER_POINTS];
 	size_t size = 0, other = 0, nfields, j, k;
 	uint64_t base;
 	KpError err;
@@ -923,6 +1030,7 @@ static void dump_cover_game(KpT *T, DumpGroups *gs, const char *path)
 	for (p = 0; p < DUMP_COVER_POINTS; p++) {
 		kp_runner_to(&gr->run, 1 + (r->last - 1) * p / (DUMP_COVER_POINTS - 1));
 		at_point[p] = snapshot(T, g, p ? &other : &size);
+		at_run[p] = gr->run;
 		kp_t_ok(T, !p || other == size, "%s: snapshots of %lu and %lu bytes", path, (unsigned long)size, (unsigned long)other);
 	}
 	mix = snapshot(T, g, &other);
@@ -985,6 +1093,10 @@ static void dump_cover_game(KpT *T, DumpGroups *gs, const char *path)
 			}
 		}
 	}
+	for (p = 0; p + 1 < DUMP_COVER_POINTS; p++) {
+		dump_scratch_from(T, gs, fields, g, r, &at_run[p], at_point[p], at_point[p + 1], mix, size, path);
+		dump_scratch_from(T, gs, fields, g, r, &at_run[p + 1], at_point[p + 1], at_point[p], mix, size, path);
+	}
 	kp_t_release(T, mark);
 }
 
@@ -992,12 +1104,13 @@ static void dump_shows_the_saved_state(KpT *T)
 {
 	static DumpGroups gs;
 	const KpDumpField *rows;
-	KpBuf *bad, *idle;
+	KpBuf *bad, *idle, *untaken;
 	size_t k;
 	int n, i, *used;
 	if (!kp_t_ready(T, "test_save", FILES) || !kp_t_has(T, DIR "replays/index.json")) return;
 	memset(&gs, 0, sizeof gs);
 	kp_t_defer(T, dump_groups_free, &gs);
+	gs.scratch_bad = kp_t_buf(T);
 	for (i = 0; i < (int)(sizeof DUMP_DONORS / sizeof DUMP_DONORS[0]); i++) dump_cover_game(T, &gs, DUMP_DONORS[i]);
 	rows = kp_dump_fields(&n);
 	used = (int *)calloc((size_t)n, sizeof *used);
@@ -1005,6 +1118,7 @@ static void dump_shows_the_saved_state(KpT *T)
 	kp_t_defer(T, free, used);
 	bad = kp_t_buf(T);
 	idle = kp_t_buf(T);
+	untaken = kp_t_buf(T);
 	for (k = 0; k < gs.n; k++) {
 		const DumpGroup *d = &gs.g[k];
 		const KpDumpField *row = dump_row(d->name);
@@ -1030,6 +1144,13 @@ static void dump_shows_the_saved_state(KpT *T)
 		if (!used[i]) kp_buf_printf(bad, "\n  row %s: no saved field", rows[i].name);
 	}
 	kp_t_log(T, "dump coverage: %lu saved fields; no game changes:%s", (unsigned long)gs.n, kp_buf_text(idle));
+	for (k = 0; k < gs.n; k++) {
+		const KpDumpField *row = dump_row(gs.g[k].name);
+		if (row && row->klass == KP_DUMP_SCRATCH && !gs.g[k].scratched) kp_buf_printf(untaken, " %s", gs.g[k].name);
+	}
+	kp_t_log(T, "scratch: %d games ran on with another state's; never taken:%s", gs.scratch_runs, kp_buf_text(untaken));
+	kp_t_ok(T, gs.scratch_runs > 0, "no game ran on with another state's scratch");
+	kp_t_ok(T, gs.scratch_bad->size == 0, "the scratch:%s", kp_buf_text(gs.scratch_bad));
 	kp_t_ok(T, bad->size == 0, "the dump's coverage:%s", kp_buf_text(bad));
 }
 
@@ -1084,6 +1205,7 @@ static const KpTest TESTS[] = {
 	{ "saved_ai_runs_continue_as_the_original", saved_ai_runs_continue_as_the_original, 0 },
 	{ "initial_states_survive_a_save", initial_states_survive_a_save, 0 },
 	{ "loads_reject_other_saves", loads_reject_other_saves, 0 },
+	{ "loads_refuse_scalars_a_game_cannot_hold", loads_refuse_scalars_a_game_cannot_hold, 0 },
 	{ "loads_show_the_loaded_countdown", loads_show_the_loaded_countdown, 0 },
 };
 KP_SUITE(kp_suite_save, "test_save", TESTS);

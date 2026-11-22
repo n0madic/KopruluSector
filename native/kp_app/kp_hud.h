@@ -241,6 +241,10 @@ int kp_glue_room(KpGlue *g, KpGame *game, int state);
  * (ComputeGameResults 0x477270: 1 win, 2 loss, 3 draw, 4 left; storm_results NULL offline). */
 void kp_glue_score(KpGlue *g, KpGame *game, int result, uint32_t elapsed, int from_save, const uint8_t *storm_results,
 	int local_result);
+/* What that score screen reads (kp_ui_score_data with the profile's name player, then the save and the network
+ * results); ui shows the game (ui->game, its colours). */
+void kp_glue_score_data(KpUi *ui, KpGame *game, int result, const char *player, uint32_t elapsed, int from_save,
+	const uint8_t *storm_results, int local_result, KpUiScoreData *out);
 /* Each frame while a glue screen shows: what it ended with, whether the canvas changed (*changed) and the glue's
  * palette when it changed (rgb, *palette). */
 KpGlueEvent kp_glue_frame(KpGlue *g, int32_t w, int32_t h, uint32_t now_ms, int *changed, uint8_t rgb[768],

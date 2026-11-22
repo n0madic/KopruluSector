@@ -195,14 +195,17 @@ static void stack_sleep(void *ud, uint32_t ms)
 	if (!st->failed && st->at < st->size && (st->d[st->at] & 7) == OP_CLOCK) run_op(st);
 }
 
-/* The events, and what StarCraft's handlers call inside them: a joiner's name and a lobby message, the counts. */
+/* The events, and what StarCraft's handlers call inside them: a joiner's name and a lobby message, the counts. A
+ * present player's event carries a player info's id dword whole, as Storm's (0x15023660 queues it, the record takes its
+ * low byte; OnPlayerJoined 0x4778e0 ignores ids from 8 up); the others' player is a record's id or -1. */
 static void stack_event(void *ud, const KpSnetEvent *e)
 {
 	Stack *st = (Stack *)ud;
 	char name[KP_SNET_STRING];
 	int first, last, active;
-	if (e->id < KP_SNET_EVENT_TEMPLATE || e->id > KP_SNET_EVENT_TEXT || e->player < -1 || e->player > 255 ||
-		(e->size && !e->data) || e->size > 0xffff)
+	if (e->id < KP_SNET_EVENT_TEMPLATE || e->id > KP_SNET_EVENT_TEXT ||
+		(e->id != KP_SNET_EVENT_PLAYER && (e->player < -1 || e->player > 255)) || (e->size && !e->data) ||
+		e->size > 0xffff)
 		fail(st, "event %u of player %d, %u bytes", e->id, e->player, e->size);
 	if (e->size && e->data) sum(st, e->data, e->size);
 	if (st->depth++ == 0) {

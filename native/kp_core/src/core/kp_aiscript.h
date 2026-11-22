@@ -32,11 +32,11 @@ void kp_ai_bins_free(KpAiBins *b);
  * (16-byte records) when it has a nonzero one, else in bwscript.bin's (8-byte records, *bin = 1); 0 when neither. */
 uint32_t kp_ai_bins_find(const KpAiBins *b, uint32_t id, int *bin);
 
-/* Script `id` checked before a game starts (ADR 0023): the closure of scdata/analyze/ai.py from its entry, every
- * address operand (a panic block of 0 is none) and the fallthrough up to a terminator, over b->operands; a return's
- * shared return address is not followed (a TODO in kp_aiscript.c). 0 when no instruction in it stops the game, or no
- * binary has the id (the launch does nothing); -1 with why set when one reads outside its binary or is fatal_error
- * (the original's fatal error). */
+/* Script `id` checked before a game starts (ADR 0023): the closure from its entry over b->operands, every address
+ * operand (a panic block of 0 is none) and the fallthrough up to a terminator, with the return address the scripts
+ * share (a call goes on where its routine returns, a return without its call from PC 0; kp_aiscript.c's check_run).
+ * 0 when no instruction in it stops the game, or no binary has the id (the launch does nothing); -1 with why set when
+ * one reads outside its binary or is fatal_error (the original's fatal error). */
 int kp_aiscript_check(const KpAiBins *b, uint32_t id, char *why, size_t why_size);
 
 #ifdef __cplusplus

@@ -821,6 +821,7 @@ static void on_player_info(KpSnet *s, const KpNetAddr *from, const uint8_t *p, u
 	for (k = 0; k < 2; k++)
 		for (n = replay[k]->head; n; n = n->next)
 			if ((uint16_t)(seq_of(n) - start) < 0x8000) resend(s, r, n->p);
+	/* the id dword whole, as Storm's (the record took its low byte): StarCraft's handler ignores ids from 8 up */
 	if (s->local_id != KP_SNET_NO_ID && !(r->flags & PLAYER_JOINING))
 		queue_event(s, KP_SNET_EVENT_PLAYER, (int32_t)id, NULL, 0);
 }

@@ -485,11 +485,12 @@ static int64_t picked(const KpScriptRun *run, KpGame *g, int64_t slot, char *why
 
 /* sim.crc: each category's CRC folded in dump order, but those of the local interface a replay's viewer does not share
  * with the recorded player: step's result dialog clock (TickResultDialogTimer 0x4be340 does not run in a replay),
- * the local selection, the sprites and images and their lists (its selection circles and the right click's ground
- * marker). */
+ * the local selection, the sprites and images and their lists and pools (its selection circles and health bars, the
+ * right click's ground marker), the fog ghosts of the local player's view. */
 static void fold_crc(void *ud, const char *category, uint32_t crc)
 {
-	static const char *const LOCAL[] = { "step", "selection", "sprite", "image", "sprite_lists" };
+	static const char *const LOCAL[] = { "step", "selection", "sprite", "image", "sprite_lists",
+		"image_pools", "fog_thingies" };
 	uint32_t *folded = (uint32_t *)ud;
 	size_t k;
 	for (k = 0; k < sizeof LOCAL / sizeof LOCAL[0]; k++) {

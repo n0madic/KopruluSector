@@ -77,7 +77,9 @@ game mode 0x6662b8 is not 3):
       e.g. the ready room's PollBriefingReady 0x461120; offline it takes Start's command 0x54)
   {"f", "music": [function, track], "t": tick}   (PlayMusicTrack 0x46ef10 as 0, StartMusicTrack 0x46f1b0 as 1)
   {"f", "score": {"roster": [{name, force, index, storm, type, race} x 8], "count", "arrays": {name: [12 x s32]},
-      "colours": [12], "player_colours": [8]}, "t": tick}   (RunScoreScreen 0x461940: what the score screen reads)
+      "colours": [12], "player_colours": [8], "results": [8], "local_result"}, "t": tick}   (RunScoreScreen 0x461940
+      past its ComputeGameResults 0x477270: what the score screen reads; the results by Storm ID 0x66ca70 and the
+      local one 0x66ca90: 1 victory, 2 defeat, 3 draw, 4 disconnected)
   {"f", "elapsed": seconds}   (SetScoreElapsedTime 0x4625f0: GetElapsedSeconds 0x47a780's value)
 Event fields by type: keys 0/1/2 and characters 15 [key, modifiers]; mouse 3..13 [x, y]; wheel 17/18 [lParam].
 """
@@ -118,7 +120,9 @@ PORTRAIT_CONTINUED, PORTRAIT_VIDEO = 0x4A6733, 0x6AB390  # past `call SVidPlayCo
 UNIT_POOL, UNIT_SIZE = 0x5DA3A0, 0x150  # game.py: CUnit index 1
 KEY_SHIFT, MOUSE_STATE = 0x665E68, 0x6D315C
 CREDITS_RUN, CREDITS_PAGE = 0x415010, 0x414C60  # ECX = the script's base name; ECX = the dialog
-SCORE_RUN = 0x461940             # RunScoreScreen: the roster (captured at game start) and the score arrays it reads
+SCORE_RUN = 0x461959             # RunScoreScreen 0x461940 past `call ComputeGameResults`: the roster (captured at game
+                                 # start), the score arrays it reads and the results it computed
+SCORE_RESULTS, SCORE_LOCAL_RESULT = 0x66CA70, 0x66CA90  # 8 x u32 by Storm ID; u32
 SCORE_ELAPSED = 0x46260E         # SetScoreElapsedTime 0x4625f0 past `call GetElapsedSeconds` (EAX = seconds)
 SCORE_ROSTER, SCORE_ROSTER_COUNT = 0x66C710, 0x66CA6C  # 8 x 0x48 bytes; the listed count
 SCORE_ARRAYS = {  # 12 x s32 each (P21 "Score arrays")
@@ -495,7 +499,9 @@ def install(session, write, current_frame) -> dict:
         arrays = {k: list(struct.unpack("<12i", m.read(a, 48))) for k, a in SCORE_ARRAYS.items()}
         record({"score": {"roster": roster, "count": m.r32(SCORE_ROSTER_COUNT), "arrays": arrays,
                           "colours": list(m.read(SCORE_COLOURS, 12)),
-                          "player_colours": list(struct.unpack("<8I", m.read(PLAYER_COLOURS, 32)))},
+                          "player_colours": list(struct.unpack("<8I", m.read(PLAYER_COLOURS, 32))),
+                          "results": list(struct.unpack("<8I", m.read(SCORE_RESULTS, 32))),
+                          "local_result": m.r32(SCORE_LOCAL_RESULT)},
                 "t": m.clock_us // 1000 + TICK_BASE_MS})
 
     session.hook(SCORE_RUN, on_score_run)

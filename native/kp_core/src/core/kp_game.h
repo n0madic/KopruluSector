@@ -117,10 +117,12 @@ typedef enum {
 	KP_SCALAR_COUNT
 } KpScalar;
 
-/* The scalar's name and whether it is a boolean (the C suites read the fields by name: kp_test_game.c). */
+/* The scalar's name, whether it is a boolean (the C suites read the fields by name: kp_test_game.c) and whether a
+ * started game always holds it (set by the start and never cleared: kp_load refuses a save without it). */
 typedef struct {
 	const char *name;
 	int boolean;
+	int held;
 } KpScalarInfo;
 extern const KpScalarInfo KP_SCALARS[KP_SCALAR_COUNT];
 
@@ -1052,10 +1054,13 @@ int kp_dump_hash(KpGame *g, int drawn, uint64_t *out);
  *   KP_DUMP_SHOWN   the dump shows it (why: where); the test checks it by changing every element by one;
  *   KP_DUMP_MODEL   the original keeps it (why: where) and the state model (tools/native_state.py) does not read it;
  *   KP_DUMP_HEAP    the original keeps it in a heap block the emulator's state dumps do not hold;
- *   KP_DUMP_KOPRULU Koprulu's own, with no counterpart in the original's memory.
+ *   KP_DUMP_KOPRULU Koprulu's own, with no counterpart in the original's memory;
+ *   KP_DUMP_SCRATCH what no later step reads as it was left: a search's working state, which each search writes
+ *                   before it reads, and a cache of constant tables; the test takes these fields together from another
+ *                   state of the same game and checks that the game runs on as it did.
  * Every saved field the test sees change without a change of the dump must be listed; a listed field the dump shows
  * changing, other than a KP_DUMP_SHOWN one, fails the test. */
-enum { KP_DUMP_SHOWN, KP_DUMP_MODEL, KP_DUMP_HEAP, KP_DUMP_KOPRULU };
+enum { KP_DUMP_SHOWN, KP_DUMP_MODEL, KP_DUMP_HEAP, KP_DUMP_KOPRULU, KP_DUMP_SCRATCH };
 typedef struct {
 	const char *name;
 	int klass;

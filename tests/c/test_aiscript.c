@@ -585,24 +585,26 @@ static void every_opcode_reads_its_aiop_operands(KpT *T)
 	}
 }
 
-/* Binaries of one script each: aiscript.bin's directory (16-byte records) at 64 names 'Tst1'..'Tst5', bwscript.bin's
- * (8-byte records) at 32 names 'Bpan'. */
-#define CHECK_AI_SIZE 176
+/* Binaries of one script each: aiscript.bin's directory (16-byte records) at 0x28 names 'Tst1'..'Tst8' (its offset,
+ * the binary's first byte, is fatal_error at PC 0), bwscript.bin's (8-byte records) at 32 names 'Bpan'. */
+#define CHECK_AI_SIZE 224
+#define CHECK_AI_DIR 0x28
 #define CHECK_BW_SIZE 48
 static void check_bins(KpT *T, KpAiBins *b, uint8_t *ai, uint8_t *bw)
 {
 	static const struct {
 		const char *id;
 		uint32_t offset;
-	} AI[] = { { "Tst1", 4 }, { "Tst2", 16 }, { "Tst3", 24 }, { "Tst4", 30 }, { "Tst5", 40 } };
+	} AI[] = { { "Tst1", 4 }, { "Tst2", 16 }, { "Tst3", 24 }, { "Tst4", 30 }, { "Tst5", 180 }, { "Tst6", 184 },
+		{ "Tst7", 186 }, { "Tst8", 200 } };
 	const KpDefsTable *t = kp_defs_table(kp_defs_profile("bw-1.17.0.1"), "AIOP");
 	size_t k;
 	memset(ai, 0, CHECK_AI_SIZE);
 	memset(bw, 0, CHECK_BW_SIZE);
-	kp_le_put32(ai, 64);
+	kp_le_put32(ai, CHECK_AI_DIR);
 	for (k = 0; k < sizeof AI / sizeof AI[0]; k++) {
-		memcpy(ai + 64 + 16 * k, AI[k].id, 4);
-		kp_le_put32(ai + 64 + 16 * k + 4, AI[k].offset);
+		memcpy(ai + CHECK_AI_DIR + 16 * k, AI[k].id, 4);
+		kp_le_put32(ai + CHECK_AI_DIR + 16 * k + 4, AI[k].offset);
 	}
 	/* Tst1: goto 10; at 7 fatal_error (never reached); at 10 stop */
 	ai[4] = 0x00, kp_le_put16(ai + 5, 10), ai[7] = 0x28, ai[10] = 0x24;
@@ -613,7 +615,15 @@ static void check_bins(KpT *T, KpAiBins *b, uint8_t *ai, uint8_t *bw)
 	/* Tst4: call 36, then an ordinal past the table (freed as stop); at 36 return */
 	ai[30] = 0x40, kp_le_put16(ai + 31, 36), ai[33] = 0x71, ai[36] = 0x41;
 	/* Tst5: wait_secure (0x0f), a melee opcode, then fatal_error */
-	ai[40] = 0x0f, ai[41] = 0x28;
+	ai[180] = 0x0f, ai[181] = 0x28;
+	/* Tst6: a return without its call: the shared address is 0, so the script runs from PC 0 (fatal_error) */
+	ai[184] = 0x41;
+	/* Tst7: call 192, stop; at 192 call 198, return; at 198 return: the inner return takes the address and clears it,
+	 * so the outer one runs from PC 0 */
+	ai[186] = 0x40, kp_le_put16(ai + 187, 192), ai[189] = 0x24;
+	ai[192] = 0x40, kp_le_put16(ai + 193, 198), ai[195] = 0x41, ai[198] = 0x41;
+	/* Tst8: call 206, then fatal_error, which no return reaches: at 206 stop */
+	ai[200] = 0x40, kp_le_put16(ai + 201, 206), ai[203] = 0x28, ai[206] = 0x24;
 	/* Bpan: panic 7 (the panic block runs from aiscript.bin, where 7 is fatal_error), then stop */
 	kp_le_put32(bw, 32);
 	memcpy(bw + 32, "Bpan", 4);
@@ -642,7 +652,10 @@ static void scripts_are_checked_before_a_game(KpT *T)
 		{ "Tst2", "AI script 'Tst2' reaches fatal_error at aiscript.bin+0x7" },
 		{ "Tst3", "AI script 'Tst3' reads PC 0x7fff outside aiscript.bin" },
 		{ "Tst4", NULL },
-		{ "Tst5", "AI script 'Tst5' reaches fatal_error at aiscript.bin+0x29" },
+		{ "Tst5", "AI script 'Tst5' reaches fatal_error at aiscript.bin+0xb5" },
+		{ "Tst6", "AI script 'Tst6' reaches fatal_error at aiscript.bin+0x0" },
+		{ "Tst7", "AI script 'Tst7' reaches fatal_error at aiscript.bin+0x0" },
+		{ "Tst8", NULL },
 		{ "Bpan", "AI script 'Bpan' reaches fatal_error at aiscript.bin+0x7" },
 		{ "None", NULL }, /* no binary has it: the launch does nothing */
 	};
@@ -660,7 +673,7 @@ static void scripts_are_checked_before_a_game(KpT *T)
 	}
 	/* a truncated operand at the end of the binary */
 	ai[CHECK_AI_SIZE - 2] = 0x00, ai[CHECK_AI_SIZE - 1] = 0x01;
-	kp_le_put32(ai + 64 + 4, CHECK_AI_SIZE - 2);
+	kp_le_put32(ai + CHECK_AI_DIR + 4, CHECK_AI_SIZE - 2);
 	kp_t_ok(T, kp_aiscript_check(&b, script_id("Tst1"), why, sizeof why) == -1 && strstr(why, "outside aiscript.bin"),
 		"a truncated goto: %s", why);
 	b.operands_size--;

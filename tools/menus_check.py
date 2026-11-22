@@ -19,7 +19,10 @@ game's map named "!" + its name in the user's maps (its BroodWar for an expansio
 the player's preloaded files there; the install's maps are koprulu-private/full/app's, as the emulator's C:\\StarCraft.
 When tools/net_check.py's goldens hold the player's game, the chat room's lobby is Koprulu's (kp_netgame.h behind the
 screens' adapter kp_netui.h) over the player's recorded SNet calls, gated by the run's clock (kp_oracle_net.h): the
-calls Koprulu makes must be the original's.
+calls Koprulu makes must be the original's. The game the lobby starts is test_lobby_trace's (stage N4): the run
+leaves its records out, and where the player saw the score screen after it, the screen opens with the original's data
+(kp_ui_score_open; test_lobby_trace compares Koprulu's own data with it) and the run follows it like the menus, its
+captures compared; its Ok goes back by the provider (SetGlueStateFromProvider 0x457e50).
 
 Usage (the emulator's venv): python3 tools/menus_check.py --root DIR
        python3 tools/menus_check.py --player DIR
@@ -60,21 +63,47 @@ PROVIDERS = {
 }
 
 
-def menus_lines(path: Path, until_game: bool = False, input_log: list[dict] | None = None) \
-        -> tuple[list[str], list[dict]]:
+def score_line(path: Path, tick: int, player: str) -> list[str]:
+    """The line "score DATA" of a network player's score screen whose "score" record is at tick: its segment's data
+    (room_check.score_screen_data's) with the player's Storm ID (its roster entry's; else the first human's, said),
+    "network" 1 and the local result ComputeGameResults gave (a draw 3 or a disconnect 4 sort as the original's; the
+    glue state tells only a victory), as kp_glue_score_data takes it."""
+    seg = room_check.score_segment(path, tick)
+    if seg is None:
+        return []
+    d = seg["data"]
+    me = next((e["storm"] for e in d["roster"] if e["name"] == player), None)
+    if me is None:
+        log.warning("%s: not in the score screen's roster, its first human's Storm ID taken", player)
+    data = dict(room_check.score_screen_data(d, me), network=1)
+    if "local_result" in d:
+        data["result"] = d["local_result"]
+    return ["score " + json.dumps(data, separators=(",", ":"))]
+
+
+def menus_lines(path: Path, player: str | None = None, input_log: list[dict] | None = None) \
+        -> tuple[list[str], list[dict], list[tuple[int, int]]]:
     """The records from the title's first timer on (the main menu's when the run has no title), as kp_oracle
     room_replay's lines: "title TICK" when it has one, "start TICK" the main menu's first timer; a glue state change is
-    a line "glue STATE" before the record that has it. With until_game they end where a game began: the first timer
-    set outside the glue (the game console's). With the driver's input_log, the releases that ran a modal loop move
-    back to their dispatch (unnest)."""
+    a line "glue STATE" before the record that has it. A network player's run (player: its name) leaves its game's
+    records out: from the first timer set outside the glue (the game console's) to the score screen's data (uilog.py's
+    "score" record), which becomes the line "score DATA" (score_line); a run that ends in the game ends at its start. With the driver's input_log, the
+    releases that ran a modal loop move back to their dispatch (unnest). Also the game's span, [its first tick, the
+    score's), for the captures to leave out."""
     owners, records, started, glue, title, start = {}, [], False, None, None, None
+    game, gaps = None, []
     for line in path.read_text().splitlines():
         r = json.loads(line)
         if "owner" in r:
             owners[r["owner"]] = r["ref"]
             continue
-        if until_game and started and "tset" in r and "glue" not in r:
-            break
+        if player is not None and started and game is None and "tset" in r and "glue" not in r:
+            game = r["t"]
+        if game is not None:
+            if "score" not in r:
+                continue
+            gaps.append((game, r["t"]))
+            game = None
         bin_name = owners.get(r["tset"][0], [None])[0] if "tset" in r else None
         if bin_name == TITLE and title is None and start is None:
             title, started = r["t"], True
@@ -83,10 +112,10 @@ def menus_lines(path: Path, until_game: bool = False, input_log: list[dict] | No
         if started:
             records.append(r)
     if start is None:
-        return [], []
+        return [], [], []
     if input_log:
         records = unnest(records, input_log)
-    lines = ([f"title {title}"] if title is not None else []) + [f"start {start}"]
+    lines =([f"title {title}"] if title is not None else []) + [f"start {start}"]
     glue_at = [None]
 
     def new_room(r: dict) -> bool:
@@ -98,8 +127,10 @@ def menus_lines(path: Path, until_game: bool = False, input_log: list[dict] | No
         if "glue" in r and r["glue"] != glue:
             glue = r["glue"]
             lines.append(f"glue {glue}")
+        if "score" in r and player is not None:
+            lines += score_line(path, r["t"], player)
         lines += room_check.record_lines(r, owners)
-    return lines, records
+    return lines, records, gaps
 
 
 def action_tick(r: dict) -> int | None:
@@ -182,9 +213,8 @@ def main(argv: list[str]) -> int:
     a = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     run = a.root / "menus" if a.root else a.player
-    # TODO: stage N4 plays the network game the chat room started; until then a network player's run ends at its start
     input_log = json.loads((a.player / "player.json").read_text()).get("input_log") if a.player else None
-    lines, records = menus_lines(run / "input.jsonl", until_game=a.player is not None, input_log=input_log)
+    lines, records, gaps = menus_lines(run / "input.jsonl", a.player.name if a.player else None, input_log)
     if not lines:
         log.error("%s: no main menu", run)
         return 1
@@ -198,7 +228,7 @@ def main(argv: list[str]) -> int:
         if a.player:
             lines = providers + net_lines(a.player) + maps_lines(a.player, Path(tmp)) + lines
         ok = room_check.replay("menus", oracle_cli.command("menus_replay"), lines, screens, records, "glue*.cap",
-                               encoding="latin-1")
+                               encoding="latin-1", gaps=gaps)
     print(f"menus_check: {'equal' if ok else 'differs'}")
     return 0 if ok else 1
 

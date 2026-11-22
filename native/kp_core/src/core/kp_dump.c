@@ -1558,6 +1558,43 @@ static void dump_lines(Dump *d, KpGame *g)
 		} \
 	} while (0)
 
+/* A thingy list's records from head in list order as t:param:sprite (a free record keeps the param it had). */
+static void thingy_records(Text *t, const int32_t *kind, const int32_t *sprite, const int32_t *next, int64_t count,
+	int64_t head)
+{
+	int64_t c = head;
+	int guard = 0;
+	while (c != KP_NONE && c >= 0 && c < count && guard++ <= count) {
+		int64_t record[3];
+		record[0] = c;
+		record[1] = kind[c];
+		record[2] = sprite[c];
+		text_record(t, record, 3);
+		c = next[c];
+	}
+}
+
+/* A thingy pool's lists (tools/native_state.py thingies): the active and the free records with their previous links
+ * and tails; `cursor` the placement cursor's record (KP_NIL for none). */
+static void thingy_lines(Dump *d, const char *category, const int32_t *kind, const int32_t *sprite, const int32_t *prev,
+	const int32_t *next, int64_t count, const KpList *active, const KpList *free_list, int64_t cursor)
+{
+	Text records = text_new(d), active_prev = text_new(d), free_records = text_new(d), free_prev = text_new(d);
+	thingy_records(&records, kind, sprite, next, count, active->head);
+	PREVS(active_prev, active->head, next, prev, KP_NONE, count);
+	thingy_records(&free_records, kind, sprite, next, count, free_list->head);
+	PREVS(free_prev, free_list->head, next, prev, KP_NONE, count);
+	begin(d, category, "0");
+	field_text(d, "active", &records);
+	field_text(d, "active_prev", &active_prev);
+	field_int(d, "active_tail", active->tail);
+	field_text(d, "free", &free_records);
+	field_text(d, "free_prev", &free_prev);
+	field_int(d, "free_tail", free_list->tail);
+	field_int(d, "cursor", cursor);
+	end(d);
+}
+
 /* The categories of stage T3 (docs/phase-state.md, tools/native_state.py later): the state the earlier ones left out,
  * which test_save.dump_shows_the_saved_state found unseen, each a category of its own so the goldens of the others and
  * the plays' fingerprints (kp_oracle.c FINGERPRINT_CATEGORIES) stay. */
@@ -1640,6 +1677,71 @@ static void later_lines(Dump *d, KpGame *g)
 		field_text(d, "nodes", &sprites);
 		field_text(d, "prev", &sprite_prev);
 		field_int(d, "tail", w->free_sprites.tail);
+		end(d);
+	}
+	{ /* the free lists of the other image pools (InitImagePools 0x40f8b0): the health bars (head 0x59289c, tail
+	   * 0x592ba0), the selection circles (0x592ba4, 0x594050), the placement ghosts (0x59406c, 0x595070) and their
+	   * boxes (0x595074, 0x596078). The local interface's, as "sprite_lists": a viewer's selection takes bars and
+	   * circles, a building's placement a ghost and a box */
+		static const char *const POOL_NAMES[4] = { "health", "circles", "ghosts", "boxes" };
+		const KpList *pools[4];
+		int q;
+		pools[0] = &w->free_health;
+		pools[1] = &w->free_circles;
+		pools[2] = &w->free_ghosts;
+		pools[3] = &w->free_boxes;
+		for (q = 0; q < 4; q++) {
+			Text nodes = text_new(d), prev = text_new(d);
+			CHAIN(nodes, pools[q]->head, w->img.next, KP_NONE, KP_IMAGES);
+			PREVS(prev, pools[q]->head, w->img.next, w->img.prev, KP_NONE, KP_IMAGES);
+			begin(d, "image_pools", "%s", POOL_NAMES[q]);
+			field_text(d, "nodes", &nodes);
+			field_text(d, "prev", &prev);
+			field_int(d, "tail", pools[q]->tail);
+			end(d);
+		}
+	}
+	/* the thingies (InitThingies 0x4183e0: two pools of 500 records {prev, next, param, sprite}): the lone sprites'
+	 * 0x5c5ae0 (free list 0x5c7a20/0x5c7a24, active 0x5c7a28/0x5c7a2c, the placement cursor's record 0x5c9984), the
+	 * game's as the shared hash's (kp_save.c walk_world_shared), and the fog ghosts' 0x5c7a30 (0x5c9970/0x5c9974,
+	 * 0x5c9978/0x5c997c), the local player's (kp_script_flow.c sim.crc) */
+	thingy_lines(d, "lone_thingies", w->thg.kind, w->thg.sprite, w->thg.prev, w->thg.next, KP_LONE, &w->active_lone,
+		&w->free_lone, w->cursor);
+	thingy_lines(d, "fog_thingies", w->fog.kind, w->fog.sprite, w->fog.prev, w->fog.next, KP_FOG, &w->active_fog,
+		&w->free_fog, KP_NIL);
+	{ /* the receding creep's chains (InitRecedingCreepPool 0x4b44a0: 1024 nodes of 20 bytes at 0x6be698, next +0,
+	   * prev +4, x +0x10, y +0x11, bucket +0x12; the buckets' heads 0x6c4698, the free list's 0x6c46bc): each list's
+	   * nodes in chain order as node:x:y:bucket (a free node keeps the tile it had) with their previous links; node k
+	   * is the original's k - 1. The original's hash of the receding tiles (0x6c3698, links +8/+0xc) only finds a
+	   * tile's node, which Koprulu keeps per tile (recede_node) */
+		const KpTerrain *tr = &g->terrain;
+		int b;
+		for (b = 0; b <= KP_RECEDE_BUCKETS; b++) {
+			Text nodes = text_new(d), prev = text_new(d);
+			int64_t c = tr->recede_head[b];
+			int guard = 0;
+			while (c > 0 && c <= KP_RECEDE_NODES && guard++ < KP_RECEDE_NODES) {
+				int64_t record[4];
+				record[0] = c;
+				record[1] = tr->recede_x[c];
+				record[2] = tr->recede_y[c];
+				record[3] = tr->recede_bucket[c];
+				text_record(&nodes, record, 4);
+				text_item(&prev, tr->recede_prev[c]);
+				c = tr->recede_next[c];
+			}
+			if (b == KP_RECEDE_BUCKETS) begin(d, "receding", "free");
+			else begin_id(d, "receding", b);
+			field_text(d, "nodes", &nodes);
+			field_text(d, "prev", &prev);
+			end(d);
+		}
+	}
+	{ /* the DAT values the game writes while it runs: weapons.dat's forward offsets 0x5260b0 (attkshiftproj 0x411023) */
+		Text forward = text_new(d);
+		for (k = 0; k < KP_WEAPON_IDS; k++) text_hex(&forward, (uint64_t)kp_dat_read(g, KP_COL_weapons_forward_offset, k), 2);
+		begin(d, "dat_writes", "weapons");
+		field_text(d, "forward_offset", &forward);
 		end(d);
 	}
 	/* the previous links along the lists the earlier categories walk forward */
@@ -1852,19 +1954,6 @@ static const KpDumpField DUMP_FIELDS[] = {
 	{ "g->guards.y2", KP_DUMP_SHOWN, "guard records" },
 	{ "g->power.prev", KP_DUMP_SHOWN, "links power" },
 	{ "g->military.type", KP_DUMP_SHOWN, "ai_military records (4 in every listed record)" },
-	/* TODO: the free lists of the other image pools (their heads' addresses are not known yet) */
-	{ "&w->free_health", KP_DUMP_MODEL, "the health bars' free list" },
-	{ "&w->free_circles", KP_DUMP_MODEL, "the selection circles' free list" },
-	{ "&w->free_ghosts", KP_DUMP_MODEL, "the placement ghosts' free list" },
-	{ "&w->free_boxes", KP_DUMP_MODEL, "the placement boxes' free list" },
-	/* TODO: the lone and fog thingies (atlas P05: the lone records 0x5c5ae0, 16 bytes; the dump lists their sprites;
-	 * the lists' heads and the fog records' addresses are not known yet) */
-	{ "w->thg.*", KP_DUMP_MODEL, "the lone thingy records 0x5c5ae0" },
-	{ "&w->free_lone", KP_DUMP_MODEL, "the lone thingies' free list" },
-	{ "&w->active_lone", KP_DUMP_MODEL, "the lone thingies' active list" },
-	{ "w->fog.*", KP_DUMP_MODEL, "the fog thingy records" },
-	{ "&w->free_fog", KP_DUMP_MODEL, "the fog thingies' free list" },
-	{ "&w->active_fog", KP_DUMP_MODEL, "the fog thingies' active list" },
 	/* TODO: the images' fields the model must map: a GRP header's pointer to its file, a draw parameter (a remap's
 	 * table) to its meaning */
 	{ "w->img.grp", KP_DUMP_MODEL, "CImage +0x2c (the GRP's header: a pointer the model must map to its file)" },
@@ -1874,8 +1963,6 @@ static const KpDumpField DUMP_FIELDS[] = {
 		"lack (Koprulu only writes it: the actions take their trigger as an argument)" },
 	{ "&holdrand", KP_DUMP_HEAP, "the CRT generator's state (rand 0x4d14d4): the thread's data block _ptd, in the heap; "
 		"its draws are the creep variants' and the interface's (the oracle's \"crt\" events)" },
-	/* TODO: the DAT values and lazy tables the game writes while it runs */
-	{ "offsets", KP_DUMP_MODEL, "weapons.dat's forward offsets in memory, which attkshiftproj 0x411023 writes" },
 	{ "g->setup.*", KP_DUMP_MODEL, "the game's setup (ADR 0024): the template 0x67293d, the multiplayer byte 0x672664 and the "
 		"player records 0x6726c8 as the game's creation left them, the lobby's races 0x5264a0 and a team game's leaders "
 		"0x5264ac; the model reads the runtime's players" },
@@ -1884,26 +1971,23 @@ static const KpDumpField DUMP_FIELDS[] = {
 		"(RefreshAllianceColors 0x41d7b0, at the start and on an alliance change), the local player's view: the seat's "
 		"state, out of the shared hash (ADR 0025)" },
 	{ "w->circle_colors", KP_DUMP_MODEL, "the images world's copy of 0x52904a by owner (the fog ghosts' flash)" },
-	{ "g->req_offsets[k]", KP_DUMP_MODEL, "the requirement offsets of the lazy initializers 0x407d50, 0x407f20, 0x4080d0, 0x408280" },
-	{ "g->req_offsets_ready", KP_DUMP_MODEL, "the lazy initializers' flags" },
-	/* TODO: the path searches' state, kept between searches */
-	{ "p->extent_ctx", KP_DUMP_MODEL, "the placement's extents context" },
-	{ "r->*", KP_DUMP_MODEL, "the region search's nodes" },
-	{ "p->rheap*", KP_DUMP_MODEL, "the region search's open heap" },
-	{ "lg->*", KP_DUMP_MODEL, "the geometry context 0x69d930" },
-	{ "e->*", KP_DUMP_MODEL, "the geometry context's edge arrays (+0x2d0)" },
-	{ "v->*", KP_DUMP_MODEL, "the swept areas 0x69ec08, 0x69ee10, 0x69f018" },
-	{ "n->*", KP_DUMP_MODEL, "the local search's nodes" },
-	{ "p->lnode_count", KP_DUMP_MODEL, "the local search's nodes in use" },
-	{ "p->lheap*", KP_DUMP_MODEL, "the local search's open heap" },
-	{ "p->hash_*", KP_DUMP_MODEL, "the local search's node hash" },
-	/* TODO: the receding creep: the original's chains of InitRecedingCreepPool 0x4b44a0, here nodes per tile */
-	{ "t->recede_next", KP_DUMP_MODEL, "the receding creep's chains (the dump has the buckets' counts)" },
-	{ "t->recede_prev", KP_DUMP_MODEL, "the receding creep's chains" },
-	{ "t->recede_x", KP_DUMP_MODEL, "the receding creep's chains" },
-	{ "t->recede_y", KP_DUMP_MODEL, "the receding creep's chains" },
-	{ "t->recede_bucket", KP_DUMP_MODEL, "the receding creep's chains" },
-	{ "t->recede_head", KP_DUMP_MODEL, "the receding creep's chains" },
+	/* a cache of the built-in requirement tables (docs/research/native-dat-requirements.md: the u16 offset arrays
+	 * 0x51bb00, 0x51f8c0, 0x51f918, 0x524bd0 and units.dat's 0x523a78), filled when a check first needs it: the
+	 * interface's button checks fill the original's, which the oracle's runner does not run */
+	{ "g->req_offsets[k]", KP_DUMP_SCRATCH, "the requirement offsets of the lazy initializers 0x407d50, 0x407f20, "
+		"0x4080d0, 0x408280" },
+	{ "g->req_offsets_ready", KP_DUMP_SCRATCH, "the lazy initializers' flags" },
+	/* the path searches' working state, which each search sets up before it reads it */
+	{ "p->extent_ctx", KP_DUMP_SCRATCH, "the placement's extents context" },
+	{ "r->*", KP_DUMP_SCRATCH, "the region search's nodes" },
+	{ "p->rheap*", KP_DUMP_SCRATCH, "the region search's open heap" },
+	{ "lg->*", KP_DUMP_SCRATCH, "the geometry context 0x69d930" },
+	{ "e->*", KP_DUMP_SCRATCH, "the geometry context's edge arrays (+0x2d0)" },
+	{ "v->*", KP_DUMP_SCRATCH, "the swept areas 0x69ec08, 0x69ee10, 0x69f018" },
+	{ "n->*", KP_DUMP_SCRATCH, "the local search's nodes" },
+	{ "p->lnode_count", KP_DUMP_SCRATCH, "the local search's nodes in use" },
+	{ "p->lheap*", KP_DUMP_SCRATCH, "the local search's open heap" },
+	{ "p->hash_*", KP_DUMP_SCRATCH, "the local search's node hash" },
 	{ "t->recede_node", KP_DUMP_KOPRULU, "each tile's receding node, in place of the original's hash of 1024 chains" },
 	/* Koprulu's own */
 	{ "g->scalar_present", KP_DUMP_KOPRULU, "which of the original's globals the game holds" },
