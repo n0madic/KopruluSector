@@ -81,6 +81,7 @@ typedef struct {
 	int quits, profile_saves, syncs, builds, frees, world_frames, ticks, restarts, stops, palettes_set, interfaces;
 	int music_track, music_playing; /* the music as the host's mixer has it: the last track asked for, still on */
 	int32_t gamma;
+	int renderer, renderers; /* the renderer the host was last told to take, and how many times */
 	int world;               /* a world stands */
 	int fail_world;          /* the next world's build fails */
 	int fail_game;           /* the next world's frame fails the game */
@@ -290,6 +291,13 @@ static void host_palette(void *ctx, const uint8_t *rgb)
 
 static void host_gamma(void *ctx, int32_t gamma) { ((Host *)ctx)->gamma = gamma; }
 
+static void host_renderer(void *ctx, int renderer)
+{
+	Host *H = (Host *)ctx;
+	H->renderer = renderer;
+	H->renderers++;
+}
+
 static uint8_t host_video_available(void *ctx, const KpUi *ui)
 {
 	(void)ui;
@@ -386,6 +394,7 @@ static Host *new_host(KpT *T)
 	h->gamma = host_gamma;
 	h->video_available = host_video_available;
 	h->gpu_name = "Vulkan";
+	h->renderer = host_renderer;
 	h->cine_has = host_cine_has;
 	h->cine_start = host_cine_start;
 	h->cine_active = host_cine_active;
@@ -4406,13 +4415,18 @@ static void video_dialog_applies_and_keeps_its_options(KpT *T)
 		o->serial++;
 		frame(H);
 		kp_t_eq(T, H->flags.fog_style, KP_FOG_SMOOTH, "applied at once");
-		kp_t_eq(T, H->flags.renderer, KP_RENDERER_GL, "the next start's renderer");
+		kp_t_eq(T, H->flags.renderer, KP_RENDERER_GL, "the renderer chosen");
+		kp_t_eq(T, H->renderers, 0, "not taken under the open dialog (each choice would make the window again)");
 		kp_t_eq(T, H->flags.water, KP_WATER_ANIMATED, NULL);
 		kp_t_eq(T, H->f.gamma, 70, "the gamma");
 		kp_t_eq(T, H->gamma, 70, "on the host's HD art");
 		saves = H->profile_saves;
 		H->f.ui->options_committed |= KP_UI_SECTION_VIDEO;
 		frame(H);
+		kp_t_ok(T, H->renderers == 1 && H->renderer == KP_RENDERER_GL, "the renderer taken at the OK (%d times, %d)",
+			H->renderers, H->renderer);
+		frame(H);
+		kp_t_eq(T, H->renderers, 1, "once");
 		if (check) {
 			kp_t_eq(T, H->profile.video.fog, KP_VIDEO_AUTO, "a check's options are not the player's");
 			kp_t_eq(T, H->profile.video.gamma, KP_UI_GAMMA_DEFAULT, NULL);

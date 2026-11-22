@@ -246,7 +246,7 @@ the settings for one run:
 | `--font original\|vector` | the original bitmap text or smooth vector text |
 | `--locale LOC`, `--speech LOC` | the language of the text and of the speech (also in the main menu's Language) |
 | `--window WxH` | the window's size |
-| `--gfx auto\|gl\|gpu` | the drawing's API: OpenGL, or SDL_GPU (Metal on macOS, Vulkan on Windows and Linux); `auto` is SDL_GPU on macOS and OpenGL elsewhere, and the video options' Renderer chooses it for the next start; a software Vulkan device (lavapipe) only under `--gfx gpu` ([ADR 0028](docs/adr/0028-sdl-gpu-backend.md)) |
+| `--gfx auto\|gl\|gpu` | the drawing's API: OpenGL, or SDL_GPU (Metal on macOS, Vulkan on Windows and Linux); `auto` is SDL_GPU on macOS and OpenGL elsewhere, and the video options' Renderer switches it at their OK (the window made anew); a software Vulkan device (lavapipe) only under `--gfx gpu` ([ADR 0028](docs/adr/0028-sdl-gpu-backend.md)) |
 | `--gfx-debug` | SDL_GPU's checks of every call (slower) |
 | `--scale-mode integer\|sharp` | how the picture is scaled to the window |
 | `--console edges\|ornaments` | the console's shape on wide screens |

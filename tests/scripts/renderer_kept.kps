@@ -1,0 +1,8 @@
+# renderer.kps's and renderer_gpu.kps's OK, the switch taken before the next frame, and the frame both shoot (the
+# cursor moved off the choice each clicked, to the same point).
+key O
+wait nodialog
+move 320 200
+wait frames 10
+log kept video.renderer video.commits gfx.gpu
+shot switched

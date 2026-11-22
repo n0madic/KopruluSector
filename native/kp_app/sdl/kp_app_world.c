@@ -463,9 +463,10 @@ static int art_changed(const KpApp *a)
 	return (fx_smooth(a) || fx_water(a)) != w->fx || (w->fx && fx_water(a) != w->art_water);
 }
 
-/* The world's art again, while the game goes on: kp_gfx's objects deleted (no HD textures stay), the art loaded as at
- * the start and everything uploaded again (the HD interface's too). */
-static void reload_art(KpApp *a)
+/* The world's art again, while the game goes on: kp_gfx's objects deleted (no HD textures stay; a gfx attached anew
+ * has none, and is not reset: GL's reset would build its backend a second time), the art loaded as at the start and
+ * everything uploaded again (the HD interface's too). */
+void kp_world_reload_art(KpApp *a, int attached)
 {
 	KpAppWorld *w = &a->world;
 	const KpPack *packs[KP_APP_PACKS];
@@ -479,7 +480,7 @@ static void reload_art(KpApp *a)
 		names[k] = w->packs[k].name;
 	}
 	load_art(a, kp_session_grp(a->flow.session), packs, names);
-	if (kp_gfx_reset(a->gfx, err, sizeof err) != 0) {
+	if (!attached && kp_gfx_reset(a->gfx, err, sizeof err) != 0) {
 		SDL_Log("%s (nothing is drawn any more)", err);
 		return;
 	}
@@ -861,7 +862,7 @@ void kp_world_frame(KpApp *a, int ticks, double fraction)
 	int ranges_count;
 	int changed;
 	if (!w->active) return;
-	if (art_changed(a)) reload_art(a);
+	if (art_changed(a)) kp_world_reload_art(a, 0);
 	if (w->hd_scale && hd_lit_wanted(a) != w->hd_lighting) { /* the video options' lighting changed: the slots again */
 		hd_slots_or_drop(a);
 		if (!w->hd_scale) kp_world_upload(a);

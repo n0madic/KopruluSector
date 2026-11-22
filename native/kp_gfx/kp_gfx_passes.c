@@ -95,22 +95,43 @@ void kp_gfx_free(KpGfx *g)
 	free(g);
 }
 
-int kp_gfx_reset(KpGfx *g, char *err, size_t err_size)
+/* The state of a new gfx over api, without a backend (the caller's to make), the palette and the gamma kept (uploaded
+ * again); the effects are the defaults until the host sets them (each frame). */
+static void fresh(KpGfx *g, const KpGfxApi *api)
 {
 	uint8_t palette[256 * 4];
-	KpGfxApi api = g->api;
+	KpGfxApi kept = *api;
 	float gamma = g->gamma;
-	KpGfxBackend *b = g->b;
 	memcpy(palette, g->palette, sizeof palette);
 	free(g->hd_slot_texels);
 	memset(g, 0, sizeof *g);
-	g->api = api;
+	g->api = kept;
 	memcpy(g->palette, palette, sizeof palette);
 	g->palette_dirty = 1;
 	g->gamma = gamma;
 	effects_defaults(g);
+}
+
+int kp_gfx_reset(KpGfx *g, char *err, size_t err_size)
+{
+	KpGfxBackend *b = g->b;
+	fresh(g, &g->api);
 	/* a live backend drops its objects (the art made again; SDL_GPU keeps its shaders); a failed reset's none: anew */
 	g->b = b ? kp_gb_reset(b, err, err_size) : kp_gb_new(&g->api, err, err_size);
+	return g->b ? 0 : -1;
+}
+
+void kp_gfx_detach(KpGfx *g)
+{
+	kp_gb_free(g->b, 0);
+	g->b = NULL;
+}
+
+int kp_gfx_attach(KpGfx *g, const KpGfxApi *api, char *err, size_t err_size)
+{
+	kp_gfx_detach(g);
+	fresh(g, api);
+	g->b = kp_gb_new(&g->api, err, err_size);
 	return g->b ? 0 : -1;
 }
 

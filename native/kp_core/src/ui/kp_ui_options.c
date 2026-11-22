@@ -3,7 +3,7 @@
  * back; the sound dialog's volumes and option bits (the volumes previewed five idle events after a change), the speed
  * dialog's game speed (the command 0x0f at OK) and scroll speeds (live). The video options are our own dialog
  * (koprulu\video.bin in place of rez\video.bin): the original's gamma (previewed) and portrait mode with the art, the
- * fog, the water, the text and the lighting (live) and the renderer (the next start's); the host applies them
+ * fog, the water, the text and the lighting (live) and the renderer (at OK); the host applies them
  * (ui->video_options). Every dialog alike:
  * its OK keeps all it changed (ui->options_committed, the host's profile), any other end puts the snapshot back. */
 #include "kp_ui.h"

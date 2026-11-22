@@ -152,7 +152,7 @@ Names are in any case. A value read where what it is read from is missing has no
 | `lobby.distributed` | the interface | The host's: 1 when every player holds the network lobby's map (`AllPeersHaveFile` `0x440ba0`: the host's Start needs it, else "The scenario map file is still being distributed."). 1 on a joiner, which offers no map (even while its own download runs), 0 with no network game |
 | `local.player` | the game | The game's local player (the seat's) |
 | `portraits` | the interface | The portraits' mode: 0 none, 1 still, 2 animated |
-| `video.graphics`, `video.fog`, `video.water`, `video.font`, `video.lighting`, `video.renderer` | the interface | The video options: -1 auto, else the choice's value (the renderer the next start's: 0 GL, 1 SDL_GPU) |
+| `video.graphics`, `video.fog`, `video.water`, `video.font`, `video.lighting`, `video.renderer` | the interface | The video options: -1 auto, else the choice's value (the renderer's: 0 GL, 1 SDL_GPU; the host switches to it at the dialog's OK, `gfx.gpu`) |
 | `video.serial`, `video.commits` | the interface | The video options' changes; the video dialog's OKs kept |
 | `text.vector` | the interface | 1 when the interface's text is in the vector font |
 | `art.scale` | the host | The world's HD pixels a logical pixel: 2 HD2, 4 HD, 0 the original's art. None without a world |
@@ -163,6 +163,7 @@ Names are in any case. A value read where what it is read from is missing has no
 | `music.playing`, `music.track` | the host | The music plays; its track |
 | `sounds.started`, `sounds.streamed` | the host | The sounds the mixer started; streamed |
 | `text.input` | the host | 1 while the window's text input is on (its IME, a phone's soft keyboard): while an edit box has the focus (`kp_input_text_sync`) |
+| `gfx.gpu` | the host | 1 while SDL_GPU draws (Metal, Vulkan), 0 on GL ([ADR 0028](../adr/0028-sdl-gpu-backend.md)): after the video options' Renderer switched it, from the next frame |
 
 ### The conditions
 

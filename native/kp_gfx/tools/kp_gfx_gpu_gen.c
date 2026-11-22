@@ -1,9 +1,14 @@
 /*
  * kp_gfx_gpu_gen: the SDL_GPU backend's shaders (ADR 0028) from kp_gfx_shaders.c. Each program's stages go through
  * the transform (kp_gfx_gpu_glsl.c), glslangValidator (Vulkan GLSL 450 to SPIR-V), spirv-val, and spirv-cross (SPIR-V to
- * MSL, the bindings as decorated); where Xcode's metal compiler is, it compiles the MSL too. The output is the committed
+ * MSL, the bindings as decorated); where Xcode's Metal toolchain is, metal and metallib build each stage's metallib
+ * from its MSL, which Metal then loads without compiling it at the start. The output is the committed
  * native/kp_gfx/kp_gfx_gpu_shaders.c: the platforms' builds need none of these tools, and test_gfx checks the file
- * against the transform (its reflection and the SHA-256 of each stage's text).
+ * against the transform (its reflection and the SHA-256 of each stage's text) and each metallib against its MSL.
+ *
+ * Without the Metal toolchain (Linux, a Mac without the download) a stage keeps the metallib this program was built
+ * with when its MSL is the same (the file does not change with the machine that writes it); a stage whose MSL changed
+ * has none, and Metal compiles its MSL when the backend starts: said as a warning (the toolchain builds them all).
  *
  *   kp_gfx_gpu_gen OUT.c           write the file
  *   kp_gfx_gpu_gen --check OUT.c   compare it with what these tools write (only where their versions are the file's)
@@ -24,6 +29,10 @@
 #define STAGES_MAX (2 * KP_PROGRAMS)
 #define MSL_VERSION "20100" /* MSL 2.1: macOS 10.14, SDL_GPU's Metal floor */
 #define METAL_STD "macos-metal2.1"
+/* the metallibs' oldest macOS: the product's deployment target (tools/product.sh; tools/ci.sh checks the two and the
+ * file's header alike); an older system's Metal refuses them and the backend compiles the MSL instead */
+#define METAL_MACOS "15.0"
+#define METAL_DOWNLOAD "xcodebuild -downloadComponent MetalToolchain"
 
 static const struct {
 	const char *src, *name;
@@ -47,6 +56,10 @@ typedef struct {
 	uint8_t *spirv;
 	size_t spirv_size;
 	char *msl;
+	char msl_sha[2 * KP_SHA256_SIZE + 1];
+	const uint8_t *metallib; /* built here (owned), or the linked file's kept */
+	size_t metallib_size;
+	uint8_t *owned;
 } Stage;
 
 typedef struct {
@@ -170,9 +183,20 @@ static int has_metal(void)
 	return system("printf 'kernel void k() {}\\n' | xcrun -sdk macosx metal -x metal -c - -o /dev/null > /dev/null 2>&1") == 0;
 }
 
+/* The linked kp_gfx_gpu_shaders.c's metallib built from this MSL (its SHA-256), or NULL. */
+static const KpGfxGpuShader *kept_metallib(const char *msl_sha)
+{
+	int k;
+	for (k = 0; k < KP_GFX_GPU_SHADER_COUNT; k++) {
+		const KpGfxGpuShader *sh = &KP_GFX_GPU_SHADERS[k];
+		if (sh->metallib && sh->metallib_msl_sha256 && strcmp(sh->metallib_msl_sha256, msl_sha) == 0) return sh;
+	}
+	return NULL;
+}
+
 static int compile_stage(Stage *s, int n, const char *dir, int metal)
 {
-	char text[TEXT_BYTES], err[256], path[600], spv[600], msl[600];
+	char text[TEXT_BYTES], err[256], path[600], spv[600], msl[600], air[600], lib[600];
 	uint8_t digest[KP_SHA256_SIZE];
 	size_t size = 0;
 	const char *ext = s->vertex ? "vert" : "frag";
@@ -186,6 +210,8 @@ static int compile_stage(Stage *s, int n, const char *dir, int metal)
 	snprintf(path, sizeof path, "%s/stage%d.%s", dir, n, ext);
 	snprintf(spv, sizeof spv, "%s/stage%d.spv", dir, n);
 	snprintf(msl, sizeof msl, "%s/stage%d.metal", dir, n);
+	snprintf(air, sizeof air, "%s/stage%d.air", dir, n);
+	snprintf(lib, sizeof lib, "%s/stage%d.metallib", dir, n);
 	if (write_file(path, text, (size_t)len) != 0) return -1;
 	/* the MSL from SPIR-V with its names; the SPIR-V kept without them */
 	if (run(dir, "glslangValidator --target-env vulkan1.0 -o '%s' '%s'", spv, path) != 0) return -1;
@@ -193,7 +219,9 @@ static int compile_stage(Stage *s, int n, const char *dir, int metal)
 	if (run(dir, "spirv-cross '%s' --msl --msl-version " MSL_VERSION " --msl-decoration-binding --output '%s'", spv,
 			msl) != 0)
 		return -1;
-	if (metal && run(dir, "xcrun -sdk macosx metal -std=" METAL_STD " -c '%s' -o '%s/stage%d.air'", msl, dir, n) != 0)
+	/* Metal's defaults (fast math), as its compile of the MSL at the start; the output is the same bytes each run */
+	if (metal && (run(dir, "xcrun -sdk macosx metal -std=" METAL_STD " -mmacosx-version-min=" METAL_MACOS " -c '%s' -o '%s'",
+			msl, air) != 0 || run(dir, "xcrun -sdk macosx metallib '%s' -o '%s'", air, lib) != 0))
 		return -1;
 	if (run(dir, "glslangValidator --target-env vulkan1.0 -g0 -o '%s' '%s'", spv, path) != 0) return -1;
 	if (run(dir, "spirv-val --target-env vulkan1.0 '%s'", spv) != 0) return -1;
@@ -202,6 +230,20 @@ static int compile_stage(Stage *s, int n, const char *dir, int metal)
 	if (!s->spirv || !s->msl || s->spirv_size % 4 != 0) {
 		fprintf(stderr, "kp_gfx_gpu_gen: %s: no output\n", source_name(s->src));
 		return -1;
+	}
+	kp_sha256(s->msl, size, digest);
+	kp_sha256_hex(digest, s->msl_sha);
+	if (metal) {
+		if (!(s->metallib = s->owned = read_file(lib, &s->metallib_size)) || s->metallib_size == 0) {
+			fprintf(stderr, "kp_gfx_gpu_gen: %s: no metallib\n", source_name(s->src));
+			return -1;
+		}
+	} else {
+		const KpGfxGpuShader *kept = kept_metallib(s->msl_sha);
+		if (kept) {
+			s->metallib = kept->metallib;
+			s->metallib_size = kept->metallib_size;
+		}
 	}
 	return 0;
 }
@@ -231,11 +273,21 @@ static void put_bytes(Buf *b, const uint8_t *v, int n)
 	buf_put(b, n ? " }" : "0 }", n ? 2 : 3);
 }
 
-static void write_output(Buf *b, Stage *stages, int count, const int vs_of[], const int fs_of[], const char *versions)
+static void put_metallib(Buf *b, const uint8_t *v, size_t n)
+{
+	size_t k;
+	for (k = 0; k < n; k++) buf_fmt(b, "%s0x%02x,", k % 16 == 0 ? "\n\t" : " ", (unsigned)v[k]);
+}
+
+static void write_output(Buf *b, Stage *stages, int count, const int vs_of[], const int fs_of[], const char *versions,
+	const char *metal)
 {
 	int n, k;
 	buf_fmt(b, "/*\n * Generated by kp_gfx_gpu_gen from kp_gfx_shaders.c (ADR 0028); do not edit: regenerate it with kp_gfx_gpu_gen.\n"
-		" * %s\n */\n#include \"kp_gfx_gpu_glsl.h\"\n#include \"kp_gfx_internal.h\"\n\n", versions);
+		" * %s\n */\n#include \"kp_gfx_gpu_glsl.h\"\n#include \"kp_gfx_internal.h\"\n\n"
+		"#ifdef KP_GFX_NO_METALLIB /* the builds GL alone draws in (the web, the phones): no metallib in them */\n"
+		"#define METALLIB(code, msl_sha256) NULL, 0, NULL\n#else\n"
+		"#define METALLIB(code, msl_sha256) code, sizeof code, msl_sha256\n#endif\n\n", versions);
 	for (n = 0; n < count; n++) {
 		const Stage *s = &stages[n];
 		const uint32_t *words = (const uint32_t *)(const void *)s->spirv;
@@ -244,7 +296,13 @@ static void write_output(Buf *b, Stage *stages, int count, const int vs_of[], co
 		for (w = 0; w < nw; w++) buf_fmt(b, "%s0x%08x,", w % 8 == 0 ? "\n\t" : " ", (unsigned)words[w]);
 		buf_fmt(b, "\n};\nstatic const char MSL_%d[] =\n", n);
 		put_msl(b, s->msl);
-		buf_put(b, "\t;\n\n", 4);
+		buf_put(b, "\t;\n", 3);
+		if (s->metallib) {
+			buf_fmt(b, "#ifndef KP_GFX_NO_METALLIB\nstatic const uint8_t METALLIB_%d[%zu] = {", n, s->metallib_size);
+			put_metallib(b, s->metallib, s->metallib_size);
+			buf_put(b, "\n};\n#endif\n", 11);
+		}
+		buf_put(b, "\n", 1);
 	}
 	buf_fmt(b, "const KpGfxGpuShader KP_GFX_GPU_SHADERS[%d] = {\n", count);
 	for (n = 0; n < count; n++) {
@@ -256,10 +314,15 @@ static void write_output(Buf *b, Stage *stages, int count, const int vs_of[], co
 		put_bytes(b, g->kind, g->samplers);
 		buf_put(b, ", ", 2);
 		put_bytes(b, g->storage_of, g->storage);
-		buf_fmt(b, " },\n\t\t\"%s\" },\n", stages[n].sha);
+		buf_fmt(b, " },\n\t\t\"%s\",\n", stages[n].sha);
+		if (stages[n].metallib) {
+			buf_fmt(b, "\t\tMETALLIB(METALLIB_%d, \"%s\") },\n", n, stages[n].msl_sha);
+		} else {
+			buf_put(b, "\t\tNULL, 0, NULL },\n", 19);
+		}
 	}
-	buf_fmt(b, "};\nconst int KP_GFX_GPU_SHADER_COUNT = %d;\n\nconst KpGfxGpuProgram KP_GFX_GPU_PROGRAMS[KP_PROGRAMS] = {\n",
-		count);
+	buf_fmt(b, "};\nconst int KP_GFX_GPU_SHADER_COUNT = %d;\nconst char KP_GFX_GPU_METAL[] = \"%s\";\n\n"
+		"const KpGfxGpuProgram KP_GFX_GPU_PROGRAMS[KP_PROGRAMS] = {\n", count, metal);
 	for (k = 0; k < KP_PROGRAMS; k++) buf_fmt(b, "\t{ %d, %d },\n", vs_of[k], fs_of[k]);
 	buf_put(b, "};\n", 3);
 }
@@ -267,8 +330,8 @@ static void write_output(Buf *b, Stage *stages, int count, const int vs_of[], co
 int main(int argc, char **argv)
 {
 	static Stage stages[STAGES_MAX];
-	char dir[512], versions[512], glslang[160], cross[160], val[160];
-	int vs_of[KP_PROGRAMS], fs_of[KP_PROGRAMS], count = 0, k, n, check, metal, rc = 0;
+	char dir[512], versions[768], glslang[160], cross[160], val[160], metal_version[160];
+	int vs_of[KP_PROGRAMS], fs_of[KP_PROGRAMS], count = 0, k, n, check, metal, rc = 0, libs = 0;
 	const char *out;
 	Buf b = { NULL, 0, 0 };
 	check = argc == 3 && strcmp(argv[1], "--check") == 0;
@@ -311,9 +374,14 @@ int main(int argc, char **argv)
 	version("glslangValidator --version 2>&1", glslang, sizeof glslang);
 	version("spirv-cross --revision 2>&1", cross, sizeof cross);
 	version("spirv-val --version 2>&1", val, sizeof val);
-	snprintf(versions, sizeof versions, "glslang: %s\n * spirv-cross: %s\n * spirv-val: %s\n * MSL: %s", glslang,
-		cross, val, MSL_VERSION);
-	write_output(&b, stages, count, vs_of, fs_of, versions);
+	for (n = 0; n < count; n++) libs += stages[n].metallib != NULL;
+	/* the metallibs' compiler: this one, or the kept metallibs' (the linked file's) */
+	if (metal) version("xcrun -sdk macosx metal --version 2>&1", metal_version, sizeof metal_version);
+	else snprintf(metal_version, sizeof metal_version, "%s", libs ? KP_GFX_GPU_METAL : "");
+	snprintf(versions, sizeof versions, "glslang: %s\n * spirv-cross: %s\n * spirv-val: %s\n * MSL: %s\n * metal: %s (%s)",
+		glslang, cross, val, MSL_VERSION, metal_version[0] ? metal_version : "none",
+		"macOS " METAL_MACOS ", " METAL_STD);
+	write_output(&b, stages, count, vs_of, fs_of, versions, metal_version);
 	if (check) {
 		size_t size = 0;
 		uint8_t *old = read_file(out, &size);
@@ -335,9 +403,21 @@ int main(int argc, char **argv)
 		fprintf(stderr, "kp_gfx_gpu_gen: %s not written\n", out);
 		rc = 1;
 	} else {
-		printf("kp_gfx_gpu_gen: %s written (%d stages%s)\n", out, count,
-			metal ? ", MSL compiled" : "; no Metal toolchain: the MSL compiles when the backend starts");
+		printf("kp_gfx_gpu_gen: %s written (%d stages, %d metallibs%s)\n", out, count, libs,
+			metal ? " built" : !libs ? "" : " kept: their MSL unchanged");
 	}
+	if (rc == 0 && libs < count) { /* the file works without them: Metal compiles those stages' MSL at the start */
+		fflush(stdout);
+		fprintf(stderr, "kp_gfx_gpu_gen: warning: no Metal toolchain: %d of %d stages have no metallib, and Metal "
+			"compiles their MSL when the backend starts (seconds on a cold cache); Xcode's Metal toolchain builds them "
+			"ahead (%s), the better file\n", count - libs, count, METAL_DOWNLOAD);
+	}
+	for (n = 0; n < count; n++) {
+		free(stages[n].spirv);
+		free(stages[n].msl);
+		free(stages[n].owned);
+	}
+	free(b.data);
 	run(dir, "rm -rf '%s'", dir);
 	return rc;
 }

@@ -54,7 +54,7 @@ static const struct {
 	{ "video.water", KP_SCRIPT_ARG_NONE, NEED_UI },
 	{ "video.font", KP_SCRIPT_ARG_NONE, NEED_UI },
 	{ "video.lighting", KP_SCRIPT_ARG_NONE, NEED_UI },
-	{ "video.renderer", KP_SCRIPT_ARG_NONE, NEED_UI },     /* the next start's (KP_RENDERER_*: 0 GL, 1 SDL_GPU) */
+	{ "video.renderer", KP_SCRIPT_ARG_NONE, NEED_UI },     /* the chosen (KP_RENDERER_*: 0 GL, 1 SDL_GPU) */
 	{ "video.serial", KP_SCRIPT_ARG_NONE, NEED_UI },       /* the dialog's changes */
 	{ "video.commits", KP_SCRIPT_ARG_NONE, NEED_UI },      /* the dialog's OKs kept */
 	{ "text.vector", KP_SCRIPT_ARG_NONE, NEED_UI },        /* the interface's text in the vector font */

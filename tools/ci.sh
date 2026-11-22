@@ -45,7 +45,8 @@
 #     the game's state written by tests/scripts/video_menu.kps, a failure's tree and state, the fixed clock's two runs
 #     of tests/scripts/determinism.kps the same and its negative control different, and its frames and states under
 #     the SDL_GPU backend GL's, byte for byte: --gfx gpu, ADR 0028; the renderer chosen in the video options taken
-#     at the next start, tests/scripts/renderer.kps run twice) and the checks' scripts: the play
+#     at their OK, Metal to GL and GL to Metal, the frames after each switch an unswitched run's: tests/scripts/
+#     renderer.kps and renderer_gpu.kps) and the checks' scripts: the play
 #     checks (play_1..5.kps: box selection, right clicks, the terrain, the fog and the palette pass against their CPU
 #     twins), the video options (video.kps: clicked through, the art following them), a save (save.kps: made during a
 #     transmission, loaded in its game and from its file, the saved view and minimap in the load's frame and its
@@ -322,6 +323,15 @@ fi
 
 step "the generated CRC tables are current (tools/native/crc32_table.py: kp_kpf.c's CRC-32, kp_webm.c's Ogg CRC)"
 "$PYTHON" tools/native/crc32_table.py --check
+step "the metallibs' oldest macOS is the product's deployment target (kp_gfx_gpu_gen's METAL_MACOS, ADR 0028)"
+# an older floor in tools/product.sh would leave its systems compiling every stage's MSL at the start
+macos_floor="$(sed -n 's/.*-DCMAKE_OSX_DEPLOYMENT_TARGET=\([0-9.]*\).*/\1/p' tools/product.sh | head -n 1)"
+if [ -z "$macos_floor" ] || ! grep -qF "#define METAL_MACOS \"$macos_floor\"" native/kp_gfx/tools/kp_gfx_gpu_gen.c ||
+  ! grep -qF "(macOS $macos_floor, " native/kp_gfx/kp_gfx_gpu_shaders.c; then
+  echo "ci: tools/product.sh's macOS ${macos_floor:-(none)} is not METAL_MACOS of kp_gfx_gpu_gen.c and the header of" \
+    "kp_gfx_gpu_shaders.c: set it there and regenerate the file" >&2
+  exit 1
+fi
 step "the native core's boundaries (tools/boundaries.sh: no mutable static state, ADR 0023)"
 tools/boundaries.sh
 step "the documents' links and their headings (tools/doc_links.py)"
@@ -680,15 +690,31 @@ if [ -n "${KOPRULU_APP:-}" ]; then
     grep -qE '^.*SDL_GPU (metal|vulkan), ' build/script_determinism_gpu.err
     diff -r build/script/determinism_gl build/script/determinism_gpu
   }
-  # the renderer chosen in the video options at the next start (stage S9.7): renderer.kps twice in one directory, the
-  # first from Auto to OpenGL kept at OK, the second started on GL from the script's profile
+  # the renderer chosen in the video options, taken at its OK in the running game (ADR 0028): renderer.kps from Auto
+  # (Metal) to OpenGL, then renderer_gpu.kps started on the OpenGL its profile (renderer.kps's) kept and switched to
+  # Metal; the frame each shot after its switch is the other's byte for byte (the index path), SDL_GPU's device under
+  # --gfx-debug's checks
   unit_renderer() {
-    unit_title "product renderer option: OpenGL chosen and kept, the next start on GL"
-    app_script renderer 0 "$APP"
-    grep -qE 'renderer\.kps:[0-9]+: start: video\.renderer -1, ' build/script_renderer.log
-    SCRIPT_KEEP=1 app_script renderer 0 "$APP"
-    grep -qE 'renderer\.kps:[0-9]+: start: video\.renderer 0, ' build/script_renderer.log
-    grep -qE ' GL [0-9]' build/script_renderer.err
+    local args=(--graphics original --font original --gfx-debug)
+    unit_title "product renderer option: taken at the OK, GL and SDL_GPU drawing the same frame after their switches"
+    SCRIPT_RUN=renderer_gl app_script renderer 0 "$APP" "${args[@]}"
+    grep -qE 'start: video\.renderer -1, video\.commits [0-9]+, gfx\.gpu 1$' build/script_renderer_gl.log
+    grep -q 'gfx: the renderer switched to OpenGL' build/script_renderer_gl.err
+    rm -rf build/script/renderer_gpu
+    mkdir -p build/script/renderer_gpu
+    cp -R build/script/renderer_gl/pref build/script/renderer_gpu/
+    SCRIPT_KEEP=1 SCRIPT_RUN=renderer_gpu app_script renderer_gpu 0 "$APP" "${args[@]}"
+    grep -qE ' GL [0-9]' build/script_renderer_gpu.err
+    grep -q 'gfx: the renderer switched to Metal' build/script_renderer_gpu.err
+    "$PYTHON" tools/gfx_compare.py build/script/renderer_gl build/script/renderer_gpu | tail -1
+    # and the frame of a run that never switched (GL given: the choice is the API drawing): an upload both switches
+    # missed alike
+    SCRIPT_RUN=renderer_none app_script renderer 0 "$APP" --gfx gl --graphics original --font original
+    if grep -q 'gfx: the renderer switched' build/script_renderer_none.err; then
+      echo "ci: renderer_none switched its renderer" >&2
+      return 1
+    fi
+    "$PYTHON" tools/gfx_compare.py build/script/renderer_none build/script/renderer_gl | tail -1
   }
   # the checks' scripts (stages SC5, SC6): a check's line ("SPIKE check ...", "fog check", "palette check") and the
   # run's last line and exit code say how it went

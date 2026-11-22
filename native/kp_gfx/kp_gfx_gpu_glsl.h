@@ -36,7 +36,9 @@ typedef struct {
 } KpGfxGpuStage;
 
 /* A stage compiled (kp_gfx_gpu_shaders.c, the generator's): its SPIR-V (entry point main), its MSL (main0), its
- * reflection and the SHA-256 of the transform's text it came from (64 hex digits). */
+ * reflection and the SHA-256 of the transform's text it came from (64 hex digits); its metallib (main0), built offline
+ * by Xcode's Metal toolchain from the MSL whose SHA-256 it records, or NULL where the generator had no toolchain and no
+ * metallib of that MSL to keep (Metal compiles the MSL when the backend starts). */
 typedef struct {
 	const uint32_t *spirv;
 	size_t spirv_size; /* bytes */
@@ -44,6 +46,9 @@ typedef struct {
 	size_t msl_size;
 	KpGfxGpuStage stage;
 	const char *sha256;
+	const uint8_t *metallib;
+	size_t metallib_size;
+	const char *metallib_msl_sha256;
 } KpGfxGpuShader;
 
 /* Per KP_PROG_* its stages' numbers in KP_GFX_GPU_SHADERS. */
@@ -53,6 +58,7 @@ typedef struct {
 
 extern const KpGfxGpuShader KP_GFX_GPU_SHADERS[];
 extern const int KP_GFX_GPU_SHADER_COUNT;
+extern const char KP_GFX_GPU_METAL[]; /* the metal compiler's version the metallibs come from ("" none) */
 extern const KpGfxGpuProgram KP_GFX_GPU_PROGRAMS[]; /* KP_PROGRAMS */
 
 /* The kinds of target a pipeline draws into: the index target (R8 with depth), the HD target (RGBA8 with depth), an

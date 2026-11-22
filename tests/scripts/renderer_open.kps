@@ -1,0 +1,11 @@
+# renderer.kps's and renderer_gpu.kps's way into the video options, from the game's start.
+wait game
+wait frames 30
+mark start
+log start video.renderer video.commits gfx.gpu
+key F10
+wait dialog gamemenu
+key O
+wait dialog options
+key V
+wait dialog video

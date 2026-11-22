@@ -280,6 +280,10 @@ struct KpApp {
 	SDL_Window *window;
 	SDL_GLContext gl;
 	SDL_GPUDevice *gpu;    /* or SDL_GPU's device (ADR 0028), which claimed the window */
+	/* the renderer setting (KP_RENDERER_*, KP_VIDEO_AUTO) the drawing was last started for, and the one the video
+	 * options' OK asks for, taken before the next frame (kp_app_main.c's switch_renderer) */
+	int renderer_started, renderer_wanted, renderer_asked;
+	int gpu_software;      /* a software Vulkan device allowed at the start (kp_flow_software_gpu) */
 	int presents_missed;   /* the frames the present did not show (SDL_GPU's swapchain not ready: the benchmark's count) */
 	KpGfx *gfx;
 	KpAudio audio;
@@ -387,8 +391,8 @@ void kp_app_pref_path(KpApp *a, const char *file, char *out, size_t size);
 void kp_app_save_profile(KpApp *a);
 void kp_app_load_profile(KpApp *a);
 /* The renderer the player's profile keeps (KP_RENDERER_*, KP_VIDEO_AUTO: none or no profile), read before the drawing
- * starts: the flow loads the whole profile after it (kp_app_flow_init), and a change in the video options takes the
- * next start. */
+ * starts: the flow loads the whole profile after it (kp_app_flow_init); a change in the video options is taken at
+ * the dialog's OK (renderer_asked, the window and the drawing made anew at the next frame's start). */
 int kp_app_profile_renderer(KpApp *a);
 /* The web's files written to IndexedDB (a no-op elsewhere). */
 void kp_app_sync_files(KpApp *a);
@@ -456,6 +460,10 @@ int kp_world_build(KpApp *a, char *err, size_t err_size);
 void kp_world_free(KpApp *a);
 /* The world's textures from its CPU copies (after the build, and again after a lost context). */
 void kp_world_upload(KpApp *a);
+/* The world's art loaded again while the game goes on and everything uploaded (the HD interface's and a movie's too):
+ * another art chosen, or another API drawing (the renderer switched: the HD set picked again for the blocks it takes,
+ * attached 1: kp_gfx attached anew, holding nothing, so not reset). */
+void kp_world_reload_art(KpApp *a, int attached);
 /* Per frame: the presentation after the game's steps (ticks) or a camera move. */
 void kp_world_frame(KpApp *a, int ticks, double fraction);
 void kp_world_draw(KpApp *a);

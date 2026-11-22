@@ -829,10 +829,39 @@ static int check_formats(KpGfxBackend *b, char *err, size_t err_size)
 	return 0;
 }
 
+/* A stage made from its code in one format (entry point main0 for Metal's, main for SPIR-V), or NULL. */
+static SDL_GPUShader *stage_shader(KpGfxBackend *b, const KpGfxGpuShader *s, int vertex, SDL_GPUShaderFormat format)
+{
+	SDL_GPUShaderCreateInfo info;
+	memset(&info, 0, sizeof info);
+	if (format == SDL_GPU_SHADERFORMAT_METALLIB) {
+		info.code = s->metallib;
+		info.code_size = s->metallib_size;
+		info.entrypoint = "main0";
+	} else if (format == SDL_GPU_SHADERFORMAT_MSL) { /* compiled here: Metal's defaults, as the metallibs' (ADR 0028) */
+		info.code = (const Uint8 *)s->msl;
+		info.code_size = s->msl_size;
+		info.entrypoint = "main0";
+	} else {
+		info.code = (const Uint8 *)s->spirv;
+		info.code_size = s->spirv_size;
+		info.entrypoint = "main";
+	}
+	info.format = format;
+	info.stage = vertex ? SDL_GPU_SHADERSTAGE_VERTEX : SDL_GPU_SHADERSTAGE_FRAGMENT;
+	info.num_samplers = s->stage.samplers;
+	info.num_storage_textures = s->stage.storage;
+	info.num_uniform_buffers = s->stage.uniforms;
+	return SDL_CreateGPUShader(b->device, &info);
+}
+
+/* The stages: on Metal each from its metallib built offline (kp_gfx_gpu_gen), else (none in the file, or refused by
+ * an older system's Metal) from its MSL, compiled here; SPIR-V on Vulkan. */
 static int make_shaders(KpGfxBackend *b, char *err, size_t err_size)
 {
 	SDL_GPUShaderFormat formats = SDL_GetGPUShaderFormats(b->device);
-	int msl = (formats & SDL_GPU_SHADERFORMAT_MSL) != 0, vertex[KP_GPU_STAGES_MAX] = { 0 }, k;
+	int msl = (formats & SDL_GPU_SHADERFORMAT_MSL) != 0, metallib = (formats & SDL_GPU_SHADERFORMAT_METALLIB) != 0;
+	int vertex[KP_GPU_STAGES_MAX] = { 0 }, k, libs = 0, refused = 0;
 	if (!msl && !(formats & SDL_GPU_SHADERFORMAT_SPIRV)) {
 		snprintf(err, err_size, "gfx: the SDL_GPU device takes neither MSL nor SPIR-V");
 		return -1;
@@ -840,31 +869,19 @@ static int make_shaders(KpGfxBackend *b, char *err, size_t err_size)
 	for (k = 0; k < KP_PROGRAMS; k++) vertex[KP_GFX_GPU_PROGRAMS[k].vs] = 1;
 	for (k = 0; k < KP_GFX_GPU_SHADER_COUNT; k++) {
 		const KpGfxGpuShader *s = &KP_GFX_GPU_SHADERS[k];
-		SDL_GPUShaderCreateInfo info;
-		memset(&info, 0, sizeof info);
-		/* TODO: a metallib built offline (Xcode's Metal toolchain) if the first start's compile, about 5 s on a
-		 * machine, or the index world's exactness under Metal's fast math needs it (ADR 0028) */
-		if (msl) { /* compiled here: Metal's defaults (ADR 0028) */
-			info.code = (const Uint8 *)s->msl;
-			info.code_size = s->msl_size;
-			info.entrypoint = "main0";
-			info.format = SDL_GPU_SHADERFORMAT_MSL;
-		} else {
-			info.code = (const Uint8 *)s->spirv;
-			info.code_size = s->spirv_size;
-			info.entrypoint = "main";
-			info.format = SDL_GPU_SHADERFORMAT_SPIRV;
+		SDL_GPUShader *shader = NULL;
+		if (msl && metallib && s->metallib) {
+			if ((shader = stage_shader(b, s, vertex[k], SDL_GPU_SHADERFORMAT_METALLIB)) != NULL) libs++;
+			else if (refused++ == 0) SDL_Log("gfx: Metal refuses the metallib of stage %d: %s (the MSL compiled)", k, SDL_GetError());
 		}
-		info.stage = vertex[k] ? SDL_GPU_SHADERSTAGE_VERTEX : SDL_GPU_SHADERSTAGE_FRAGMENT;
-		info.num_samplers = s->stage.samplers;
-		info.num_storage_textures = s->stage.storage;
-		info.num_uniform_buffers = s->stage.uniforms;
-		if (!(b->shaders[k] = SDL_CreateGPUShader(b->device, &info))) {
+		if (!shader) shader = stage_shader(b, s, vertex[k], msl ? SDL_GPU_SHADERFORMAT_MSL : SDL_GPU_SHADERFORMAT_SPIRV);
+		if (!(b->shaders[k] = shader)) {
 			char what[64];
 			snprintf(what, sizeof what, "SDL_GPU stage %d does not compile", k);
 			return fail(err, err_size, what);
 		}
 	}
+	if (msl) SDL_Log("gfx: Metal's stages: %d from metallibs, %d compiled from MSL", libs, KP_GFX_GPU_SHADER_COUNT - libs);
 	return 0;
 }
 
@@ -969,6 +986,7 @@ static void describe(KpGfxBackend *b)
 static KpGfxBackend *gpu_new(const KpGfxApi *api, char *err, size_t err_size)
 {
 	KpGfxBackend *b;
+	Uint64 t0;
 	if (!api->gpu_device || !api->window) {
 		snprintf(err, err_size, "gfx: SDL_GPU needs a device and the window it claimed");
 		return NULL;
@@ -983,6 +1001,7 @@ static KpGfxBackend *gpu_new(const KpGfxApi *api, char *err, size_t err_size)
 		snprintf(err, err_size, "gfx: out of memory");
 		return NULL;
 	}
+	t0 = SDL_GetTicksNS();
 	b->ops = &KP_GFX_GPU_OPS;
 	b->api = *api;
 	b->device = (SDL_GPUDevice *)api->gpu_device;
@@ -997,6 +1016,8 @@ static KpGfxBackend *gpu_new(const KpGfxApi *api, char *err, size_t err_size)
 		gpu_free(b, 0);
 		return NULL;
 	}
+	/* the start's cost of the stages and pipelines (Metal's first compile of an MSL takes seconds: ADR 0028) */
+	SDL_Log("gfx: SDL_GPU's stages and pipelines made in %.0f ms", (double)(SDL_GetTicksNS() - t0) / 1e6);
 	describe(b);
 	return b;
 }

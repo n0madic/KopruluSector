@@ -44,14 +44,16 @@ struct KpGfxBackend {
 	int bound, blend;
 	uint32_t piped;
 	int unpiped, unpiped_prog, unpiped_target, unpiped_blend, unpiped_depth;
+	int backend;                        /* the API it was made over (KP_GFX_BACKEND_*) */
+	int uploads[KP_TEXTURES];
 };
 
 static KpGfxBackend *recorder; /* the last one made: the test's (one gfx at a time) */
 
 KpGfxBackend *kp_gb_new(const KpGfxApi *api, char *err, size_t err_size)
 {
-	(void)api;
 	if (!(recorder = (KpGfxBackend *)calloc(1, sizeof *recorder))) snprintf(err, err_size, "out of memory");
+	else recorder->backend = api ? api->backend : -1;
 	return recorder;
 }
 
@@ -92,7 +94,8 @@ int kp_gb_has_texture(const KpGfxBackend *b, int tex, int32_t *w, int32_t *h)
 void kp_gb_upload(KpGfxBackend *b, int tex, int32_t layer, int32_t x, int32_t y, int32_t w, int32_t h, const void *data,
 	size_t stride)
 {
-	(void)b, (void)tex, (void)layer, (void)x, (void)y, (void)w, (void)h, (void)data, (void)stride;
+	(void)layer, (void)x, (void)y, (void)w, (void)h, (void)data, (void)stride;
+	b->uploads[tex]++;
 }
 
 int kp_gb_targets(KpGfxBackend *b, int32_t w, int32_t h)
@@ -378,6 +381,26 @@ static void gpu_glsl_lays_out_the_declarations(KpT *T)
 	kp_t_eq(T, kp_gfx_gpu_glsl(VS, VS, 1, text, 64, &st, err, sizeof err), -1, "a text past its buffer refused");
 }
 
+/* A stage's metallib (where the generator had Xcode's Metal toolchain, or kept one) is built from the MSL beside it:
+ * the SHA-256 it records is that MSL's, so an MSL changed without its metallib fails here. The builds without SDL_GPU
+ * (KP_GFX_NO_METALLIB) have none. */
+static void gpu_metallib_is_its_msls(KpT *T, const KpGfxGpuShader *sh, int n)
+{
+#ifdef KP_GFX_NO_METALLIB
+	kp_t_ok(T, sh->metallib == NULL && sh->metallib_size == 0, "stage %d: no metallib without SDL_GPU", n);
+#else
+	char hex[2 * KP_SHA256_SIZE + 1];
+	uint8_t digest[KP_SHA256_SIZE];
+	if (!sh->metallib) return; /* Metal compiles its MSL at the start (the generator warned) */
+	kp_sha256(sh->msl, sh->msl_size, digest);
+	kp_sha256_hex(digest, hex);
+	kp_t_ok(T, sh->metallib_msl_sha256 && strcmp(hex, sh->metallib_msl_sha256) == 0,
+		"stage %d's metallib comes from another MSL: regenerate native/kp_gfx/kp_gfx_gpu_shaders.c", n);
+	kp_t_ok(T, sh->metallib_size > 4 && memcmp(sh->metallib, "MTLB", 4) == 0 && KP_GFX_GPU_METAL[0],
+		"stage %d's metallib and its compiler's version", n);
+#endif
+}
+
 /* The committed kp_gfx_gpu_shaders.c is the transform's of the current sources: each stage's reflection and the
  * SHA-256 of its text (the SPIR-V and the MSL come from tools that need not be here; kp_gfx_gpu_gen --check compares
  * them where they are). A source changed without the file regenerated fails here. */
@@ -404,6 +427,7 @@ static void gpu_shaders_are_current(KpT *T)
 				n);
 			kp_t_ok(T, sh->msl_size == strlen(sh->msl) && strstr(sh->msl, f ? "fragment main0_out main0(" :
 				"vertex main0_out main0(") != NULL, "stage %d's MSL entry point main0", n);
+			gpu_metallib_is_its_msls(T, sh, n);
 		}
 	}
 }
@@ -731,6 +755,45 @@ static void hd_lit_slots_light_the_sprites(KpT *T)
 	kp_t_eq(T, (int)recorder->light[3], 0, "no lit slots: the sprites unlit");
 }
 
+/* The renderer switched in a running game (ADR 0028): kp_gfx_detach frees the backend before its window goes (a frame
+ * then draws nothing), kp_gfx_attach makes one over the other API with a new gfx's state (no art up: the host uploads
+ * it again), the palette kept and uploaded on the next frame. */
+static void attach_takes_another_api(KpT *T)
+{
+	KpGfxApi api = { 1, 0, KP_GFX_BACKEND_GL, NULL, NULL };
+	KpGfxFrame f;
+	KpGfx *g;
+	char err[256] = "";
+	uint8_t rgb[768];
+	g = kp_gfx_new(&api, err, sizeof err);
+	kp_t_ok(T, g != NULL && recorder != NULL && recorder->backend == KP_GFX_BACKEND_GL, "no gfx: %s", err);
+	kp_t_defer(T, gfx_free, g);
+	memset(rgb, 7, sizeof rgb);
+	kp_gfx_palette(g, rgb);
+	kp_gfx_hd(g, 1);
+	kp_gfx_effects(g, 2, 1, 0);
+	kp_t_ok(T, kp_gfx_hd_ready(g), "the RGBA world ready before the switch");
+	memset(&f, 0, sizeof f);
+	f.win_w = f.full_w = 640;
+	f.win_h = f.full_h = 480;
+	f.mode = KP_SCALE_INTEGER;
+	f.scale = 1;
+	f.world_w = 640;
+	f.world_h = 480;
+	kp_gfx_frame(g, &f);
+	kp_t_eq(T, recorder->uploads[KP_TEX_PALETTE], 1, "the palette uploaded");
+	kp_gfx_detach(g);
+	kp_t_ok(T, recorder == NULL, "the backend freed");
+	kp_gfx_frame(g, &f); /* nothing to draw with */
+	kp_t_ok(T, kp_gfx_present(g, 0) == 0 && !kp_gfx_lost(g), "a detached gfx presents nothing and is not lost");
+	api.backend = KP_GFX_BACKEND_GPU;
+	kp_t_eq(T, kp_gfx_attach(g, &api, err, sizeof err), 0, "attached: %s", err);
+	kp_t_ok(T, recorder != NULL && recorder->backend == KP_GFX_BACKEND_GPU, "the new backend over SDL_GPU");
+	kp_t_ok(T, !kp_gfx_hd_ready(g), "a new gfx's state: the art uploaded again by the host");
+	kp_gfx_frame(g, &f);
+	kp_t_eq(T, recorder->uploads[KP_TEX_PALETTE], 1, "the palette kept and uploaded again");
+}
+
 /* Every draw of the passes has its SDL_GPU pipeline (ADR 0028: all are made when the backend starts, from
  * KP_GFX_GPU_PIPELINES), and every row of the table is drawn with: the index world with its fog, canvas, cursor and
  * vector text at a whole and at a sharp scale, the RGBA world with its fog under the HD interface, the vector text and
@@ -845,6 +908,7 @@ static const KpTest TESTS[] = {
 	{ "hd_composite_reads_what_lay_under", hd_composite_reads_what_lay_under, 0 },
 	{ "hd_lit_slots_light_the_sprites", hd_lit_slots_light_the_sprites, 0 },
 	{ "gpu_pipelines_cover_the_passes", gpu_pipelines_cover_the_passes, 0 },
+	{ "attach_takes_another_api", attach_takes_another_api, 0 },
 };
 
 KP_SUITE(kp_suite_gfx, "test_gfx", TESTS);

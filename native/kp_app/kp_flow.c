@@ -3591,7 +3591,7 @@ static void video_from_profile(KpFlow *f)
 		if (!(given & KP_VIDEO_GIVEN_WATER)) fl->water = v->water;
 		if (!(given & KP_VIDEO_GIVEN_FONT)) fl->font_mode = v->font;
 		if (!(given & KP_VIDEO_GIVEN_LIGHTING)) fl->lighting = v->lighting;
-		/* the host read it already, before its drawing started (kp_app_main.c): a change takes the next start */
+		/* the host read it already, before its drawing started (kp_app_main.c); a change is taken at the dialog's OK */
 		if (!(given & KP_VIDEO_GIVEN_RENDERER)) fl->renderer = v->renderer;
 	}
 	apply_gamma(f);
@@ -3625,8 +3625,7 @@ static void video_options(KpFlow *f)
 		fl->water = o->water;
 		fl->font_mode = o->font;
 		fl->lighting = o->lighting;
-		/* the next start's renderer (TODO: switched in a running game, its window made again; ADR 0028) */
-		fl->renderer = o->renderer;
+		fl->renderer = o->renderer; /* the host takes it at the OK (committed_options), not at each choice */
 		f->portraits = (int32_t)f->ui->portrait.mode;
 		if (f->gamma != (int32_t)f->ui->gamma) {
 			f->gamma = (int32_t)f->ui->gamma;
@@ -3705,6 +3704,9 @@ static int committed_options(KpFlow *f)
 	if (sections & (KP_UI_SECTION_SOUND | KP_UI_SECTION_TIPS)) changed |= keep_options(f, KP_UI_OPTIONS_KEPT);
 	if (sections & KP_UI_SECTION_VIDEO) {
 		f->video_commits++;
+		/* the renderer switched once its choice is kept: each choice under the open dialog would make the window
+		 * again, and a Cancel puts the running one back (ADR 0028) */
+		if (f->host.renderer) f->host.renderer(f->host.ctx, f->flags->renderer);
 		if (!dev_checks(f)) { /* the checks' options are not the player's */
 			keep_video(f);
 			changed = 1;

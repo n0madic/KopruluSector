@@ -58,6 +58,7 @@ typedef struct {
 	int code;     /* the exit code a script's refusal leaves (KP_SCRIPT_EXIT_*), 0 none */
 	double next_frame; /* when the frame limit lets the next frame be shown */
 	char error[512];
+	KpGfxApi api;      /* the drawing's API as the start set it (its GL attributes), again for a renderer's switch */
 } Main;
 
 /* Whether a folder holds the converter's output (generated/: the HD art, the console's pieces, the repack). */
@@ -359,8 +360,16 @@ static void gl_core(KpGfxApi *api, int glsl)
 }
 #endif
 
-/* The window (extra: SDL_WINDOW_OPENGL for GL), hidden for --headless; on the phones fullscreen. */
-static int make_window(KpApp *a, SDL_WindowFlags extra)
+/* A window's place, kept while it is made again for another API (the renderer switched, ADR 0028): its position, size
+ * and state (fullscreen, maximized). */
+typedef struct {
+	int x, y, w, h;
+	SDL_WindowFlags state;
+} WindowPlace;
+
+/* The window (extra: SDL_WINDOW_OPENGL for GL), hidden for --headless; on the phones fullscreen. In the place of the
+ * window before it (NULL: the flags' size). */
+static int make_window(KpApp *a, SDL_WindowFlags extra, const WindowPlace *place)
 {
 	SDL_WindowFlags flags = extra | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
 #ifdef __EMSCRIPTEN__
@@ -369,7 +378,21 @@ static int make_window(KpApp *a, SDL_WindowFlags extra)
 	/* still the same drawing and readback: the display does not fit a hidden window to its screen, so a run's size is
 	 * the one asked for */
 	if (a->flags.headless) flags |= SDL_WINDOW_HIDDEN;
-	a->window = SDL_CreateWindow(KP_APP_TITLE, a->flags.win_w, a->flags.win_h, flags);
+	if (place) {
+		SDL_PropertiesID p = SDL_CreateProperties();
+		if (p) {
+			SDL_SetStringProperty(p, SDL_PROP_WINDOW_CREATE_TITLE_STRING, KP_APP_TITLE);
+			SDL_SetNumberProperty(p, SDL_PROP_WINDOW_CREATE_X_NUMBER, place->x);
+			SDL_SetNumberProperty(p, SDL_PROP_WINDOW_CREATE_Y_NUMBER, place->y);
+			SDL_SetNumberProperty(p, SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER, place->w);
+			SDL_SetNumberProperty(p, SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER, place->h);
+			SDL_SetNumberProperty(p, SDL_PROP_WINDOW_CREATE_FLAGS_NUMBER, (Sint64)(flags | place->state));
+			a->window = SDL_CreateWindowWithProperties(p);
+			SDL_DestroyProperties(p);
+		}
+	} else {
+		a->window = SDL_CreateWindow(KP_APP_TITLE, a->flags.win_w, a->flags.win_h, flags);
+	}
 	if (!a->window) {
 		SDL_Log("SDL_CreateWindow: %s", SDL_GetError());
 		return -1;
@@ -385,11 +408,29 @@ static int make_window(KpApp *a, SDL_WindowFlags extra)
 	return 0;
 }
 
-/* The drawing on GL: the window with its context, kp_gfx over it; 0, else -1. */
-static int gl_start(KpApp *a, KpGfxApi *api)
+/* kp_gfx over the window's API: made at the start, the one kept attached again after a renderer's switch. */
+static int gfx_over(KpApp *a, const KpGfxApi *api)
 {
 	char err[512];
-	if (make_window(a, SDL_WINDOW_OPENGL) != 0) return -1;
+	if (a->gfx ? kp_gfx_attach(a->gfx, api, err, sizeof err) == 0 : (a->gfx = kp_gfx_new(api, err, sizeof err)) != NULL) {
+		return 0;
+	}
+	SDL_Log("%s", err);
+	return -1;
+}
+
+/* The drawing started (again): its swap interval and the log's line of its API. */
+static void gfx_started(KpApp *a)
+{
+	kp_gfx_vsync(a->gfx, a->flags.vsync);
+	SDL_Log("%s%s, %s", a->gpu ? "" : "GL ", kp_gfx_version(a->gfx), SDL_GetPlatform());
+}
+
+/* The drawing on GL: the window (in place, else NULL) with its context, kp_gfx over it; 0, else -1 with nothing left
+ * made. */
+static int gl_start(KpApp *a, KpGfxApi *api, const WindowPlace *place)
+{
+	if (make_window(a, SDL_WINDOW_OPENGL, place) != 0) return -1;
 	a->gl = SDL_GL_CreateContext(a->window);
 #if !defined(SDL_PLATFORM_ANDROID) && !defined(SDL_PLATFORM_IOS) && !defined(__EMSCRIPTEN__) && !defined(SDL_PLATFORM_MACOS)
 	if (!a->gl) { /* a driver without 3.3 core (Wine over macOS's GL): 4.1 core, forward compatible */
@@ -398,16 +439,19 @@ static int gl_start(KpApp *a, KpGfxApi *api)
 		a->gl = SDL_GL_CreateContext(a->window);
 	}
 #endif
-	if (!a->gl) {
+	if (a->gl) {
+		api->backend = KP_GFX_BACKEND_GL;
+		api->gpu_device = NULL;
+		api->window = a->window;
+		if (gfx_over(a, api) == 0) return 0;
+		SDL_GL_DestroyContext(a->gl);
+		a->gl = NULL;
+	} else {
 		SDL_Log("SDL_GL_CreateContext: %s", SDL_GetError());
-		return -1;
 	}
-	api->window = a->window;
-	if (!(a->gfx = kp_gfx_new(api, err, sizeof err))) {
-		SDL_Log("%s", err);
-		return -1;
-	}
-	return 0;
+	SDL_DestroyWindow(a->window);
+	a->window = NULL;
+	return -1;
 }
 
 #ifdef KP_GFX_GPU
@@ -416,22 +460,23 @@ static int gl_start(KpApp *a, KpGfxApi *api)
 #ifdef SDL_PLATFORM_MACOS
 #define KP_GFX_GPU_DEFAULT 1
 #define KP_GFX_GPU_HARDWARE_ONLY "" /* Metal has no software device */
+#define KP_GFX_GPU_HARDWARE_SWITCH ""
 #else
 #define KP_GFX_GPU_DEFAULT 0
 #define KP_GFX_GPU_HARDWARE_ONLY " (a hardware Vulkan device wanted: software Vulkan only under --gfx gpu)"
+#define KP_GFX_GPU_HARDWARE_SWITCH " (a hardware Vulkan device wanted: the video options never take a software one)"
 #endif
 
 /* The drawing on SDL_GPU (ADR 0028): its device (Metal on macOS, Vulkan elsewhere: named, as SDL would try D3D12
- * before Vulkan; a software Vulkan device only under a given --gfx gpu, kp_flow_software_gpu), the window without GL
- * claimed by it, kp_gfx over it. 0, else -1 with nothing left made: GL draws. */
-static int gpu_start(KpApp *a, KpGfxApi *api)
+ * before Vulkan; a software Vulkan device only where software is, a given --gfx gpu: kp_flow_software_gpu), the window
+ * (in place, else NULL) without GL claimed by it, kp_gfx over it. 0, else -1 with nothing left made: GL draws. */
+static int gpu_start(KpApp *a, KpGfxApi *api, const WindowPlace *place, int software)
 {
 	SDL_PropertiesID p = SDL_CreateProperties();
-	int software = kp_flow_software_gpu(&a->flags);
-	char err[512];
 	if (!p) return -1;
 #ifdef SDL_PLATFORM_MACOS
 	SDL_SetBooleanProperty(p, SDL_PROP_GPU_DEVICE_CREATE_SHADERS_MSL_BOOLEAN, true);
+	SDL_SetBooleanProperty(p, SDL_PROP_GPU_DEVICE_CREATE_SHADERS_METALLIB_BOOLEAN, true); /* built offline, else the MSL */
 #else
 	SDL_SetBooleanProperty(p, SDL_PROP_GPU_DEVICE_CREATE_SHADERS_SPIRV_BOOLEAN, true);
 	SDL_SetBooleanProperty(p, SDL_PROP_GPU_DEVICE_CREATE_VULKAN_REQUIRE_HARDWARE_ACCELERATION_BOOLEAN, !software);
@@ -441,15 +486,16 @@ static int gpu_start(KpApp *a, KpGfxApi *api)
 	a->gpu = SDL_CreateGPUDeviceWithProperties(p);
 	SDL_DestroyProperties(p);
 	if (!a->gpu) {
-		SDL_Log("SDL_GPU: no device: %s%s", SDL_GetError(), software ? "" : KP_GFX_GPU_HARDWARE_ONLY);
+		/* a switch the start's --gfx gpu would have allowed software for: the dialog's choice is why */
+		SDL_Log("SDL_GPU: no device: %s%s", SDL_GetError(), software ? "" : a->gpu_software ? KP_GFX_GPU_HARDWARE_SWITCH :
+			KP_GFX_GPU_HARDWARE_ONLY);
 		return -1;
 	}
-	if (make_window(a, 0) == 0 && SDL_ClaimWindowForGPUDevice(a->gpu, a->window)) {
+	if (make_window(a, 0, place) == 0 && SDL_ClaimWindowForGPUDevice(a->gpu, a->window)) {
 		api->backend = KP_GFX_BACKEND_GPU;
 		api->gpu_device = a->gpu;
 		api->window = a->window;
-		if ((a->gfx = kp_gfx_new(api, err, sizeof err)) != NULL) return 0;
-		SDL_Log("%s", err);
+		if (gfx_over(a, api) == 0) return 0;
 		SDL_ReleaseWindowFromGPUDevice(a->gpu, a->window);
 	} else if (a->window) {
 		SDL_Log("SDL_ClaimWindowForGPUDevice: %s", SDL_GetError());
@@ -463,13 +509,84 @@ static int gpu_start(KpApp *a, KpGfxApi *api)
 	api->gpu_device = api->window = NULL;
 	return -1;
 }
+
+/* Whether a renderer setting (KP_RENDERER_*, KP_VIDEO_AUTO) draws with SDL_GPU. */
+static int wants_gpu(int renderer) { return renderer == KP_RENDERER_GPU || (renderer == KP_VIDEO_AUTO && KP_GFX_GPU_DEFAULT); }
+
+/* The drawing's API let go, kp_gfx kept (detached first): GL's context, or SDL_GPU's claim and device, then the window,
+ * its place kept for the next. */
+static void gfx_stop(KpApp *a, WindowPlace *place)
+{
+	SDL_GetWindowPosition(a->window, &place->x, &place->y);
+	SDL_GetWindowSize(a->window, &place->w, &place->h);
+	/* TODO: a fullscreen or maximized window's windowed geometry, to restore after leaving that state: SDL 3 has no
+	 * public getter, so the new window keeps the current size as its windowed one (ADR 0028) */
+	place->state = SDL_GetWindowFlags(a->window) & (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_MAXIMIZED);
+	kp_gfx_detach(a->gfx);
+	if (a->gl) SDL_GL_DestroyContext(a->gl);
+	a->gl = NULL;
+	if (a->gpu) {
+		SDL_ReleaseWindowFromGPUDevice(a->gpu, a->window);
+		SDL_DestroyGPUDevice(a->gpu);
+		a->gpu = NULL;
+	}
+	SDL_DestroyWindow(a->window);
+	a->window = NULL;
+}
+
+/* The renderer the video options' OK kept, taken between two frames (ADR 0028). Where it names the other API, kp_gfx's
+ * backend goes, the window is made again for that API in the same place (SDL turns no Metal or Vulkan window back into
+ * a GL one), and the art goes up again as after a lost context, the world's loaded again (the new API may take other HD
+ * blocks). The setting the drawing started for, asked again, does nothing (a device that failed is not tried at each
+ * OK); a device that does not start leaves the API before drawing, as at the start, and the dialog's choice never takes
+ * a software Vulkan device (kp_flow_software_gpu). -1: neither API draws any more (m->error).
+ * TODO: the switch to and from Vulkan run on real hardware (Windows, Linux): only Metal and GL have been switched. */
+static int switch_renderer(Main *m)
+{
+	KpApp *a = &m->app;
+	WindowPlace place;
+	int gpu = wants_gpu(a->renderer_wanted), ok;
+	double t0 = kp_app_wall();
+	a->renderer_asked = 0;
+	if (a->renderer_wanted == a->renderer_started) return 0;
+	a->renderer_started = a->renderer_wanted;
+	if (gpu == (a->gpu != NULL)) return 0; /* Auto and the platform's API, or a GPU that failed and GL chosen */
+	gfx_stop(a, &place);
+	SDL_Log("gfx: the renderer switched to %s (the window %dx%d at %d,%d%s%s)", gpu ? KP_GFX_GPU_NAME : "OpenGL", place.w,
+		place.h, place.x, place.y, (place.state & SDL_WINDOW_FULLSCREEN) ? ", fullscreen" : "",
+		(place.state & SDL_WINDOW_MAXIMIZED) ? ", maximized" : "");
+	ok = gpu ? gpu_start(a, &m->api, &place, 0) == 0 : gl_start(a, &m->api, &place) == 0;
+	if (!ok) {
+		SDL_Log("%s: not started, %s draws again", gpu ? "SDL_GPU" : "GL", gpu ? "GL" : "SDL_GPU");
+		ok = gpu ? gl_start(a, &m->api, &place) == 0 : gpu_start(a, &m->api, &place, a->gpu_software) == 0;
+	}
+	if (!ok) {
+		snprintf(m->error, sizeof m->error, "Neither OpenGL nor %s draws after the renderer's switch.", KP_GFX_GPU_NAME);
+		return -1;
+	}
+	gfx_started(a);
+	/* the new window's picture and the new API's options first: the world's art is chosen by them (art_wanted) */
+	window_size(a);
+	a->flow.video_available = a->flow.host.video_available(a, a->flow.ui);
+	if (a->world.active) {
+		kp_world_reload_art(a, 1); /* the HD interface's art and a movie's too */
+	} else {
+		kp_hd_ui_lost(a);
+		kp_app_cine_lost(a);
+	}
+	SDL_GetWindowPosition(a->window, &place.x, &place.y);
+	SDL_GetWindowSize(a->window, &place.w, &place.h);
+	SDL_Log("gfx: the renderer switched in %.0f ms (the window %dx%d at %d,%d)", (kp_app_wall() - t0) * 1000, place.w,
+		place.h, place.x, place.y);
+	return 0;
+}
 #endif
 
 SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
 {
 	Main *m = (Main *)calloc(1, sizeof *m);
 	KpApp *a;
-	KpGfxApi api;
+	KpGfxApi *api;
 	char err[512];
 #ifdef KP_GFX_GPU
 	int renderer;
@@ -477,6 +594,7 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
 	if (!m) return SDL_APP_FAILURE;
 	*appstate = m;
 	a = &m->app;
+	api = &m->api;
 	kp_smk_set_video(&kp_webm_smk_video); /* the KPW1 movies (Remastered's WebM in an SMK's place) */
 	usage_flags(&a->flags, argc, argv);
 	data_root(&a->flags);
@@ -512,16 +630,15 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
 		SDL_free(pref);
 	}
 #endif
-	memset(&api, 0, sizeof api);
 #if defined(SDL_PLATFORM_ANDROID) || defined(SDL_PLATFORM_IOS) || defined(__EMSCRIPTEN__)
 	SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
 	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
 	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
-	api.gles = 1;
+	api->gles = 1;
 #elif defined(SDL_PLATFORM_MACOS)
-	gl_core(&api, KP_GFX_GLSL_41);
+	gl_core(api, KP_GFX_GLSL_41);
 #else
-	gl_core(&api, KP_GFX_GLSL_33);
+	gl_core(api, KP_GFX_GLSL_33);
 #endif
 	SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
 	SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 0);
@@ -532,15 +649,14 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
 	if (!(a->flags.video_given & KP_VIDEO_GIVEN_RENDERER) && !kp_flow_dev_checks(&a->flags)) {
 		renderer = kp_app_profile_renderer(a);
 	}
-	if ((renderer == KP_RENDERER_GPU || (renderer == KP_VIDEO_AUTO && KP_GFX_GPU_DEFAULT)) && gpu_start(a, &api) != 0) {
-		SDL_Log("SDL_GPU: not started, GL draws");
-	}
+	a->renderer_started = renderer;
+	a->gpu_software = kp_flow_software_gpu(&a->flags);
+	if (wants_gpu(renderer) && gpu_start(a, api, NULL, a->gpu_software) != 0) SDL_Log("SDL_GPU: not started, GL draws");
 #else
 	if (a->flags.renderer == KP_RENDERER_GPU) SDL_Log("SDL_GPU: not in this build (ADR 0028), GL draws");
 #endif
-	if (!a->gfx && gl_start(a, &api) != 0) return SDL_APP_FAILURE;
-	kp_gfx_vsync(a->gfx, a->flags.vsync);
-	SDL_Log("%s%s, %s", a->gpu ? "" : "GL ", kp_gfx_version(a->gfx), SDL_GetPlatform());
+	if (!a->gfx && gl_start(a, api, NULL) != 0) return SDL_APP_FAILURE;
+	gfx_started(a);
 	if (a->flags.headless) { /* tools/ci.sh checks this line */
 		SDL_Log("headless: window %s, sound driver %s", (SDL_GetWindowFlags(a->window) & SDL_WINDOW_HIDDEN) ? "hidden" : "shown",
 			SDL_GetCurrentAudioDriver());
@@ -711,6 +827,15 @@ SDL_AppResult SDL_AppIterate(void *appstate)
 		m->ready = 1;
 		if (start_flow(m) != 0) return start_failed(m);
 	}
+#ifdef KP_GFX_GPU
+	/* the renderer the video options' OK kept: before the frame's flow and drawing (a frame's resources are one API's) */
+	if (a->renderer_asked && switch_renderer(m) != 0) {
+		SDL_Log("%s", m->error);
+		kp_app_script_stop(a, m->error);
+		if (!a->flags.headless) SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, KP_APP_TITLE, m->error, NULL);
+		return SDL_APP_FAILURE;
+	}
+#endif
 	if (frame_skipped(m)) return SDL_APP_CONTINUE;
 	kp_app_clock_frame(a);
 	kp_app_groups_frame(a);

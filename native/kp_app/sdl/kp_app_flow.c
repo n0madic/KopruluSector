@@ -184,6 +184,16 @@ static void host_palette(void *ctx, const uint8_t *rgb) { kp_gfx_palette(((KpApp
 
 static void host_gamma(void *ctx, int32_t gamma) { kp_gfx_gamma(((KpApp *)ctx)->gfx, gamma); }
 
+#ifdef KP_GFX_GPU
+/* The video options' OK: the renderer taken before the next frame (kp_app_main.c), not under the flow's frame. */
+static void host_renderer(void *ctx, int renderer)
+{
+	KpApp *a = (KpApp *)ctx;
+	a->renderer_wanted = renderer;
+	a->renderer_asked = 1;
+}
+#endif
+
 /* The options the player has: the HD variants the data has and this context draws (a computer's x4; a phone's and the
  * web's x2 only; kp_world_hd_pick), the lighting where the context takes such a variant's pages' blocks (decoded pages
  * draw unlit) and the vector text's TrueType fonts. */
@@ -211,7 +221,7 @@ static uint8_t host_video_available(void *ctx, const KpUi *ui)
 	}
 	if (kp_ui_vector_fonts(ui, &fonts, &font_sizes) > 0 || a->flags.vector_font[0]) has |= KP_VIDEO_HAS_VECTOR;
 #ifdef KP_GFX_GPU
-	has |= KP_VIDEO_HAS_GPU; /* the renderer's choice (ADR 0028), taken at the next start */
+	has |= KP_VIDEO_HAS_GPU; /* the renderer's choice (ADR 0028), taken at the dialog's OK */
 #endif
 	return has;
 }
@@ -290,8 +300,10 @@ static void flow_setup(KpApp *a)
 	h->video_available = host_video_available;
 #ifdef KP_GFX_GPU
 	h->gpu_name = KP_GFX_GPU_NAME;
+	h->renderer = host_renderer;
 #else
 	h->gpu_name = NULL;
+	h->renderer = NULL;
 #endif
 	h->cine_has = host_cine_has;
 	h->cine_start = host_cine_start;

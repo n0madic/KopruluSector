@@ -1,0 +1,12 @@
+# The second run of renderer.kps (tools/ci.sh, with its profile): it starts on the OpenGL that run kept, chooses SDL_GPU
+# (Metal on macOS, Vulkan elsewhere) and draws with it from the next frame on, then shoots the frame renderer.kps shot
+# with GL. It wants a hardware SDL_GPU device (a software Vulkan device is never the dialog's).
+mission zerg/zerg01
+clock fixed
+
+include renderer_open.kps
+expect video.renderer == 0 and gfx.gpu == 0
+choose renderer.gpu
+check video-choice
+include renderer_kept.kps
+expect video.renderer == 1 and gfx.gpu == 1 and video.commits == @start.video.commits + 1

@@ -384,7 +384,7 @@ enum { KP_UI_PORTRAITS_NONE, KP_UI_PORTRAITS_STILL, KP_UI_PORTRAITS_ANIMATED }; 
 /* The video options' choices (our own dialog koprulu\video.bin, in place of the original's rez\video.bin; the colour
  * cycling it offered stays on): per radio group KP_VIDEO_AUTO (the art's or the scale's choice) or a value below. The
  * dialog changes them in ui->video_options, the host applies them (the world's art, the fog, the water, the text, the
- * lighting; the renderer at the next start). */
+ * lighting; the renderer at the dialog's OK). */
 #define KP_VIDEO_AUTO (-1)
 enum { KP_GRAPHICS_ORIGINAL, KP_GRAPHICS_HD2, KP_GRAPHICS_HD }; /* the original's indexed art, Remastered's x2, x4 */
 enum { KP_FOG_ORIGINAL, KP_FOG_SMOOTH };                        /* the fog's style */

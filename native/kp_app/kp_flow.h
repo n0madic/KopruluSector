@@ -144,6 +144,9 @@ typedef struct {
 	 * the renderer's button, NULL where it is not built */
 	uint8_t (*video_available)(void *ctx, const KpUi *ui);
 	const char *gpu_name;
+	/* the renderer the video options' OK kept (KP_RENDERER_*, KP_VIDEO_AUTO), taken by the running game: its window made
+	 * again for the other API between two frames (ADR 0028); NULL where SDL_GPU is not built */
+	void (*renderer)(void *ctx, int renderer);
 	/* the cinematics (kp_app.h's kp_app_cine_has, kp_app_cine_start, kp_app_cine_active) */
 	int (*cine_has)(void *ctx, int id);
 	int (*cine_start)(void *ctx, const int *ids, int n, int preludes);

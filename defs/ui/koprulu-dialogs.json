@@ -6,7 +6,7 @@
   "rez\\video.bin (kp_ui_options.c): the gamma (ID 1), then radio groups by ID, the first of each Auto:",
   "the art 10..13, the fog 20..22, the water 30..32, the text 40..42, the portraits 50..52 (none, still,",
   "animated), the lighting 60..62 (Auto, off, on), the renderer 70..72 (Auto, OpenGL, SDL_GPU: its text the",
-  "host's API, Metal or Vulkan; at the next start). koprulu\\language.bin: the languages (ADR 0016; a glue",
+  "host's API, Metal or Vulkan; taken at OK). koprulu\\language.bin: the languages (ADR 0016; a glue",
   "popup over pDPopup.pcx, kp_ui_menus.c): OK 1, Cancel 3, the text's label 4 and its button 5, the speech's",
   "label 6 and button 7 (a button's text is the language's own name, set at run time; a click takes the next",
   "language). koprulu\\address.bin: the host's address of the join screen (phase N, stage N5; an edit popup over",
@@ -59,7 +59,7 @@
    {"type": 9, "id": -1, "flags": 8, "rect": [174, 132, 152, 14], "text": "Water"},
    {"type": 9, "id": -1, "flags": 8, "rect": [336, 94, 152, 14], "text": "Unit portraits"},
    {"type": 9, "id": -1, "flags": 8, "rect": [336, 184, 152, 14], "text": "Lighting"},
-   {"type": 9, "id": -1, "flags": 8, "rect": [12, 246, 314, 14], "text": "Renderer (at the next start)"},
+   {"type": 9, "id": -1, "flags": 8, "rect": [12, 246, 314, 14], "text": "Renderer"},
    {"type": 10, "id": -1, "flags": 2056, "rect": [0, 8, 500, 24], "text": "Video Options"}
   ],
   "koprulu\\language.bin": [

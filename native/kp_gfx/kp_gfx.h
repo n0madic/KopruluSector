@@ -44,6 +44,11 @@ void kp_gfx_free(KpGfx *g);
  * objects the current context still has are deleted). A reset that fails leaves no backend: every call after it draws
  * and uploads nothing, and the reads fail. */
 int kp_gfx_reset(KpGfx *g, char *err, size_t err_size);
+/* The renderer switched in a running game (ADR 0028): the backend freed while its context or device still stands
+ * (nothing is drawn until kp_gfx_attach), then a new one over another API's window, the gfx as after kp_gfx_reset (its
+ * palette and gamma kept; the host uploads everything again). A failed attach leaves it detached. */
+void kp_gfx_detach(KpGfx *g);
+int kp_gfx_attach(KpGfx *g, const KpGfxApi *api, char *err, size_t err_size);
 /* Whether the current context no longer has kp_gfx's objects (a phone's context lost in the background). */
 int kp_gfx_lost(const KpGfx *g);
 /* The textures that could not be made since the last call (out of memory, a size past the context's limits), the

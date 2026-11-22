@@ -1,24 +1,15 @@
-# The renderer chosen in the video options takes the next start (ADR 0028, stage S9.7). tools/ci.sh runs it twice in
-# one --script-out without --gfx: the first run starts on the platform's renderer (Auto: Metal on macOS, GL on the
-# other desktops), chooses OpenGL and keeps it with OK in the script's own profile; the second reads that profile
-# before its drawing starts, so it draws with GL (its log's "GL " line) and shows OpenGL chosen. Each run wants exit
+# The renderer chosen in the video options is taken at its OK, in the running game (ADR 0028): the window made again
+# for the other API, the art uploaded again. tools/ci.sh runs this script, then renderer_gpu.kps with this run's
+# profile: this one starts on the platform's renderer (Auto: Metal on macOS, GL on the other desktops), chooses OpenGL
+# and draws with GL from the next frame on; the next start reads the kept OpenGL, so renderer_gpu.kps starts on GL and
+# switches to SDL_GPU. Both shoot the same frame after their switch, which tools/gfx_compare.py compares byte for byte
+# (the index path: ci.sh gives --graphics original): an upload missed after a switch shows there. Each run wants exit
 # code 0 and "0 failures".
 mission zerg/zerg01
 clock fixed
 
-wait game
-wait frames 30
-mark start
-log start video.renderer video.commits
-key F10
-wait dialog gamemenu
-key O
-wait dialog options
-key V
-wait dialog video
+include renderer_open.kps
 choose renderer.gl
 check video-choice
-key O
-wait nodialog
-log kept video.renderer video.commits
-expect video.renderer == 0 and video.commits == @start.video.commits + 1
+include renderer_kept.kps
+expect video.renderer == 0 and gfx.gpu == 0 and video.commits == @start.video.commits + 1

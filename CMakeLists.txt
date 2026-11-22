@@ -147,6 +147,9 @@ add_library(kp_gfx_passes STATIC ${KP_GFX_DIR}/kp_gfx_passes.c ${KP_GFX_DIR}/kp_
 kp_target(kp_gfx_passes)
 target_include_directories(kp_gfx_passes PUBLIC ${KP_GFX_DIR})
 target_link_libraries(kp_gfx_passes PUBLIC kp_present)
+if(EMSCRIPTEN OR ANDROID OR IOS) # GL alone draws there (ADR 0028): the generated metallibs (Metal's stages) left out
+	target_compile_definitions(kp_gfx_passes PUBLIC KP_GFX_NO_METALLIB)
+endif()
 
 # --- kp_app_core: the product's headless part (the session, the saves, the profile, the interface's host; S2) ---
 set(KP_APP_DIR ${CMAKE_CURRENT_SOURCE_DIR}/native/kp_app)
