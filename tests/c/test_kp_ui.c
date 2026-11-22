@@ -4402,6 +4402,44 @@ static void network_score_lists_the_storm_players(KpT *T)
 	kp_t_eq(T, (int64_t)d.roster[beta].storm, 0, NULL);
 }
 
+/* A glue popup's button glows while the cursor is over it (UpdateFlcButtonHover 0x4c8760: the cursor relative to the
+ * popup, 0x4c29d0, in the response rectangle, the popup away from the screen's origin), 15 a 30 ms step, and fades
+ * when the cursor leaves (a kicking host's Ok of 2026-11-22, the "k" of its colour 1 dim). */
+static void popup_button_glows_under_the_cursor(KpT *T)
+{
+	enum { ID_OK = 1, STEPS = 7, STEP_FRAMES = 2 };
+	KpOracleUi *u;
+	KpOracleGame *game;
+	KpUi *ui;
+	Clock c;
+	char name[128];
+	int32_t d, ok;
+	int16_t x, y;
+	if (!kp_t_ready(T, "test_kp_ui.popup_button_glows_under_the_cursor", GAME_FILES)) return;
+	u = kp_t_ui(T, KP_ORACLE_UI_STRINGS);
+	ui = u->ui;
+	game = terran01(T);
+	hud(T, ui, game->g);
+	kp_ui_end_game(ui);
+	custom_score(T, ui, game->g, &c, 0, 0, 0);
+	kp_ui_menus_ok_cancel_popup(ui, (const uint8_t *)"Kick?", NULL);
+	frames(&c, 10);
+	d = ui->open;
+	kp_t_eq_str(T, kp_t_ui_bin(ui, d, name, sizeof name), "rez\\glupokcancel.bin", "the popup on top");
+	kp_t_ok(T, ui->controls[d].left > 0 && ui->controls[d].top > 0, "away from the screen's origin");
+	ok = kp_ui_find_control(ui, d, ID_OK);
+	kp_t_ok(T, ok >= 0, "its Ok");
+	x = (int16_t)(ui->controls[d].left + (ui->controls[ok].left + ui->controls[ok].right) / 2);
+	y = (int16_t)(ui->controls[d].top + (ui->controls[ok].top + ui->controls[ok].bottom) / 2);
+	kp_t_eq(T, ui->controls[ok].glow, 0, "dark before the cursor comes");
+	kp_t_ui_input(ui, 3, x, y);
+	frames(&c, STEPS * STEP_FRAMES);
+	kp_t_eq(T, ui->controls[ok].glow, 100, "lit under the cursor");
+	kp_t_ui_input(ui, 3, ui->controls[d].left - 10, ui->controls[d].top - 10);
+	frames(&c, STEPS * STEP_FRAMES);
+	kp_t_eq(T, ui->controls[ok].glow, 0, "dark again once the cursor left");
+}
+
 static const KpTest TESTS[] = {
 	{ "region_cuts_overlapping_rects", region_cuts_overlapping_rects, 0 },
 	{ "region_grows_past_its_inline_fragments", region_grows_past_its_inline_fragments, 0 },
@@ -4484,5 +4522,6 @@ static const KpTest TESTS[] = {
 	{ "timeout_dialog_counts_down_and_drops", timeout_dialog_counts_down_and_drops, 0 },
 	{ "network_options_queue_the_latency", network_options_queue_the_latency, 0 },
 	{ "network_score_lists_the_storm_players", network_score_lists_the_storm_players, 0 },
+	{ "popup_button_glows_under_the_cursor", popup_button_glows_under_the_cursor, 0 },
 };
 KP_SUITE(kp_suite_kp_ui, "test_kp_ui", TESTS);

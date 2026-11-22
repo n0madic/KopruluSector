@@ -120,6 +120,8 @@ static void close_clips(KpUi *ui, KpUiControl *c)
 
 static int hovered_on_screen(KpUi *ui, KpUiControl *c)
 {
+	/* DrawFlcButton 0x4c8150: the screen's cursor (0x6d3154) against the response rectangle, the parent's offset not
+	 * taken as UpdateFlcButtonHover takes it */
 	int16_t *r = response(c);
 	return (c->flags & KP_UI_HOVER) && ui->mouse_x >= r[0] && ui->mouse_x <= r[2] && ui->mouse_y >= r[1]
 		&& ui->mouse_y <= r[3];
@@ -262,12 +264,13 @@ static void init_button(KpUi *ui, KpUiControl *c)
 
 static void hover_fade(KpUi *ui, KpUiControl *c)
 {
-	/* UpdateFlcButtonHover 0x4c8760 */
+	/* UpdateFlcButtonHover 0x4c8760: the cursor relative to the parent (0x4c29d0) in the response rectangle, as
+	 * ButtonHitTest's (DrawFlcButton's hover-only overlays test the screen's cursor: hovered_on_screen) */
 	KpUiControl *d = &ui->controls[c->parent];
 	int16_t *r = response(c);
-	int32_t mx = ui->mouse_x - d->left, my = ui->mouse_y - d->top, k;
-	int hover = ui->open == c->parent && (c->flags & KP_UI_HOVER) && mx + d->left >= r[0] && mx + d->left <= r[2]
-		&& my + d->top >= r[1] && my + d->top <= r[3];
+	int32_t mx = (int16_t)(ui->mouse_x - d->left), my = (int16_t)(ui->mouse_y - d->top), k;
+	int hover = ui->open == c->parent && (c->flags & KP_UI_HOVER) && mx >= r[0] && mx <= r[2] && my >= r[1]
+		&& my <= r[3];
 	if (hover) {
 		if (c->glow < FULL_LEVEL) c->glow = (int16_t)(c->glow + FADE_STEP < FULL_LEVEL ? c->glow + FADE_STEP : FULL_LEVEL);
 	} else if (c->glow > 0) {
