@@ -11,7 +11,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "kp_gfx_gpu_glsl.h"
 #include "kp_gfx_internal.h"
+#include "kp_sha256.h"
 
 /* --- the recording backend --- */
 
@@ -37,6 +39,11 @@ struct KpGfxBackend {
 	int blocks;                         /* kp_gb_takes_blocks: every block format ... */
 	int no_astc;                        /* ... but ASTC's */
 	float light[4];                     /* KP_PROG_HD_IMAGES's KP_U_LIGHT */
+	/* the SDL_GPU backend's pipelines (KP_GFX_GPU_PIPELINES): the target bound, the blend, the rows the draws took,
+	 * the draws without one and the last of them */
+	int bound, blend;
+	uint32_t piped;
+	int unpiped, unpiped_prog, unpiped_target, unpiped_blend, unpiped_depth;
 };
 
 static KpGfxBackend *recorder; /* the last one made: the test's (one gfx at a time) */
@@ -96,7 +103,8 @@ int kp_gb_targets(KpGfxBackend *b, int32_t w, int32_t h)
 
 void kp_gb_bind(KpGfxBackend *b, int target, int32_t vx, int32_t vy, int32_t vw, int32_t vh)
 {
-	(void)b, (void)target, (void)vx, (void)vy, (void)vw, (void)vh;
+	(void)vx, (void)vy, (void)vw, (void)vh;
+	b->bound = target;
 }
 
 void kp_gb_clear(KpGfxBackend *b, float r, float gg, float bb, float a, int depth)
@@ -118,8 +126,17 @@ void kp_gb_uniform(KpGfxBackend *b, int prog, int u, float x, float y, float z, 
 void kp_gb_draw(KpGfxBackend *b, int prog, int32_t vertices, const KpGfxBinding *bind, int count, int depth, int write)
 {
 	Draw *d;
-	int k;
+	int k, p = kp_gfx_gpu_pipeline(prog, kp_gfx_gpu_target_kind(b->bound), b->blend, kp_gfx_gpu_depth(depth, write));
 	(void)vertices;
+	if (p >= 0) {
+		b->piped |= 1u << p;
+	} else {
+		b->unpiped++;
+		b->unpiped_prog = prog;
+		b->unpiped_target = b->bound;
+		b->unpiped_blend = b->blend;
+		b->unpiped_depth = kp_gfx_gpu_depth(depth, write);
+	}
 	if (b->count == DRAWS_MAX) return;
 	d = &b->draws[b->count++];
 	d->prog = prog;
@@ -139,9 +156,9 @@ void kp_gb_draw(KpGfxBackend *b, int prog, int32_t vertices, const KpGfxBinding 
 	d->lit = d->lit == 3;
 }
 
-void kp_gb_blend(KpGfxBackend *b, int on) { (void)b, (void)on; }
+void kp_gb_blend(KpGfxBackend *b, int on) { b->blend = on ? KP_GPU_BLEND_ALPHA : KP_GPU_BLEND_OFF; }
 
-void kp_gb_blend_premultiplied(KpGfxBackend *b) { (void)b; }
+void kp_gb_blend_premultiplied(KpGfxBackend *b) { b->blend = KP_GPU_BLEND_PREMULTIPLIED; }
 
 int kp_gb_takes_blocks(KpGfxBackend *b, int format)
 {
@@ -173,6 +190,32 @@ int kp_gb_alive(const KpGfxBackend *b)
 {
 	(void)b;
 	return 1;
+}
+
+KpGfxBackend *kp_gb_reset(KpGfxBackend *b, char *err, size_t err_size)
+{
+	kp_gb_free(b, 0);
+	return kp_gb_new(NULL, err, err_size);
+}
+
+int kp_gb_present(KpGfxBackend *b, int wait)
+{
+	(void)b, (void)wait;
+	return 1;
+}
+
+int kp_gb_vsync(KpGfxBackend *b, int on)
+{
+	(void)b, (void)on;
+	return 0;
+}
+
+void kp_gb_finish(KpGfxBackend *b) { (void)b; }
+
+const char *kp_gb_version(const KpGfxBackend *b)
+{
+	(void)b;
+	return "recorder";
 }
 
 /* --- the shaders --- */
@@ -211,8 +254,9 @@ static int link_program(KpT *T, const char *dir, const KpGfxProgramSource *p, co
 	return pclose(out);
 }
 
-/* The validator can run here (1), else why not, skipped (0) or with GLSLANG_REQUIRED set failed (-1). */
-static int glslang_runs(KpT *T)
+/* The validator can run here (1), else why not, skipped (0: test's SKIP line) or with GLSLANG_REQUIRED set failed
+ * (-1). */
+static int glslang_runs(KpT *T, const char *test)
 {
 	const char *why = NULL;
 	FILE *probe = popen("command -v " GLSLANG " 2>/dev/null", "r");
@@ -228,7 +272,7 @@ static int glslang_runs(KpT *T)
 		kp_t_ok(T, 0, "%s with " GLSLANG_REQUIRED " set: the shaders not compiled", why);
 		return -1;
 	}
-	kp_t_log(T, "SKIP test_gfx.shaders_compile_for_every_context: %s", why);
+	kp_t_log(T, "SKIP test_gfx.%s: %s", test, why);
 	return 0;
 }
 
@@ -241,7 +285,7 @@ static void shaders_compile_for_every_context(KpT *T)
 	const char *tmp = getenv("TMPDIR"), *dir;
 	char log[4096], header[64];
 	int k, v;
-	if (glslang_runs(T) <= 0) return;
+	if (glslang_runs(T, "shaders_compile_for_every_context") <= 0) return;
 	dir = kp_t_temp_dir(T, tmp && tmp[0] ? tmp : "/tmp");
 	for (k = 0; k < KP_PROGRAMS; k++) {
 		const KpGfxProgramSource *p = &KP_GFX_PROGRAMS[k];
@@ -251,6 +295,143 @@ static void shaders_compile_for_every_context(KpT *T)
 			snprintf(header, sizeof header, "#version %d core\n", CORE_VERSIONS[v]);
 			kp_t_eq(T, link_program(T, dir, p, header, log, sizeof log), 0, "program %d, GL %d core:\n%s", k,
 				CORE_VERSIONS[v], log);
+		}
+	}
+}
+
+/* --- the SDL_GPU backend's shaders (ADR 0028) --- */
+
+#define GPU_TEXT_BYTES (64 * 1024)
+
+/* A stage's Vulkan GLSL (kp_gfx_gpu_glsl) into text: its length. */
+static int gpu_stage(KpT *T, int prog, int fragment, char *text, KpGfxGpuStage *stage)
+{
+	const KpGfxProgramSource *p = &KP_GFX_PROGRAMS[prog];
+	char err[256] = "";
+	int len = kp_gfx_gpu_glsl(fragment ? p->fs : p->vs, p->vs, !fragment, text, GPU_TEXT_BYTES, stage, err, sizeof err);
+	kp_t_ok(T, len > 0, "program %d's %s stage: %s", prog, fragment ? "fragment" : "vertex", err);
+	return len;
+}
+
+/* The transform's layout: the constants in one block at 16 times their KP_U_* number, the samplers bound in the
+ * stage's set in their order, an unsigned integer one a texture without a sampler after them, the varyings at the
+ * vertex outputs' locations, gl_VertexIndex, and the vertex stage's main ending on the negated y. What it cannot read
+ * (an early return in a vertex stage's main, an unknown constant, an input no vertex output feeds) is refused. */
+static void gpu_glsl_lays_out_the_declarations(KpT *T)
+{
+	static const char VS[] = "uniform highp sampler2D image_data;\n"
+		"uniform vec4 view; // xy\n"
+		"out highp vec2 var_a;\n"
+		"flat out vec4 var_b;\n"
+		"void main()\n"
+		"{\n"
+		"    int i = gl_VertexID % 6;\n"
+		"    var_a = vec2(0.0);\n"
+		"    var_b = vec4(float(i));\n"
+		"    gl_Position = vec4(view.xy, 0.0, 1.0);\n"
+		"}\n";
+	static const char FS[] = "uniform highp usampler2D terrain_map;\n"
+		"uniform highp sampler2DArray atlas;\n"
+		"flat in vec4 var_b;\n"
+		"in highp vec2 var_a;\n"
+		"uniform highp vec4 hd;\n"
+		"out vec4 out_fragColor;\n"
+		"void main() { out_fragColor = var_b + vec4(texelFetch(terrain_map, ivec2(var_a), 0)); }\n";
+	static char text[GPU_TEXT_BYTES];
+	char err[256], want[128];
+	KpGfxGpuStage st;
+	kp_t_ok(T, kp_gfx_gpu_glsl(VS, VS, 1, text, sizeof text, &st, err, sizeof err) > 0, "the vertex stage: %s", err);
+	snprintf(want, sizeof want, "layout(offset = %d) vec4 view;", 16 * KP_U_VIEW);
+	kp_t_ok(T, strstr(text, "layout(std140, set = 1, binding = 0) uniform kp_vertex_constants") && strstr(text, want),
+		"the vertex constants' block:\n%s", text);
+	kp_t_ok(T, strstr(text, "layout(set = 0, binding = 0) uniform highp sampler2D image_data;") != NULL, "a vertex sampler");
+	kp_t_ok(T, strstr(text, "layout(location = 0) out highp vec2 var_a;") != NULL
+		&& strstr(text, "layout(location = 1) flat out vec4 var_b;") != NULL, "the outputs in order");
+	kp_t_ok(T, strstr(text, "gl_VertexIndex % 6") != NULL && !strstr(text, "gl_VertexID"), "gl_VertexIndex");
+	kp_t_ok(T, strstr(text, "1.0);\n    gl_Position.xy = gl_Position.xy * kp_viewport.xy + kp_viewport.zw * gl_Position.w;\n"
+		"    gl_Position.y = -gl_Position.y;\n}\n") != NULL, "the viewport's mapping and the negated y last:\n%s", text);
+	snprintf(want, sizeof want, "layout(offset = %d) vec4 kp_viewport;", 16 * KP_UNIFORMS);
+	kp_t_ok(T, KP_GPU_VIEWPORT_OFFSET == 16 * KP_UNIFORMS && strstr(text, want) != NULL, "the mapping after the constants");
+	kp_t_ok(T, st.samplers == 1 && st.sampler[0] == KP_S_IMAGE_DATA && st.kind[0] == KP_GPU_KIND_2D && st.storage == 0
+		&& st.uniforms == 1, "the vertex stage's reflection");
+	kp_t_ok(T, kp_gfx_gpu_glsl(FS, VS, 0, text, sizeof text, &st, err, sizeof err) > 0, "the fragment stage: %s", err);
+	snprintf(want, sizeof want, "layout(offset = %d) vec4 hd;", 16 * KP_U_HD);
+	kp_t_ok(T, strstr(text, "layout(std140, set = 3, binding = 0) uniform kp_fragment_constants") && strstr(text, want),
+		"the fragment constants' block:\n%s", text);
+	kp_t_ok(T, strstr(text, "#extension GL_EXT_samplerless_texture_functions : require") != NULL
+		&& strstr(text, "layout(set = 2, binding = 1) uniform utexture2D terrain_map;") != NULL
+		&& strstr(text, "layout(set = 2, binding = 0) uniform highp sampler2DArray atlas;") != NULL,
+		"the integer texture after the sampler:\n%s", text);
+	kp_t_ok(T, strstr(text, "layout(location = 1) flat in vec4 var_b;") != NULL
+		&& strstr(text, "layout(location = 0) in highp vec2 var_a;") != NULL
+		&& strstr(text, "layout(location = 0) out vec4 out_fragColor;") != NULL, "the inputs at the outputs' locations");
+	kp_t_ok(T, st.samplers == 1 && st.sampler[0] == KP_S_ATLAS && st.kind[0] == KP_GPU_KIND_ARRAY && st.storage == 1
+		&& st.storage_of[0] == KP_S_TERRAIN_MAP && st.uniforms == 1, "the fragment stage's reflection");
+	kp_t_eq(T, kp_gfx_gpu_glsl("void main()\n{\n    if (true) return;\n}\n", VS, 1, text, sizeof text, &st, err,
+		sizeof err), -1, "an early return refused");
+	kp_t_eq(T, kp_gfx_gpu_glsl("void main() {\n    gl_Position = vec4(0.0);\n}\n", VS, 1, text, sizeof text, &st, err,
+		sizeof err), -1, "a vertex main not on a line of its own refused (no mapping, no negated y)");
+	kp_t_eq(T, kp_gfx_gpu_glsl("uniform vec4 nothing;\n", VS, 0, text, sizeof text, &st, err, sizeof err), -1,
+		"an unknown constant refused");
+	kp_t_eq(T, kp_gfx_gpu_glsl("in vec2 var_c;\n", VS, 0, text, sizeof text, &st, err, sizeof err), -1,
+		"an input without its output refused");
+	kp_t_eq(T, kp_gfx_gpu_glsl(VS, VS, 1, text, 64, &st, err, sizeof err), -1, "a text past its buffer refused");
+}
+
+/* The committed kp_gfx_gpu_shaders.c is the transform's of the current sources: each stage's reflection and the
+ * SHA-256 of its text (the SPIR-V and the MSL come from tools that need not be here; kp_gfx_gpu_gen --check compares
+ * them where they are). A source changed without the file regenerated fails here. */
+static void gpu_shaders_are_current(KpT *T)
+{
+	static char text[GPU_TEXT_BYTES];
+	char hex[2 * KP_SHA256_SIZE + 1];
+	uint8_t digest[KP_SHA256_SIZE];
+	int k, f;
+	for (k = 0; k < KP_PROGRAMS; k++) {
+		for (f = 0; f < 2; f++) {
+			int n = f ? KP_GFX_GPU_PROGRAMS[k].fs : KP_GFX_GPU_PROGRAMS[k].vs, len;
+			const KpGfxGpuShader *sh;
+			KpGfxGpuStage st;
+			kp_t_ok(T, n >= 0 && n < KP_GFX_GPU_SHADER_COUNT, "program %d's stage %d", k, n);
+			sh = &KP_GFX_GPU_SHADERS[n];
+			len = gpu_stage(T, k, f, text, &st);
+			kp_sha256(text, (size_t)len, digest);
+			kp_sha256_hex(digest, hex);
+			kp_t_ok(T, strcmp(hex, sh->sha256) == 0 && memcmp(&st, &sh->stage, sizeof st) == 0,
+				"program %d's %s stage changed: regenerate native/kp_gfx/kp_gfx_gpu_shaders.c (build/cmake/kp_gfx_gpu_gen"
+				" native/kp_gfx/kp_gfx_gpu_shaders.c)", k, f ? "fragment" : "vertex");
+			kp_t_ok(T, sh->spirv_size >= 20 && sh->spirv_size % 4 == 0 && sh->spirv[0] == 0x07230203u, "stage %d's SPIR-V",
+				n);
+			kp_t_ok(T, sh->msl_size == strlen(sh->msl) && strstr(sh->msl, f ? "fragment main0_out main0(" :
+				"vertex main0_out main0(") != NULL, "stage %d's MSL entry point main0", n);
+		}
+	}
+}
+
+/* Every program's stages as the transform writes them compile as Vulkan GLSL (glslangValidator, as the generator
+ * compiles them; skipped without it unless KP_TEST_GLSLANG is set). */
+static void gpu_shaders_compile_for_vulkan(KpT *T)
+{
+	static char text[GPU_TEXT_BYTES];
+	const char *tmp = getenv("TMPDIR"), *dir;
+	char path[512], command[1400], log[4096];
+	KpGfxGpuStage st;
+	int k, f;
+	if (glslang_runs(T, "gpu_shaders_compile_for_vulkan") <= 0) return;
+	dir = kp_t_temp_dir(T, tmp && tmp[0] ? tmp : "/tmp");
+	for (k = 0; k < KP_PROGRAMS; k++) {
+		for (f = 0; f < 2; f++) { /* each stage on its own, as the generator compiles them: SPIR-V has no link */
+			FILE *out;
+			size_t n;
+			gpu_stage(T, k, f, text, &st);
+			snprintf(path, sizeof path, "%s/kp_gpu_%d.%s", dir, k, f ? "frag" : "vert");
+			kp_t_ok(T, write_shader(path, "", text) == 0, "%s: not written", path);
+			snprintf(command, sizeof command, GLSLANG " --target-env vulkan1.0 -o '%s.spv' '%s' 2>&1", path, path);
+			out = popen(command, "r");
+			kp_t_ok(T, out != NULL, "no popen");
+			n = fread(log, 1, sizeof log - 1, out);
+			log[n] = 0;
+			kp_t_eq(T, pclose(out), 0, "program %d's %s stage for Vulkan:\n%s", k, f ? "fragment" : "vertex", log);
 		}
 	}
 }
@@ -293,7 +474,7 @@ static void world_passes_keep_their_depth_state(KpT *T)
 	static KpPlan plan;
 	static KpLookups lookups;
 	static uint8_t table[256];
-	KpGfxApi api = { 1, 0 };
+	KpGfxApi api = { 1, 0, KP_GFX_BACKEND_GL, NULL, NULL };
 	KpGfxFrame f;
 	KpGfx *g;
 	char err[256] = "";
@@ -358,7 +539,7 @@ static void rgba_world_reads_the_fitted_blends(KpT *T)
 {
 	static KpPlan plan;
 	static KpLookups lookups;
-	KpGfxApi api = { 1, 0 };
+	KpGfxApi api = { 1, 0, KP_GFX_BACKEND_GL, NULL, NULL };
 	KpGfxFrame f;
 	KpGfx *g;
 	char err[256] = "";
@@ -415,7 +596,7 @@ static void hd_composite_reads_what_lay_under(KpT *T)
 	static KpCanvas c;
 	static uint8_t pixels[W * H * 2];
 	static uint16_t ids[W * H], below[W * H];
-	KpGfxApi api = { 1, 0 };
+	KpGfxApi api = { 1, 0, KP_GFX_BACKEND_GL, NULL, NULL };
 	KpGfxFrame f;
 	KpGfx *g;
 	char err[256] = "";
@@ -463,7 +644,7 @@ static void hd_lit_slots_light_the_sprites(KpT *T)
 	uint8_t *const light[KP_HD_LIGHTS] = { layer, layer, layer, layer };
 	static const float HALF[3] = { 0.45169f, 0.14614f, 0.88012f }; /* the view 640 x 480 */
 	static KpPlan plan;
-	KpGfxApi api = { 1, 0 };
+	KpGfxApi api = { 1, 0, KP_GFX_BACKEND_GL, NULL, NULL };
 	KpGfxFrame f;
 	KpGfx *g;
 	char err[256] = "";
@@ -550,12 +731,120 @@ static void hd_lit_slots_light_the_sprites(KpT *T)
 	kp_t_eq(T, (int)recorder->light[3], 0, "no lit slots: the sprites unlit");
 }
 
+/* Every draw of the passes has its SDL_GPU pipeline (ADR 0028: all are made when the backend starts, from
+ * KP_GFX_GPU_PIPELINES), and every row of the table is drawn with: the index world with its fog, canvas, cursor and
+ * vector text at a whole and at a sharp scale, the RGBA world with its fog under the HD interface, the vector text and
+ * the cursor's HD frame, a movie. */
+static void gpu_pipelines_cover_the_passes(KpT *T)
+{
+	enum { W = 8, H = 4, LEVELS = 4 };
+	static KpPlan plan;
+	static KpLookups lookups;
+	static KpCanvas c;
+	static KpCursor cursor;
+	static KpVText text;
+	static KpFogLayer fog;
+	static uint8_t pixels[W * H * 2], atlas[16], dark[256 * KP_DARK_ROWS], plane[16 * 16];
+	static uint16_t ids[W * H], below[W * H], cells[8];
+	static float quads[KP_VTEXT_QUAD_FLOATS], items[2 * KP_GFX_UI_ITEM_FLOATS];
+	static const float RECT[4] = { 10, 10, 32, 32 }, SRC[4] = { 0, 0, 1, 1 };
+	KpGfxApi api = { 1, 0, KP_GFX_BACKEND_GL, NULL, NULL };
+	KpVideoPicture v;
+	KpGfxFrame f;
+	KpGfx *g;
+	char err[256] = "";
+	int k;
+	g = kp_gfx_new(&api, err, sizeof err);
+	kp_t_ok(T, g != NULL && recorder != NULL, "no gfx: %s", err);
+	kp_t_defer(T, gfx_free, g);
+	kp_t_ok(T, KP_GFX_GPU_PIPELINE_COUNT <= 32, "the rows fit the recorder's mask");
+	memset(&lookups, 0, sizeof lookups);
+	lookups.remap_rows = 1;
+	lookups.table_rows = 1;
+	lookups.tables = (uint8_t *)calloc(1, 256);
+	kp_t_ok(T, lookups.tables != NULL, "out of memory");
+	kp_t_defer(T, lookups_free, &lookups);
+	kp_gfx_lookups(g, &lookups);
+	kp_gfx_terrain(g, atlas, 4, 4, 1, 0, cells, 2, 2);
+	recorder->made[KP_TEX_PAGES] = recorder->made[KP_TEX_FRAMES] = recorder->made[KP_TEX_IMAGE_DATA] = 1;
+	kp_gfx_world(g, 1);
+	memset(&fog, 0, sizeof fog);
+	fog.on = 1;
+	fog.width = fog.height = LEVELS;
+	kp_gfx_fog(g, &fog, dark);
+	memset(&c, 0, sizeof c);
+	c.w = c.canvas.w = W;
+	c.h = c.canvas.h = H;
+	c.canvas.pixels = pixels;
+	c.canvas.ids = ids;
+	c.canvas.below = below;
+	c.dirty[2] = W;
+	c.dirty[3] = H;
+	kp_gfx_canvas(g, &c);
+	cursor.shown = cursor.changed = 1;
+	cursor.w = cursor.h = 1;
+	kp_gfx_cursor(g, &cursor, 4, 4);
+	memset(&text, 0, sizeof text);
+	text.atlas = atlas;
+	text.atlas_w = text.atlas_h = 4;
+	text.atlas_changed = 1;
+	text.quads = quads;
+	text.quad_count = 1;
+	text.quads_changed = 1;
+	kp_gfx_text(g, &text);
+	memset(&plan, 0, sizeof plan);
+	plan.slots[KP_FAMILY_OVERWRITE] = 3;
+	plan.slots[KP_FAMILY_DEST] = 2;
+	plan.slots[KP_FAMILY_DISTORT] = 1;
+	plan.count = 1;
+	plan.windows[0].rank = plan.windows[0].last = 10;
+	plan.windows[0].layers = 1;
+	plan.layers = 1;
+	memset(&f, 0, sizeof f);
+	f.win_w = f.full_w = 1280;
+	f.win_h = f.full_h = 960;
+	f.mode = KP_SCALE_INTEGER;
+	f.scale = 2;
+	f.world_w = 640;
+	f.world_h = 480;
+	f.plan = &plan;
+	kp_gfx_frame(g, &f);
+	f.mode = KP_SCALE_SHARP;
+	f.scale = 1.5;
+	kp_gfx_frame(g, &f);
+	kp_gfx_ui_atlas(g, 16, 1);
+	kp_gfx_ui_items(g, items, 1);
+	kp_gfx_ui_cursor(g, RECT, SRC, 0);
+	kp_gfx_hd(g, 1);
+	kp_gfx_effects(g, 2, 1, 0); /* the original's art through the RGBA world, its fog smooth (the HD fog pass) */
+	kp_t_ok(T, kp_gfx_hd_ready(g), "the RGBA world ready");
+	kp_gfx_frame(g, &f);
+	memset(&v, 0, sizeof v);
+	for (k = 0; k < 3; k++) {
+		v.planes[k] = plane;
+		v.strides[k] = 16;
+	}
+	v.width = v.height = v.chroma_w = v.chroma_h = 16;
+	kp_gfx_video(g, &v, 16, 16, &f);
+	kp_t_eq(T, recorder->unpiped, 0, "draws without a pipeline: the last, program %d into target %d, blend %d, depth %d",
+		recorder->unpiped_prog, recorder->unpiped_target, recorder->unpiped_blend, recorder->unpiped_depth);
+	for (k = 0; k < KP_GFX_GPU_PIPELINE_COUNT; k++) {
+		const KpGfxGpuPipeline *p = &KP_GFX_GPU_PIPELINES[k];
+		kp_t_ok(T, (recorder->piped >> k) & 1, "pipeline %d (program %d, target %d, blend %d, depth %d) not drawn with", k,
+			p->prog, p->target, p->blend, p->depth);
+	}
+}
+
 static const KpTest TESTS[] = {
 	{ "shaders_compile_for_every_context", shaders_compile_for_every_context, 0 },
+	{ "gpu_glsl_lays_out_the_declarations", gpu_glsl_lays_out_the_declarations, 0 },
+	{ "gpu_shaders_are_current", gpu_shaders_are_current, 0 },
+	{ "gpu_shaders_compile_for_vulkan", gpu_shaders_compile_for_vulkan, 0 },
 	{ "world_passes_keep_their_depth_state", world_passes_keep_their_depth_state, 0 },
 	{ "rgba_world_reads_the_fitted_blends", rgba_world_reads_the_fitted_blends, 0 },
 	{ "hd_composite_reads_what_lay_under", hd_composite_reads_what_lay_under, 0 },
 	{ "hd_lit_slots_light_the_sprites", hd_lit_slots_light_the_sprites, 0 },
+	{ "gpu_pipelines_cover_the_passes", gpu_pipelines_cover_the_passes, 0 },
 };
 
 KP_SUITE(kp_suite_gfx, "test_gfx", TESTS);

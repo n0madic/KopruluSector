@@ -947,6 +947,19 @@ const char KP_GFX_HD_COMPOSITE_FS[] =
 	"    out_fragColor = vec4(world, 1.0);\n"
 	"}\n";
 
+/* The constants' and the samplers' names in the sources, by KP_U_* and KP_S_* (both backends' and the GPU shaders'
+ * generator's). */
+const char *const KP_GFX_UNIFORM_NAMES[KP_UNIFORMS] = { "terrain", "terrain_size", "view", "interp", "window",
+	"slot_base", "lookups", "fog", "fog_origin", "cursor", "blend", "source_size", "hd", "water", "hd_cursor_rect",
+	"hd_cursor_src", "hd_cursor_layer", "art", "ui_gamma", "video_yuv", "video_gb", "video_chroma", "hd_atlas",
+	"light", "video_caption_rect" };
+const char *const KP_GFX_SAMPLER_NAMES[KP_SAMPLERS] = { "terrain_map", "terrain_sheet", "image_data", "frame_table",
+	"atlas", "remap_table", "bars", "dest", "tables", "fog_levels", "fog_dark", "ui_canvas", "ui_blend", "ui_cursor",
+	"index_target", "rgb_target", "palette", "text_atlas", "text_quads", "hd_diffuse", "hd_team", "hd_frames",
+	"hd_sheet", "hd_map", "hd_colors", "hd_target", "hd_slots", "hd_water", "hd_normal_a", "hd_normal_b", "hd_tone",
+	"ui_ids", "ui_below", "ui_items", "ui_atlas", "hd_edges", "video_y", "video_cb", "video_cr", "hd_light", "hd_occlusion",
+	"hd_glow", "video_caption", "glow_fit" };
+
 const char KP_GFX_ES_HEADER[] = "#version 300 es\nprecision highp float;\nprecision highp int;\n"
 	"precision highp sampler2D;\nprecision highp sampler2DArray;\nprecision highp usampler2D;\n";
 

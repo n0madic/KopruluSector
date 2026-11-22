@@ -1,0 +1,16 @@
+# The SDL_GPU backend's frame check on the HD path (ADR 0028, stage S9.5): terran01 with the profile's video options
+# (auto: the HD art, lit, the smooth fog, the animated water) on the fixed clock. The game stands under its menu, the
+# main thread stands while the loader reads the pages the frame asks for (hang), the pages go up, then the frame is
+# shot. tools/ci.sh runs it with --gfx gl and --gfx gpu over Remastered's repack and tools/gfx_compare.py reports the
+# frames' largest difference (the index path's frames, determinism.kps's, are compared byte for byte).
+mission terran/terran01
+clock fixed
+
+wait game
+wait frames 60
+menu game
+wait dialog gamemenu
+hang 2
+wait frames 60
+log art art.scale art.lit art.fx hd.ui
+shot menu

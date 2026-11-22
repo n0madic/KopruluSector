@@ -115,7 +115,7 @@ Names are in any case. A value read where what it is read from is missing has no
 | Kind | Names |
 |---|---|
 | Keys | `A`–`Z`, `0`–`9`, `F1`–`F12`, `Escape`, `Return`, `Enter` (the keypad's), `Space`, `Tab`, `Backspace`, `Delete`, `Insert`, `Home`, `End`, `PageUp`, `PageDown`, `Up`, `Down`, `Left`, `Right`, `LShift`, `RShift`, `LCtrl`, `RCtrl`, `LAlt`, `RAlt`, `Back` (Android's), `Semicolon`, `Comma`, `Period`, `Slash`, `Minus`, `Equals`, `Grave`; `race-build`: the key of a building in the basic build menu of the player's race (`H` Zerg, `S` Terran, `P` Protoss), the race told by the player's first worker (none: the step fails) |
-| Choices (`choose`) | `graphics.auto\|original\|hd2\|hd`, `fog.auto\|original\|smooth`, `water.auto\|still\|animated`, `font.auto\|original\|vector`, `lighting.auto\|off\|on`, `portraits.none\|still\|animated`: the video dialog's button of the choice |
+| Choices (`choose`) | `graphics.auto\|original\|hd2\|hd`, `fog.auto\|original\|smooth`, `water.auto\|still\|animated`, `font.auto\|original\|vector`, `lighting.auto\|off\|on`, `renderer.auto\|gl\|gpu`, `portraits.none\|still\|animated`: the video dialog's button of the choice |
 | Menus (`menu`) | `game`, `help`, `options`, `quit-mission`, `quit`, `save`, `load` |
 | Options dialogs (`options-dialog`) | `speed`, `sound`, `video`, `tips` |
 | Units (`select`) | `worker`, `main` (the race's main building), `group` (the player's box-selectable unit whose box of `select`'s radius takes the most such units) |
@@ -152,7 +152,7 @@ Names are in any case. A value read where what it is read from is missing has no
 | `lobby.distributed` | the interface | The host's: 1 when every player holds the network lobby's map (`AllPeersHaveFile` `0x440ba0`: the host's Start needs it, else "The scenario map file is still being distributed."). 1 on a joiner, which offers no map (even while its own download runs), 0 with no network game |
 | `local.player` | the game | The game's local player (the seat's) |
 | `portraits` | the interface | The portraits' mode: 0 none, 1 still, 2 animated |
-| `video.graphics`, `video.fog`, `video.water`, `video.font`, `video.lighting` | the interface | The video options: -1 auto, else the choice's value |
+| `video.graphics`, `video.fog`, `video.water`, `video.font`, `video.lighting`, `video.renderer` | the interface | The video options: -1 auto, else the choice's value (the renderer the next start's: 0 GL, 1 SDL_GPU) |
 | `video.serial`, `video.commits` | the interface | The video options' changes; the video dialog's OKs kept |
 | `text.vector` | the interface | 1 when the interface's text is in the vector font |
 | `art.scale` | the host | The world's HD pixels a logical pixel: 2 HD2, 4 HD, 0 the original's art. None without a world |

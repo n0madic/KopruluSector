@@ -3883,14 +3883,18 @@ static void video_options_set_and_revert(KpT *T)
 	og = terran01(T);
 	m = game_menu(T, og->g);
 	o = &m->ui->video_options;
-	o->available = KP_VIDEO_HAS_HD2; /* no x4 art, no TrueType fonts */
+	o->available = KP_VIDEO_HAS_HD2 | KP_VIDEO_HAS_GPU; /* no x4 art, no TrueType fonts; SDL_GPU built */
+	o->gpu_name = "Metal";
 	frames(&m->clock, 5);
 	key(m, 0x79, 0, 10); /* F10, Options, Video */
 	key(m, 0x4f, 'o', 10);
 	kp_t_eq_str(T, modeless(m->ui, name, sizeof name), "rez\\options.bin", NULL);
 	key(m, 0x56, 'v', 10);
 	kp_t_eq_str(T, modeless(m->ui, name, sizeof name), "koprulu\\video.bin", NULL);
-	kp_t_ok(T, chosen(m, 10) && chosen(m, 20) && chosen(m, 30) && chosen(m, 40) && chosen(m, 60), "each choice Auto");
+	kp_t_ok(T, chosen(m, 10) && chosen(m, 20) && chosen(m, 30) && chosen(m, 40) && chosen(m, 60) && chosen(m, 70),
+		"each choice Auto");
+	kp_t_eq_str(T, (const char *)m->ui->controls[video_control(m, 72)].text, "Metal", "SDL_GPU's button the host's API");
+	kp_t_ok(T, !(m->ui->controls[video_control(m, 72)].flags & KP_UI_DISABLED), "SDL_GPU offered");
 	kp_t_ok(T, chosen(m, 52) && !chosen(m, 50), "the portraits animated");
 	kp_t_ok(T, !(m->ui->controls[video_control(m, 12)].flags & KP_UI_DISABLED), "HD (2x) offered");
 	kp_t_ok(T, (m->ui->controls[video_control(m, 13)].flags & KP_UI_DISABLED) != 0, "HD (4x) disabled");
@@ -3911,25 +3915,31 @@ static void video_options_set_and_revert(KpT *T)
 	kp_t_eq(T, m->ui->portrait.mode, KP_UI_PORTRAITS_NONE, "no portraits");
 	choose(m, 61);
 	kp_t_eq(T, o->lighting, KP_LIGHTING_OFF, "the sprites unlit");
-	kp_t_eq(T, o->serial, serial + 5, "each change counted");
+	choose(m, 71);
+	kp_t_eq(T, o->renderer, KP_RENDERER_GL, "OpenGL at the next start");
+	kp_t_eq(T, o->serial, serial + 6, "each change counted");
 	key(m, 0x43, 'c', 10); /* Cancel */
 	kp_t_eq_str(T, modeless(m->ui, name, sizeof name), "rez\\options.bin", NULL);
 	kp_t_ok(T, o->graphics == KP_VIDEO_AUTO && o->fog == KP_VIDEO_AUTO && o->water == KP_VIDEO_AUTO
-		&& o->lighting == KP_VIDEO_AUTO, "put back");
+		&& o->lighting == KP_VIDEO_AUTO && o->renderer == KP_VIDEO_AUTO, "put back");
 	kp_t_eq(T, m->ui->portrait.mode, KP_UI_PORTRAITS_ANIMATED, "the portraits put back");
-	kp_t_ok(T, o->serial > serial + 5 && m->ui->options_committed == 0, "a change, no commit");
-	o->available = KP_VIDEO_HAS_HD2 | KP_VIDEO_HAS_LIGHTING; /* the context takes the BC blocks */
+	kp_t_ok(T, o->serial > serial + 6 && m->ui->options_committed == 0, "a change, no commit");
+	/* the context takes the BC blocks */
+	o->available = KP_VIDEO_HAS_HD2 | KP_VIDEO_HAS_LIGHTING | KP_VIDEO_HAS_GPU;
 	key(m, 0x56, 'v', 10);
 	kp_t_ok(T, !(m->ui->controls[video_control(m, 62)].flags & KP_UI_DISABLED), "the lighting offered");
 	choose(m, 12);
 	choose(m, 62);
+	choose(m, 72);
 	key(m, 0x4f, 'o', 10); /* OK: back to the game */
 	kp_t_eq_str(T, modeless(m->ui, name, sizeof name), "", NULL);
 	kp_t_eq(T, o->graphics, KP_GRAPHICS_HD2, "kept");
 	kp_t_eq(T, o->lighting, KP_LIGHTING_ON, "the lighting kept");
+	kp_t_eq(T, o->renderer, KP_RENDERER_GPU, "SDL_GPU kept");
 	kp_t_eq(T, m->ui->options_committed, KP_UI_SECTION_VIDEO, "a commit");
 	kp_t_eq(T, m->ui->gamma, KP_UI_GAMMA_DEFAULT, "the gamma untouched");
-	o->available = 0; /* nothing imported: no HD art, no water masks */
+	o->available = 0; /* nothing imported: no HD art, no water masks; GL alone (a phone, the web) */
+	o->gpu_name = NULL;
 	key(m, 0x79, 0, 10);
 	key(m, 0x4f, 'o', 10);
 	key(m, 0x56, 'v', 10);
@@ -3938,6 +3948,10 @@ static void video_options_set_and_revert(KpT *T)
 	kp_t_ok(T, (m->ui->controls[video_control(m, 32)].flags & KP_UI_DISABLED) != 0, "the animated water disabled");
 	kp_t_ok(T, !(m->ui->controls[video_control(m, 31)].flags & KP_UI_DISABLED), "the still water offered");
 	kp_t_ok(T, (m->ui->controls[video_control(m, 62)].flags & KP_UI_DISABLED) != 0, "no HD art: the lighting disabled");
+	kp_t_ok(T, (m->ui->controls[video_control(m, 70)].flags & KP_UI_DISABLED) != 0
+		&& (m->ui->controls[video_control(m, 71)].flags & KP_UI_DISABLED) != 0
+		&& (m->ui->controls[video_control(m, 72)].flags & KP_UI_DISABLED) != 0, "GL alone: the renderer disabled");
+	kp_t_eq_str(T, (const char *)m->ui->controls[video_control(m, 72)].text, "Vulkan", "the dialog's text");
 }
 
 /* Each options dialog alike: everything changed under it stays at its OK with its section committed, and goes back at

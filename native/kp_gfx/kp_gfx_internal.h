@@ -1,7 +1,8 @@
 /*
  * The narrow backend under kp_gfx's passes (ADR 0012 decision 3): named textures, render targets and programs, their
  * uploads, draws of a vertex count with the textures and constants bound, target copies and readback. The passes
- * (kp_gfx_passes.c) see nothing else; kp_gfx_gl.c implements it over GLES 3.0 / WebGL2 / desktop GL core.
+ * (kp_gfx_passes.c) see nothing else; kp_gfx_gl.c implements it over GLES 3.0 / WebGL2 / desktop GL core, kp_gfx_gpu.c
+ * over SDL_GPU (ADR 0028), kp_gfx_backend.c picks one.
  */
 #ifndef KP_GFX_INTERNAL_H
 #define KP_GFX_INTERNAL_H
@@ -135,6 +136,18 @@ void kp_gb_copy(KpGfxBackend *b, int from, int to);
 int kp_gb_read(KpGfxBackend *b, int target, int32_t x, int32_t y, int32_t w, int32_t h, uint8_t *out);
 /* Whether the backend's objects still exist in the current context (0: the context lost them). */
 int kp_gb_alive(const KpGfxBackend *b);
+/* Every texture and target dropped (kp_gfx_reset): the backend to draw with from now on (b itself, or b freed and a
+ * new one), NULL with err when none could be made (b freed). */
+KpGfxBackend *kp_gb_reset(KpGfxBackend *b, char *err, size_t err_size);
+/* Shows the frame drawn into the window: 1, or 0 when it was not shown (the window not ready for it: wait 0; wait 1
+ * waits for it). */
+int kp_gb_present(KpGfxBackend *b, int wait);
+/* The presents wait for the display's refresh (on) or not: 0, else -1 when the platform refuses. */
+int kp_gb_vsync(KpGfxBackend *b, int on);
+/* Waits until the GPU has done everything submitted (a benchmark's end). */
+void kp_gb_finish(KpGfxBackend *b);
+/* The API's version and the device's names (the start-up log). */
+const char *kp_gb_version(const KpGfxBackend *b);
 
 /* The programs' sources (kp_gfx_shaders.c): per KP_PROG_* its vertex and fragment shader, each compiled after
  * KP_GFX_ES_HEADER on GLES 3.0 / WebGL2, after "#version <glsl_version> core" on desktop GL. */
@@ -144,6 +157,9 @@ typedef struct {
 } KpGfxProgramSource;
 extern const KpGfxProgramSource KP_GFX_PROGRAMS[KP_PROGRAMS];
 extern const char KP_GFX_ES_HEADER[];
+/* The names the sources give the constants (KP_U_*) and the samplers (KP_S_*). */
+extern const char *const KP_GFX_UNIFORM_NAMES[KP_UNIFORMS];
+extern const char *const KP_GFX_SAMPLER_NAMES[KP_SAMPLERS];
 
 /* The shader sources (kp_gfx_shaders.c). */
 extern const char KP_GFX_FULLSCREEN_VS[], KP_GFX_TERRAIN_FS[], KP_GFX_WORLD_VS[], KP_GFX_WORLD_FS[], KP_GFX_DEST_FS[],

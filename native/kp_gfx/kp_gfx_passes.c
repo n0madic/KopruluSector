@@ -100,8 +100,8 @@ int kp_gfx_reset(KpGfx *g, char *err, size_t err_size)
 	uint8_t palette[256 * 4];
 	KpGfxApi api = g->api;
 	float gamma = g->gamma;
+	KpGfxBackend *b = g->b;
 	memcpy(palette, g->palette, sizeof palette);
-	kp_gb_free(g->b, !g->b || !kp_gb_alive(g->b)); /* a live context's objects deleted (the art made again) */
 	free(g->hd_slot_texels);
 	memset(g, 0, sizeof *g);
 	g->api = api;
@@ -109,9 +109,21 @@ int kp_gfx_reset(KpGfx *g, char *err, size_t err_size)
 	g->palette_dirty = 1;
 	g->gamma = gamma;
 	effects_defaults(g);
-	g->b = kp_gb_new(&g->api, err, err_size);
+	/* a live backend drops its objects (the art made again; SDL_GPU keeps its shaders); a failed reset's none: anew */
+	g->b = b ? kp_gb_reset(b, err, err_size) : kp_gb_new(&g->api, err, err_size);
 	return g->b ? 0 : -1;
 }
+
+int kp_gfx_present(KpGfx *g, int wait) { return g->b ? kp_gb_present(g->b, wait) : 0; }
+
+int kp_gfx_vsync(KpGfx *g, int on) { return g->b ? kp_gb_vsync(g->b, on) : -1; }
+
+void kp_gfx_finish(KpGfx *g)
+{
+	if (g->b) kp_gb_finish(g->b);
+}
+
+const char *kp_gfx_version(const KpGfx *g) { return g->b ? kp_gb_version(g->b) : "?"; }
 
 /* --- resources --- */
 

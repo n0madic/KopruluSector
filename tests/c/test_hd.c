@@ -263,10 +263,11 @@ static void free_scr(void *p)
 /* The install's data and grpmeta; skips without it. */
 static Scr *scr(KpT *T)
 {
+	KpRes *res = kp_t_install(T, SCR); /* first: its skip would leave s unfreed */
 	Scr *s = (Scr *)calloc(1, sizeof *s);
 	KpError e;
 	if (!s) kp_t_fail(T, "out of memory");
-	s->res = kp_t_install(T, SCR);
+	s->res = res;
 	if (kp_data_build(&s->data, s->res, NULL, 0, NULL, 0, &e) != 0) {
 		free(s);
 		kp_t_fail(T, "the install's data: %s", e.msg);

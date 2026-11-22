@@ -1,15 +1,16 @@
 /*
  * The product's entry (plan phase S, stage S5; ADR 0012): SDL's main callbacks (SDL_MAIN_USE_CALLBACKS, which the web
  * and iOS need) over one KpApp: the window with its GL context (GLES 3.0 / WebGL2 on the phones and the web, GL 4.1
- * core on macOS, 3.3 core on Windows and Linux), the audio, the data, then each frame the flow, the drawing and the
- * development checks.
+ * core on macOS, 3.3 core on Windows and Linux) or, on the desktops with --gfx gpu, its SDL_GPU device (ADR 0028), the
+ * audio, the data, then each frame the flow, the drawing and the development checks.
  *
  *   koprulu [--data DIR] [--mission NAME [--play]] [--map PATH [--map-template NAME] [--seats N]]
  *           [--scale-mode auto|integer|sharp] [--fog off|original|smooth]
  *           [--water on|off] [--world-only]
  *           [--autotest [N]] [--screenshot PATH [--after SECONDS] [--camera X,Y]] [--bench-frames N]
  *           [--frame-cap HZ]
- *           [--no-vsync] [--window WxH] [--font original|vector|auto] [--vector-font PATH] [--vector-size F]
+ *           [--no-vsync] [--gfx auto|gl|gpu] [--gfx-debug] [--window WxH]
+ *           [--font original|vector|auto] [--vector-font PATH] [--vector-size F]
  *           [--graphics original|hd2|hd|auto] [--hd-budget MB] [--hd-decode] [--lighting on|off]
  *           [--cine-check DIR] [--headless] [--locale LOC] [--speech LOC]
  *           [--script FILE --script-out DIR] [--script-live FIFO --script-out DIR]
@@ -92,7 +93,7 @@ static void usage_flags(KpAppFlags *f, int argc, char **argv)
 	f->console_edges = KP_CONSOLE_EDGES;
 	f->vsync = 1;
 	f->scale_mode = KP_SCALE_AUTO;
-	f->font_mode = f->graphics = f->fog_style = f->water = f->lighting = KP_VIDEO_AUTO;
+	f->font_mode = f->graphics = f->fog_style = f->water = f->lighting = f->renderer = KP_VIDEO_AUTO;
 	f->vector_size = 1.0;
 	f->watch_delay = -1; /* KP_WATCH_DELAY_SECONDS */
 	f->win_w = KP_APP_WINDOW_W;
@@ -140,6 +141,12 @@ static void usage_flags(KpAppFlags *f, int argc, char **argv)
 		}
 		else if (strcmp(s, "--world-only") == 0) f->world_only = 1;
 		else if (strcmp(s, "--no-vsync") == 0) f->vsync = 0;
+		else if (strcmp(s, "--gfx") == 0 && next) {
+			const char *m = argv[++k];
+			f->renderer = strcmp(m, "gl") == 0 ? KP_RENDERER_GL : strcmp(m, "gpu") == 0 ? KP_RENDERER_GPU : KP_VIDEO_AUTO;
+			f->video_given |= KP_VIDEO_GIVEN_RENDERER;
+		}
+		else if (strcmp(s, "--gfx-debug") == 0) f->gfx_debug = 1;
 		else if (strcmp(s, "--headless") == 0) f->headless = KP_WINDOW_HIDES;
 		else if (strcmp(s, "--script") == 0 && next) snprintf(f->script, sizeof f->script, "%s", argv[++k]);
 		else if (strcmp(s, "--script-out") == 0 && next) snprintf(f->script_out, sizeof f->script_out, "%s", argv[++k]);
@@ -352,12 +359,119 @@ static void gl_core(KpGfxApi *api, int glsl)
 }
 #endif
 
+/* The window (extra: SDL_WINDOW_OPENGL for GL), hidden for --headless; on the phones fullscreen. */
+static int make_window(KpApp *a, SDL_WindowFlags extra)
+{
+	SDL_WindowFlags flags = extra | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
+#ifdef __EMSCRIPTEN__
+	flags |= SDL_WINDOW_FILL_DOCUMENT; /* the page's whole window */
+#endif
+	/* still the same drawing and readback: the display does not fit a hidden window to its screen, so a run's size is
+	 * the one asked for */
+	if (a->flags.headless) flags |= SDL_WINDOW_HIDDEN;
+	a->window = SDL_CreateWindow(KP_APP_TITLE, a->flags.win_w, a->flags.win_h, flags);
+	if (!a->window) {
+		SDL_Log("SDL_CreateWindow: %s", SDL_GetError());
+		return -1;
+	}
+#if defined(SDL_PLATFORM_LINUX) && !defined(SDL_PLATFORM_ANDROID)
+	window_icon(a);
+#endif
+#if defined(SDL_PLATFORM_ANDROID) || defined(SDL_PLATFORM_IOS)
+	/* the phones' immersive mode: no status and navigation bars (a swipe from the edge shows them for a while), the
+	 * picture up to the cutouts (the safe area keeps the panels off them) */
+	if (!SDL_SetWindowFullscreen(a->window, true)) SDL_Log("SDL_SetWindowFullscreen: %s", SDL_GetError());
+#endif
+	return 0;
+}
+
+/* The drawing on GL: the window with its context, kp_gfx over it; 0, else -1. */
+static int gl_start(KpApp *a, KpGfxApi *api)
+{
+	char err[512];
+	if (make_window(a, SDL_WINDOW_OPENGL) != 0) return -1;
+	a->gl = SDL_GL_CreateContext(a->window);
+#if !defined(SDL_PLATFORM_ANDROID) && !defined(SDL_PLATFORM_IOS) && !defined(__EMSCRIPTEN__) && !defined(SDL_PLATFORM_MACOS)
+	if (!a->gl) { /* a driver without 3.3 core (Wine over macOS's GL): 4.1 core, forward compatible */
+		SDL_Log("GL 3.3 core: %s; trying 4.1 core", SDL_GetError());
+		gl_core(api, KP_GFX_GLSL_41);
+		a->gl = SDL_GL_CreateContext(a->window);
+	}
+#endif
+	if (!a->gl) {
+		SDL_Log("SDL_GL_CreateContext: %s", SDL_GetError());
+		return -1;
+	}
+	api->window = a->window;
+	if (!(a->gfx = kp_gfx_new(api, err, sizeof err))) {
+		SDL_Log("%s", err);
+		return -1;
+	}
+	return 0;
+}
+
+#ifdef KP_GFX_GPU
+/* The renderer --gfx auto takes on this platform where the oracles and the benchmarks showed SDL_GPU's parity on real
+ * hardware (ADR 0028 decision 7, stage S9.6): Metal on macOS; GL on the other desktops until measured there. */
+#ifdef SDL_PLATFORM_MACOS
+#define KP_GFX_GPU_DEFAULT 1
+#else
+#define KP_GFX_GPU_DEFAULT 0
+#endif
+
+/* The drawing on SDL_GPU (ADR 0028): its device (Metal on macOS, Vulkan elsewhere: named, as SDL would try D3D12
+ * before Vulkan; auto takes no software Vulkan while GL is there), the window without GL claimed by it, kp_gfx over
+ * it. 0, else -1 with nothing left made: GL draws. */
+static int gpu_start(KpApp *a, KpGfxApi *api)
+{
+	SDL_PropertiesID p = SDL_CreateProperties();
+	char err[512];
+	if (!p) return -1;
+#ifdef SDL_PLATFORM_MACOS
+	SDL_SetBooleanProperty(p, SDL_PROP_GPU_DEVICE_CREATE_SHADERS_MSL_BOOLEAN, true);
+#else
+	SDL_SetBooleanProperty(p, SDL_PROP_GPU_DEVICE_CREATE_SHADERS_SPIRV_BOOLEAN, true);
+	SDL_SetBooleanProperty(p, SDL_PROP_GPU_DEVICE_CREATE_VULKAN_REQUIRE_HARDWARE_ACCELERATION_BOOLEAN,
+		a->flags.renderer != KP_RENDERER_GPU);
+#endif
+	SDL_SetStringProperty(p, SDL_PROP_GPU_DEVICE_CREATE_NAME_STRING, KP_GFX_GPU_DRIVER);
+	SDL_SetBooleanProperty(p, SDL_PROP_GPU_DEVICE_CREATE_DEBUGMODE_BOOLEAN, a->flags.gfx_debug != 0);
+	a->gpu = SDL_CreateGPUDeviceWithProperties(p);
+	SDL_DestroyProperties(p);
+	if (!a->gpu) {
+		SDL_Log("SDL_GPU: no device: %s", SDL_GetError());
+		return -1;
+	}
+	if (make_window(a, 0) == 0 && SDL_ClaimWindowForGPUDevice(a->gpu, a->window)) {
+		api->backend = KP_GFX_BACKEND_GPU;
+		api->gpu_device = a->gpu;
+		api->window = a->window;
+		if ((a->gfx = kp_gfx_new(api, err, sizeof err)) != NULL) return 0;
+		SDL_Log("%s", err);
+		SDL_ReleaseWindowFromGPUDevice(a->gpu, a->window);
+	} else if (a->window) {
+		SDL_Log("SDL_ClaimWindowForGPUDevice: %s", SDL_GetError());
+	}
+	/* a window SDL_GPU had takes no GL context: GL gets a new one */
+	if (a->window) SDL_DestroyWindow(a->window);
+	a->window = NULL;
+	SDL_DestroyGPUDevice(a->gpu);
+	a->gpu = NULL;
+	api->backend = KP_GFX_BACKEND_GL;
+	api->gpu_device = api->window = NULL;
+	return -1;
+}
+#endif
+
 SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
 {
 	Main *m = (Main *)calloc(1, sizeof *m);
 	KpApp *a;
 	KpGfxApi api;
 	char err[512];
+#ifdef KP_GFX_GPU
+	int renderer;
+#endif
 	if (!m) return SDL_APP_FAILURE;
 	*appstate = m;
 	a = &m->app;
@@ -386,6 +500,16 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
 		SDL_Log("SDL_Init: %s", SDL_GetError());
 		return SDL_APP_FAILURE;
 	}
+#ifndef __EMSCRIPTEN__
+	if (a->script) { /* a script's profile is its own (made by kp_app_script_begin): SDL_GetPrefPath would make the
+	                  * player's directory */
+		kp_app_script_pref(a, a->pref, sizeof a->pref);
+	} else {
+		char *pref = SDL_GetPrefPath(KP_APP_NAME, KP_APP_NAME);
+		snprintf(a->pref, sizeof a->pref, "%s", pref ? pref : "./");
+		SDL_free(pref);
+	}
+#endif
 	memset(&api, 0, sizeof api);
 #if defined(SDL_PLATFORM_ANDROID) || defined(SDL_PLATFORM_IOS) || defined(__EMSCRIPTEN__)
 	SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
@@ -400,49 +524,24 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
 	SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
 	SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 0);
 	SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 0);
-	{
-		SDL_WindowFlags flags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
-#ifdef __EMSCRIPTEN__
-		flags |= SDL_WINDOW_FILL_DOCUMENT; /* the page's whole window */
-#endif
-		/* still the same GL and readback: the display does not fit a hidden window to its screen, so a run's size is
-		 * the one asked for */
-		if (a->flags.headless) flags |= SDL_WINDOW_HIDDEN;
-		a->window = SDL_CreateWindow(KP_APP_TITLE, a->flags.win_w, a->flags.win_h, flags);
+#ifdef KP_GFX_GPU
+	/* the profile's renderer (a script's its own) under --gfx; the checks keep the flag's, as their other options */
+	renderer = a->flags.renderer;
+	if (!(a->flags.video_given & KP_VIDEO_GIVEN_RENDERER) && !kp_flow_dev_checks(&a->flags)) {
+		renderer = kp_app_profile_renderer(a);
 	}
-	if (!a->window) {
-		SDL_Log("SDL_CreateWindow: %s", SDL_GetError());
-		return SDL_APP_FAILURE;
+	if ((renderer == KP_RENDERER_GPU || (renderer == KP_VIDEO_AUTO && KP_GFX_GPU_DEFAULT)) && gpu_start(a, &api) != 0) {
+		SDL_Log("SDL_GPU: not started, GL draws");
 	}
-#if defined(SDL_PLATFORM_LINUX) && !defined(SDL_PLATFORM_ANDROID)
-	window_icon(a);
+#else
+	if (a->flags.renderer == KP_RENDERER_GPU) SDL_Log("SDL_GPU: not in this build (ADR 0028), GL draws");
 #endif
-#if defined(SDL_PLATFORM_ANDROID) || defined(SDL_PLATFORM_IOS)
-	/* the phones' immersive mode: no status and navigation bars (a swipe from the edge shows them for a while), the
-	 * picture up to the cutouts (the safe area keeps the panels off them) */
-	if (!SDL_SetWindowFullscreen(a->window, true)) SDL_Log("SDL_SetWindowFullscreen: %s", SDL_GetError());
-#endif
-	a->gl = SDL_GL_CreateContext(a->window);
-#if !defined(SDL_PLATFORM_ANDROID) && !defined(SDL_PLATFORM_IOS) && !defined(__EMSCRIPTEN__) && !defined(SDL_PLATFORM_MACOS)
-	if (!a->gl) { /* a driver without 3.3 core (Wine over macOS's GL): 4.1 core, forward compatible */
-		SDL_Log("GL 3.3 core: %s; trying 4.1 core", SDL_GetError());
-		gl_core(&api, KP_GFX_GLSL_41);
-		a->gl = SDL_GL_CreateContext(a->window);
-	}
-#endif
-	if (!a->gl) {
-		SDL_Log("SDL_GL_CreateContext: %s", SDL_GetError());
-		return SDL_APP_FAILURE;
-	}
-	SDL_GL_SetSwapInterval(a->flags.vsync ? 1 : 0);
-	SDL_Log("GL %s, %s", kp_gfx_version(), SDL_GetPlatform());
+	if (!a->gfx && gl_start(a, &api) != 0) return SDL_APP_FAILURE;
+	kp_gfx_vsync(a->gfx, a->flags.vsync);
+	SDL_Log("%s%s, %s", a->gpu ? "" : "GL ", kp_gfx_version(a->gfx), SDL_GetPlatform());
 	if (a->flags.headless) { /* tools/ci.sh checks this line */
 		SDL_Log("headless: window %s, sound driver %s", (SDL_GetWindowFlags(a->window) & SDL_WINDOW_HIDDEN) ? "hidden" : "shown",
 			SDL_GetCurrentAudioDriver());
-	}
-	if (!(a->gfx = kp_gfx_new(&api, err, sizeof err))) {
-		SDL_Log("%s", err);
-		return SDL_APP_FAILURE;
 	}
 #ifdef __EMSCRIPTEN__
 	/* the preferences live in IndexedDB: mounted, then read back before the profile loads */
@@ -458,12 +557,6 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
 		Module.canvas.addEventListener('webglcontextrestored', function() { Module.kp_context = 2; }, false);
 	);
 	snprintf(a->pref, sizeof a->pref, "/prefs/");
-#else
-	if (!a->script) { /* a script's profile is its own: SDL_GetPrefPath would make the player's directory */
-		char *pref = SDL_GetPrefPath(KP_APP_NAME, KP_APP_NAME);
-		snprintf(a->pref, sizeof a->pref, "%s", pref ? pref : "./");
-		SDL_free(pref);
-	}
 #endif
 	if (kp_app_script_begin(a, err, sizeof err) != 0) {
 		kp_dev_line("script: %s", err);
@@ -516,7 +609,7 @@ static int context_lost(KpApp *a)
 static int context_lost(KpApp *a)
 {
 	if (!a->recheck_context) return 0;
-	if (a->gl && !kp_gfx_lost(a->gfx)) {
+	if (a->gpu || (a->gl && !kp_gfx_lost(a->gfx))) { /* SDL_GPU has no context to lose (ADR 0028) */
 		a->recheck_context = 0;
 		return 0;
 	}
@@ -530,12 +623,11 @@ static int context_lost(KpApp *a)
 			if (first) SDL_Log("SDL_GL_CreateContext: %s (tried again each frame)", SDL_GetError());
 			return 1;
 		}
-		SDL_GL_SetSwapInterval(a->flags.vsync ? 1 : 0);
 	} else {
 		SDL_Log("gfx: the context lost its objects in the background");
 	}
 	a->recheck_context = 0;
-	restore_context(a);
+	if (restore_context(a) == 0) kp_gfx_vsync(a->gfx, a->flags.vsync); /* a new context's swap interval */
 	return 0;
 }
 #endif
@@ -579,7 +671,8 @@ static void present(Main *m)
 		m->next_frame = m->next_frame + period > now ? m->next_frame + period : now + period;
 	}
 #endif
-	SDL_GL_SwapWindow(m->app.window);
+	/* the frame benchmark waits for the swapchain: a frame not shown would count as a fast one */
+	if (!kp_gfx_present(m->app.gfx, m->app.flags.bench_frames > 0)) m->app.presents_missed++;
 }
 
 /* The start's failure: said (a script's refusal, a message box where someone can close it); the program ends */
@@ -720,6 +813,10 @@ void SDL_AppQuit(void *appstate, SDL_AppResult result)
 	kp_app_res_close(&m->app); /* after the audio: the music's stream reads through it */
 	kp_gfx_free(m->app.gfx);
 	if (m->app.gl) SDL_GL_DestroyContext(m->app.gl);
+	if (m->app.gpu) { /* kp_gfx's objects first, then the claim, the device, the window */
+		SDL_ReleaseWindowFromGPUDevice(m->app.gpu, m->app.window);
+		SDL_DestroyGPUDevice(m->app.gpu);
+	}
 	if (m->app.window) SDL_DestroyWindow(m->app.window);
 	free(m);
 #ifdef KP_EXIT_CODES

@@ -43,7 +43,9 @@
 #     KOPRULU_ORIGINAL its composed views rebuilt on the CPU from the retail files, tools/viewer_compose_check.py),
 #     the smoke scripts (--script's exit codes 0 to 3, tests/scripts/smoke_*.kps, ADR 0017; the video dialog's tree and
 #     the game's state written by tests/scripts/video_menu.kps, a failure's tree and state, the fixed clock's two runs
-#     of tests/scripts/determinism.kps the same and its negative control different) and the checks' scripts: the play
+#     of tests/scripts/determinism.kps the same and its negative control different, and its frames and states under
+#     the SDL_GPU backend GL's, byte for byte: --gfx gpu, ADR 0028; the renderer chosen in the video options taken
+#     at the next start, tests/scripts/renderer.kps run twice) and the checks' scripts: the play
 #     checks (play_1..5.kps: box selection, right clicks, the terrain, the fog and the palette pass against their CPU
 #     twins), the video options (video.kps: clicked through, the art following them), a save (save.kps: made during a
 #     transmission, loaded in its game and from its file, the saved view and minimap in the load's frame and its
@@ -59,7 +61,7 @@
 #     net_join.kps: the host found only by its address, typed in the join screen's Address popup; the shared hash the
 #     same at tick 400; net_watch.kps a third program watching it with --watch) and, with KOPRULU_SCR,
 #     the HD art (hd_glue.kps, hd_game.kps on each race, hd_replay.kps: the glue's screens, the game's screens and menus and a replay's with no SD
-#     pixel where HD art exists, over Remastered's install, the world's packs laid out from its anims and the
+#     pixel where HD art exists; gfx_hd.kps: the SDL_GPU backend's HD frame within one level of GL's), over Remastered's install, the world's packs laid out from its anims and the
 #     interface's frames by the placement table, and over its repack's sets and interface groups; each language's walk
 #     on terran01 too); with KOPRULU_ORIGINAL or KOPRULU_SCR the install's repack
 #     (stage D8, kp_convert repack into build/repack: the 1.17 install's groups, Remastered's one koprulu.mpq and its
@@ -235,12 +237,13 @@ app_check() {
 }
 # A script's run (--script, ADR 0017) as app_check runs a check, its exit code the one wanted (0 passed, 1 failed, 2
 # refused, 3 the watchdog; a pass also wants its summary with 0 failures): its files in build/script/RUN, emptied
-# first (a run removes nothing), its output in build/script_RUN.log, its last script line printed. RUN is the script's
-# NAME, or SCRIPT_RUN's for a second run of one script with other flags.
+# first (a run removes nothing; SCRIPT_KEEP=1 keeps them: a run after another in its directory, with its profile), its
+# output in build/script_RUN.log, its last script line printed. RUN is the script's NAME, or SCRIPT_RUN's for a second
+# run of one script with other flags.
 app_script() {
   local name="$1" want="$2" run="${SCRIPT_RUN:-$1}" status=0
   shift 2
-  rm -rf "build/script/${run:?}"
+  if [ -z "${SCRIPT_KEEP:-}" ]; then rm -rf "build/script/${run:?}"; fi
   limited "$@" --script "tests/scripts/$name.kps" --script-out "build/script/$run" --headless --window "$APP_WINDOW" \
     >"build/script_$run.log" 2>"build/script_$run.err" || status=$?
   grep -E "^SPIKE script" "build/script_$run.log" | tail -1 || true
@@ -668,6 +671,25 @@ if [ -n "${KOPRULU_APP:-}" ]; then
       return 1
     fi
   }
+  # the SDL_GPU backend against GL (ADR 0028, stage S9.5): one script on the fixed clock, its frames and states byte for
+  # byte (the index path: both map an index to its palette colour); the GPU's run under SDL_GPU's own checks
+  unit_gfx_index() {
+    unit_title "product SDL_GPU backend: determinism.kps's frames and states as GL's, byte for byte"
+    SCRIPT_RUN=determinism_gl app_script determinism 0 "$APP" --gfx gl
+    SCRIPT_RUN=determinism_gpu app_script determinism 0 "$APP" --gfx gpu --gfx-debug
+    grep -qE '^.*SDL_GPU (metal|vulkan), ' build/script_determinism_gpu.err
+    diff -r build/script/determinism_gl build/script/determinism_gpu
+  }
+  # the renderer chosen in the video options at the next start (stage S9.7): renderer.kps twice in one directory, the
+  # first from Auto to OpenGL kept at OK, the second started on GL from the script's profile
+  unit_renderer() {
+    unit_title "product renderer option: OpenGL chosen and kept, the next start on GL"
+    app_script renderer 0 "$APP"
+    grep -qE 'renderer\.kps:[0-9]+: start: video\.renderer -1, ' build/script_renderer.log
+    SCRIPT_KEEP=1 app_script renderer 0 "$APP"
+    grep -qE 'renderer\.kps:[0-9]+: start: video\.renderer 0, ' build/script_renderer.log
+    grep -qE ' GL [0-9]' build/script_renderer.err
+  }
   # the checks' scripts (stages SC5, SC6): a check's line ("SPIKE check ...", "fog check", "palette check") and the
   # run's last line and exit code say how it went
   unit_check() {
@@ -708,6 +730,8 @@ if [ -n "${KOPRULU_APP:-}" ]; then
   [ -z "${KOPRULU_ORIGINAL:-}" ] || queue unit_repack_original
   queue unit_autotest
   queue unit_determinism
+  queue unit_gfx_index
+  queue unit_renderer
   for name in touch lists save replay; do queue unit_check "$name"; done
   for n in 1 2 3 4 5; do queue unit_play "$n"; done
   step "product checks on the fixed clock, $APP_JOBS at a time, and the repacks: the autotest, the fixed clock's runs, the checks' and play scripts"
@@ -923,9 +947,21 @@ if [ -n "${KOPRULU_APP:-}" ]; then
     grep -qE "Remastered's hd2? interface art \($ui_art\)" "build/script_$run.err"
     grep -E "^SPIKE hd check" "build/script_$run.log" | grep -vE ": [0-9]+ HD pixels; SD over HD art: 0 lost, 0 outside, 0 through, 0 waiting, 0 unreadable; 0 drawn outside the log; 0 log drops;" || true
   }
+  # the SDL_GPU backend against GL on the HD path (ADR 0028, stage S9.5): terran01's HD frame under its menu from the
+  # repack's hd2 set (the BC pages both take), within one level a channel (SDL_GPU's Metal compiles with fast math)
+  unit_gfx_hd() {
+    unit_title "product SDL_GPU backend: gfx_hd.kps's HD frame within one level of GL's"
+    SCRIPT_RUN=gfx_hd_gl app_script gfx_hd 0 "$APP" --gfx gl --data build/repack/scr
+    SCRIPT_RUN=gfx_hd_gpu app_script gfx_hd 0 "$APP" --gfx gpu --data build/repack/scr
+    grep -qE '^.*SDL_GPU (metal|vulkan), ' build/script_gfx_hd_gpu.err
+    grep -qF "Remastered's hd2 art (the repack's hd2)" build/script_gfx_hd_gl.err
+    grep -qF "Remastered's hd2 art (the repack's hd2)" build/script_gfx_hd_gpu.err
+    "$PYTHON" tools/gfx_compare.py build/script/gfx_hd_gl build/script/gfx_hd_gpu --max-diff 1 | tail -1
+  }
   queue unit_smoke
   for name in video music; do queue unit_check "$name"; done
   if [ -n "${KOPRULU_SCR:-}" ]; then
+    queue unit_gfx_hd
     for loc in $(sed -n 's/^\([a-z][a-z][A-Z][A-Z]\): [0-9]* tables, .*/\1/p' build/locale_check.log); do
       queue unit_language "$loc"
     done

@@ -1,24 +1,17 @@
 /*
- * kp_gfx's backend over GLES 3.0 / WebGL2 / desktop GL core (kp_gfx_internal.h). The world images need no vertex
- * buffer: a draw of six vertices per slot reads gl_VertexID; an empty vertex array is bound for the core profiles.
+ * kp_gfx's backend over GLES 3.0 / WebGL2 / desktop GL core (kp_gfx_internal.h, behind kp_gfx_backend.c). The world
+ * images need no vertex buffer: a draw of six vertices per slot reads gl_VertexID; an empty vertex array is bound for the
+ * core profiles.
  */
-#include "kp_gfx_internal.h"
+#include "kp_gfx_backend.h"
 #include "kp_gl.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-static const char *const UNIFORM_NAMES[KP_UNIFORMS] = { "terrain", "terrain_size", "view", "interp", "window",
-	"slot_base", "lookups", "fog", "fog_origin", "cursor", "blend", "source_size", "hd", "water", "hd_cursor_rect",
-	"hd_cursor_src", "hd_cursor_layer", "art", "ui_gamma", "video_yuv", "video_gb", "video_chroma", "hd_atlas",
-	"light", "video_caption_rect" };
-static const char *const SAMPLER_NAMES[KP_SAMPLERS] = { "terrain_map", "terrain_sheet", "image_data", "frame_table",
-	"atlas", "remap_table", "bars", "dest", "tables", "fog_levels", "fog_dark", "ui_canvas", "ui_blend", "ui_cursor",
-	"index_target", "rgb_target", "palette", "text_atlas", "text_quads", "hd_diffuse", "hd_team", "hd_frames",
-	"hd_sheet", "hd_map", "hd_colors", "hd_target", "hd_slots", "hd_water", "hd_normal_a", "hd_normal_b", "hd_tone",
-	"ui_ids", "ui_below", "ui_items", "ui_atlas", "hd_edges", "video_y", "video_cb", "video_cr", "hd_light", "hd_occlusion",
-	"hd_glow", "video_caption", "glow_fit" };
+static void gl_free(KpGfxBackend *b, int lost);
+static void gl_drop(KpGfxBackend *b, int tex);
 
 /* The errors a drain reads at most: a driver with no current context (or a lost one) may never answer GL_NO_ERROR. */
 #define KP_GL_ERRORS_MAX 32
@@ -39,6 +32,7 @@ typedef struct {
 enum { DUMMY_2D, DUMMY_ARRAY, DUMMY_UINT, DUMMIES };
 
 struct KpGfxBackend {
+	const KpGfxBackendOps *ops; /* first: kp_gfx_backend.c's dispatch */
 	KpGfxApi api;
 	GLuint vao, window_fbo, window_rb;
 	GLuint programs[KP_PROGRAMS];
@@ -53,7 +47,7 @@ struct KpGfxBackend {
 	int32_t hd_failed_w, hd_failed_h; /* the size the HD target could not be made at (not tried again) */
 	int takes[KP_FORMATS]; /* a block format's textures: 0 untried, 1 yes, -1 no */
 	GLuint current; /* the program in use */
-	/* the textures that could not be made since kp_gb_take_failures, the last described; a texture failing again at
+	/* the textures that could not be made since gl_take_failures, the last described; a texture failing again at
 	 * the size it failed at last is not counted again (a caller trying each frame) */
 	int32_t failures;
 	char failure[160];
@@ -139,7 +133,7 @@ static void sampler_types(KpGfxBackend *b, int prog)
 		GLenum type = 0;
 		glGetActiveUniform(b->programs[prog], (GLuint)i, (GLsizei)sizeof name, &n, &size, &type, name);
 		for (k = 0; k < KP_SAMPLERS; k++) {
-			if (strcmp(name, SAMPLER_NAMES[k]) != 0) continue;
+			if (strcmp(name, KP_GFX_SAMPLER_NAMES[k]) != 0) continue;
 			b->dummy_of[prog][k] = type == GL_SAMPLER_2D_ARRAY ? DUMMY_ARRAY
 				: type == GL_UNSIGNED_INT_SAMPLER_2D ? DUMMY_UINT : DUMMY_2D;
 		}
@@ -190,21 +184,21 @@ static int program(KpGfxBackend *b, int prog, const char *vs, const char *fs, ch
 		return -1;
 	}
 	b->programs[prog] = p;
-	for (k = 0; k < KP_UNIFORMS; k++) b->uniforms[prog][k] = glGetUniformLocation(p, UNIFORM_NAMES[k]);
+	for (k = 0; k < KP_UNIFORMS; k++) b->uniforms[prog][k] = glGetUniformLocation(p, KP_GFX_UNIFORM_NAMES[k]);
 	sampler_types(b, prog);
-	/* the program's samplers read units 0, 1, ... in the order of their numbers (kp_gb_draw binds them there; WebGL 2
+	/* the program's samplers read units 0, 1, ... in the order of their numbers (gl_draw binds them there; WebGL 2
 	 * has 32 units in all, fewer than the samplers, and 16 a fragment shader) */
 	glUseProgram(p);
 	b->current = p;
 	for (k = 0, unit = 0; k < KP_SAMPLERS; k++) {
-		GLint at = glGetUniformLocation(p, SAMPLER_NAMES[k]);
+		GLint at = glGetUniformLocation(p, KP_GFX_SAMPLER_NAMES[k]);
 		b->units[prog][k] = at >= 0 ? unit : -1;
 		if (at >= 0) glUniform1i(at, unit++);
 	}
 	return 0;
 }
 
-KpGfxBackend *kp_gb_new(const KpGfxApi *api, char *err, size_t err_size)
+static KpGfxBackend *gl_new(const KpGfxApi *api, char *err, size_t err_size)
 {
 	KpGfxBackend *b;
 	const char *missing = kp_gl_load();
@@ -219,6 +213,7 @@ KpGfxBackend *kp_gb_new(const KpGfxApi *api, char *err, size_t err_size)
 		snprintf(err, err_size, "gfx: out of memory");
 		return NULL;
 	}
+	b->ops = &KP_GFX_GL_OPS;
 	b->api = *api;
 	b->failed_tex = -1;
 	/* the window's framebuffer and renderbuffer: 0, or the ones the platform made (UIKit's, whose swap presents the
@@ -231,7 +226,11 @@ KpGfxBackend *kp_gb_new(const KpGfxApi *api, char *err, size_t err_size)
 	glBindVertexArray(b->vao);
 	for (k = 0; k < KP_PROGRAMS; k++) {
 		if (program(b, KP_GFX_PROGRAMS[k].prog, KP_GFX_PROGRAMS[k].vs, KP_GFX_PROGRAMS[k].fs, err, err_size) != 0) {
-			kp_gb_free(b, 0);
+			/* the driver named: the start's log names it only once the backend stands (kp_gfx_version) */
+			const GLubyte *v = glGetString(GL_VERSION);
+			size_t n = strlen(err);
+			if (n < err_size) snprintf(err + n, err_size - n, " (GL %s)", v ? (const char *)v : "?");
+			gl_free(b, 0);
 			return NULL;
 		}
 	}
@@ -262,7 +261,7 @@ static void free_targets(KpGfxBackend *b)
 	b->hd_failed_w = b->hd_failed_h = 0; /* the memory the targets held is back: one more try */
 }
 
-void kp_gb_free(KpGfxBackend *b, int lost)
+static void gl_free(KpGfxBackend *b, int lost)
 {
 	int k;
 	if (!b) return;
@@ -282,11 +281,11 @@ void kp_gb_free(KpGfxBackend *b, int lost)
 	free(b);
 }
 
-int kp_gb_texture(KpGfxBackend *b, int tex, int format, int32_t w, int32_t h, int32_t layers)
+static int gl_texture(KpGfxBackend *b, int tex, int format, int32_t w, int32_t h, int32_t layers)
 {
 	Texture *t = &b->textures[tex];
 	if (t->id && t->format == format && t->w == w && t->h == h && t->layers == layers) return 0;
-	kp_gb_drop(b, tex);
+	gl_drop(b, tex);
 	clear_errors(); /* only the texture's own error counts */
 	glGenTextures(1, &t->id);
 	t->format = format;
@@ -303,11 +302,11 @@ int kp_gb_texture(KpGfxBackend *b, int tex, int format, int32_t w, int32_t h, in
 				|| tex == KP_TEX_VIDEO_Y || tex == KP_TEX_VIDEO_CB || tex == KP_TEX_VIDEO_CR || tex == KP_TEX_HD_NORMAL_B
 				|| tex == KP_TEX_VIDEO_CAPTION ? GL_LINEAR : GL_NEAREST,
 		tex == KP_TEX_HD_NORMAL_A || tex == KP_TEX_HD_NORMAL_B ? GL_REPEAT : GL_CLAMP_TO_EDGE);
-#ifndef __EMSCRIPTEN__ /* WebGL has no swizzle: kp_gb_takes_blocks refuses RG11, the phones' pages draw decoded there */
+#ifndef __EMSCRIPTEN__ /* WebGL has no swizzle: gl_takes_blocks refuses RG11, the phones' pages draw decoded there */
 	if (format == KP_FMT_EAC_RG11) glTexParameteri(t->target, GL_TEXTURE_SWIZZLE_A, GL_GREEN); /* y of the normal map */
 	if (tex == KP_TEX_HD_OCCLUSION && format == KP_FMT_EAC_R11) glTexParameteri(t->target, GL_TEXTURE_SWIZZLE_G, GL_RED);
 #endif
-	if (is_blocks(format)) { /* texture arrays only; the contents follow by layer (kp_gb_upload_blocks) */
+	if (is_blocks(format)) { /* texture arrays only; the contents follow by layer (gl_upload_blocks) */
 #ifdef KP_GLES
 		/* WebGL's compressedTexImage3D takes no empty contents (Emscripten's would read size bytes of the heap from 0) */
 		glTexStorage3D(GL_TEXTURE_2D_ARRAY, 1, (GLenum)FORMATS[format].internal, w, h, layers > 0 ? layers : 1);
@@ -323,7 +322,7 @@ int kp_gb_texture(KpGfxBackend *b, int tex, int format, int32_t w, int32_t h, in
 		glTexImage2D(t->target, 0, FORMATS[format].internal, w, h, 0, FORMATS[format].format, FORMATS[format].type, NULL);
 	}
 	if (glGetError() != GL_NO_ERROR) { /* out of memory, or a size past the context's */
-		kp_gb_drop(b, tex);
+		gl_drop(b, tex);
 		if (b->failed_tex != tex || b->failed_w != w || b->failed_h != h || b->failed_layers != layers) {
 			b->failures++;
 			snprintf(b->failure, sizeof b->failure, "gfx: texture %d (%d x %d x %d, format %d) cannot be made", tex,
@@ -339,7 +338,7 @@ int kp_gb_texture(KpGfxBackend *b, int tex, int format, int32_t w, int32_t h, in
 	return 0;
 }
 
-int kp_gb_take_failures(KpGfxBackend *b, char *msg, size_t size)
+static int gl_take_failures(KpGfxBackend *b, char *msg, size_t size)
 {
 	int32_t n = b->failures;
 	if (n > 0 && size > 0) snprintf(msg, size, "%s", b->failure);
@@ -347,14 +346,14 @@ int kp_gb_take_failures(KpGfxBackend *b, char *msg, size_t size)
 	return (int)n;
 }
 
-void kp_gb_drop(KpGfxBackend *b, int tex)
+static void gl_drop(KpGfxBackend *b, int tex)
 {
 	Texture *t = &b->textures[tex];
 	if (t->id) glDeleteTextures(1, &t->id);
 	memset(t, 0, sizeof *t);
 }
 
-int kp_gb_has_texture(const KpGfxBackend *b, int tex, int32_t *w, int32_t *h)
+static int gl_has_texture(const KpGfxBackend *b, int tex, int32_t *w, int32_t *h)
 {
 	const Texture *t = &b->textures[tex];
 	if (w) *w = t->w;
@@ -362,7 +361,7 @@ int kp_gb_has_texture(const KpGfxBackend *b, int tex, int32_t *w, int32_t *h)
 	return t->id != 0;
 }
 
-void kp_gb_upload(KpGfxBackend *b, int tex, int32_t layer, int32_t x, int32_t y, int32_t w, int32_t h, const void *data,
+static void gl_upload(KpGfxBackend *b, int tex, int32_t layer, int32_t x, int32_t y, int32_t w, int32_t h, const void *data,
 	size_t stride)
 {
 	Texture *t = &b->textures[tex];
@@ -379,7 +378,7 @@ void kp_gb_upload(KpGfxBackend *b, int tex, int32_t layer, int32_t x, int32_t y,
 	glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
 }
 
-void kp_gb_upload_blocks(KpGfxBackend *b, int tex, int32_t layer, int32_t w, int32_t h, const void *data, size_t size)
+static void gl_upload_blocks(KpGfxBackend *b, int tex, int32_t layer, int32_t w, int32_t h, const void *data, size_t size)
 {
 	Texture *t = &b->textures[tex];
 	if (!t->id || !is_blocks(t->format) || t->layers <= 0 || size != blocks_size(t->format, w, h)) return;
@@ -389,14 +388,14 @@ void kp_gb_upload_blocks(KpGfxBackend *b, int tex, int32_t layer, int32_t w, int
 		data);
 }
 
-int kp_gb_takes_blocks(KpGfxBackend *b, int format)
+static int gl_takes_blocks(KpGfxBackend *b, int format)
 {
 	static const uint8_t block[16] = { 0 };
 	GLuint id = 0;
 	int side, bytes;
 	if (!is_blocks(format)) return 0;
 #ifdef __EMSCRIPTEN__
-	if (format == KP_FMT_EAC_RG11) return 0; /* the shader's normal y needs its swizzle (kp_gb_texture) */
+	if (format == KP_FMT_EAC_RG11) return 0; /* the shader's normal y needs its swizzle (gl_texture) */
 #endif
 	if (b->takes[format]) return b->takes[format] > 0;
 	kp_hd_codec_block(format - KP_FMT_BLOCKS, &side, &bytes);
@@ -430,7 +429,7 @@ static int make_target(Target *t, int32_t w, int32_t h, GLint filter, int depth,
 	return glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE ? 0 : -1;
 }
 
-int kp_gb_targets(KpGfxBackend *b, int32_t w, int32_t h)
+static int gl_targets(KpGfxBackend *b, int32_t w, int32_t h)
 {
 	int rc = 0;
 	if (w < 1) w = 1;
@@ -451,7 +450,7 @@ int kp_gb_targets(KpGfxBackend *b, int32_t w, int32_t h)
 	return 0;
 }
 
-int kp_gb_hd_target(KpGfxBackend *b, int32_t w, int32_t h)
+static int gl_hd_target(KpGfxBackend *b, int32_t w, int32_t h)
 {
 	Target *t = &b->targets[KP_TARGET_HD];
 	int rc;
@@ -476,13 +475,13 @@ int kp_gb_hd_target(KpGfxBackend *b, int32_t w, int32_t h)
 	return 0;
 }
 
-void kp_gb_bind(KpGfxBackend *b, int target, int32_t vx, int32_t vy, int32_t vw, int32_t vh)
+static void gl_bind(KpGfxBackend *b, int target, int32_t vx, int32_t vy, int32_t vw, int32_t vh)
 {
 	glBindFramebuffer(GL_FRAMEBUFFER, target == KP_TARGET_WINDOW ? b->window_fbo : b->targets[target].fbo);
 	glViewport(vx, vy, vw, vh);
 }
 
-void kp_gb_clear(KpGfxBackend *b, float r, float gg, float bb, float a, int depth)
+static void gl_clear(KpGfxBackend *b, float r, float gg, float bb, float a, int depth)
 {
 	(void)b;
 	glClearColor(r, gg, bb, a);
@@ -502,7 +501,7 @@ static void use(KpGfxBackend *b, int prog)
 	b->current = b->programs[prog];
 }
 
-void kp_gb_uniform(KpGfxBackend *b, int prog, int u, float x, float y, float z, float w)
+static void gl_uniform(KpGfxBackend *b, int prog, int u, float x, float y, float z, float w)
 {
 	GLint at = b->uniforms[prog][u];
 	if (at < 0) return;
@@ -510,7 +509,7 @@ void kp_gb_uniform(KpGfxBackend *b, int prog, int u, float x, float y, float z, 
 	glUniform4f(at, x, y, z, w);
 }
 
-void kp_gb_draw(KpGfxBackend *b, int prog, int32_t vertices, const KpGfxBinding *bind, int count, int depth, int write)
+static void gl_draw(KpGfxBackend *b, int prog, int32_t vertices, const KpGfxBinding *bind, int count, int depth, int write)
 {
 	int k;
 	use(b, prog);
@@ -532,7 +531,7 @@ void kp_gb_draw(KpGfxBackend *b, int prog, int32_t vertices, const KpGfxBinding 
 	if (depth == KP_DEPTH_OFF) glDisable(GL_DEPTH_TEST);
 	else glEnable(GL_DEPTH_TEST);
 	glDepthMask(write ? GL_TRUE : GL_FALSE);
-	glDrawArrays(GL_TRIANGLES, 0, vertices); /* the vertex array kp_gb_new bound */
+	glDrawArrays(GL_TRIANGLES, 0, vertices); /* the vertex array gl_new bound */
 	/* a target's colour left bound counts as a feedback loop on WebGL when that target is drawn next */
 	for (k = 0; k < count; k++) {
 		if (bind[k].texture < KP_SAMPLE_TARGET || b->units[prog][bind[k].sampler] < 0) continue;
@@ -541,7 +540,7 @@ void kp_gb_draw(KpGfxBackend *b, int prog, int32_t vertices, const KpGfxBinding 
 	}
 }
 
-void kp_gb_blend(KpGfxBackend *b, int on)
+static void gl_blend(KpGfxBackend *b, int on)
 {
 	(void)b;
 	if (on) {
@@ -553,14 +552,14 @@ void kp_gb_blend(KpGfxBackend *b, int on)
 	}
 }
 
-void kp_gb_blend_premultiplied(KpGfxBackend *b)
+static void gl_blend_premultiplied(KpGfxBackend *b)
 {
 	(void)b;
 	glEnable(GL_BLEND);
 	glBlendFuncSeparate(GL_ONE, GL_ONE_MINUS_SRC_ALPHA, GL_ZERO, GL_ONE);
 }
 
-void kp_gb_copy(KpGfxBackend *b, int from, int to)
+static void gl_copy(KpGfxBackend *b, int from, int to)
 {
 	glBindFramebuffer(GL_READ_FRAMEBUFFER, b->targets[from].fbo);
 	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, b->targets[to].fbo);
@@ -568,7 +567,7 @@ void kp_gb_copy(KpGfxBackend *b, int from, int to)
 	glBindFramebuffer(GL_FRAMEBUFFER, b->window_fbo);
 }
 
-int kp_gb_read(KpGfxBackend *b, int target, int32_t x, int32_t y, int32_t w, int32_t h, uint8_t *out)
+static int gl_read(KpGfxBackend *b, int target, int32_t x, int32_t y, int32_t w, int32_t h, uint8_t *out)
 {
 	if (target != KP_TARGET_WINDOW && !b->targets[target].fbo) return -1; /* not made: the window is no stand-in */
 	while (glGetError() != GL_NO_ERROR) {} /* only the read's own error counts */
@@ -578,10 +577,42 @@ int kp_gb_read(KpGfxBackend *b, int target, int32_t x, int32_t y, int32_t w, int
 	return glGetError() == GL_NO_ERROR ? 0 : -1;
 }
 
-int kp_gb_alive(const KpGfxBackend *b) { return glIsProgram(b->programs[0]) == GL_TRUE; }
+static int gl_alive(const KpGfxBackend *b) { return glIsProgram(b->programs[0]) == GL_TRUE; }
 
-const char *kp_gfx_version(void)
+static KpGfxBackend *gl_reset(KpGfxBackend *b, char *err, size_t err_size)
+{
+	KpGfxApi api = b->api;
+	gl_free(b, !gl_alive(b)); /* a lost context's objects went with it */
+	return gl_new(&api, err, err_size);
+}
+
+static int gl_present(KpGfxBackend *b, int wait)
+{
+	(void)wait; /* the swap waits as the driver does */
+	SDL_GL_SwapWindow((SDL_Window *)b->api.window);
+	return 1;
+}
+
+static int gl_vsync(KpGfxBackend *b, int on)
+{
+	(void)b;
+	return SDL_GL_SetSwapInterval(on ? 1 : 0) ? 0 : -1;
+}
+
+static void gl_finish(KpGfxBackend *b)
+{
+	(void)b;
+	glFinish();
+}
+
+static const char *gl_version(const KpGfxBackend *b)
 {
 	const GLubyte *v = glGetString(GL_VERSION);
+	(void)b;
 	return v ? (const char *)v : "?";
 }
+
+const KpGfxBackendOps KP_GFX_GL_OPS = { gl_new, gl_free, gl_reset, gl_texture, gl_drop, gl_take_failures,
+	gl_has_texture, gl_upload, gl_targets, gl_bind, gl_clear, gl_uniform, gl_draw, gl_blend, gl_blend_premultiplied,
+	gl_takes_blocks, gl_upload_blocks, gl_hd_target, gl_copy, gl_read, gl_alive, gl_present, gl_vsync, gl_finish,
+	gl_version };

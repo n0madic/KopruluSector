@@ -18,9 +18,9 @@ enum {
 	V_TICK, V_CAMERA_X, V_CAMERA_Y, V_CAMERA_TILE_X, V_CAMERA_TILE_Y, V_MINIMAP_X, V_MINIMAP_Y, V_SELECTED, V_UNITS,
 	V_CREEP_TILES, V_CREEP_RECEDING, V_TRIGGER_WAITING, V_PORTRAIT_MS, V_TARGETING, V_PLACING, V_GROUPS_HELD, V_PAD_OPEN,
 	V_PAD_COUNT, V_PAD_SHOWN, V_GAMMA, V_PORTRAITS, V_VIDEO_GRAPHICS, V_VIDEO_FOG, V_VIDEO_WATER, V_VIDEO_FONT,
-	V_VIDEO_LIGHTING, V_VIDEO_SERIAL, V_VIDEO_COMMITS, V_TEXT_VECTOR, V_SELECTION_HAS, V_SELECTION_FIRST, V_MOVED,
-	V_GROUP_HELD, V_REPLAY_ENDED, V_REPLAY_FRAMES, V_SIM_CRC, V_SIM_SHARED, V_LIST_TOP, V_LIST_SELECTED, V_LIST_COUNT, V_SEAT,
-	V_LOCAL_PLAYER, V_LOBBY_HUMANS, V_LOBBY_DISTRIBUTED, V_COUNT
+	V_VIDEO_LIGHTING, V_VIDEO_RENDERER, V_VIDEO_SERIAL, V_VIDEO_COMMITS, V_TEXT_VECTOR, V_SELECTION_HAS,
+	V_SELECTION_FIRST, V_MOVED, V_GROUP_HELD, V_REPLAY_ENDED, V_REPLAY_FRAMES, V_SIM_CRC, V_SIM_SHARED, V_LIST_TOP,
+	V_LIST_SELECTED, V_LIST_COUNT, V_SEAT, V_LOCAL_PLAYER, V_LOBBY_HUMANS, V_LOBBY_DISTRIBUTED, V_COUNT
 };
 enum { NEED_UI, NEED_WORLD, NEED_GAME, NEED_CONSOLE }; /* what a value is read from */
 static const struct {
@@ -54,6 +54,7 @@ static const struct {
 	{ "video.water", KP_SCRIPT_ARG_NONE, NEED_UI },
 	{ "video.font", KP_SCRIPT_ARG_NONE, NEED_UI },
 	{ "video.lighting", KP_SCRIPT_ARG_NONE, NEED_UI },
+	{ "video.renderer", KP_SCRIPT_ARG_NONE, NEED_UI },     /* the next start's (KP_RENDERER_*: 0 GL, 1 SDL_GPU) */
 	{ "video.serial", KP_SCRIPT_ARG_NONE, NEED_UI },       /* the dialog's changes */
 	{ "video.commits", KP_SCRIPT_ARG_NONE, NEED_UI },      /* the dialog's OKs kept */
 	{ "text.vector", KP_SCRIPT_ARG_NONE, NEED_UI },        /* the interface's text in the vector font */
@@ -111,6 +112,9 @@ static const struct {
 	{ "lighting.auto", KP_VIDEO_CHOICE_ID(KP_VIDEO_ID_LIGHTING, KP_VIDEO_AUTO) },
 	{ "lighting.off", KP_VIDEO_CHOICE_ID(KP_VIDEO_ID_LIGHTING, KP_LIGHTING_OFF) },
 	{ "lighting.on", KP_VIDEO_CHOICE_ID(KP_VIDEO_ID_LIGHTING, KP_LIGHTING_ON) },
+	{ "renderer.auto", KP_VIDEO_CHOICE_ID(KP_VIDEO_ID_RENDERER, KP_VIDEO_AUTO) },
+	{ "renderer.gl", KP_VIDEO_CHOICE_ID(KP_VIDEO_ID_RENDERER, KP_RENDERER_GL) },
+	{ "renderer.gpu", KP_VIDEO_CHOICE_ID(KP_VIDEO_ID_RENDERER, KP_RENDERER_GPU) },
 	{ "portraits.none", KP_VIDEO_ID_PORTRAITS + KP_UI_PORTRAITS_NONE },
 	{ "portraits.still", KP_VIDEO_ID_PORTRAITS + KP_UI_PORTRAITS_STILL },
 	{ "portraits.animated", KP_VIDEO_ID_PORTRAITS + KP_UI_PORTRAITS_ANIMATED },
@@ -569,6 +573,7 @@ int kp_script_flow_value(const KpFlow *f, const KpScriptRun *run, const KpScript
 	case V_VIDEO_WATER: *out = ui->video_options.water; break;
 	case V_VIDEO_FONT: *out = ui->video_options.font; break;
 	case V_VIDEO_LIGHTING: *out = ui->video_options.lighting; break;
+	case V_VIDEO_RENDERER: *out = ui->video_options.renderer; break;
 	case V_VIDEO_SERIAL: *out = ui->video_options.serial; break;
 	case V_VIDEO_COMMITS: *out = f->video_commits; break;
 	case V_TEXT_VECTOR: *out = ui->vector_text != 0; break;

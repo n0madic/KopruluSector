@@ -6061,7 +6061,8 @@ static void vector_text_lays_glyphs_on_the_original_pens(KpT *T)
 	kp_t_eq(T, kp_vtext_quads(v, &c), 2, "the shadow under the glyph");
 	q = v->quads;
 	kp_t_ok(T, q[12] == 5.0f && q[28] == 100.0f, "the shadow first");
-	kp_t_ok(T, q[16] - q[0] < -0.49f && q[16] - q[0] > -0.51f, "half a logical pixel right and down at scale 3");
+	kp_t_ok(T, (q[16] - q[0]) * 3.0f < -1.99f && (q[16] - q[0]) * 3.0f > -2.01f && (q[17] - q[1]) * 3.0f < -1.99f
+		&& (q[17] - q[1]) * 3.0f > -2.01f, "half a logical pixel right and down in whole window pixels at scale 3: 2");
 	kp_t_ok(T, q[24] == 12.0f && q[25] < -1000.0f && q[26] > 1000.0f && q[27] > 1000.0f,
 		"cut only where its uncovered pixels end short of its bitmap");
 	kp_vtext_free(v);

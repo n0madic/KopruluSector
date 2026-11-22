@@ -385,6 +385,7 @@ static Host *new_host(KpT *T)
 	h->palette = host_palette;
 	h->gamma = host_gamma;
 	h->video_available = host_video_available;
+	h->gpu_name = "Vulkan";
 	h->cine_has = host_cine_has;
 	h->cine_start = host_cine_start;
 	h->cine_active = host_cine_active;
@@ -4326,8 +4327,10 @@ static void video_options_come_from_the_profile_under_the_flags(KpT *T)
 		H->profile.video.water = KP_WATER_ANIMATED;
 		H->profile.video.font = KP_VTEXT_VECTOR;
 		H->profile.video.lighting = KP_LIGHTING_OFF;
+		H->profile.video.renderer = KP_RENDERER_GPU;
 		H->flags.graphics = KP_GRAPHICS_ORIGINAL;
 		H->flags.fog_style = H->flags.water = H->flags.font_mode = H->flags.lighting = KP_VIDEO_AUTO;
+		H->flags.renderer = KP_VIDEO_AUTO;
 		H->flags.video_given = KP_VIDEO_GIVEN_GRAPHICS;
 		H->flags.originals = check;
 		H->available = KP_VIDEO_HAS_HD2 | KP_VIDEO_HAS_VECTOR;
@@ -4336,11 +4339,13 @@ static void video_options_come_from_the_profile_under_the_flags(KpT *T)
 		kp_t_eq(T, H->flags.graphics, KP_GRAPHICS_ORIGINAL, "the flag's art");
 		kp_t_eq(T, ui->video_options.graphics, KP_GRAPHICS_ORIGINAL, NULL);
 		kp_t_eq(T, ui->video_options.available, KP_VIDEO_HAS_HD2 | KP_VIDEO_HAS_VECTOR, "the host's choices");
+		kp_t_eq_str(T, ui->video_options.gpu_name, "Vulkan", "SDL_GPU's button the host's API");
 		if (check) {
 			kp_t_eq(T, H->f.gamma, KP_UI_GAMMA_DEFAULT, "a check's gamma");
 			kp_t_eq(T, H->f.portraits, KP_UI_PORTRAITS_ANIMATED, NULL);
 			kp_t_eq(T, H->flags.fog_style, KP_VIDEO_AUTO, "a check keeps the flags");
 			kp_t_eq(T, H->flags.lighting, KP_VIDEO_AUTO, NULL);
+			kp_t_eq(T, H->flags.renderer, KP_VIDEO_AUTO, NULL);
 		} else {
 			kp_t_eq(T, H->f.gamma, 150, "the profile's gamma");
 			kp_t_eq(T, H->gamma, 150, "on the host's HD art");
@@ -4351,7 +4356,9 @@ static void video_options_come_from_the_profile_under_the_flags(KpT *T)
 			kp_t_eq(T, H->flags.water, KP_WATER_ANIMATED, NULL);
 			kp_t_eq(T, H->flags.font_mode, KP_VTEXT_VECTOR, NULL);
 			kp_t_eq(T, H->flags.lighting, KP_LIGHTING_OFF, NULL);
+			kp_t_eq(T, H->flags.renderer, KP_RENDERER_GPU, "the profile's renderer (the host's start read it too)");
 			kp_t_eq(T, ui->video_options.fog, KP_FOG_SMOOTH, NULL);
+			kp_t_eq(T, ui->video_options.renderer, KP_RENDERER_GPU, NULL);
 		}
 	}
 }
@@ -4369,10 +4376,12 @@ static void video_dialog_applies_and_keeps_its_options(KpT *T)
 		o = &H->f.ui->video_options;
 		o->fog = KP_FOG_SMOOTH;
 		o->water = KP_WATER_ANIMATED;
+		o->renderer = KP_RENDERER_GL;
 		H->f.ui->gamma = 70;
 		o->serial++;
 		frame(H);
 		kp_t_eq(T, H->flags.fog_style, KP_FOG_SMOOTH, "applied at once");
+		kp_t_eq(T, H->flags.renderer, KP_RENDERER_GL, "the next start's renderer");
 		kp_t_eq(T, H->flags.water, KP_WATER_ANIMATED, NULL);
 		kp_t_eq(T, H->f.gamma, 70, "the gamma");
 		kp_t_eq(T, H->gamma, 70, "on the host's HD art");
@@ -4385,6 +4394,7 @@ static void video_dialog_applies_and_keeps_its_options(KpT *T)
 		} else {
 			kp_t_eq(T, H->profile.video.fog, KP_FOG_SMOOTH, "kept at OK");
 			kp_t_eq(T, H->profile.video.water, KP_WATER_ANIMATED, NULL);
+			kp_t_eq(T, H->profile.video.renderer, KP_RENDERER_GL, NULL);
 			kp_t_eq(T, H->profile.video.gamma, 70, NULL);
 			kp_t_ok(T, H->profile_saves > saves, "the profile written");
 		}

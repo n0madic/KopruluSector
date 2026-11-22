@@ -24,7 +24,13 @@ typedef struct KpGfx KpGfx;
 typedef struct {
 	int gles;
 	int glsl_version;
+	int backend;      /* KP_GFX_BACKEND_* */
+	void *window;     /* the SDL_Window the frames are shown in */
+	void *gpu_device; /* KP_GFX_BACKEND_GPU: the SDL_GPUDevice that claimed the window */
 } KpGfxApi;
+
+/* The backends (ADR 0028): the GL context current on the window, or SDL_GPU (Metal, Vulkan) on the desktops. */
+enum { KP_GFX_BACKEND_GL, KP_GFX_BACKEND_GPU };
 
 /* The desktop GL core contexts the host asks for, as their GLSL versions (the GL version times 100): 4.1 (macOS, and
  * where a driver has no 3.3 core) and 3.3; test_gfx compiles the shaders for each. */
@@ -174,8 +180,14 @@ void kp_gfx_video_caption(KpGfx *g, const uint8_t *rgba, int32_t w, int32_t h, c
 int kp_gfx_read_index(KpGfx *g, int32_t x, int32_t y, int32_t w, int32_t h, uint8_t *out);
 /* The window's pixels (RGBA, rows bottom-up) of the last frame; -1 none. */
 int kp_gfx_read_window(KpGfx *g, int32_t x, int32_t y, int32_t w, int32_t h, uint8_t *out);
-/* The context's GL version string. */
-const char *kp_gfx_version(void);
+/* Shows the frame drawn: 1, or 0 when the window was not ready for it (wait 1 waits until it is; a benchmark's). */
+int kp_gfx_present(KpGfx *g, int wait);
+/* The presents wait for the display's refresh or not: 0, else -1 when the platform refuses. */
+int kp_gfx_vsync(KpGfx *g, int on);
+/* Waits until the GPU has done every frame submitted (a benchmark's end). */
+void kp_gfx_finish(KpGfx *g);
+/* The backend's API version and device (the start-up log). */
+const char *kp_gfx_version(const KpGfx *g);
 
 #ifdef __cplusplus
 }

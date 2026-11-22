@@ -222,7 +222,7 @@ int kp_app_load_data(KpApp *a, char *err, size_t err_size)
 	if (!(a->console_art = kp_hd_ui_scr_console_art(a->res, &a->data.files, &a->console_art_size, &e)) && e.msg[0]) {
 		SDL_Log("%s: the original's console", e.msg);
 	} else if (a->console_art) {
-		SDL_Log("data: the consoles' art (%zu bytes) in %.1f ms", a->console_art_size,
+		SDL_Log("data: the consoles' art (%lu bytes) in %.1f ms", (unsigned long)a->console_art_size,
 			(double)(SDL_GetTicksNS() - t0) / 1e6);
 	}
 	return 0;
@@ -373,4 +373,22 @@ void kp_app_load_profile(KpApp *a)
 	}
 	if (kp_profile_decode(&a->profile, bytes, size, &err) != 0) SDL_Log("profile: %s (a new profile)", err.msg);
 	free(bytes);
+}
+
+int kp_app_profile_renderer(KpApp *a)
+{
+	char path[1100];
+	uint8_t *bytes;
+	size_t size;
+	KpError err;
+	KpProfile *p;
+	int renderer = KP_VIDEO_AUTO;
+	kp_app_pref_path(a, KP_APP_PROFILE, path, sizeof path);
+	if ((bytes = kp_read_file(path, &size)) == NULL) return KP_VIDEO_AUTO;
+	if ((p = (KpProfile *)malloc(sizeof *p)) != NULL) { /* the whole profile is large for the stack */
+		if (kp_profile_decode(p, bytes, size, &err) == 0) renderer = p->video.renderer;
+		free(p);
+	}
+	free(bytes);
+	return renderer;
 }

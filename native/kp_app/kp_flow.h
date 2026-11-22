@@ -71,6 +71,8 @@ typedef struct {
 	int hd_budget;         /* --hd-budget MB: the HD pages' slots' memory (0: KP_HD_BUDGET; streaming checks) */
 	int hd_decode;         /* --hd-decode: the HD pages decoded as without S3TC (a phone's path on a computer) */
 	int lighting;          /* --lighting on|off|auto (KP_LIGHTING_*, KP_VIDEO_AUTO: on): the HD sprites' lighting layers */
+	int renderer;          /* --gfx gl|gpu|auto (KP_RENDERER_*, KP_VIDEO_AUTO: the platform's, ADR 0028): the drawing's API */
+	int gfx_debug;         /* --gfx-debug: SDL_GPU's checks of every call */
 	char locale[8];        /* --locale ruRU: a language's overlays over the enUS base (ADR 0016); "": the player's (the
 	                        * glue's start: kp_flow_init chooses and sets it) or none (the checks' and --mission's) */
 	char speech[8];        /* --speech ruRU: a language's speech over the base's (ADR 0016, stage L5: its missions' TIME,
@@ -138,8 +140,10 @@ typedef struct {
 	/* the screen's palette (RGB, 256 entries) and the gamma of the HD interface's art */
 	void (*palette)(void *ctx, const uint8_t *rgb);
 	void (*gamma)(void *ctx, int32_t gamma);
-	/* the video options the player has (KP_VIDEO_HAS_*) with the interface ui */
+	/* the video options the player has (KP_VIDEO_HAS_*) with the interface ui; SDL_GPU's API ("Metal", "Vulkan") for
+	 * the renderer's button, NULL where it is not built */
 	uint8_t (*video_available)(void *ctx, const KpUi *ui);
+	const char *gpu_name;
 	/* the cinematics (kp_app.h's kp_app_cine_has, kp_app_cine_start, kp_app_cine_active) */
 	int (*cine_has)(void *ctx, int id);
 	int (*cine_start)(void *ctx, const int *ids, int n, int preludes);

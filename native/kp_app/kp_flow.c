@@ -3573,6 +3573,7 @@ static void video_from_profile(KpFlow *f)
 	f->video_flags.water = fl->water;
 	f->video_flags.font = fl->font_mode;
 	f->video_flags.lighting = fl->lighting;
+	f->video_flags.renderer = fl->renderer;
 	if (dev_checks(f)) {
 		f->gamma = KP_UI_GAMMA_DEFAULT;
 		f->portraits = KP_UI_PORTRAITS_ANIMATED;
@@ -3584,6 +3585,8 @@ static void video_from_profile(KpFlow *f)
 		if (!(given & KP_VIDEO_GIVEN_WATER)) fl->water = v->water;
 		if (!(given & KP_VIDEO_GIVEN_FONT)) fl->font_mode = v->font;
 		if (!(given & KP_VIDEO_GIVEN_LIGHTING)) fl->lighting = v->lighting;
+		/* the host read it already, before its drawing started (kp_app_main.c): a change takes the next start */
+		if (!(given & KP_VIDEO_GIVEN_RENDERER)) fl->renderer = v->renderer;
 	}
 	apply_gamma(f);
 }
@@ -3598,7 +3601,9 @@ void kp_flow_video_to_ui(KpFlow *f, KpUi *ui)
 	o->water = (int8_t)f->flags->water;
 	o->font = (int8_t)f->flags->font_mode;
 	o->lighting = (int8_t)f->flags->lighting;
+	o->renderer = (int8_t)f->flags->renderer;
 	o->available = f->video_available;
+	o->gpu_name = f->host.gpu_name;
 	f->video_serial = o->serial;
 }
 
@@ -3614,6 +3619,8 @@ static void video_options(KpFlow *f)
 		fl->water = o->water;
 		fl->font_mode = o->font;
 		fl->lighting = o->lighting;
+		/* the next start's renderer (TODO: switched in a running game, its window made again; ADR 0028) */
+		fl->renderer = o->renderer;
 		f->portraits = (int32_t)f->ui->portrait.mode;
 		if (f->gamma != (int32_t)f->ui->gamma) {
 			f->gamma = (int32_t)f->ui->gamma;
@@ -3634,6 +3641,7 @@ static void keep_video(KpFlow *f)
 	run.water = fl->water;
 	run.font = fl->font_mode;
 	run.lighting = fl->lighting;
+	run.renderer = fl->renderer;
 	kp_profile_commit_video(&f->profile->video, &run, &f->video_flags, fl->video_given);
 }
 

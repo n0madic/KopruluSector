@@ -157,7 +157,7 @@ KpUi *kp_ui_new_data(const KpUiData *d, char *err, size_t err_size)
 	ui->gamma = KP_UI_GAMMA_DEFAULT;
 	{
 		KpUiVideoOptions *v = &ui->video_options;
-		v->graphics = v->fog = v->water = v->font = v->lighting = KP_VIDEO_AUTO;
+		v->graphics = v->fog = v->water = v->font = v->lighting = v->renderer = KP_VIDEO_AUTO;
 	}
 	ui->view_w = KP_UI_VIEW_W;
 	ui->view_h = KP_UI_VIEW_H;

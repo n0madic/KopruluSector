@@ -549,10 +549,13 @@ void kp_dev_timing(KpApp *a, double flow_ms, double draw_ms)
 		stats(d->frame_ms, d->frames, f, sizeof f);
 		stats(d->flow_ms, d->frames, g, sizeof g);
 		stats(d->draw_ms, d->frames, h, sizeof h);
+		kp_gfx_finish(a->gfx); /* the last frames' GPU work done before the program ends */
 		kp_dev_line("frame bench %s: %d frames %dx%d (logical %dx%d), vsync %s; frame %s; game and presentation %s; "
-			"drawing (CPU) %s; images %d, windows %d, layers %d", a->data.missions[a->flow.current].name, d->frames,
-			(int)a->flow.win_w, (int)a->flow.win_h, (int)a->flow.world_w, (int)a->flow.world_h, a->flags.vsync ? "on" : "off", f, g, h,
-			(int)a->world.presenter.drawn, (int)a->world.data.plan.count, (int)a->world.data.plan.layers);
+			"drawing (CPU) %s; images %d, windows %d, layers %d; %s, presents not shown %d",
+			a->data.missions[a->flow.current].name, d->frames, (int)a->flow.win_w, (int)a->flow.win_h,
+			(int)a->flow.world_w, (int)a->flow.world_h, a->flags.vsync ? "on" : "off", f, g, h,
+			(int)a->world.presenter.drawn, (int)a->world.data.plan.count, (int)a->world.data.plan.layers,
+			a->gpu ? "SDL_GPU" : "GL", a->presents_missed);
 		a->quit = 1;
 	}
 }

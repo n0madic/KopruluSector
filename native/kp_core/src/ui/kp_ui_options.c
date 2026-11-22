@@ -3,7 +3,8 @@
  * back; the sound dialog's volumes and option bits (the volumes previewed five idle events after a change), the speed
  * dialog's game speed (the command 0x0f at OK) and scroll speeds (live). The video options are our own dialog
  * (koprulu\video.bin in place of rez\video.bin): the original's gamma (previewed) and portrait mode with the art, the
- * fog, the water, the text and the lighting (live); the host applies them (ui->video_options). Every dialog alike:
+ * fog, the water, the text and the lighting (live) and the renderer (the next start's); the host applies them
+ * (ui->video_options). Every dialog alike:
  * its OK keeps all it changed (ui->options_committed, the host's profile), any other end puts the snapshot back. */
 #include "kp_ui.h"
 
@@ -75,7 +76,7 @@ static void restore(KpUi *ui, const struct KpUiOptionsBlock *b)
 	ui->cpu_throttle = b->cpu_throttle;
 	if (ui->gamma != b->gamma || ui->portrait.mode != b->portrait || o->graphics != b->video.graphics
 		|| o->fog != b->video.fog || o->water != b->video.water || o->font != b->video.font
-		|| o->lighting != b->video.lighting) {
+		|| o->lighting != b->video.lighting || o->renderer != b->video.renderer) {
 		ui->gamma = b->gamma;
 		if (ui->portrait.mode != b->portrait) kp_ui_portrait_set_mode(ui, b->portrait);
 		o->graphics = b->video.graphics;
@@ -83,6 +84,7 @@ static void restore(KpUi *ui, const struct KpUiOptionsBlock *b)
 		o->water = b->video.water;
 		o->font = b->video.font;
 		o->lighting = b->video.lighting;
+		o->renderer = b->video.renderer;
 		o->serial++;
 	}
 }
@@ -396,6 +398,7 @@ static int8_t *video_choice(KpUi *ui, int16_t id)
 	case KP_VIDEO_ID_WATER: return &o->water;
 	case KP_VIDEO_ID_FONT: return &o->font;
 	case KP_VIDEO_ID_LIGHTING: return &o->lighting;
+	case KP_VIDEO_ID_RENDERER: return &o->renderer;
 	default: return NULL;
 	}
 }
@@ -403,10 +406,12 @@ static int8_t *video_choice(KpUi *ui, int16_t id)
 static int8_t choice_value(int16_t id) { return (int8_t)(id % KP_VIDEO_GROUP_IDS - 1); }
 
 /* Whether the host can honour an option button's choice (video_options.available; the others are disabled): the
- * animated water needs the water masks of an imported HD variant, the lighting the HD art's lighting layers. */
+ * animated water needs the water masks of an imported HD variant, the lighting the HD art's lighting layers; the
+ * renderer is a choice where SDL_GPU is built (the desktops), GL alone elsewhere. */
 static int choice_offered(const KpUi *ui, int16_t id)
 {
 	uint8_t has = ui->video_options.available;
+	if (id / KP_VIDEO_GROUP_IDS * KP_VIDEO_GROUP_IDS == KP_VIDEO_ID_RENDERER) return (has & KP_VIDEO_HAS_GPU) != 0;
 	if (id == KP_VIDEO_CHOICE_ID(KP_VIDEO_ID_GRAPHICS, KP_GRAPHICS_HD2)) return (has & KP_VIDEO_HAS_HD2) != 0;
 	if (id == KP_VIDEO_CHOICE_ID(KP_VIDEO_ID_GRAPHICS, KP_GRAPHICS_HD)) return (has & KP_VIDEO_HAS_HD) != 0;
 	if (id == KP_VIDEO_CHOICE_ID(KP_VIDEO_ID_WATER, KP_WATER_ANIMATED)) {
@@ -431,6 +436,9 @@ static int video_option(KpUi *ui, KpUiControl *c, KpUiEvent *e)
 			: *choice == choice_value(c->id);
 		(void)kp_ui_send_user(ui, self, KP_UI_VALUE_CHANGED, (uint32_t)on);
 		if (!choice_offered(ui, c->id)) kp_ui_set_enabled(ui, self, 0);
+		if (c->id == KP_VIDEO_CHOICE_ID(KP_VIDEO_ID_RENDERER, KP_RENDERER_GPU) && ui->video_options.gpu_name != NULL) {
+			c->text = (const uint8_t *)ui->video_options.gpu_name;
+		}
 	}
 	return kp_ui_type_interact(3)(ui, c, e);
 }
@@ -465,7 +473,7 @@ static int video_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 				int16_t id = ui->controls[c].id;
 				if (id == KP_VIDEO_ID_GAMMA) {
 					ui->controls[c].interact = gamma_slider;
-				} else if (id >= KP_VIDEO_ID_GRAPHICS && id < KP_VIDEO_ID_LIGHTING + KP_VIDEO_GROUP_IDS) {
+				} else if (id >= KP_VIDEO_ID_GRAPHICS && id < KP_VIDEO_ID_LAST + KP_VIDEO_GROUP_IDS) {
 					ui->controls[c].interact = video_option;
 				}
 			}

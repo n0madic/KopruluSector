@@ -36,6 +36,17 @@
 #define KP_APP_WINDOW_W 1280 /* the desktop window's first size (--window W H) */
 #define KP_APP_WINDOW_H 960
 #define KP_APP_APK_FDS 128 /* Android: the repack's groups read in place from the APK (kp_app_files.c apk_repack_file) */
+#ifdef KP_GFX_GPU
+/* SDL_GPU's driver on this platform and its name in the video options (ADR 0028: Metal on macOS, Vulkan on the other
+ * desktops; TODO: D3D12 on Windows) */
+#ifdef SDL_PLATFORM_MACOS
+#define KP_GFX_GPU_DRIVER "metal"
+#define KP_GFX_GPU_NAME "Metal"
+#else
+#define KP_GFX_GPU_DRIVER "vulkan"
+#define KP_GFX_GPU_NAME "Vulkan"
+#endif
+#endif
 
 /* The sound mixer: the interface's channels, the music, the streams and the click. */
 typedef struct {
@@ -268,6 +279,8 @@ struct KpApp {
 #endif
 	SDL_Window *window;
 	SDL_GLContext gl;
+	SDL_GPUDevice *gpu;    /* or SDL_GPU's device (ADR 0028), which claimed the window */
+	int presents_missed;   /* the frames the present did not show (SDL_GPU's swapchain not ready: the benchmark's count) */
 	KpGfx *gfx;
 	KpAudio audio;
 	char pref[1024];
@@ -373,6 +386,10 @@ SDL_IOStream *kp_io_open_head(const char *path, uint8_t *head, size_t cap, size_
 void kp_app_pref_path(KpApp *a, const char *file, char *out, size_t size);
 void kp_app_save_profile(KpApp *a);
 void kp_app_load_profile(KpApp *a);
+/* The renderer the player's profile keeps (KP_RENDERER_*, KP_VIDEO_AUTO: none or no profile), read before the drawing
+ * starts: the flow loads the whole profile after it (kp_app_flow_init), and a change in the video options takes the
+ * next start. */
+int kp_app_profile_renderer(KpApp *a);
 /* The web's files written to IndexedDB (a no-op elsewhere). */
 void kp_app_sync_files(KpApp *a);
 /* kp_app_pick.c: Load Replay's Import and Export over the platform's file picker: the flow's hooks (none in a scripted or
@@ -552,6 +569,8 @@ enum { KP_SCRIPT_EXIT_PASSED, KP_SCRIPT_EXIT_FAILED, KP_SCRIPT_EXIT_REFUSED, KP_
 /* --script's file read and parsed, its header put into the flags before they are final (the mission, the originals'
  * options and video); 0, else -1 with err (the flags or the script refused). */
 int kp_app_script_load(KpApp *a, char *err, size_t err_size);
+/* The profile's directory of a script's run (--script-out's, ending in '/'), its own: the player's is never read. */
+void kp_app_script_pref(const KpApp *a, char *out, size_t size);
 /* Once the window stands: the run's directory, its own profile (a->pref), the watchdog; 0, else -1 with err. */
 int kp_app_script_begin(KpApp *a, char *err, size_t err_size);
 /* A frame drawn: the script's steps for it; the program ends after the frame of the last. */

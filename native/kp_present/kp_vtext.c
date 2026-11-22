@@ -316,7 +316,10 @@ static int glyph_quads(KpVText *v, const KpUiCanvasGlyph *u, const KpVTextGlyph 
 		if (u->clip[3] < u->y + u->box[3] + u->box[1]) clip[3] = (float)u->clip[3];
 	}
 	if (u->has_shadow) {
-		float r[4], shadow = (s * 0.5f < 1.0f ? 1.0f : s * 0.5f) / s;
+		/* half a logical pixel right and down, in whole window pixels (at least one): at an odd scale half a logical
+		 * pixel put the shadow's edges on pixels' centres, which each graphics API breaks its own way (ADR 0028) */
+		int32_t px = (int32_t)(s * 0.5f + 0.5f);
+		float r[4], shadow = (float)(px < 1 ? 1 : px) / s;
 		r[0] = rect[0] + shadow;
 		r[1] = rect[1] + shadow;
 		r[2] = rect[2] + shadow;

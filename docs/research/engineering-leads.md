@@ -4,22 +4,22 @@ Collected 2026-11-13 from outside material on other StarCraft ports. Every item 
 
 ## For the native SDL_GPU backend (stage S9)
 
-Drawing is GLES 3.0 / WebGL2 for now and a native SDL_GPU backend is a deferred stage ([phase S](../phaseS.md), [ADR 0012](../adr/0012-sdl3-runtime.md)). If it is started, these are reported to bite on SDL_GPU 3.4:
+The native SDL_GPU backend is done on the desktops ([ADR 0028](../adr/0028-sdl-gpu-backend.md), [phase S](../phaseS.md) stage S9); the phones and the web stay on GLES 3.0 / WebGL2. These were reported to bite on SDL_GPU 3.4 (the first two do not arise: one block of `vec4` constants per stage, 400 bytes, on Metal and Vulkan only):
 
 - A uniform block larger than 4 KiB reads as zeros on SDL's Vulkan backend. Keep each block below it and split rather than grow; a build-time check on block sizes catches it before a frame does.
 - A three-component vector after a scalar sits beside it in Direct3D's layout and 16 bytes further on in SPIR-V's, moving every field after it. A build step that compares the offsets of each field between the two layouts and fails the build on any difference prevents it.
 - SDL_GPU binds at most 8 storage buffers of each kind. Several parts of a frame description then have to share one buffer at offsets.
 - The swapchain image is handed out only on the thread that created the window, so presenting cannot move to a drawing thread.
-- Direct3D 12 in SDL 3.4.16 was reported to crash when descriptor tables were written before being sized, and the report's authors carry a local patch. Check the pinned SDL version against this when a D3D12 path is first run.
+- Direct3D 12 in SDL 3.4.16 was reported to crash when descriptor tables were written before being sized, and the report's authors carry a local patch. Check the pinned SDL version against this when a D3D12 path is first run (Windows uses Vulkan; D3D12 is a `TODO` of ADR 0028).
 - Mouse positions reach the game in game pixels, and two presenters that letterbox differently disagree about where the game's frame is; anything drawn around the game's frame must be part of the one function that maps window to game coordinates.
 
-**A frame check to add with a second backend:** read the resolved frame back every frame and compare it with the frame the first backend draws for the same state, so a frame that is self-consistent but wrong is caught. The emulator's frame captures are the reference for the first backend; the second is compared with the first.
+**A frame check to add with a second backend:** read the resolved frame back every frame and compare it with the frame the first backend draws for the same state, so a frame that is self-consistent but wrong is caught. The emulator's frame captures are the reference for the first backend; the second is compared with the first. *Done for SDL_GPU (ADR 0028, stage S9.5), by script rather than every frame: one window holds one API, so the two backends draw in two runs of one fixed-clock script and `tools/gfx_compare.py` compares their frames (the index path byte for byte, the HD path within one level a channel).*
 
 ## Start-up robustness and crash reports
 
 Neither is described in the project's docs today, and both matter most on phones and on the many Windows GPU drivers:
 
-- **A driver that hangs or fails at start.** Restart by itself after a time limit (20 s was used) with another way of drawing, down to one that needs no graphics driver, and let the player choose one by hand. The start-up log should name the graphics card and driver.
+- **A driver that hangs or fails at start.** Restart by itself after a time limit (20 s was used) with another way of drawing, down to one that needs no graphics driver, and let the player choose one by hand. The start-up log should name the graphics card and driver. *In part since stage S9: the video options' Renderer chooses GL or SDL_GPU by hand for the next start, a failed SDL_GPU start falls back to GL before the first frame, and the start's line names the driver and device (`SDL_GPU metal, Apple M4 Max, macOS`; GL's version string); no restart after a hang.*
 - **A start-up log per run**, and a note at the next start when the previous session ended with no word (a heap corruption or an abrupt kill reaches no handler).
 - **A crash report folder per crash** with: what happened and where (module and offset), the build, system, displays and renderer, the session (time running, whether the start finished, the screen or frame, the mission, the last few missions), the call stack, the last 64 log lines of every module with times, the registers and the loaded modules. Write each part to disk as it is made, so a fault inside the reporter keeps the earlier parts; keep the last ten.
 - **Symbols per build.** Keep each shipped build's symbols (the program with debug info, the `.dSYM`, the PDB) and a script that takes a report and names each frame's function, file and line.

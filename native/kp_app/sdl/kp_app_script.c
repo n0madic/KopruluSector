@@ -466,6 +466,7 @@ static int choice_value(const KpApp *a, int16_t id)
 	case KP_VIDEO_ID_WATER: return o->water;
 	case KP_VIDEO_ID_FONT: return o->font;
 	case KP_VIDEO_ID_LIGHTING: return o->lighting;
+	case KP_VIDEO_ID_RENDERER: return o->renderer;
 	default: return (int)a->flow.ui->portrait.mode;
 	}
 }
@@ -1006,6 +1007,11 @@ int kp_app_script_load(KpApp *a, char *err, size_t err_size)
 	return 0;
 }
 
+void kp_app_script_pref(const KpApp *a, char *out, size_t size)
+{
+	snprintf(out, size, "%s/" PREF_DIR "/", a->flags.script_out);
+}
+
 int kp_app_script_begin(KpApp *a, char *err, size_t err_size)
 {
 	Script *S = (Script *)a->script;
@@ -1017,7 +1023,7 @@ int kp_app_script_begin(KpApp *a, char *err, size_t err_size)
 		snprintf(err, err_size, "cannot make %s: %s", pref, SDL_GetError());
 		return -1;
 	}
-	snprintf(a->pref, sizeof a->pref, "%s/", pref);
+	kp_app_script_pref(a, a->pref, sizeof a->pref);
 	a->clock_fixed = !S->s.clock_real;
 #ifdef KP_SCRIPT_LIVE
 	if (S->s.live && live_start(S, a->flags.script_live, err, err_size) != 0) return -1;

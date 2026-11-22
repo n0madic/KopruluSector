@@ -842,6 +842,7 @@ static void session_profile_video_options(KpT *T)
 	static const uint8_t PROG[8 * KP_CAMPAIGN_RACES] = { 0, 0, 0, 0, 9 }; /* the original's Terran at 9 */
 	static const uint8_t SAVES[2] = { 0, 0 };
 	static const uint8_t VOPT6[12] = { 125, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1, 0 }; /* the six values before the lighting */
+	static const uint8_t VOPT7[14] = { 125, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0 }; /* before the renderer: unlit */
 	KpProfile p, q;
 	KpKpfOut old[4];
 	KpError err;
@@ -852,6 +853,7 @@ static void session_profile_video_options(KpT *T)
 	kp_t_eq(T, p.video.gamma, KP_UI_GAMMA_DEFAULT, "a new profile's gamma");
 	kp_t_eq(T, p.video.portraits, KP_UI_PORTRAITS_ANIMATED, NULL);
 	kp_t_eq(T, p.video.graphics, KP_VIDEO_AUTO, NULL);
+	kp_t_eq(T, p.video.renderer, KP_VIDEO_AUTO, "a new profile's renderer the platform's");
 	p.video.gamma = 125;
 	p.video.portraits = KP_UI_PORTRAITS_STILL;
 	p.video.graphics = KP_GRAPHICS_HD2;
@@ -859,6 +861,7 @@ static void session_profile_video_options(KpT *T)
 	p.video.water = KP_WATER_STILL;
 	p.video.font = KP_VTEXT_VECTOR;
 	p.video.lighting = KP_LIGHTING_OFF;
+	p.video.renderer = KP_RENDERER_GPU;
 	kp_t_ok(T, kp_profile_encode(&p, &bytes, &size) == 0, "encoded");
 	kp_t_ok(T, kp_profile_decode(&q, bytes, size, &err) == 0, "%s", err.msg);
 	free(bytes);
@@ -895,16 +898,27 @@ static void session_profile_video_options(KpT *T)
 	kp_t_eq(T, q.video.gamma, 125, "its gamma");
 	kp_t_eq(T, q.video.font, KP_VTEXT_VECTOR, "its text");
 	kp_t_eq(T, q.video.lighting, KP_VIDEO_AUTO, "its lighting auto");
+	kp_t_eq(T, q.video.renderer, KP_VIDEO_AUTO, "its renderer auto");
+	/* the profile of the build before the renderer: VOPT of seven values */
+	old[3].payload = VOPT7;
+	old[3].size = sizeof VOPT7;
+	kp_t_ok(T, kp_kpf_build("PROF", 1, 0, "koprulu", NULL, old, 4, &bytes, &size) == 0, "a profile before the renderer");
+	kp_t_ok(T, kp_profile_decode(&q, bytes, size, &err) == 0, "%s", err.msg);
+	free(bytes);
+	kp_t_eq(T, q.video.lighting, KP_LIGHTING_OFF, "its lighting");
+	kp_t_eq(T, q.video.renderer, KP_VIDEO_AUTO, "its renderer auto");
 	/* values out of range: their defaults */
 	p.video.gamma = 20;
 	p.video.graphics = 9;
 	p.video.portraits = 7;
+	p.video.renderer = 5;
 	kp_t_ok(T, kp_profile_encode(&p, &bytes, &size) == 0, "encoded");
 	kp_t_ok(T, kp_profile_decode(&q, bytes, size, &err) == 0, "%s", err.msg);
 	free(bytes);
 	kp_t_eq(T, q.video.gamma, KP_UI_GAMMA_DEFAULT, "a gamma out of range");
 	kp_t_eq(T, q.video.graphics, KP_VIDEO_AUTO, "an art out of range");
 	kp_t_eq(T, q.video.portraits, KP_UI_PORTRAITS_ANIMATED, "portraits out of range");
+	kp_t_eq(T, q.video.renderer, KP_VIDEO_AUTO, "a renderer out of range");
 	kp_t_eq(T, q.video.water, KP_WATER_STILL, "the others kept");
 }
 
@@ -1467,23 +1481,30 @@ static void session_profile_commit_keeps_the_flags_out(KpT *T)
 	profile.gamma = KP_UI_GAMMA_DEFAULT;
 	profile.portraits = KP_UI_PORTRAITS_ANIMATED;
 	profile.graphics = profile.fog = profile.water = profile.font = profile.lighting = KP_VIDEO_AUTO;
+	profile.renderer = KP_VIDEO_AUTO;
 	flags.fog = KP_FOG_ORIGINAL; /* --fog original */
+	flags.renderer = KP_RENDERER_GL; /* --gfx gl */
 	flags.graphics = KP_GRAPHICS_ORIGINAL; /* --graphics original */
 	flags.lighting = KP_LIGHTING_OFF; /* --lighting off */
 	run = profile;
 	run.lighting = KP_LIGHTING_OFF;      /* the flag's, untouched in the dialog */
+	run.renderer = KP_RENDERER_GL;       /* the flag's, untouched in the dialog */
 	run.gamma = 120;
 	run.fog = KP_FOG_ORIGINAL;           /* the flag's, untouched in the dialog */
 	run.graphics = KP_GRAPHICS_HD2;      /* the dialog's over the flag's */
 	run.water = KP_WATER_ANIMATED;       /* the dialog's, no flag */
 	kp_profile_commit_video(&profile, &run, &flags, KP_VIDEO_GIVEN_FOG | KP_VIDEO_GIVEN_GRAPHICS
-		| KP_VIDEO_GIVEN_LIGHTING);
+		| KP_VIDEO_GIVEN_LIGHTING | KP_VIDEO_GIVEN_RENDERER);
 	kp_t_eq(T, profile.gamma, 120, "the gamma kept");
 	kp_t_eq(T, profile.fog, KP_VIDEO_AUTO, "the fog's flag not kept");
 	kp_t_eq(T, profile.graphics, KP_GRAPHICS_HD2, "the art the dialog changed kept");
 	kp_t_eq(T, profile.water, KP_WATER_ANIMATED, "the water kept");
 	kp_t_eq(T, profile.font, KP_VIDEO_AUTO, NULL);
 	kp_t_eq(T, profile.lighting, KP_VIDEO_AUTO, "the lighting's flag not kept");
+	kp_t_eq(T, profile.renderer, KP_VIDEO_AUTO, "--gfx not kept");
+	run.renderer = KP_RENDERER_GPU; /* the dialog's, the next start's */
+	kp_profile_commit_video(&profile, &run, &flags, KP_VIDEO_GIVEN_RENDERER);
+	kp_t_eq(T, profile.renderer, KP_RENDERER_GPU, "the renderer the dialog changed kept over --gfx");
 	kp_profile_commit_video(&profile, &run, &flags, 0);
 	kp_t_eq(T, profile.fog, KP_FOG_ORIGINAL, "without the flag the run's fog kept");
 }

@@ -342,18 +342,20 @@ typedef struct {
 	KpCampaignProfile progress;
 } KpProfileCharacter;
 /* The video options (the dialog's, kp_ui.h): the gamma (KP_UI_GAMMA_MIN..MAX), the portraits (0 none, 1 still, 2
- * animated) and the art, fog, water, text and lighting (KP_GRAPHICS_*, KP_FOG_*, KP_WATER_*, KP_VTEXT_*, KP_LIGHTING_*
- * or KP_VIDEO_AUTO). */
+ * animated) and the art, fog, water, text, lighting and renderer (KP_GRAPHICS_*, KP_FOG_*, KP_WATER_*, KP_VTEXT_*,
+ * KP_LIGHTING_*, KP_RENDERER_* or KP_VIDEO_AUTO). */
 typedef struct {
-	int32_t gamma, portraits, graphics, fog, water, font, lighting;
+	int32_t gamma, portraits, graphics, fog, water, font, lighting, renderer;
 } KpVideoSettings;
-/* The video options a command-line flag gave for its run (the art, the fog, the water, the text, the lighting): the
- * profile's do not replace them at the start, and they are not kept in the profile unless the dialog changed them. */
+/* The video options a command-line flag gave for its run (the art, the fog, the water, the text, the lighting, the
+ * renderer): the profile's do not replace them at the start, and they are not kept in the profile unless the dialog
+ * changed them. */
 #define KP_VIDEO_GIVEN_GRAPHICS 0x1
 #define KP_VIDEO_GIVEN_FOG 0x2
 #define KP_VIDEO_GIVEN_WATER 0x4
 #define KP_VIDEO_GIVEN_FONT 0x8
 #define KP_VIDEO_GIVEN_LIGHTING 0x10
+#define KP_VIDEO_GIVEN_RENDERER 0x20
 /* The options of the sound and speed dialogs and the tips (the original's registry table 0x50f168, CPUThrottle apart):
  * the music's and the effects' percent (0..100), the mouse and key scroll speeds and the game speed (0..6), the tip, the
  * CPU throttle (0 or 1), the multiplayer game's mouse and key scroll speeds (0..6: m_mscroll, m_kscroll). */

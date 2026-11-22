@@ -138,10 +138,12 @@ kp_target(kp_present CXX)
 target_include_directories(kp_present PUBLIC ${KP_PRESENT_DIR})
 target_link_libraries(kp_present PUBLIC kp_ui PRIVATE kp_stb)
 
-# --- kp_gfx_passes: kp_gfx's passes and shaders over its narrow backend (kp_gfx_internal.h; no SDL, no GL): kp_gfx
-# implements the backend over GL, the C suites record it ---
+# --- kp_gfx_passes: kp_gfx's passes and shaders over its narrow backend (kp_gfx_internal.h; no SDL, no GL), and the
+# SDL_GPU backend's shaders generated from them (kp_gfx_gpu_gen, ADR 0028): kp_gfx implements the backend over GL and
+# SDL_GPU, the C suites record it ---
 set(KP_GFX_DIR ${CMAKE_CURRENT_SOURCE_DIR}/native/kp_gfx)
-add_library(kp_gfx_passes STATIC ${KP_GFX_DIR}/kp_gfx_passes.c ${KP_GFX_DIR}/kp_gfx_shaders.c)
+add_library(kp_gfx_passes STATIC ${KP_GFX_DIR}/kp_gfx_passes.c ${KP_GFX_DIR}/kp_gfx_shaders.c
+	${KP_GFX_DIR}/kp_gfx_gpu_glsl.c ${KP_GFX_DIR}/kp_gfx_gpu_shaders.c)
 kp_target(kp_gfx_passes)
 target_include_directories(kp_gfx_passes PUBLIC ${KP_GFX_DIR})
 target_link_libraries(kp_gfx_passes PUBLIC kp_present)
@@ -236,6 +238,11 @@ endif()
 add_executable(kp_oracle ${KP_TOOLS_DIR}/kp_oracle_main.c ${KP_TOOLS_DIR}/kp_oracle_cli_ui.c)
 kp_target(kp_oracle CXX)
 target_link_libraries(kp_oracle PRIVATE kp_oracle_lib)
+if(NOT WIN32 AND NOT EMSCRIPTEN) # the SDL_GPU backend's shaders (ADR 0028): glslang, SPIRV-Cross and Xcode's metal run here
+	add_executable(kp_gfx_gpu_gen ${KP_GFX_DIR}/tools/kp_gfx_gpu_gen.c)
+	kp_target(kp_gfx_gpu_gen)
+	target_link_libraries(kp_gfx_gpu_gen PRIVATE kp_gfx_passes)
+endif()
 
 # --- the fuzz targets' entries (tests/c/kp_fuzz.c): test_fuzz's kept inputs, kp_fuzz_seeds, libFuzzer's targets ---
 add_library(kp_fuzz_lib STATIC ${KP_TESTS_DIR}/kp_fuzz.c ${KP_TESTS_DIR}/kp_fuzz_net.c ${KP_TESTS_DIR}/kp_fuzz_lobby.c
@@ -327,9 +334,15 @@ if(KP_APP)
 	set(SDLMIXER_VORBIS_STB ON CACHE BOOL "" FORCE)
 	add_subdirectory(${KP_SDL_MIXER_DIR} sdl_mixer EXCLUDE_FROM_ALL)
 
-	add_library(kp_gfx STATIC ${KP_GFX_DIR}/kp_gfx_gl.c ${KP_GFX_DIR}/kp_gl.c)
+	# objects, not an archive: kp_gfx_passes calls the backend (kp_gb_*), which the app never names, so GNU ld would
+	# leave kp_gfx_backend.c out of an archive scanned before kp_gfx_passes
+	add_library(kp_gfx OBJECT ${KP_GFX_DIR}/kp_gfx_backend.c ${KP_GFX_DIR}/kp_gfx_gl.c ${KP_GFX_DIR}/kp_gl.c)
 	kp_target(kp_gfx)
 	target_link_libraries(kp_gfx PUBLIC kp_gfx_passes ${KP_SDL_TARGET})
+	if(NOT EMSCRIPTEN AND NOT ANDROID AND NOT IOS) # the SDL_GPU backend on the desktops only (ADR 0028): Metal, Vulkan
+		target_sources(kp_gfx PRIVATE ${KP_GFX_DIR}/kp_gfx_gpu.c)
+		target_compile_definitions(kp_gfx PUBLIC KP_GFX_GPU)
+	endif()
 
 	file(GLOB KP_APP_SOURCES CONFIGURE_DEPENDS ${KP_APP_DIR}/sdl/*.c)
 	if(ANDROID)

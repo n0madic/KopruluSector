@@ -63,6 +63,12 @@ build: `CMakeLists.txt` (`cmake -S . -B build/cmake -G Ninja && cmake --build bu
 and UBSan; `-DKP_FUZZ=ON` libFuzzer's targets with an LLVM clang, `tools/fuzz.sh`; `emcmake` for wasm under node with
 the host's files, `NODERAWFS`), every source also checked as C++11 (ADR 0008).
 
+The second graphics backend (ADR 0028, stage S9.5) is checked against the first, whose frames the oracle's checks
+cover: one script on the fixed clock run with `--gfx gl` and with `--gfx gpu` (a frame is one API's, so two
+processes), then `tools/gfx_compare.py` on their `shot` frames. `tools/ci.sh` wants `determinism.kps`'s frames and
+states byte for byte (the index path) and `gfx_hd.kps`'s HD frame within one level a channel (SDL_GPU's Metal compiles
+the shaders with fast math).
+
 # Golden oracle: M0E reference cases
 
 `tests/golden/oracle/` holds versioned original observations for the 1.17.0.1 profile

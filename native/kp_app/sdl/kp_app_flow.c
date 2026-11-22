@@ -210,6 +210,9 @@ static uint8_t host_video_available(void *ctx, const KpUi *ui)
 		if (!a->flags.hd_decode && kp_gfx_hd_takes(a->gfx, p.format)) has |= KP_VIDEO_HAS_LIGHTING;
 	}
 	if (kp_ui_vector_fonts(ui, &fonts, &font_sizes) > 0 || a->flags.vector_font[0]) has |= KP_VIDEO_HAS_VECTOR;
+#ifdef KP_GFX_GPU
+	has |= KP_VIDEO_HAS_GPU; /* the renderer's choice (ADR 0028), taken at the next start */
+#endif
 	return has;
 }
 
@@ -285,6 +288,11 @@ static void flow_setup(KpApp *a)
 	h->palette = host_palette;
 	h->gamma = host_gamma;
 	h->video_available = host_video_available;
+#ifdef KP_GFX_GPU
+	h->gpu_name = KP_GFX_GPU_NAME;
+#else
+	h->gpu_name = NULL;
+#endif
 	h->cine_has = host_cine_has;
 	h->cine_start = host_cine_start;
 	h->cine_active = host_cine_active;
