@@ -697,63 +697,17 @@ void kp_ui_canvas_fill(KpUiCanvas *c, int32_t x, int32_t y, int32_t w, int32_t h
 	}
 }
 
-#define SHADE_SHIFT 2 /* the margins' brightness: a quarter */
+#define MARGIN_INDEX 0 /* the glue palettes' black (as kp_canvas_compose_black's) */
 
-/* The glue palette's indices darkened to a quarter of their brightness (the nearest colour, the lowest index on a
- * tie). */
-static void build_shade(const KpUi *ui, KpUiCanvas *c)
+/* A fixed screen's margins around its dialog d at (x, y): the canvas past its rectangle black, with no HD item (ADR
+ * 0011). */
+static void draw_margins(KpUiCanvas *c, const KpUiControl *d, int32_t x, int32_t y)
 {
-	const uint8_t *p = ui->glue.palette;
-	int i, j;
-	for (i = 0; i < 256; i++) {
-		int32_t r = p[4 * i] >> SHADE_SHIFT, g = p[4 * i + 1] >> SHADE_SHIFT, b = p[4 * i + 2] >> SHADE_SHIFT, best = 0;
-		int32_t best_d = -1;
-		for (j = 0; j < 256; j++) {
-			int32_t dr = p[4 * j] - r, dg = p[4 * j + 1] - g, db = p[4 * j + 2] - b, d = dr * dr + dg * dg + db * db;
-			if (best_d < 0 || d < best_d) {
-				best = j;
-				best_d = d;
-			}
-		}
-		c->shade[i] = (uint8_t)best;
-	}
-	c->shade_serial = ui->glue.palette_serial + 1;
-}
-
-/* A fixed screen's margins around its dialog d at (x, y): the dialog's pixels as composed (src, the vector glyphs taken
- * out) and their owners (NULL none), from the dialog's compose (one owners' pass per surface: the items once, the
- * development checks' counts once). */
-static void draw_margins(KpUi *ui, KpUiCanvas *c, const KpUiControl *d, int32_t x, int32_t y, const uint8_t *src,
-	const uint16_t *owners)
-{
-	int32_t i, j, w = d->bitmap.w, h = d->bitmap.h;
-	c->seq++;
-	if (src == NULL || w <= 0 || h <= 0) return;
-	/* the HD interface (not the original's, ADR 0013 R4d): a margin pixel is its edge pixel's item, whose art (a
-	 * wide glue background) may reach there */
-	if (c->shade_serial != ui->glue.palette_serial + 1) build_shade(ui, c);
-	for (j = 0; j < c->h; j++) {
-		int32_t sy = j - y < 0 ? 0 : (j - y >= h ? h - 1 : j - y);
-		int inside_row = j >= y && j < y + h;
-		for (i = 0; i < c->w; i++) {
-			int32_t sx;
-			if (inside_row && i >= x && i < x + w) {
-				i = x + w - 1; /* the screen itself is the dialog's */
-				continue;
-			}
-			sx = i - x < 0 ? 0 : (i - x >= w ? w - 1 : i - x);
-			if (owners) {
-				uint16_t below = ui->image_log.below[(size_t)sy * (size_t)w + (size_t)sx];
-				c->item = owners[(size_t)sy * (size_t)w + (size_t)sx];
-				c->plain = c->hd_audit && ui->image_log.plain[(size_t)sy * (size_t)w + (size_t)sx];
-				c->below_value = (uint16_t)((below & KP_UI_BELOW_UNDER)
-					| (below & KP_UI_BELOW_KNOWN ? KP_UI_BELOW_KNOWN | c->shade[below & 0xff] : 0));
-			}
-			put(c, i, j, c->shade[src[(size_t)sy * (size_t)w + (size_t)sx]], OPAQUE);
-		}
-	}
-	c->item = c->below_value = 0;
-	c->plain = 0;
+	int32_t w = d->bitmap.w > 0 ? d->bitmap.w : 0, h = d->bitmap.h > 0 ? d->bitmap.h : 0;
+	kp_ui_canvas_fill(c, 0, 0, c->w, y, MARGIN_INDEX);                 /* above */
+	kp_ui_canvas_fill(c, 0, y + h, c->w, c->h - y - h, MARGIN_INDEX);  /* below */
+	kp_ui_canvas_fill(c, 0, y, x, h, MARGIN_INDEX);                    /* left */
+	kp_ui_canvas_fill(c, x + w, y, c->w - x - w, h, MARGIN_INDEX);     /* right */
 }
 
 void kp_ui_canvas_tooltip(KpUi *ui, KpUiCanvas *c, int32_t x, int32_t y)
@@ -1036,8 +990,8 @@ void kp_ui_canvas_dialog(KpUi *ui, KpUiCanvas *c, int32_t dialog, int32_t x, int
 void kp_ui_canvas_screen(KpUi *ui, KpUiCanvas *c, int32_t dialog, int32_t x, int32_t y)
 {
 	const uint16_t *owners;
-	const uint8_t *src = compose_dialog(ui, c, dialog, x, y, &owners);
-	draw_margins(ui, c, &ui->controls[dialog], x, y, src, owners);
+	(void)compose_dialog(ui, c, dialog, x, y, &owners);
+	draw_margins(c, &ui->controls[dialog], x, y);
 }
 
 void kp_ui_canvas_blend_row(const KpUi *ui, uint8_t out[256]) { kp_ui_effect_row(ui, 0, out); }

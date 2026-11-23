@@ -26,7 +26,7 @@ Phase 9 ran it on the browser pane. Phase S ([phaseS.md](phaseS.md)) moved the p
 
 | Screen | 1024 × 576 (16:9, wide) | 540 × 960 (9:16, narrow) | Checked by |
 |---|---|---|---|
-| Main menu, game mode popup | ✓ centred, margins widened and dimmed | ✓ centred at the 640 × 480 minimum, margins above and below | browser |
+| Main menu, game mode popup | ✓ centred, margins black (widened and dimmed until 2026-11-23) | ✓ centred at the 640 × 480 minimum, margins above and below | browser |
 | Login, new ID popup (typed name) | ✓ | ✓ | browser |
 | Campaign episodes (Brood War) | ✓ | ✓ | browser |
 | Establishing text, ready room (Protoss), Start | ✓ | ✓ | browser; `room_check.py` (57 games) |

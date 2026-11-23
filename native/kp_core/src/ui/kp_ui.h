@@ -2779,8 +2779,6 @@ typedef struct {
 	                               * on, at the canvas's size (a resize or the planes' change frees it) */
 	size_t hd_plain_size;
 	uint8_t plain;                /* the draws' from here on (from KpUiImageLog.plain) */
-	uint8_t shade[256];          /* the margins' darkening of the glue palette (kp_ui_canvas_screen) */
-	uint32_t shade_serial;        /* the glue palette's serial it was built for plus 1, 0 none */
 	uint8_t *scratch;             /* a GRP frame decoded for the game view (kp_ui_canvas_game_view) */
 	size_t scratch_size;
 	/* the HD interface's items (not the original's: StarCraft: Remastered's art, ADR 0013 R4d; kp_ui_canvas_hd): per
@@ -2902,10 +2900,8 @@ void kp_ui_canvas_console_owned(KpUi *ui, KpUiCanvas *c, int group, int32_t x, i
 void kp_ui_canvas_fluff(KpUi *ui, KpUiCanvas *c, int group, int32_t x, int32_t y, int32_t x0, int32_t x1);
 /* An opaque rectangle of one index (a fixed screen's margins over the world). */
 void kp_ui_canvas_fill(KpUiCanvas *c, int32_t x, int32_t y, int32_t w, int32_t h, uint8_t index);
-/* A fixed screen's dialog at canvas (x, y) (kp_ui_canvas_dialog) with its margins (a glue screen, plan section 2a: the
- * theme's widened and dimmed background): each margin pixel repeats the screen's nearest edge pixel, darkened to the
- * glue palette's nearest colour at a quarter of its brightness, with that pixel's HD item. Not the original's (ADR 0011
- * approximation). */
+/* A fixed screen's dialog at canvas (x, y) (kp_ui_canvas_dialog) with its margins (a glue screen on a logical screen
+ * larger than its 640 x 480): the canvas past the dialog's rectangle black (index 0), with no HD item (ADR 0011). */
 void kp_ui_canvas_screen(KpUi *ui, KpUiCanvas *c, int32_t dialog, int32_t x, int32_t y);
 /* A dialog's bitmap at canvas (x, y): opaque, or with index 0 transparent when the dialog has flag 0x2000
  * (BlitDialogToScreen 0x4c5630 blits with the dialog's flags); a translucent dialog composited onto the backdrop (flags

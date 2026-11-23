@@ -3849,19 +3849,6 @@ static int taking(Glue *G)
 }
 
 /* The nearest colour of the glue palette at a quarter of entry i's brightness, the lowest index on a tie. */
-static int shade(const uint8_t *rgb, int i)
-{
-	int r = rgb[3 * i] / 4, g = rgb[3 * i + 1] / 4, b = rgb[3 * i + 2] / 4, best = 0, best_d = -1, j;
-	for (j = 0; j < 256; j++) {
-		int dr = rgb[3 * j] - r, dg = rgb[3 * j + 1] - g, db = rgb[3 * j + 2] - b, d = dr * dr + dg * dg + db * db;
-		if (best_d < 0 || d < best_d) {
-			best = j;
-			best_d = d;
-		}
-	}
-	return best;
-}
-
 /* Whether the interface's image log holds a picture of the score directory's file `name` (lower case). */
 static int score_picture_logged(const KpUi *ui, const char *name)
 {
@@ -3956,23 +3943,30 @@ static void glue_menus_start_a_campaign_mission(KpT *T)
 	Glue *G;
 	KpUi *ui;
 	KpOracleGame *game;
-	uint8_t rgb[768];
-	int32_t y;
-	int k, checked = 0, sliding = 0;
+	int32_t x, y, px, py;
+	int k, edges = 0, sliding = 0, margins = 0, black = 0;
 	if (!kp_t_ready(T, "test_hud.glue_menus_start_a_campaign_mission", GLUE_FILES)) return;
 	G = glue(T);
 	ui = G->ui;
 	wait_for(G, "rez\\glumain.bin", 2000);
-	/* the margins of the 800 x 600 screen widen the menu's edges, dimmed (kp_ui_canvas_screen) */
-	for (k = 0; k < 256; k++) memcpy(&rgb[3 * k], &ui->glue.palette[4 * k], 3);
-	for (y = G->glue->place_y; y <= G->glue->place_y + 479; y += 7) {
-		uint8_t edge = index_at(&G->glue->canvas, G->glue->place_x, y), index, alpha;
-		kp_canvas_pixel(&G->glue->canvas, 0, y, &index, &alpha);
-		kp_t_eq(T, alpha, 255, NULL);
-		kp_t_eq(T, index, shade(rgb, edge), NULL);
-		checked += edge != index;
+	/* the margins of the 800 x 600 screen black on every side (kp_ui_canvas_screen; issue #6: they repeated the menu's
+	 * edges, dimmed), opaque, where the menu's own edge is not black */
+	px = G->glue->place_x;
+	py = G->glue->place_y;
+	kp_t_ok(T, px > 0 && py > 0, "margins on every side: the menu at %d, %d", (int)px, (int)py);
+	for (y = 0; y < 600; y += 3) {
+		for (x = 0; x < 800; x += 3) {
+			uint8_t index, alpha;
+			if (x >= px && x < px + 640 && y >= py && y < py + 480) continue;
+			kp_canvas_pixel(&G->glue->canvas, x, y, &index, &alpha);
+			margins++;
+			black += index == 0 && alpha == 255;
+		}
 	}
-	kp_t_ok(T, checked > 0, "some margin pixels differ from their edge");
+	kp_t_eq(T, black, margins, "the margins black");
+	kp_t_eq(T, ui->glue.palette[0] | ui->glue.palette[1] << 8 | ui->glue.palette[2] << 16, 0, "index 0 is black");
+	for (y = py; y < py + 480; y += 7) edges += index_at(&G->glue->canvas, px, y) != 0;
+	kp_t_ok(T, edges > 0, "the menu's left edge is not black");
 	glue_click(G, 3, -1, -1); /* Single Player */
 	wait_for(G, "rez\\glugamemode.bin", 2000);
 	glue_key(G, 'e');

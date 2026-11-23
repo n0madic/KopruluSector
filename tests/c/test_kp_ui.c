@@ -1427,7 +1427,7 @@ static void audit_plane_follows_the_canvas(KpT *T)
 }
 
 /* A fixed screen with its margins (kp_ui_canvas_screen) takes its dialog's owners once: its items are added once, the
- * development checks count its pixels drawn outside the log once, and a margin pixel is its edge pixel's item. */
+ * development checks count its pixels drawn outside the log once; a margin pixel is black, opaque, with no item. */
 static void screens_take_their_owners_once(KpT *T)
 {
 	enum { W = 8, H = 4, X = 2, CW = W + 2 * X };
@@ -1435,7 +1435,7 @@ static void screens_take_their_owners_once(KpT *T)
 	KpUi *ui = (KpUi *)calloc(1, sizeof *ui);
 	KpUiCanvas *c = vt_canvas(T, CW, H);
 	KpUiSurface s = vt_sized(T, W, H, 5);
-	int32_t items, unlogged;
+	int32_t items, unlogged, x, y;
 	kp_t_ok(T, ui != NULL, "out of memory");
 	kp_t_defer(T, owners_free, ui);
 	ui->hd = 1;
@@ -1455,7 +1455,16 @@ static void screens_take_their_owners_once(KpT *T)
 	kp_ui_canvas_end(c);
 	kp_t_eq(T, c->item_count, items, "the items once");
 	kp_t_eq(T, c->hd_unlogged, unlogged, "counted once");
-	kp_t_ok(T, c->ids[0] != 0 && c->ids[0] == c->ids[X] && c->ids[CW - 1] == c->ids[X + W - 1], "the margins' items");
+	kp_t_ok(T, c->ids[X] != 0 && c->ids[X + W - 1] != 0, "the screen's items");
+	for (y = 0; y < H; y++) {
+		for (x = 0; x < CW; x++) {
+			const uint8_t *p = c->pixels + 2 * ((size_t)y * CW + (size_t)x);
+			if (x >= X && x < X + W) continue;
+			kp_t_ok(T, p[0] == 0 && p[1] == 255 && c->ids[(size_t)y * CW + (size_t)x] == 0,
+				"margin (%d, %d): index %d, alpha %d, item %d", (int)x, (int)y, p[0], p[1],
+				c->ids[(size_t)y * CW + (size_t)x]);
+		}
+	}
 }
 
 /* A pixel an image wrote stops being the image's once a draw outside the images writes it, even with the image's own
