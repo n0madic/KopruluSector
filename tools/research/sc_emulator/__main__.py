@@ -214,9 +214,12 @@ def cmd_play(a):
             from . import uiscreen
             uiscreen.install(s, out / "screens", tuple(int(x) for x in a.screens.split(",") if x), a.glue_ms,
                              names=logs["uilog"]["dialog_ref"])
-        if a.fog:
+        if a.fog or a.fog_redraws:
             from . import fogcap
-            fogcap.install(s, tuple(int(x) for x in a.fog.split(",")), out / "fog", forced=not a.fog_partial)
+            if a.fog:
+                fogcap.install(s, tuple(int(x) for x in a.fog.split(",")), out / "fog", forced=not a.fog_partial)
+            if a.fog_redraws:
+                fogcap.install_redraws(s, out / "fog")
 
     scenarios.SETUP = setup
     # the play's own records go next to the reference runs under another name, which they must not overwrite
@@ -414,6 +417,8 @@ def main(argv=None):
     pp.add_argument("--out-root", default="", help="output root instead of emu/campaign")
     pp.add_argument("--fog", default="", help="comma-separated frames of fog captures (sc_emulator/fogcap.py)")
     pp.add_argument("--fog-partial", action="store_true", help="capture the game's own partial redraws")
+    pp.add_argument("--fog-redraws", action="store_true", help="record every fog pass of the run, full or partial, "
+                    "into fog/redraws.cap (fogcap.install_redraws)")
     pp.add_argument("--speech", default="", help="LOC:CAMPAIGN/MISSION (ruRU:terran/terran01): the triggers take the "
                     "TIME of the language's map in --scr (sc_emulator/speech.py)")
     pp.add_argument("--scr", default=os.environ.get("KOPRULU_SCR", "/Applications/StarCraft"),

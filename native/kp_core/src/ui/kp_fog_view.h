@@ -5,7 +5,9 @@
  * a 3x3 blur smooths the levels and a bilinear expansion turns them into one level per 8x8-pixel block (the level
  * map); a pixel of the view is then darkened through the tileset's dark.pcx row of its level, interpolated between
  * its block's four corner levels. The original's view is 640x400 pixels (grids of 24 x 17 tiles, a level map of
- * 88 x 60 blocks); a wider view grows the grids by its size in tiles (ADR 0009, an approximation outside 640x400). */
+ * 88 x 60 blocks); a wider view grows the grids by its size in tiles (ADR 0009). A pixel's level depends on its map
+ * point alone, so a wider view, or one whose camera lies between the 8-pixel grid's positions, is the original's
+ * 640x400 views tiled (tools/fog_check.py --wide). */
 #ifndef KP_FOG_VIEW_H
 #define KP_FOG_VIEW_H
 
@@ -18,13 +20,14 @@ extern "C" {
 #define KP_FOG_LEVELS 32       /* dark.pcx rows */
 #define KP_FOG_SEEN 31         /* 0x671a80 */
 #define KP_FOG_EXPLORED 15     /* 0x671a80 >> 1 */
-#define KP_FOG_MAX_COLS 132    /* a view of up to 4096 x 4096 pixels */
-#define KP_FOG_MAX_ROWS 132
+#define KP_FOG_MAX_COLS 133    /* a view of up to 4096 x 4096 pixels, its camera off the 8-pixel grid */
+#define KP_FOG_MAX_ROWS 133
 #define KP_FOG_GRID (KP_FOG_MAX_COLS * KP_FOG_MAX_ROWS)
 #define KP_FOG_MAX_LEVELS ((KP_FOG_MAX_COLS - 2) * 4 * (KP_FOG_MAX_ROWS - 2) * 4)
 
 typedef struct {
-	int64_t cols, rows;   /* the tile grids: the view's size in tiles + 4 (24 x 17 for 640 x 400) */
+	int64_t cols, rows;   /* the tile grids: the view's size in tiles + 4 (24 x 17 for 640 x 400), its size plus the
+	                       * camera's phase on the 8-pixel grid for a camera off it */
 	int64_t level_w, level_h; /* the level map: (cols - 2) * 4 x (rows - 2) * 4 (88 x 60) */
 	int64_t tile_x, tile_y; /* the camera's tile at the last update (its top-left) */
 	uint8_t raw[KP_FOG_GRID];    /* 0x670a78: the tiles' levels, from the camera tile - 1 */

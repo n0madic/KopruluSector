@@ -8,6 +8,14 @@
 #define BLOCKS_PER_TILE 4
 #define GRID_MARGIN 4 /* the grids reach a tile left of the camera's and past the view's right edge */
 
+/* The grids' tiles along a view of `size` pixels: the original's (24 for 640, 17 for 400) on the 8-pixel grid; a camera
+ * between grid positions (a finger's pan, never the original's) adds its phase, so that the level map still reaches the
+ * block after the view's last, which the darkening interpolates towards (else the view's edge faded to black). */
+static int64_t grid_tiles(int64_t size, int64_t cam)
+{
+	return (size + (cam & (BLOCK - 1)) + TILE - 1) / TILE + GRID_MARGIN;
+}
+
 void kp_fog_view_init(KpFogView *v)
 {
 	int a, b, k;
@@ -47,7 +55,7 @@ static int64_t quarter(int64_t v) { return v / 4; }
 int kp_fog_view_update(KpFogView *v, const KpFogVision *vision, int64_t cam_x, int64_t cam_y, int64_t view_w,
 	int64_t view_h, int64_t rect[4])
 {
-	int64_t cols = (view_w + TILE - 1) / TILE + GRID_MARGIN, rows = (view_h + TILE - 1) / TILE + GRID_MARGIN;
+	int64_t cols = grid_tiles(view_w, cam_x), rows = grid_tiles(view_h, cam_y);
 	int64_t tx = cam_x / TILE, ty = cam_y / TILE, r, c, k, x0, y0, x1, y1;
 	int resized;
 	if (cols > KP_FOG_MAX_COLS || rows > KP_FOG_MAX_ROWS || view_w < 1 || view_h < 1) return -1;

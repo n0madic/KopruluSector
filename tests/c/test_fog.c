@@ -1,8 +1,9 @@
 /* The fog of war of the presentation (kp_fog_view.h, native/kp_core/src/ui/kp_fog_view.c) on synthetic tile flags
  * (plan phase S, stage S7). The original's own fog passes are the oracle of tools/fog_check.py (the emulator's
  * captures); these cases keep the rules that need no capture: the levels of seen, explored and unexplored tiles, the
- * blur at an edge between them, the uniform and black blocks of the darkening, the blocks a dirty update reports, and
- * the minimap's three map sizes and its rows. */
+ * blur at an edge between them, the uniform and black blocks of the darkening, the blocks a dirty update reports, the
+ * minimap's three map sizes and its rows, and a wider view tiled by 640 x 400 views (ADR 0009: the same tiling
+ * `tools/fog_check.py --wide` checks against the original's own fog code). */
 #include "kp_test.h"
 
 #include <string.h>
@@ -205,9 +206,208 @@ static void minimap_sizes_and_rows(KpT *T)
 	}
 }
 
+/* --- a wider view tiled by the original's views (ADR 0009) ---
+ * Each pixel of a wider view equals the same map pixel's in every 640 x 400 view, at a camera of the original's scroll
+ * range on the 8-pixel grid, that shows it. The 640 x 400 view is the original's (fog_check.py on the emulator's
+ * captures); fog_check.py --wide checks this tiling against the original's code, this case keeps it where the original
+ * is not at hand. */
+
+#define ORIGINAL_BOTTOM 24 /* InitScreenScroll's (H - 12) * 32 + 8: the 400 rows reach 24 pixels below the map */
+
+static uint32_t next_random(uint32_t *s)
+{
+	*s = *s * 1103515245u + 12345u;
+	return *s >> 8;
+}
+
+/* A map of unexplored, explored and seen rectangles and single tiles, the other players' bits and the high WORD
+ * random. */
+static int64_t *patched_map(KpT *T, int64_t w, int64_t h, uint32_t seed)
+{
+	int64_t *t = (int64_t *)malloc(sizeof *t * (size_t)(w * h)), k, x, y;
+	uint8_t *state;
+	int level, n;
+	kp_t_ok(T, t != NULL, "out of memory");
+	kp_t_defer(T, free, t);
+	state = (uint8_t *)calloc((size_t)(w * h), 1);
+	kp_t_ok(T, state != NULL, "out of memory");
+	kp_t_defer(T, free, state);
+	for (level = 1; level <= 2; level++) {
+		for (n = 0; n < 24; n++) {
+			int64_t x0 = next_random(&seed) % w, y0 = next_random(&seed) % h;
+			int64_t rw = 1 + next_random(&seed) % 24, rh = 1 + next_random(&seed) % 24;
+			for (y = y0; y < y0 + rh && y < h; y++) {
+				for (x = x0; x < x0 + rw && x < w; x++) state[y * w + x] = (uint8_t)level;
+			}
+		}
+	}
+	for (n = 0; n < w * h / 64; n++) {
+		uint32_t at = next_random(&seed) % (uint32_t)(w * h);
+		state[at] = (uint8_t)(next_random(&seed) % 3);
+	}
+	for (k = 0; k < w * h; k++) {
+		int64_t f = (int64_t)next_random(&seed) << 8;
+		f = (f | (next_random(&seed) & 0xff)) & ~(int64_t)(NOT_SEEN | NOT_EXPLORED);
+		t[k] = f | (state[k] == 0 ? NOT_SEEN | NOT_EXPLORED : state[k] == 1 ? NOT_SEEN : 0);
+	}
+	return t;
+}
+
+/* The w x h view at (cam_x, cam_y) under the fog: (7 x + 13 y) mod 251 of each map pixel. */
+static void pattern_view(int64_t cam_x, int64_t cam_y, int64_t w, int64_t h, uint8_t *out)
+{
+	int64_t x, y;
+	for (y = 0; y < h; y++) {
+		for (x = 0; x < w; x++) out[y * w + x] = (uint8_t)(((cam_x + x) * 7 + (cam_y + y) * 13) % 251);
+	}
+}
+
+/* The same view darkened. */
+static void shade_view(KpT *T, KpFogView *v, const KpFogVision *vision, const uint8_t *d, int64_t cam_x, int64_t cam_y,
+	int64_t w, int64_t h, uint8_t *out)
+{
+	int64_t rect[4];
+	kp_t_ok(T, kp_fog_view_update(v, vision, cam_x, cam_y, w, h, rect) >= 0, "a view of %lld x %lld", (long long)w,
+		(long long)h);
+	pattern_view(cam_x, cam_y, w, h, out);
+	kp_fog_view_shade(v, cam_x, cam_y, d, out, w, h, w);
+}
+
+#define COVER_MAX 8 /* the original's views along one side of a wide view */
+#define COUNT(a) ((int)(sizeof (a) / sizeof (a)[0]))
+
+static int64_t on_grid(int64_t v) { return v > 0 ? v & ~(int64_t)7 : 0; }
+
+/* The original's view positions (on the 8-pixel grid, 0..top) that cover start..start + size together, at most
+ * COVER_MAX of them; fails when they cannot. */
+static int cover(KpT *T, int64_t start, int64_t size, int64_t view, int64_t top, int64_t *out)
+{
+	int n = 0;
+	int64_t x = on_grid(start), last = (start + size - view + 7) & ~(int64_t)7;
+	while (x + view < start + size) {
+		kp_t_ok(T, n < COVER_MAX - 1, "%lld pixels need more than %d views of %lld", (long long)size, COVER_MAX,
+			(long long)view);
+		out[n++] = x < top ? x : top;
+		x += view;
+	}
+	if (last < 0) last = 0;
+	out[n++] = last < top ? last : top;
+	kp_t_ok(T, out[0] <= start && out[n - 1] + view >= start + size, "no cover of %lld..%lld by views of %lld up to %lld",
+		(long long)start, (long long)(start + size), (long long)view, (long long)top);
+	return n;
+}
+
+/* A buffer for the largest of n views, each grown by pad pixels on both sides, released when the test ends. */
+static uint8_t *view_buffer(KpT *T, const int64_t (*views)[2], int n, int64_t pad)
+{
+	int64_t area = 0;
+	uint8_t *p;
+	int k;
+	for (k = 0; k < n; k++) {
+		if ((views[k][0] + pad) * (views[k][1] + pad) > area) area = (views[k][0] + pad) * (views[k][1] + pad);
+	}
+	p = (uint8_t *)malloc((size_t)area);
+	kp_t_ok(T, p != NULL, "out of memory");
+	kp_t_defer(T, free, p);
+	return p;
+}
+
+static void wide_view_is_the_original_views_tiled(KpT *T)
+{
+	static const int64_t MAPS[2][2] = { { 64, 64 }, { 128, 96 } };
+	static const int64_t VIEWS[5][2] = { { 640, 400 }, { 502, 880 }, { 854, 400 }, { 1001, 517 }, { 1280, 640 } };
+	static const int64_t ORIGINAL[1][2] = { { VIEW_W, VIEW_H } };
+	const uint8_t *d = dark(T);
+	KpFogView *wide = view(T), *orig = view(T);
+	uint8_t *mine = view_buffer(T, VIEWS, COUNT(VIEWS), 0), *theirs = view_buffer(T, ORIGINAL, 1, 0);
+	int m, k, c, views = 0;
+	for (m = 0; m < COUNT(MAPS); m++) {
+		int64_t mw = MAPS[m][0], mh = MAPS[m][1];
+		KpFogVision vision = vision_of(patched_map(T, mw, mh, (uint32_t)(0x46c3c0 + m)), mw);
+		int64_t top_x = mw * 32 - VIEW_W, top_y = mh * 32 - VIEW_H + ORIGINAL_BOTTOM;
+		vision.map_h = mh;
+		for (k = 0; k < COUNT(VIEWS); k++) {
+			int64_t w = VIEWS[k][0], h = VIEWS[k][1];
+			int64_t max_x = on_grid(mw * 32 - w), max_y = on_grid(mh * 32 - h + ORIGINAL_BOTTOM);
+			int64_t cams[5][2] = { { 0, 0 }, { max_x, 0 }, { 0, max_y }, { max_x, max_y }, { 0, 0 } };
+			cams[4][0] = on_grid(max_x / 2 + 13);
+			cams[4][1] = on_grid(max_y / 3 + 5);
+			for (c = 0; c < COUNT(cams); c++) {
+				int64_t cx = cams[c][0], cy = cams[c][1], xs[COVER_MAX], ys[COVER_MAX];
+				int nx = cover(T, cx, w, VIEW_W, top_x, xs), ny = cover(T, cy, h, VIEW_H, top_y, ys), i, j;
+				shade_view(T, wide, &vision, d, cx, cy, w, h, mine);
+				for (j = 0; j < ny; j++) {
+					for (i = 0; i < nx; i++) {
+						int64_t wx = xs[i], wy = ys[j], x, y;
+						shade_view(T, orig, &vision, d, wx, wy, VIEW_W, VIEW_H, theirs);
+						views++;
+						for (y = 0; y < VIEW_H; y++) {
+							int64_t vy = wy + y - cy;
+							if (vy < 0 || vy >= h) continue;
+							for (x = 0; x < VIEW_W; x++) {
+								int64_t vx = wx + x - cx;
+								if (vx < 0 || vx >= w || mine[vy * w + vx] == theirs[y * VIEW_W + x]) continue;
+								kp_t_fail(T, "map %lld x %lld, view %lld x %lld at (%lld, %lld): map pixel (%lld, %lld) %d, "
+									"the 640 x 400 view at (%lld, %lld) %d", (long long)mw, (long long)mh, (long long)w,
+									(long long)h, (long long)cx, (long long)cy, (long long)(wx + x), (long long)(wy + y),
+									mine[vy * w + vx], (long long)wx, (long long)wy, theirs[y * VIEW_W + x]);
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	kp_t_ok(T, views > 100, "the original's views compared: %d", views);
+}
+
+/* A camera between the 8-pixel grid's positions (a finger's pan; the original's never is) keeps the fog on the map: an
+ * all-seen map stays clear to the view's last pixels (the level map reaches the block after them, which the darkening
+ * interpolates towards), and each pixel equals the same map pixel's in a view on the grid a block larger. */
+static void off_grid_camera_keeps_the_fog_on_the_map(KpT *T)
+{
+	static const int64_t VIEWS[4][2] = { { 640, 400 }, { 1280, 640 }, { 1001, 517 }, { 502, 880 } };
+	static const int64_t PHASES[6] = { 1, 7, 25, 28, 30, 31 };
+	const uint8_t *d = dark(T);
+	int64_t *seen = tiles(T, 64, all_seen);
+	KpFogVision clear = vision_of(seen, 64), patched = vision_of(patched_map(T, 64, 64, 0x46b910), 64);
+	KpFogView *v = view(T), *grid = view(T);
+	uint8_t *mine = view_buffer(T, VIEWS, COUNT(VIEWS), 0), *plain = view_buffer(T, VIEWS, COUNT(VIEWS), 0);
+	uint8_t *ref = view_buffer(T, VIEWS, COUNT(VIEWS), 8);
+	int k, p, q;
+	for (k = 0; k < COUNT(VIEWS); k++) {
+		int64_t w = VIEWS[k][0], h = VIEWS[k][1];
+		for (p = 0; p < COUNT(PHASES); p++) {
+			for (q = 0; q < 3; q++) {
+				/* the phase in x (q 0), in y (1) or in both (2), 25..31 the view's last block one past a grid camera's */
+				int64_t cx = 320 + (q == 1 ? 0 : PHASES[p]), cy = 288 + (q == 0 ? 0 : PHASES[COUNT(PHASES) - 1 - p]);
+				int64_t gx = cx & ~(int64_t)7, gy = cy & ~(int64_t)7, x, y;
+				shade_view(T, v, &clear, d, cx, cy, w, h, mine);
+				pattern_view(cx, cy, w, h, plain); /* a seen block keeps its pixels */
+				kp_t_ok(T, memcmp(mine, plain, (size_t)(w * h)) == 0,
+					"%lld x %lld at (%lld, %lld): an all-seen map stays clear", (long long)w, (long long)h, (long long)cx,
+					(long long)cy);
+				shade_view(T, v, &patched, d, cx, cy, w, h, mine);
+				shade_view(T, grid, &patched, d, gx, gy, w + 8, h + 8, ref);
+				for (y = 0; y < h; y++) {
+					for (x = 0; x < w; x++) {
+						uint8_t a = mine[y * w + x], b = ref[(cy - gy + y) * (w + 8) + cx - gx + x];
+						if (a == b) continue;
+						kp_t_fail(T, "%lld x %lld at (%lld, %lld): map pixel (%lld, %lld) %d, the view on the grid %d",
+							(long long)w, (long long)h, (long long)cx, (long long)cy, (long long)(cx + x),
+							(long long)(cy + y), a, b);
+					}
+				}
+			}
+		}
+	}
+}
+
 static const KpTest TESTS[] = {
 	{ "levels_of_seen_explored_and_unexplored_tiles", levels_of_seen_explored_and_unexplored_tiles, 0 },
 	{ "dirty_update_reports_the_changed_blocks", dirty_update_reports_the_changed_blocks, 0 },
 	{ "minimap_sizes_and_rows", minimap_sizes_and_rows, 0 },
+	{ "wide_view_is_the_original_views_tiled", wide_view_is_the_original_views_tiled, 0 },
+	{ "off_grid_camera_keeps_the_fog_on_the_map", off_grid_camera_keeps_the_fog_on_the_map, 0 },
 };
 KP_SUITE(kp_suite_fog, "test_fog", TESTS);

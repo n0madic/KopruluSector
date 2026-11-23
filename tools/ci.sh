@@ -87,14 +87,16 @@
 #     on the attached, unlocked phone: only for the changes that need a real phone (docs/phaseS.md, "Device runs");
 #   KOPRULU_CAPTURES=<dir> with KOPRULU_ORIGINAL composes the full-game emulator's captured frames
 #     (tools/research/sc_emulator/capture.py) and compares them with the original's screens, and its fog captures
-#     under <dir>/fog (sc_emulator/fogcap.py) with Koprulu's fog (tools/fog_check.py);
+#     under <dir>/fog (sc_emulator/fogcap.py) with Koprulu's fog (tools/fog_check.py), the wider views too against
+#     the original's fog code over the captures' and generated maps (`--wide`, ADR 0009), and the whole plays'
+#     redraws there (`play ... --fog-redraws`, redraws.cap: the cells the original's partial redraws leave);
 #   KOPRULU_HUD=<dir> (the emulator's console runs with screen captures) checks kp_ui's console against them
 #     (tools/ui_check.py) and replays their input through the interface (tools/input_check.py);
 #   KOPRULU_INPUT=<dir> (the test scenarios' runs with the input log): the same input check over every scenario;
 #     KOPRULU_SCENARIOS=<dir> (the scenarios' first state dumps, <dir>/<run>/states/s00001.state) gives each run's cheat
 #     word: the emulator starts them with Ophelia's cheat on its command line, which the cheat_typed run's first word has;
 #   KOPRULU_PLAYS=<dir> (the emulator's recorded campaign plays, `play ... --fog F`) checks the fog captures of every
-#     play under it; with KOPRULU_PLAYS_UI=<dir> too (the plays re-recorded with the input log) every play's input
+#     play under it (in the full mode with KOPRULU_ORIGINAL the wider views over their maps too); with KOPRULU_PLAYS_UI=<dir> too (the plays re-recorded with the input log) every play's input
 #     replays through the interface (tools/input_check.py --kind plays, the cheat word from KOPRULU_PLAYS's first
 #     state dumps).
 set -euo pipefail
@@ -1105,7 +1107,7 @@ if [ -n "${KOPRULU_CAPTURES:-}" ] && [ -n "${KOPRULU_ORIGINAL:-}" ]; then
   "$PYTHON" tools/compose_capture.py --data "$KOPRULU_ORIGINAL" --root "$KOPRULU_CAPTURES" | tail -1
   if [ -d "$KOPRULU_CAPTURES/fog" ]; then
     step "fog of war and the minimap's fog against the original's captured fog passes"
-    "$PYTHON" tools/fog_check.py --root "$KOPRULU_CAPTURES/fog" | tail -1
+    "$PYTHON" tools/fog_check.py --root "$KOPRULU_CAPTURES/fog" --wide --exe "$KOPRULU_ORIGINAL/StarCraft.exe" | tail -3
   fi
 fi
 
@@ -1123,7 +1125,11 @@ fi
 
 if [ -n "${KOPRULU_PLAYS:-}" ]; then
   step "fog of war and the minimap's fog against the fog passes captured in the campaign plays"
-  "$PYTHON" tools/fog_check.py --root "$KOPRULU_PLAYS" | tail -1
+  plays_wide=""  # the wider views over the plays' 119 maps: about 80 s
+  if [ "$CI_MODE" = full ] && [ -n "${KOPRULU_ORIGINAL:-}" ]; then
+    plays_wide="--wide --synthetic 0"  # fog_check takes $KOPRULU_ORIGINAL/StarCraft.exe
+  fi
+  "$PYTHON" tools/fog_check.py --root "$KOPRULU_PLAYS" $plays_wide | tail -2
 fi
 
 if [ -n "${KOPRULU_PLAYS_UI:-}" ] && [ -n "${KOPRULU_PLAYS:-}" ]; then
