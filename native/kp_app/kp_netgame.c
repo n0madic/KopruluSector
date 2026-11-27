@@ -2514,17 +2514,26 @@ void kp_netgame_enum(KpNetGame *ng)
 	ng->net.enum_games(ng->net.ud, on_enum_game, ng, &hint);
 }
 
-int kp_netgame_join(KpNetGame *ng, const KpNetGameHeader *listed)
+/* JoinNetworkGame 0x475610's steps: the requested template key before SNetJoinGame; its refusal reported; once joined,
+ * the listed header with the template record the host's event 1 gave */
+static void join_requested(KpNetGame *ng, const KpNetGameHeader *listed)
 {
-	uint8_t received[KP_TEMPLATE_SIZE];
-	int id = -1;
 	ng->requested_key[0] = listed->type;
 	ng->requested_key[1] = listed->sub;
 	kp_net_put16(ng->requested_key + 2, listed->subtype);
-	if (!ng->net.join_game(ng->net.ud, listed->id, "", "", ng->config.player_name, "", &id)) {
-		report_storm(ng, ng->net.error(ng->net.ud) == ERROR_VERSION ? KP_NETTBL_JOIN_VERSION : KP_NETTBL_JOIN_FAILED, 0);
-		return 0;
-	}
+}
+
+static int join_refused(KpNetGame *ng)
+{
+	ng->joining = 0;
+	report_storm(ng, ng->net.error(ng->net.ud) == ERROR_VERSION ? KP_NETTBL_JOIN_VERSION : KP_NETTBL_JOIN_FAILED, 0);
+	return 0;
+}
+
+static int joined(KpNetGame *ng, const KpNetGameHeader *listed, int id)
+{
+	uint8_t received[KP_TEMPLATE_SIZE];
+	ng->joining = 0;
 	ng->local_storm = id;
 	memcpy(received, ng->header.template_record, sizeof received);
 	ng->header = *listed;
@@ -2532,6 +2541,32 @@ int kp_netgame_join(KpNetGame *ng, const KpNetGameHeader *listed)
 	ng->config.replay = listed->replay;
 	ng->host = 0;
 	return 1;
+}
+
+int kp_netgame_join(KpNetGame *ng, const KpNetGameHeader *listed)
+{
+	int id = -1;
+	join_requested(ng, listed);
+	if (!ng->net.join_game(ng->net.ud, listed->id, "", "", ng->config.player_name, "", &id)) return join_refused(ng);
+	return joined(ng, listed, id);
+}
+
+int kp_netgame_join_begin(KpNetGame *ng, const KpNetGameHeader *listed)
+{
+	if (!ng->net.join_begin || !ng->net.join_poll) return kp_netgame_join(ng, listed);
+	join_requested(ng, listed);
+	if (!ng->net.join_begin(ng->net.ud, listed->id, "", "", ng->config.player_name, "")) return join_refused(ng);
+	ng->join_listed = *listed; /* the list may be refreshed meanwhile */
+	ng->joining = 1;
+	return 1;
+}
+
+int kp_netgame_join_poll(KpNetGame *ng)
+{
+	int id = -1, r;
+	if (!ng->joining) return 0;
+	if ((r = ng->net.join_poll(ng->net.ud, &id)) < 0) return -1;
+	return r ? joined(ng, &ng->join_listed, id) : join_refused(ng);
 }
 
 int kp_netgame_enter(KpNetGame *ng)
@@ -2839,6 +2874,7 @@ void kp_netgame_abort(KpNetGame *ng)
 	kp_transfer_reset(&ng->transfer);
 	flush_lobby(ng);
 	discard_lobby(ng);
+	ng->joining = 0; /* a join's handshake given up: Storm's leave ends it */
 	leave_storm(ng, KP_NETGAME_LEAVE_CODE);
 	stop_countdown(ng);
 	ng->host = 0;
@@ -3050,6 +3086,12 @@ static int c_join(void *ud, uint32_t game_id, const char *name, const char *pass
 {
 	return kp_snet_join_game(snet(ud), game_id, name, password, player_name, player_desc, player_id);
 }
+static int c_join_begin(void *ud, uint32_t game_id, const char *name, const char *password, const char *player_name,
+	const char *player_desc)
+{
+	return kp_snet_join_begin(snet(ud), game_id, name, password, player_name, player_desc);
+}
+static int c_join_poll(void *ud, int *player_id) { return kp_snet_join_poll(snet(ud), player_id); }
 static int c_leave(void *ud, uint32_t reason) { return kp_snet_leave_game(snet(ud), reason); }
 static int c_enum(void *ud, int (*fn)(void *fn_ud, const KpSnetGame *g), void *fn_ud, uint32_t *hint)
 {
@@ -3086,6 +3128,8 @@ KpNetCalls kp_netgame_snet_calls(KpSnet *s)
 	KpNetCalls c;
 	c.create_game = c_create;
 	c.join_game = c_join;
+	c.join_begin = c_join_begin;
+	c.join_poll = c_join_poll;
 	c.leave_game = c_leave;
 	c.enum_games = c_enum;
 	c.send_turn = c_send_turn;

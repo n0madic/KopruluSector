@@ -31,6 +31,7 @@
 #include <stdint.h>
 
 #include "kp_record.h"
+#include "kp_rep.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -64,6 +65,7 @@ extern "C" {
 #define KP_WATCH_TIMEOUT_MS 10000        /* no answer this long from a server that answered: gone */
 #define KP_WATCH_FIRST_TIMEOUT_MS 300000 /* no answer at all this long: no game (a host still in its lobby has none) */
 #define KP_WATCH_START_MAX (32u << 20) /* the largest start file a viewer takes */
+#define KP_WATCH_RECORD_MAX KP_REP_MAX_RECORD /* the largest record a viewer takes (what a replay file holds) */
 
 /* A datagram back to where the REQUEST came from (the server), or to the server (the viewer). */
 typedef void (*KpWatchSend)(void *ud, const uint8_t *data, size_t size);
@@ -105,7 +107,8 @@ typedef enum {
 	KP_WATCH_FETCHING, /* the start file is coming */
 	KP_WATCH_LIVE,     /* the start file is here, the record grows */
 	KP_WATCH_ENDED,    /* the record is whole (the game ended) */
-	KP_WATCH_GONE,     /* no answer for KP_WATCH_TIMEOUT_MS, or the server went on to another game */
+	KP_WATCH_GONE,     /* no answer for KP_WATCH_TIMEOUT_MS, the server went on to another game, or its record grew past
+	                    * KP_WATCH_RECORD_MAX (oversize) */
 	KP_WATCH_FAILED    /* gone before the start file came (no answer at all for KP_WATCH_FIRST_TIMEOUT_MS), out of
 	                    * memory, or a start file too large */
 } KpWatchStatus;
@@ -126,6 +129,7 @@ typedef struct {
 	int taken_whole;
 	uint32_t last_request, last_heard;
 	int asked, fresh;
+	int oversize; /* gone: the record grew past KP_WATCH_RECORD_MAX */
 } KpWatchViewer;
 
 void kp_watch_viewer_init(KpWatchViewer *v, uint32_t now);

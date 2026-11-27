@@ -8,6 +8,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "kp_net_thread.h"
+
 #define UNMAPPED_SELF 0x7f000002u /* 127.0.0.2: to itself, a program the map does not hold */
 #define DRAIN_MAX 4096            /* datagrams read from one socket a wait, at most (the provider queues as many) */
 
@@ -28,7 +30,6 @@ typedef SOCKET Fd;
 #include <netdb.h>
 #include <netinet/in.h>
 #include <poll.h>
-#include <pthread.h>
 #include <sys/socket.h>
 #include <time.h>
 #include <unistd.h>
@@ -100,6 +101,11 @@ int kp_net_sock_wait(KpNetSock *s, uint32_t ms, KpNetSockDeliver fn, void *ud)
 	(void)ud;
 	return -1;
 }
+int kp_net_sock_wake(KpNetSock *s)
+{
+	(void)s;
+	return 0;
+}
 uint16_t kp_net_sock_port(const KpNetSock *s, int socket)
 {
 	(void)s;
@@ -117,6 +123,8 @@ long kp_net_sock_send_errors(const KpNetSock *s)
 struct KpNetSock {
 	Fd fd[KP_NET_SOCKETS];
 	uint16_t port[KP_NET_SOCKETS]; /* the real ports, host order */
+	Fd wake;                        /* 127.0.0.1's socket the waits also watch (kp_net_sock_wake), NO_FD none */
+	uint16_t wake_port;
 	uint32_t self_ip;               /* with a map: this program's virtual address */
 	uint16_t map_base;
 	int map_hosts, map_self;
@@ -167,49 +175,71 @@ static struct sockaddr_in real_address(uint32_t ip, uint16_t port)
 	return a;
 }
 
-static int open_socket(KpNetSock *s, int k, uint32_t ip, uint16_t port, char *error, size_t size)
+static int nonblocking(Fd fd, char *error, size_t size)
+{
+#ifdef _WIN32
+	u_long on = 1;
+	BOOL report = FALSE;
+	DWORD out = 0;
+	if (ioctlsocket(fd, FIONBIO, &on) != 0) {
+		snprintf(error, size, "FIONBIO: error %d", last_error());
+		return 0;
+	}
+	/* without it an ICMP "port unreachable" fails the next recvfrom (a peer that left); failing to set it only makes
+	 * those failures transient ones */
+	WSAIoctl(fd, SIO_UDP_CONNRESET, &report, sizeof report, NULL, 0, &out, NULL, NULL);
+#else
+	int flags = fcntl(fd, F_GETFL, 0);
+	if (flags < 0 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) != 0) {
+		snprintf(error, size, "O_NONBLOCK: error %d", last_error());
+		return 0;
+	}
+#endif
+	return 1;
+}
+
+/* A socket bound and made non-blocking (*fd keeps it, to close, from its creation on); broadcast: SO_BROADCAST */
+static int bound_socket(Fd *fd, uint32_t ip, uint16_t port, int broadcast, char *error, size_t size)
 {
 	struct sockaddr_in a = real_address(ip, port);
 	int on = 1;
-	Fd fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-	if (fd == NO_FD) {
+	if ((*fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == NO_FD) {
 		snprintf(error, size, "socket: error %d", last_error());
 		return 0;
 	}
-	s->fd[k] = fd;
-	if (setsockopt(fd, SOL_SOCKET, SO_BROADCAST, (const char *)&on, sizeof on) != 0) {
+	if (broadcast && setsockopt(*fd, SOL_SOCKET, SO_BROADCAST, (const char *)&on, sizeof on) != 0) {
 		snprintf(error, size, "SO_BROADCAST: error %d", last_error());
 		return 0;
 	}
-	if (bind(fd, (const struct sockaddr *)&a, sizeof a) != 0) {
+	if (bind(*fd, (const struct sockaddr *)&a, sizeof a) != 0) {
 		snprintf(error, size, "bind %s port %u: error %d", ip == KP_NET_LOOPBACK_IP ? "127.0.0.1" : "0.0.0.0", port,
 			last_error());
 		return 0;
 	}
-#ifdef _WIN32
-	{
-		u_long nonblocking = 1;
-		BOOL report = FALSE;
-		DWORD out = 0;
-		if (ioctlsocket(fd, FIONBIO, &nonblocking) != 0) {
-			snprintf(error, size, "FIONBIO: error %d", last_error());
-			return 0;
-		}
-		/* without it an ICMP "port unreachable" fails the next recvfrom (a peer that left); failing to set it only
-		 * makes those failures transient ones */
-		WSAIoctl(fd, SIO_UDP_CONNRESET, &report, sizeof report, NULL, 0, &out, NULL, NULL);
-	}
-#else
-	{
-		int flags = fcntl(fd, F_GETFL, 0);
-		if (flags < 0 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) != 0) {
-			snprintf(error, size, "O_NONBLOCK: error %d", last_error());
-			return 0;
-		}
-	}
-#endif
+	return nonblocking(*fd, error, size);
+}
+
+static int open_socket(KpNetSock *s, int k, uint32_t ip, uint16_t port, char *error, size_t size)
+{
+	if (!bound_socket(&s->fd[k], ip, port, 1, error, size)) return 0;
 	s->port[k] = port;
 	return 1;
+}
+
+/* The wake socket on 127.0.0.1 at a port the system picks; none when it cannot be opened (the waits then end only by
+ * their time or a datagram) */
+static void open_wake(KpNetSock *s)
+{
+	char error[64];
+	struct sockaddr_in a;
+	socklen_t len = sizeof a;
+	if (bound_socket(&s->wake, KP_NET_LOOPBACK_IP, 0, 0, error, sizeof error) &&
+		getsockname(s->wake, (struct sockaddr *)&a, &len) == 0) {
+		s->wake_port = ntohs(a.sin_port);
+		return;
+	}
+	if (s->wake != NO_FD) close_fd(s->wake);
+	s->wake = NO_FD;
 }
 
 void kp_net_sock_close(KpNetSock *s)
@@ -218,6 +248,7 @@ void kp_net_sock_close(KpNetSock *s)
 	if (!s) return;
 	for (k = 0; k < KP_NET_SOCKETS; k++)
 		if (s->fd[k] != NO_FD) close_fd(s->fd[k]);
+	if (s->wake != NO_FD) close_fd(s->wake);
 	free(s);
 #ifdef _WIN32
 	if (--wsa_users == 0) WSACleanup();
@@ -255,6 +286,7 @@ KpNetSock *kp_net_sock_open(const KpNetSockConfig *c, char *error, size_t size)
 		return NULL;
 	}
 	for (k = 0; k < KP_NET_SOCKETS; k++) s->fd[k] = NO_FD;
+	s->wake = NO_FD;
 #ifdef _WIN32
 	if (wsa_users++ == 0) {
 		WSADATA wsa;
@@ -286,6 +318,7 @@ KpNetSock *kp_net_sock_open(const KpNetSockConfig *c, char *error, size_t size)
 		}
 		s->port[0] = ntohs(a.sin_port);
 	}
+	open_wake(s);
 	return s;
 }
 
@@ -388,6 +421,23 @@ static int drain(KpNetSock *s, int socket, KpNetSockDeliver fn, void *ud)
 	return n;
 }
 
+/* The wake socket's datagrams read and dropped */
+static void drain_wake(KpNetSock *s)
+{
+	char b[16];
+	int reads;
+	for (reads = 0; reads < DRAIN_MAX && recv(s->wake, b, (int)sizeof b, 0) >= 0; reads++) {
+	}
+}
+
+int kp_net_sock_wake(KpNetSock *s)
+{
+	struct sockaddr_in a;
+	if (!s || s->wake == NO_FD) return 0;
+	a = real_address(KP_NET_LOOPBACK_IP, s->wake_port);
+	return sendto(s->wake, "w", 1, 0, (const struct sockaddr *)&a, sizeof a) == 1;
+}
+
 int kp_net_sock_wait(KpNetSock *s, uint32_t ms, KpNetSockDeliver fn, void *ud)
 {
 	int k, n = 0, ready;
@@ -397,19 +447,25 @@ int kp_net_sock_wait(KpNetSock *s, uint32_t ms, KpNetSockDeliver fn, void *ud)
 	FD_ZERO(&set);
 	for (k = 0; k < KP_NET_SOCKETS; k++)
 		if (s->fd[k] != NO_FD) FD_SET(s->fd[k], &set);
+	if (s->wake != NO_FD) FD_SET(s->wake, &set);
 	t.tv_sec = (long)(ms / 1000);
 	t.tv_usec = (long)(ms % 1000) * 1000;
-	ready = select(0, &set, NULL, NULL, &t);
+	ready = select(0, &set, NULL, NULL, ms > 0x7fffffffu ? NULL : &t);
 	if (ready == SOCKET_ERROR) return -1;
+	if (ready > 0 && s->wake != NO_FD && FD_ISSET(s->wake, &set)) drain_wake(s);
 #else
-	struct pollfd p[KP_NET_SOCKETS];
+	struct pollfd p[KP_NET_SOCKETS + 1];
 	for (k = 0; k < KP_NET_SOCKETS; k++) { /* a single socket's B: poll skips a negative descriptor */
 		p[k].fd = s->fd[k];
 		p[k].events = POLLIN;
 		p[k].revents = 0;
 	}
-	ready = poll(p, KP_NET_SOCKETS, ms > 0x7fffffffu ? -1 : (int)ms);
+	p[KP_NET_SOCKETS].fd = s->wake;
+	p[KP_NET_SOCKETS].events = POLLIN;
+	p[KP_NET_SOCKETS].revents = 0;
+	ready = poll(p, KP_NET_SOCKETS + 1, ms > 0x7fffffffu ? -1 : (int)ms);
 	if (ready < 0) return errno == EINTR ? 0 : -1;
+	if (p[KP_NET_SOCKETS].revents & POLLIN) drain_wake(s);
 #endif
 	if (ready == 0) return 0;
 	for (k = 0; k < KP_NET_SOCKETS && s->fd[k] != NO_FD; k++) {
@@ -462,80 +518,36 @@ static int resolve_name(const char *name, uint16_t port, KpNetAddr *out, char *e
 struct KpNetLookup {
 	char name[KP_NET_HOST]; /* the name and port the thread resolves (written before it starts, never after) */
 	uint16_t port;
-	int threaded;  /* a thread resolves it: the lock is initialized */
-	/* under the lock while threaded: 1 found (addr), 0 none (error), LOOKUP_RESOLVING; given up by its owner while
-	 * resolving (the thread frees it) */
+	KpNetLock *lock; /* a thread resolves it (NULL: answered at once) */
+	/* under the lock: 1 found (addr), 0 none (error), LOOKUP_RESOLVING; given up by its owner while resolving (the
+	 * thread frees it) */
 	int state, abandoned;
 	KpNetAddr addr;
 	char error[128];
-#ifdef _WIN32
-	CRITICAL_SECTION lock;
-#elif !defined(__EMSCRIPTEN__)
-	pthread_mutex_t lock;
-#endif
 };
-
-static void lookup_lock(KpNetLookup *l)
-{
-	if (!l->threaded) return;
-#ifdef _WIN32
-	EnterCriticalSection(&l->lock);
-#elif !defined(__EMSCRIPTEN__)
-	pthread_mutex_lock(&l->lock);
-#endif
-}
-
-static void lookup_unlock(KpNetLookup *l)
-{
-	if (!l->threaded) return;
-#ifdef _WIN32
-	LeaveCriticalSection(&l->lock);
-#elif !defined(__EMSCRIPTEN__)
-	pthread_mutex_unlock(&l->lock);
-#endif
-}
 
 static void lookup_destroy(KpNetLookup *l)
 {
-	if (l->threaded) {
-#ifdef _WIN32
-		DeleteCriticalSection(&l->lock);
-#elif !defined(__EMSCRIPTEN__)
-		pthread_mutex_destroy(&l->lock);
-#endif
-	}
+	kp_net_lock_free(l->lock);
 	free(l);
 }
 
 #ifndef __EMSCRIPTEN__
 /* The thread: the resolver's answer, then the lookup freed if its owner gave it up meanwhile */
-static void lookup_run(KpNetLookup *l)
+static void lookup_run(void *p)
 {
+	KpNetLookup *l = (KpNetLookup *)p;
 	KpNetAddr a;
 	char error[sizeof l->error];
 	int found = resolve_name(l->name, l->port, &a, error, sizeof error), abandoned;
-	lookup_lock(l);
+	kp_net_lock(l->lock);
 	if (found) l->addr = a;
 	else snprintf(l->error, sizeof l->error, "%s", error);
 	l->state = found;
 	abandoned = l->abandoned;
-	lookup_unlock(l);
+	kp_net_unlock(l->lock);
 	if (abandoned) lookup_destroy(l);
 }
-
-#ifdef _WIN32
-static DWORD WINAPI lookup_thread(LPVOID p)
-{
-	lookup_run((KpNetLookup *)p);
-	return 0;
-}
-#else
-static void *lookup_thread(void *p)
-{
-	lookup_run((KpNetLookup *)p);
-	return NULL;
-}
-#endif
 #endif
 
 /* The name handed to a detached thread of its own; 0 none started (the reason in l->error) */
@@ -545,39 +557,14 @@ static int lookup_spawn(KpNetLookup *l)
 	snprintf(l->error, sizeof l->error, "no resolver on the web");
 	return 0;
 #else
-	int started;
-#ifdef _WIN32
-	HANDLE t;
-	InitializeCriticalSection(&l->lock);
-#else
-	pthread_t t;
-	pthread_attr_t attr;
-	if (pthread_mutex_init(&l->lock, NULL) != 0) {
+	if (!(l->lock = kp_net_lock_new())) {
 		snprintf(l->error, sizeof l->error, "the resolver's lock: no resources");
 		return 0;
 	}
-#endif
-	l->threaded = 1;
 	l->state = LOOKUP_RESOLVING; /* before the thread starts: from then on it is the thread's to set */
-#ifdef _WIN32
-	t = CreateThread(NULL, 0, lookup_thread, l, 0, NULL);
-	started = t != NULL;
-	if (started) CloseHandle(t); /* detached */
-#else
-	started = pthread_attr_init(&attr) == 0;
-	if (started) {
-		started = pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED) == 0
-			&& pthread_create(&t, &attr, lookup_thread, l) == 0;
-		pthread_attr_destroy(&attr);
-	}
-#endif
-	if (started) return 1;
-#ifdef _WIN32
-	DeleteCriticalSection(&l->lock);
-#else
-	pthread_mutex_destroy(&l->lock);
-#endif
-	l->threaded = 0;
+	if (kp_net_thread_detach(lookup_run, l)) return 1;
+	kp_net_lock_free(l->lock);
+	l->lock = NULL;
 	l->state = 0;
 	snprintf(l->error, sizeof l->error, "the resolver's thread did not start");
 	return 0;
@@ -598,11 +585,11 @@ KpNetLookup *kp_net_lookup_start(const char *text)
 int kp_net_lookup_poll(KpNetLookup *l, KpNetAddr *out, char *error, size_t size)
 {
 	int state;
-	lookup_lock(l);
+	kp_net_lock(l->lock);
 	state = l->state;
 	if (state == 1 && out) *out = l->addr;
 	if (state == 0 && error && size) snprintf(error, size, "%s", l->error);
-	lookup_unlock(l);
+	kp_net_unlock(l->lock);
 	return state;
 }
 
@@ -610,9 +597,9 @@ void kp_net_lookup_free(KpNetLookup *l)
 {
 	int resolving;
 	if (!l) return;
-	lookup_lock(l);
+	kp_net_lock(l->lock);
 	resolving = l->state == LOOKUP_RESOLVING;
 	if (resolving) l->abandoned = 1;
-	lookup_unlock(l);
+	kp_net_unlock(l->lock);
 	if (!resolving) lookup_destroy(l);
 }

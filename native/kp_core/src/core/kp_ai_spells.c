@@ -471,13 +471,12 @@ static int64_t select_yamato(KpGame *g, int64_t n, int r) /* 0x433240 */
 }
 static int64_t select_recall(KpGame *g, int64_t n, int r) /* 0x433140: from a region the AI holds */
 {
-	int64_t p = g->u.owner[n], reg, *a;
+	int64_t p = g->u.owner[n], reg;
 	int32_t s = kp_unit_sprite(g, n);
 	(void)r;
 	reg = kp_region_at(g, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]));
 	/* IsRegionUnthreatened 0x4aea70 */
-	a = &g->air.state[p][reg];
-	if (*a == REGION_ABANDONED || g->air.target_air[p][reg] != 0 || g->air.target_ground[p][reg] != 0
+	if (g->air.state[p][reg] == REGION_ABANDONED || g->air.target_air[p][reg] != 0 || g->air.target_ground[p][reg] != 0
 		|| kp_band(g->air.flags[p][reg], REGION_TARGETED) != 0) {
 		return 0;
 	}

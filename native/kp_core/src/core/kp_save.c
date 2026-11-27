@@ -34,7 +34,7 @@
 
 enum { MODE_BYTES, MODE_HASH, MODE_RAW, MODE_COVER };
 /* The primitives' kinds (the coverage's alignment, the schema's fingerprint). */
-enum { KIND_U8 = 1, KIND_U32, KIND_U64, KIND_I32, KIND_I64, KIND_INT, KIND_LIST };
+enum { KIND_U8 = 1, KIND_U32, KIND_U64, KIND_I32, KIND_I64, KIND_INT, KIND_LIST, KIND_I8, KIND_I16, KIND_U16 };
 
 typedef struct {
 	const char *tag;
@@ -421,6 +421,75 @@ static void u8s(Codec *c, uint8_t *v, size_t n)
 	}
 }
 
+/* An integer's bits of elem bytes (1, 2, 4 or 8) at p, zero-extended, and their store. */
+static uint64_t num_bits(const uint8_t *p, size_t elem)
+{
+	uint8_t b8;
+	uint16_t b16;
+	uint32_t b32;
+	uint64_t b64;
+	switch (elem) {
+	case 1: memcpy(&b8, p, 1); return b8;
+	case 2: memcpy(&b16, p, 2); return b16;
+	case 4: memcpy(&b32, p, 4); return b32;
+	default: memcpy(&b64, p, 8); return b64;
+	}
+}
+
+static void num_store(uint8_t *p, size_t elem, uint64_t x)
+{
+	uint8_t b8 = (uint8_t)x;
+	uint16_t b16 = (uint16_t)x;
+	uint32_t b32 = (uint32_t)x;
+	switch (elem) {
+	case 1: memcpy(p, &b8, 1); return;
+	case 2: memcpy(p, &b16, 2); return;
+	case 4: memcpy(p, &b32, 4); return;
+	default: memcpy(p, &x, 8); return;
+	}
+}
+
+static int num_kind(size_t elem, int sign)
+{
+	switch (elem) {
+	case 1: return sign ? KIND_I8 : KIND_U8;
+	case 2: return sign ? KIND_I16 : KIND_U16;
+	case 4: return sign ? KIND_I32 : KIND_U32;
+	default: return sign ? KIND_I64 : KIND_U64;
+	}
+}
+
+/* n integers of elem bytes each (1, 2, 4 or 8; signed or not), the narrowed fields' (kp_game.h): saved and hashed at
+ * their width, little-endian. */
+static void nums(Codec *c, void *v, size_t n, size_t elem, int sign)
+{
+	uint8_t *p = (uint8_t *)v, b[8];
+	size_t k, j;
+	switch (c->mode) {
+	case MODE_COVER: cover(c, num_kind(elem, sign), v, n, elem); return;
+	case MODE_HASH:
+		for (k = 0; k < n; k++) hash_put(c, num_bits(p + k * elem, elem), (unsigned)elem);
+		return;
+	case MODE_RAW: c->elem = elem; raw(c, v, n * elem); return;
+	default: break;
+	}
+	if (c->reading) {
+		const uint8_t *q = take(c, n * elem);
+		if (!q || c->dry) return;
+		for (k = 0; k < n; k++) {
+			uint64_t x = 0;
+			for (j = elem; j-- > 0;) x = x << 8 | q[k * elem + j];
+			num_store(p + k * elem, elem, x);
+		}
+	} else {
+		for (k = 0; k < n; k++) {
+			uint64_t x = num_bits(p + k * elem, elem);
+			for (j = 0; j < elem; j++) b[j] = (uint8_t)(x >> (8 * j));
+			put_bytes(c, b, elem);
+		}
+	}
+}
+
 static void ints(Codec *c, int *v, size_t n)
 {
 	size_t k;
@@ -538,11 +607,21 @@ static void checked_u32(Codec *c, uint32_t *v)
 #define u8s(c_, v, n) (NAMED(c_, v), (u8s)(c_, v, n))
 #define ints(c_, v, n) (NAMED(c_, v), (ints)(c_, v, n))
 #define lists(c_, v, n) (NAMED(c_, v), (lists)(c_, v, n))
+#define nums(c_, v, n, elem, sign) (NAMED(c_, v), (nums)(c_, v, n, elem, sign))
 #define checked_u64(c_, v) (NAMED(c_, v), (checked_u64)(c_, v))
 #define checked_u32(c_, v) (NAMED(c_, v), (checked_u32)(c_, v))
 
 #define ARRAY_N(a) (sizeof(a) / sizeof((a)[0]))
 #define I64S(f) (NAMED(c, f), (i64s)(c, (f), ARRAY_N(f)))
+/* a narrowed array (kp_game.h), all its elements: by its element type's name (a unit field's type column) */
+#define NUMS(f, sign) (NAMED(c, f), (nums)(c, (f), ARRAY_N(f), sizeof((f)[0]), sign))
+#define WALK_int64_t(f) I64S(f)
+#define WALK_int32_t(f) NUMS(f, 1)
+#define WALK_uint32_t(f) NUMS(f, 0)
+#define WALK_int16_t(f) NUMS(f, 1)
+#define WALK_uint16_t(f) NUMS(f, 0)
+#define WALK_int8_t(f) NUMS(f, 1)
+#define WALK_uint8_t(f) NUMS(f, 0)
 #define I64(f) (NAMED(c, f), (i64s)(c, &(f), 1))
 /* a multi-dimensional int64_t array, all its elements */
 #define I64N(f) (NAMED(c, f), (i64s)(c, (int64_t *)(f), sizeof(f) / sizeof(int64_t)))
@@ -594,10 +673,11 @@ static uint64_t canon_sprite(const Codec *c, int64_t s)
 	return c->canon->seat[s] ? (uint64_t)-1 : c->canon->key[s];
 }
 
-static void hash_canon_sprites(Codec *c, const int64_t *v, size_t n)
+/* The sprite references of an array of elem-byte records (the units' field, whatever its width), by their keys. */
+static void hash_canon_sprites(Codec *c, const void *v, size_t elem, size_t n)
 {
 	size_t k;
-	for (k = 0; k < n; k++) hash_put(c, canon_sprite(c, v[k]), 8);
+	for (k = 0; k < n; k++) hash_put(c, canon_sprite(c, kp_num_get(v, elem, 1, (int64_t)k)), 8);
 }
 
 /* The units' word 0xd0, a Pylon's Psi field by its key. */
@@ -614,11 +694,11 @@ static void hash_unit_d0(Codec *c, const KpGame *g)
 #define CREEP_GROUP 0x10
 /* The tiles' flags without the creep shown (the viewer's, OnCreepTileChanged 0x4b4040), and the tile words with a creep
  * tile's variant (the CRT generator's draw, 0x4c0c40) left out: the seat's. */
-static void hash_shared_tiles(Codec *c, const int64_t *flags, const int64_t *words, size_t n)
+static void hash_shared_tiles(Codec *c, const uint32_t *flags, const uint16_t *words, size_t n)
 {
 	size_t k;
-	for (k = 0; k < n; k++) hash_put(c, (uint64_t)(flags[k] & ~CREEP_SHOWN), 8);
-	for (k = 0; k < n; k++) hash_put(c, (uint64_t)((words[k] & 0x7ff0) == CREEP_GROUP ? CREEP_GROUP : words[k]), 8);
+	for (k = 0; k < n; k++) hash_put(c, flags[k] & ~(uint32_t)CREEP_SHOWN, 4);
+	for (k = 0; k < n; k++) hash_put(c, (words[k] & 0x7ff0) == CREEP_GROUP ? CREEP_GROUP : words[k], 2);
 }
 
 /* The sprite flags of the local selection: its circle, the allies' dashed circles and the selected mark. */
@@ -957,11 +1037,12 @@ static void walk(Codec *c, KpGame *g)
 	}
 	section(c, "UNIT");
 	/* the shared hash takes the units' (and the bullets' flingy parts') sprites by their canonical places */
-#define UNIT(name) \
+#define UNIT(name, type) \
 	if (!kp_unit_view_field(#name)) { \
-		if (c->shared && strcmp(#name, "sprite") == 0) hash_canon_sprites(c, g->u.name, ARRAY_N(g->u.name)); \
+		if (c->shared && strcmp(#name, "sprite") == 0) \
+			hash_canon_sprites(c, g->u.name, KP_ELEM(g->u.name), ARRAY_N(g->u.name)); \
 		else if (c->shared && strcmp(#name, "union_0xd0") == 0) hash_unit_d0(c, g); \
-		else I64S(g->u.name); \
+		else WALK_##type(g->u.name); \
 	}
 	KP_UNIT_FIELDS(UNIT)
 #undef UNIT
@@ -1042,7 +1123,7 @@ static void walk(Codec *c, KpGame *g)
 		 * coverage counts the whole rows (past the map's regions they are no state). */
 		size_t count = c->mode == MODE_COVER ? (size_t)KP_AI_REGIONS : (size_t)g->regions.count;
 		for (k = 0; k < KP_AI_PLAYERS; k++) {
-#define AI_REGION(name) i64s(c, g->air.name[k], count);
+#define AI_REGION(name, type) nums(c, g->air.name[k], count, KP_ELEM(g->air.name[k]), (type)-1 < 0);
 			KP_AI_REGION_FIELDS(AI_REGION)
 #undef AI_REGION
 		}
@@ -1074,17 +1155,17 @@ static void walk(Codec *c, KpGame *g)
 	I64N(g->pai.area);
 	I64S(g->pai.medic);
 	section(c, "SPAT");
-	I64S(g->spatial.x_unit);
-	I64S(g->spatial.x_at);
-	I64S(g->spatial.y_unit);
-	I64S(g->spatial.y_at);
+	NUMS(g->spatial.x_unit, 1);
+	NUMS(g->spatial.x_at, 1);
+	NUMS(g->spatial.y_unit, 1);
+	NUMS(g->spatial.y_at, 1);
 	I64(g->spatial.count);
 	I64(g->spatial.max_w);
 	I64(g->spatial.max_h);
-	I64S(g->spatial.mark);
+	NUMS(g->spatial.mark, 0);
 	/* the rectangle query's marks: the interface's queries (a box's selection, the attack notices) write them too, and
 	 * no query's result depends on them (kp_units_in_rect clears them at the stamp's wrap): the seat's (ADR 0025) */
-	SEAT_PART(I64S(g->spatial.seen));
+	SEAT_PART(NUMS(g->spatial.seen, 0));
 	SEAT_PART(I64(g->spatial.stamp));
 	section(c, "MOVE");
 	I64(g->mv.next_x);
@@ -1108,12 +1189,12 @@ static void walk(Codec *c, KpGame *g)
 	if (c->shared) {
 		hash_shared_tiles(c, t->tiles, t->raw_tiles, ARRAY_N(t->tiles));
 	} else {
-		I64S(t->tiles);
-		SEAT_PART(I64S(t->megatiles));
-		I64S(t->raw_tiles);
+		NUMS(t->tiles, 0);
+		SEAT_PART(NUMS(t->megatiles, 0));
+		NUMS(t->raw_tiles, 0);
 	}
-	I64S(t->creep_backup);
-	SEAT_PART(I64S(t->creep_border));
+	NUMS(t->creep_backup, 0);
+	SEAT_PART(NUMS(t->creep_border, 0));
 	I64(t->recede_timer);
 	I64(t->recede_free);
 	I64(t->recede_retry);
@@ -1124,7 +1205,7 @@ static void walk(Codec *c, KpGame *g)
 	I64S(t->recede_y);
 	I64S(t->recede_bucket);
 	I64S(t->recede_head);
-	I64S(t->recede_node);
+	NUMS(t->recede_node, 1);
 	section(c, "PLAY");
 	I64S(pl->controller);
 	I64S(pl->race);
@@ -1297,10 +1378,16 @@ static void walk(Codec *c, KpGame *g)
 }
 
 /* What a restored game derives (kp_load, kp_restore): the remembered-terrain set is rebuilt at its next refresh; the
- * game's pending events are dropped; the countdown's text follows the countdown; the interface takes the game anew. */
+ * game's pending events are dropped; the countdown's text follows the countdown; the interface takes the game anew.
+ * The scratch that is empty between steps starts empty: a step that failed (kp_game_fail) inside a turn, a town's
+ * migration, a placement or a nested query left it set in the game a load or a restore writes into. */
 static void restored(KpGame *g)
 {
 	g->terrain.has_terrain_changed = 0;
+	g->turn_cancels_cursor = 0;
+	g->ai.migrating = 0;
+	g->ai.placement_builder = 0;
+	g->spatial.frame_top = 0;
 	g->command_record = g->local_record;
 	g->events.first = g->events.count = g->events.texts_waiting = 0;
 	/* the countdown's text (not saved) as the restored countdown shows it, not the game's before */
@@ -1423,12 +1510,47 @@ int kp_save(KpGame *g, const char *mission, const char *data, uint8_t **out, siz
 	return 0;
 }
 
+/* kp_load's copy of the game it writes into (the walk's fields, raw): NULL out of memory. */
+static uint8_t *game_copy(KpGame *g, size_t *size)
+{
+	Codec c;
+	uint8_t *buf;
+	memset(&c, 0, sizeof c);
+	c.mode = MODE_RAW;
+	walk(&c, g);
+	*size = c.size;
+	if (!(buf = (uint8_t *)malloc(c.size ? c.size : 1))) return NULL;
+	memset(&c, 0, sizeof c);
+	c.mode = MODE_RAW;
+	c.buf = buf;
+	c.cap = *size;
+	walk(&c, g);
+	if (c.failed) {
+		free(buf);
+		return NULL;
+	}
+	return buf;
+}
+
+/* The copy written back: the game as it was before the load (its scratch and serials untouched, unlike kp_restore). */
+static void game_put_back(KpGame *g, uint8_t *buf, size_t size)
+{
+	Codec c;
+	memset(&c, 0, sizeof c);
+	c.mode = MODE_RAW;
+	c.reading = 1;
+	c.buf = buf;
+	c.size = size;
+	walk(&c, g);
+}
+
 int kp_load(KpGame *g, const uint8_t *bytes, size_t size, const char *mission, const char *data, KpError *err)
 {
 	Codec c;
 	char m[KP_SAVE_NAME] = "", d[KP_SAVE_NAME] = "";
 	uint32_t version = 0;
-	size_t start;
+	size_t start, copy_size = 0;
+	uint8_t *copy = NULL;
 	memset(&c, 0, sizeof c);
 	c.reading = 1;
 	c.buf = (uint8_t *)bytes;
@@ -1458,12 +1580,18 @@ int kp_load(KpGame *g, const uint8_t *bytes, size_t size, const char *mission, c
 		snprintf(c.error, sizeof c.error, "save: %u bytes past the state", (unsigned)(c.size - c.at));
 	}
 	if (!c.failed && c.refused) fail(&c, c.refusal);
+	/* The values the step uses as indices are checked once written (kp_load_check); a state that fails is replaced by
+	 * the game's copy taken before. */
+	if (!c.failed && !(copy = game_copy(g, &copy_size))) fail(&c, "save: no memory for the load");
 	if (!c.failed) {
 		c.dry = 0;
 		c.at = start;
 		c.sections = 0;
 		walk(&c, g);
+		if (!c.failed && kp_load_check(g, c.error, sizeof c.error) != 0) c.failed = 1;
+		if (c.failed) game_put_back(g, copy, copy_size);
 	}
+	free(copy);
 	if (c.failed) {
 		snprintf(err->msg, sizeof err->msg, "%s", c.error);
 		return -1;

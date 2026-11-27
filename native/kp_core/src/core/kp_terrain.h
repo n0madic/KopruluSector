@@ -29,16 +29,19 @@ typedef struct {
 } KpVisionTemplate;
 
 typedef struct {
-	/* g.tiles, g.megatiles, g.raw_tiles (MTXM words), g.creep_backup, g.creep_border (0 where unset) */
-	int64_t tiles[KP_TILES], megatiles[KP_TILES], raw_tiles[KP_TILES];
-	int64_t creep_backup[KP_TILES], creep_border[KP_TILES];
+	/* g.tiles (the flag DWORDs 0x666454), g.megatiles (the remembered megatiles, 0x8000 their creep), g.raw_tiles (MTXM
+	 * words), g.creep_backup (the words under creep), g.creep_border (the border ranks; 0 where unset): the original's
+	 * widths */
+	uint32_t tiles[KP_TILES];
+	uint16_t megatiles[KP_TILES], raw_tiles[KP_TILES], creep_backup[KP_TILES];
+	uint8_t creep_border[KP_TILES];
 	/* g.recede (InitRecedingCreepPool 0x4b44a0) */
 	int64_t recede_timer, recede_free, recede_retry, recede_buckets[KP_RECEDE_BUCKETS];
 	/* its nodes 1..1024 (0 none): bucket links, tile and bucket; the bucket heads (bucket 9 is the free list, its count
 	 * recede_free); the node of each receding tile, in place of the original's hash of 1024 chains */
 	int64_t recede_next[KP_RECEDE_NODES + 1], recede_prev[KP_RECEDE_NODES + 1], recede_x[KP_RECEDE_NODES + 1];
 	int64_t recede_y[KP_RECEDE_NODES + 1], recede_bucket[KP_RECEDE_NODES + 1], recede_head[KP_RECEDE_BUCKETS + 1];
-	int64_t recede_node[KP_TILES];
+	int16_t recede_node[KP_TILES];
 	/* g.terrain_changed of kp_refresh_remembered_terrain: unset until its first run, then a tile set */
 	int has_terrain_changed;
 	uint8_t terrain_changed[KP_TILES];

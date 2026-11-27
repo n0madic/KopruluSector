@@ -23,6 +23,10 @@ enum { CMD_CONNECT = 1, CMD_ACCEPT, CMD_CONNECT_ACK, CMD_PING, CMD_PONG, CMD_PLA
 #define MAXMSG_RESERVE 16u  /* ScanProviders keeps maxmsg - 16 */
 #define REQUEST_SIZE 13     /* a resend request naming a player */
 #define PLAYER_INFO_HEAD 0x24
+/* A join's handshake (kp_snet_join_begin): waiting for the accept (command 2), then for the template or the reject
+ * (9 or 10); kp_snet_join_game's wait between passes (PumpUntilControl 0x15023f40's Sleep(10)) */
+enum { JOIN_ACCEPT = 1, JOIN_ANSWER };
+#define JOIN_PASS_MS 10u
 /* Bounds the original lacks (kp_snet.h): remote records, and packet nodes when a datagram is filed. */
 
 /* A packet node (0x20 bytes in Storm): the packet and its length, the address it came from or goes to, the creation or
@@ -74,8 +78,13 @@ struct KpSnet {
 	int remote_count, nodes;
 	uint8_t local_id;                               /* 0x15066600 */
 	int joining;                                    /* 0x1506bad8 */
-	int in_join;                                    /* kp_snet_join_game runs: the pump waits */
+	int in_join;                                    /* a join's handshake runs (kp_snet_join_poll): the pump waits */
 	KpNetAddr join_addr;                            /* while joining: the joined game's address (kp_snet.h) */
+	/* the handshake's wait (PumpUntilControl 0x15023f40): JOIN_ACCEPT or JOIN_ANSWER, since join_start; the join
+	 * request's strings */
+	int join_wait;
+	uint32_t join_start;
+	char join_player[KP_SNET_STRING], join_desc[KP_SNET_STRING], join_password[KP_SNET_STRING];
 	int seen[CMD_COUNT];                            /* 0x1506baf0 */
 	char name[KP_SNET_STRING], stats[KP_SNET_STRING], password[KP_SNET_STRING];
 	uint32_t mode, start_tick, game_type, ladder_type, max_players;
@@ -1189,52 +1198,78 @@ int kp_snet_create_game(KpSnet *s, const char *name, const char *password, const
 	return 1;
 }
 
-/* PumpUntilControl 0x15023f40: until one of the commands was dispatched, or the timeout. */
-static int pump_until(KpSnet *s, const unsigned *cmds, int count, uint32_t timeout)
+/* PumpUntilControl 0x15023f40's wait for the commands of `wait` begun: its clock and the commands seen cleared */
+static void join_wait(KpSnet *s, int wait)
 {
-	uint32_t start = now_of(s);
-	int first = 1, k;
+	s->join_wait = wait;
+	s->join_start = now_of(s);
 	memset(s->seen, 0, sizeof s->seen);
-	for (;;) {
-		if (!first && s->hooks.sleep) s->hooks.sleep(s->hooks.ud, 10);
-		first = 0;
-		receive_packets(s);
-		run_timers(s);
-		for (k = 0; k < count; k++)
-			if (cmds[k] < CMD_COUNT && s->seen[cmds[k]]) return 1;
-		if (timeout != KP_SNET_INFINITE && now_of(s) - start >= timeout) return 0;
-	}
 }
 
-int kp_snet_join_game(KpSnet *s, uint32_t game_id, const char *name, const char *password, const char *player_name,
-	const char *player_desc, int *player_id)
+/* PumpUntilControl's pass: the provider's packets read and filed, the timers run; 1 once one of the wait's commands
+ * was dispatched, 0 when the wait timed out, -1 neither */
+static int join_pass(KpSnet *s)
 {
-	static const unsigned accept[] = {CMD_ACCEPT}, answer[] = {CMD_TEMPLATE, CMD_REJECT};
-	KpSnpGame g;
-	Player *host, *local;
+	int k, count = s->join_wait == JOIN_ACCEPT ? 1 : 2;
+	const unsigned cmds[2] = {s->join_wait == JOIN_ACCEPT ? CMD_ACCEPT : CMD_TEMPLATE, CMD_REJECT};
+	receive_packets(s);
+	run_timers(s);
+	for (k = 0; k < count; k++)
+		if (s->seen[cmds[k]]) return 1;
+	return s->t_join != KP_SNET_INFINITE && now_of(s) - s->join_start >= s->t_join ? 0 : -1;
+}
+
+/* The handshake ended without a game: Storm's game left, the error set */
+static int join_failed(KpSnet *s, uint32_t error)
+{
+	s->joining = s->in_join = 0;
+	s->join_wait = 0;
+	kp_snet_leave_game(s, 1);
+	return fail(s, error);
+}
+
+/* The join request (command 7): the player's name, description and password, each at most 0x7f bytes and its NUL */
+static void send_join_request(KpSnet *s)
+{
 	uint8_t buf[3 * KP_SNET_STRING];
-	uint32_t n, k;
+	const char *field[3];
+	uint32_t n = 0, k;
+	int f;
+	field[0] = s->join_player;
+	field[1] = s->join_desc;
+	field[2] = s->join_password;
+	for (f = 0; f < 3; f++) {
+		k = (uint32_t)strlen(field[f]);
+		memcpy(buf + n, field[f], k + 1);
+		n += k + 1;
+	}
+	send_packet(s, find_or_create(s, &s->join_addr), CONTROL, CMD_JOIN, buf, n);
+}
+
+int kp_snet_join_begin(KpSnet *s, uint32_t game_id, const char *name, const char *password, const char *player_name,
+	const char *player_desc)
+{
+	KpSnpGame g;
+	Player *host;
+	uint8_t buf[4];
 	Node *c;
-	if (!player_id) return fail(s, KP_SNET_ERROR_PARAMETER);
-	*player_id = -1;
 	if (!s->snp) return fail(s, KP_SNET_ERROR_NO_PROVIDER);
 	if (!name) name = "";
-	if (!password) password = "";
-	if (!player_desc) player_desc = "";
 	if (!player_name || !*player_name) return fail(s, KP_SNET_ERROR_PARAMETER);
 	if (s->local_id != KP_SNET_NO_ID) kp_snet_leave_game(s, 2);
 	free_all_records(s);
+	s->joining = s->in_join = 0;
+	s->join_wait = 0;
 	if (game_id == 0 && !*name) return fail(s, KP_SNET_ERROR_PARAMETER);
 	if (!kp_snp_udp_game_info(s->snp, game_id, name, &g)) return fail(s, KP_SNET_ERROR_NOT_FOUND);
 	if (g.program != s->program || g.version != s->version) return fail(s, KP_SNET_ERROR_VERSION);
 	s->joining = 1;
 	s->in_join = 1;
 	s->join_addr = g.addr;
-	if (!(host = find_or_create(s, &g.addr))) {
-		s->joining = s->in_join = 0;
-		kp_snet_leave_game(s, 1);
-		return fail(s, KP_SNET_ERROR_NO_MEMORY);
-	}
+	copy_string(s->join_player, player_name);
+	copy_string(s->join_desc, player_desc);
+	copy_string(s->join_password, password);
+	if (!(host = find_or_create(s, &g.addr))) return join_failed(s, KP_SNET_ERROR_NO_MEMORY);
 	host->connecting = 1;
 	host->recv_seq[CONTROL] = host->ack_owed[CONTROL] = host->send_seq[CONTROL] = 1;
 	kp_net_put32(buf, 1);
@@ -1243,49 +1278,53 @@ int kp_snet_join_game(KpSnet *s, uint32_t game_id, const char *name, const char 
 		resend(s, host, c->p);
 	}
 	process_ack(s, host, CONTROL, 1);
-	if (!pump_until(s, accept, 1, s->t_join)) goto unreachable;
-	n = 0;
-	k = (uint32_t)strlen(player_name) < KP_SNET_STRING - 1 ? (uint32_t)strlen(player_name) : KP_SNET_STRING - 1;
-	memcpy(buf + n, player_name, k);
-	buf[n + k] = 0;
-	n += k + 1;
-	k = (uint32_t)strlen(player_desc) < KP_SNET_STRING - 1 ? (uint32_t)strlen(player_desc) : KP_SNET_STRING - 1;
-	memcpy(buf + n, player_desc, k);
-	buf[n + k] = 0;
-	n += k + 1;
-	k = (uint32_t)strlen(password) < KP_SNET_STRING - 1 ? (uint32_t)strlen(password) : KP_SNET_STRING - 1;
-	memcpy(buf + n, password, k);
-	buf[n + k] = 0;
-	n += k + 1;
-	send_packet(s, find_or_create(s, &g.addr), CONTROL, CMD_JOIN, buf, n);
-	if (!pump_until(s, answer, 2, s->t_join)) {
-		if ((host = find_remote(s, &g.addr))) host->connecting = 0;
-		goto unreachable;
+	join_wait(s, JOIN_ACCEPT);
+	return 1;
+}
+
+int kp_snet_join_poll(KpSnet *s, int *player_id)
+{
+	Player *host, *local;
+	int r;
+	if (player_id) *player_id = -1;
+	if (!s->join_wait) return fail(s, KP_SNET_ERROR_PARAMETER);
+	if (s->join_wait == JOIN_ACCEPT) {
+		if ((r = join_pass(s)) <= 0) return r < 0 ? -1 : join_failed(s, KP_SNET_ERROR_UNREACHABLE);
+		send_join_request(s);
+		join_wait(s, JOIN_ANSWER); /* its first pass at once, as PumpUntilControl's first pass does not wait */
 	}
-	if (s->local_id == KP_SNET_NO_ID) {
-		if ((host = find_remote(s, &g.addr))) host->connecting = 0;
-		s->joining = s->in_join = 0;
-		kp_snet_leave_game(s, 1);
-		return fail(s, KP_SNET_ERROR_REJECTED);
+	if ((r = join_pass(s)) < 0) return -1;
+	if (r == 0 || s->local_id == KP_SNET_NO_ID) {
+		if ((host = find_remote(s, &s->join_addr))) host->connecting = 0;
+		return join_failed(s, r == 0 ? KP_SNET_ERROR_UNREACHABLE : KP_SNET_ERROR_REJECTED);
 	}
+	s->join_wait = 0;
 	s->game_type = 0; /* the UDP provider's record +0x24 */
 	if ((local = ensure_local(s))) {
 		local->id = s->local_id;
-		copy_string(local->name, player_name);
-		copy_string(local->desc, player_desc);
+		copy_string(local->name, s->join_player);
+		copy_string(local->desc, s->join_desc);
 	}
-	*player_id = s->local_id;
+	if (player_id) *player_id = s->local_id;
 	s->in_join = 0;
 	s->signal = 1; /* datagrams arrived meanwhile: the pump thread runs once the lock is free */
 	dispatch_events(s);
-	if ((host = find_remote(s, &g.addr))) host->connecting = 0;
+	if ((host = find_remote(s, &s->join_addr))) host->connecting = 0;
 	s->joining = 0;
 	if (s->local_id == KP_SNET_NO_ID) return fail(s, KP_SNET_ERROR_GAME_ENDED);
 	return 1;
-unreachable:
-	s->joining = s->in_join = 0;
-	kp_snet_leave_game(s, 1);
-	return fail(s, KP_SNET_ERROR_UNREACHABLE);
+}
+
+int kp_snet_join_game(KpSnet *s, uint32_t game_id, const char *name, const char *password, const char *player_name,
+	const char *player_desc, int *player_id)
+{
+	int r;
+	if (!player_id) return fail(s, KP_SNET_ERROR_PARAMETER);
+	*player_id = -1;
+	if (!kp_snet_join_begin(s, game_id, name, password, player_name, player_desc)) return 0;
+	while ((r = kp_snet_join_poll(s, player_id)) < 0)
+		if (s->hooks.sleep) s->hooks.sleep(s->hooks.ud, JOIN_PASS_MS);
+	return r;
 }
 
 int kp_snet_leave_game(KpSnet *s, uint32_t reason)
@@ -1313,6 +1352,8 @@ int kp_snet_leave_game(KpSnet *s, uint32_t reason)
 	s->ladder_type = 0;
 	s->local_id = KP_SNET_NO_ID;
 	s->max_players = 0;
+	s->joining = s->in_join = 0; /* a join's handshake given up (kp_snet_join_begin's caller left meanwhile) */
+	s->join_wait = 0;
 	free_all_records(s);
 	return 1;
 }

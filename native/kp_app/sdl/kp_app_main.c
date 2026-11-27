@@ -124,8 +124,9 @@ static void usage_flags(KpAppFlags *f, int argc, char **argv)
 		else if (strcmp(s, "--watch-delay") == 0 && next) f->watch_delay = atof(argv[++k]);
 		else if (strcmp(s, "--watch-port") == 0 && next) {
 			int port = atoi(argv[++k]);
-			if (port > 0 && port <= 0xffff) f->watch_port = port;
-			else SDL_Log("koprulu: --watch-port %s: not a port, %u kept", argv[k], (unsigned)KP_WATCH_PORT);
+			if (strcmp(argv[k], "off") == 0) f->watch_port = -1; /* the hosted games served to no viewer */
+			else if (port > 0 && port <= 0xffff) f->watch_port = port;
+			else SDL_Log("koprulu: --watch-port %s: not a port nor off, %u kept", argv[k], (unsigned)KP_WATCH_PORT);
 		}
 		else if (strcmp(s, "--console") == 0 && next) {
 			const char *m = argv[++k];

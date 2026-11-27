@@ -171,7 +171,7 @@ void kp_creep_recede_tick(KpGame *g)
 		i = tile_index(g, x, y);
 		recede_unlink(t, node);
 		t->recede_node[i] = 0;
-		t->tiles[i] = kp_band(t->tiles[i], kp_bnot(RECEDING));
+		t->tiles[i] = kp_to_u32(kp_band(t->tiles[i], kp_bnot(RECEDING)));
 		remove_creep(g, x, y);
 		recede_push(t, node, FREE_BUCKET);
 		return;
@@ -193,12 +193,12 @@ static void tile_changed(KpGame *g, int64_t x, int64_t y, int64_t mode, int64_t 
 	KpTerrain *t = &g->terrain;
 	int64_t i = tile_index(g, x, y), f, group, at, cv5_flags, mega, terrain;
 	if (mode == MODE_BORDER) {
-		t->megatiles[i] = kp_bor(t->megatiles[i], 0x8000);
+		t->megatiles[i] = kp_to_u16(kp_bor(t->megatiles[i], 0x8000));
 		return;
 	}
 	f = t->tiles[i];
 	if (viewer_sees(g, f)) {
-		t->megatiles[i] = kp_cv5_megatile(g, word);
+		t->megatiles[i] = kp_to_u16(kp_cv5_megatile(g, word));
 		g->minimap_terrain++; /* RedrawCreepTileRect 0x4b4eb0's MarkMinimapTerrainDirty, for the interface */
 		if (mode == MODE_ADD) f = kp_bor(f, SHOWN);
 		else f = kp_band(f, kp_bnot(SHOWN));
@@ -214,7 +214,7 @@ static void tile_changed(KpGame *g, int64_t x, int64_t y, int64_t mode, int64_t 
 	f = kp_bor(kp_band(f, kp_bnot(WALK_BITS)), kp_band(terrain, WALK_BITS));
 	if (kp_band(f, WALKABLE) != 0) f = kp_band(f, kp_bnot(UNWALKABLE));
 	if (kp_band(f, WALK_BITS) == 0) f = kp_bor(f, UNWALKABLE);
-	t->tiles[i] = f;
+	t->tiles[i] = kp_to_u32(f);
 	kp_receding_neighbours(g, x, y);
 }
 
@@ -251,7 +251,7 @@ void kp_creep_apply(KpGame *g, int64_t x, int64_t y, int64_t mode, int64_t arg)
 		} else {
 			variant = (int64_t)kp_rng_crt_rand(g->crt) % 6;
 		}
-		t->raw_tiles[i] = CREEP_GROUP + variant;
+		t->raw_tiles[i] = kp_to_u16(CREEP_GROUP + variant);
 	} else if (mode == MODE_REMOVE) {
 		if (t->creep_backup[i] == 0) return;
 		t->raw_tiles[i] = t->creep_backup[i];
@@ -452,8 +452,8 @@ static int add_receding(KpGame *g, int64_t x, int64_t y)
 	t->recede_x[node] = kp_band(x, 0xff);
 	t->recede_y[node] = kp_band(y, 0xff);
 	recede_push(t, node, creep_neighbours(g, x, y));
-	t->recede_node[i] = node;
-	t->tiles[i] = kp_bor(t->tiles[i], RECEDING);
+	t->recede_node[i] = kp_to_i16(node);
+	t->tiles[i] = kp_to_u32(kp_bor(t->tiles[i], RECEDING));
 	return 1;
 }
 
@@ -466,7 +466,7 @@ int kp_creep_cancel_receding(KpGame *g, int64_t x, int64_t y)
 	recede_unlink(t, node);
 	t->recede_node[i] = 0;
 	recede_push(t, node, FREE_BUCKET);
-	t->tiles[i] = kp_band(t->tiles[i], kp_bnot(RECEDING));
+	t->tiles[i] = kp_to_u32(kp_band(t->tiles[i], kp_bnot(RECEDING)));
 	return 1;
 }
 

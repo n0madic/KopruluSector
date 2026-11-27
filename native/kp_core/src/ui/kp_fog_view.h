@@ -41,7 +41,7 @@ typedef struct {
  * player), the map's size, the local masks (0x672668 not visible, 0x67266c not explored: 1 << local player and
  * that << 8) and in a replay its vision byte and reveal-all (0x67cc84, 0x67cc88). */
 typedef struct {
-	const int64_t *tiles;
+	const uint32_t *tiles;
 	int64_t map_w, map_h;
 	int64_t not_visible, not_explored;
 	int replay;

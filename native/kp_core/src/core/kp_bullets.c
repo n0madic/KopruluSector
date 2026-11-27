@@ -83,7 +83,7 @@ void kp_bullets_init(KpGame *g)
 	memset(bl, 0, sizeof *bl);
 	for (b = 1; b <= KP_BULLETS; b++) {
 		int64_t f = KP_UNITS + b;
-#define CLEAR(name) u->name[f] = 0;
+#define CLEAR(name, type) u->name[f] = 0;
 		KP_UNIT_FIELDS(CLEAR)
 #undef CLEAR
 		u->sprite[f] = KP_NONE;

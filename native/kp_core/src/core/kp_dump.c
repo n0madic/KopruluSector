@@ -726,7 +726,7 @@ static void unit_line(Dump *d, KpGame *g, int64_t n, const char *list)
 	int64_t unions = u->union_units[n];
 	int k;
 	begin_id(d, "unit", n);
-#define UNIT_FIELD(name) \
+#define UNIT_FIELD(name, type) \
 	if (strcmp(#name, "prev") != 0 && strcmp(#name, "next") != 0 && strcmp(#name, "union_units") != 0 \
 		&& strncmp(#name, "union_0x", 8) != 0 && strcmp(#name, "ai") != 0) { \
 		field_int(d, #name, u->name[n]); \
@@ -1080,7 +1080,8 @@ static void dump_lines(Dump *d, KpGame *g)
 		end(d);
 	}
 	for (k = 0; k < 2; k++) {
-		const int64_t *unit = k == 0 ? g->spatial.x_unit : g->spatial.y_unit, *at = k == 0 ? g->spatial.x_at : g->spatial.y_at;
+		const int16_t *unit = k == 0 ? g->spatial.x_unit : g->spatial.y_unit;
+		const int32_t *at = k == 0 ? g->spatial.x_at : g->spatial.y_at;
 		Text e = text_new(d);
 		for (i = 0; i < g->spatial.count && i < KP_SPATIAL_CAPACITY; i++) {
 			text_pair(&e, unit[i], at[i]);
@@ -1321,12 +1322,12 @@ static void dump_lines(Dump *d, KpGame *g)
 		for (i = 0; i < g->regions.count; i++) {
 			const KpAiRegions *a = &g->air;
 			int changed = 0;
-#define AI_CHANGED(name) if (strcmp(#name, "military") != 0 && a->name[p][i] != 0) changed = 1;
+#define AI_CHANGED(name, type) if (strcmp(#name, "military") != 0 && a->name[p][i] != 0) changed = 1;
 			KP_AI_REGION_FIELDS(AI_CHANGED)
 #undef AI_CHANGED
 			if (!changed) continue;
 			begin_pair(d, "ai_region", p, i);
-#define AI_FIELD(name) if (strcmp(#name, "military") != 0) field_int(d, #name, a->name[p][i]);
+#define AI_FIELD(name, type) if (strcmp(#name, "military") != 0) field_int(d, #name, a->name[p][i]);
 			KP_AI_REGION_FIELDS(AI_FIELD)
 #undef AI_FIELD
 			end(d);

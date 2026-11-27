@@ -16,9 +16,11 @@
 
 #include "kp_ids.h"
 #include "kp_kpf.h"
+#include "kp_record.h"
 #include "kp_runner.h"
 #include "kp_session.h"
 #include "kp_turns.h"
+#include "kp_watch.h"
 #include "../../native/kp_core/src/core/kp_chk.h"
 #include "../../native/kp_core/src/core/kp_mission.h"
 
@@ -43,7 +45,7 @@ static const char *const COMMAND_MAPS[] = { "scenarios/build_terran", "scenarios
 #define COMMAND_KINDS 2
 
 static const char *const NAMES[KP_FUZZ_TARGETS] = { "rep", "chk", "save", "commands", "turns", "udp", "snet", "lobby",
-	"transfer", "game" };
+	"transfer", "game", "watch" };
 
 /* the seeds' plain orders: stop and hold position */
 static const uint8_t STOP[2] = { 0x1a, 0 }, HOLD[2] = { 0x2b, 0 };
@@ -223,6 +225,7 @@ int kp_fuzz_init(int target, char *why, size_t why_size)
 	case KP_FUZZ_SNET: return 0;
 	case KP_FUZZ_LOBBY: return 0;
 	case KP_FUZZ_TRANSFER: return 0;
+	case KP_FUZZ_WATCH: return 0;
 	case KP_FUZZ_CHK: (void)need_data(why, why_size); why[0] = 0; return 0; /* with the data when present */
 	case KP_FUZZ_SAVE: return save_start(why, why_size);
 	case KP_FUZZ_COMMANDS:
@@ -603,6 +606,215 @@ static int run_turns(const uint8_t *d, size_t size, char *why, size_t why_size)
 	return rc;
 }
 
+/* --- watch: a network game's server and viewer (kp_watch.h) --- */
+
+#define WATCH_DATAGRAM (KP_WATCH_DATA_HEADER + KP_WATCH_CHUNK)
+#define WATCH_QUEUE 64        /* the datagrams in transit each way, at most (the rest lost) */
+#define WATCH_COMMAND_MAX 32  /* a recorded command's bytes, at most */
+
+typedef struct {
+	uint8_t bytes[WATCH_DATAGRAM];
+	size_t size;
+} WatchDatagram;
+
+typedef struct {
+	WatchDatagram up[WATCH_QUEUE], down[WATCH_QUEUE]; /* the viewer's requests, the server's answers */
+	int ups, downs;
+	size_t request_size; /* the request the server answers now */
+	int bad;
+	char why[KP_ERROR_SIZE];
+} WatchLink;
+
+static void watch_bad(WatchLink *l, const char *msg, size_t size)
+{
+	if (!l->bad) snprintf(l->why, sizeof l->why, "watch: %s (%u bytes)", msg, (unsigned)size);
+	l->bad = 1;
+}
+
+/* A viewer's REQUEST: the magic, the type, the size of the answer it asks for at most. */
+static void watch_up(void *ud, const uint8_t *bytes, size_t size)
+{
+	WatchLink *l = (WatchLink *)ud;
+	if (size < KP_WATCH_REQUEST_HEADER || size > WATCH_DATAGRAM || memcmp(bytes, KP_WATCH_MAGIC, KP_WATCH_MAGIC_SIZE) != 0
+		|| bytes[KP_WATCH_AT_TYPE] != KP_WATCH_REQUEST) {
+		watch_bad(l, "a malformed request", size);
+		return;
+	}
+	if (l->ups == WATCH_QUEUE) return;
+	memcpy(l->up[l->ups].bytes, bytes, size);
+	l->up[l->ups++].size = size;
+}
+
+/* A server's DATA: never larger than its request, its bytes within the part's size and their CRC right (an answer of no
+ * bytes past the part's end only tells the size and the frames). */
+static void watch_down(void *ud, const uint8_t *bytes, size_t size)
+{
+	WatchLink *l = (WatchLink *)ud;
+	size_t n;
+	if (size > l->request_size) {
+		watch_bad(l, "an answer larger than its request", size);
+		return;
+	}
+	if (size < KP_WATCH_DATA_HEADER || memcmp(bytes, KP_WATCH_MAGIC, KP_WATCH_MAGIC_SIZE) != 0
+		|| bytes[KP_WATCH_AT_TYPE] != KP_WATCH_DATA) {
+		watch_bad(l, "a malformed answer", size);
+		return;
+	}
+	n = (size_t)bytes[KP_WATCH_AT_COUNT] | (size_t)bytes[KP_WATCH_AT_COUNT + 1] << 8;
+	if (size != KP_WATCH_DATA_HEADER + n || n > KP_WATCH_CHUNK
+		|| (n && (uint64_t)kp_le_u32(bytes + KP_WATCH_AT_OFFSET) + n > kp_le_u32(bytes + KP_WATCH_AT_SIZE))
+		|| kp_crc32(n ? bytes + KP_WATCH_DATA_HEADER : bytes, n) != kp_le_u32(bytes + KP_WATCH_AT_CRC)) {
+		watch_bad(l, "an answer's count, bounds or CRC", size);
+		return;
+	}
+	if (l->downs == WATCH_QUEUE) return;
+	memcpy(l->down[l->downs].bytes, bytes, size);
+	l->down[l->downs++].size = size;
+}
+
+static void watch_serve(WatchLink *l, KpWatchServer *s, const uint8_t *bytes, size_t size)
+{
+	l->request_size = size;
+	kp_watch_server_receive(s, bytes, size, watch_down, l);
+}
+
+/* The viewer's and the server's state within their bounds. */
+static int watch_bounds(const KpWatchServer *s, const KpRecorder *rec, const KpWatchViewer *v, char *why, size_t why_size)
+{
+	if (v->start_got > v->start_size || v->start_size > KP_WATCH_START_MAX)
+		return failed(why, why_size, "watch: the start file's %u of %u bytes", (unsigned)v->start_got, (unsigned)v->start_size);
+	if (v->record_got > v->record_cap || v->record_got > KP_WATCH_RECORD_MAX || v->known[KP_WATCH_PART_RECORD] > KP_WATCH_RECORD_MAX)
+		return failed(why, why_size, "watch: the record's %u bytes (room %u, known %u)", (unsigned)v->record_got,
+			(unsigned)v->record_cap, (unsigned)v->known[KP_WATCH_PART_RECORD]);
+	if (v->ready_size > v->record_got || v->taken > v->ready_size)
+		return failed(why, why_size, "watch: ready %u, taken %u of %u", (unsigned)v->ready_size, (unsigned)v->taken,
+			(unsigned)v->record_got);
+	if (s->record_size > rec->used || s->record_size > s->record_cap)
+		return failed(why, why_size, "watch: published %u of %u", (unsigned)s->record_size, (unsigned)rec->used);
+	return 0;
+}
+
+/* {u8 start size}, the start file's bytes, then operations {u8 kind | arg << 3}: 0 a DATA to the viewer {u8 flags, u32
+ * offset, u32 size, u32 frames, u16 n, n bytes} (flags: 1 the record's part, 2 final, 4 its CRC wrong, 8 at what the
+ * viewer holds, 16 the size from the offset), 1 a datagram to the viewer and 2 to the server {u16 n, n bytes}, 3 the
+ * clock {u16 ms} and the viewer's turn over the link (its requests served, the answers taken when arg's bit 0 is 0),
+ * 4 commands recorded {u8 count, each u8 storm, u8 n, n bytes} and a mark arg + 1 frames on, 5 the game's end, 6 the
+ * playback's take, 7 a mark arg frames back (a load). */
+static int run_watch(const uint8_t *d, size_t size, char *why, size_t why_size)
+{
+	static WatchLink link;
+	static KpRecorder rec;
+	KpWatchServer s;
+	KpWatchViewer v;
+	size_t at = 1, start = size ? d[0] : 0;
+	uint32_t now = 0;
+	int64_t frame = 0;
+	int rc = 0, k;
+	if (start > size - at) start = size - at;
+	memset(&link, 0, sizeof link);
+	if (kp_record_init(&rec) != 0) return failed(why, why_size, "out of memory");
+	if (kp_watch_server_init(&s, 7, d + at, start, 4) != 0) {
+		kp_record_free(&rec);
+		return failed(why, why_size, "out of memory");
+	}
+	at += start;
+	kp_watch_viewer_init(&v, now);
+	while (rc == 0 && at < size) {
+		uint8_t op = d[at++];
+		int arg = op >> 3;
+		switch (op & 7) {
+		case 0: {
+			uint8_t out[WATCH_DATAGRAM];
+			uint8_t flags = at < size ? d[at++] : 0;
+			int part = (flags & 1) ? KP_WATCH_PART_RECORD : KP_WATCH_PART_START;
+			uint32_t offset = at + 4 <= size ? kp_le_u32(d + at) : 0, total = 0, frames = 0;
+			size_t n = 0;
+			at = at + 4 <= size ? at + 4 : size;
+			if (at + 4 <= size) total = kp_le_u32(d + at);
+			at = at + 4 <= size ? at + 4 : size;
+			if (at + 4 <= size) frames = kp_le_u32(d + at);
+			at = at + 4 <= size ? at + 4 : size;
+			if (at + 2 <= size) n = kp_le_u16(d + at) % (KP_WATCH_CHUNK + 1);
+			at = at + 2 <= size ? at + 2 : size;
+			if (n > size - at) n = size - at;
+			if (flags & 8) offset = (uint32_t)(part == KP_WATCH_PART_RECORD ? v.record_got : v.start_got);
+			if (flags & 16) total = offset + (uint32_t)n + (total & 0xff);
+			memcpy(out, KP_WATCH_MAGIC, KP_WATCH_MAGIC_SIZE);
+			out[KP_WATCH_AT_TYPE] = KP_WATCH_DATA;
+			kp_le_put32(out + KP_WATCH_AT_GAME, s.game);
+			out[KP_WATCH_AT_PART] = (uint8_t)part;
+			kp_le_put32(out + KP_WATCH_AT_OFFSET, offset);
+			kp_le_put32(out + KP_WATCH_AT_SIZE, total);
+			kp_le_put32(out + KP_WATCH_AT_FRAMES, frames);
+			out[KP_WATCH_AT_FINAL] = (uint8_t)((flags >> 1) & 1);
+			kp_le_put16(out + KP_WATCH_AT_COUNT, (uint16_t)n);
+			if (n) memcpy(out + KP_WATCH_DATA_HEADER, d + at, n);
+			kp_le_put32(out + KP_WATCH_AT_CRC, kp_crc32(n ? out + KP_WATCH_DATA_HEADER : out, n) ^ ((flags & 4) ? 1u : 0u));
+			at += n;
+			kp_watch_viewer_receive(&v, out, KP_WATCH_DATA_HEADER + n, now);
+			break;
+		}
+		case 1:
+		case 2: {
+			size_t n = at + 2 <= size ? kp_le_u16(d + at) : 0;
+			at = at + 2 <= size ? at + 2 : size;
+			if (n > size - at) n = size - at;
+			if ((op & 7) == 1) kp_watch_viewer_receive(&v, d + at, n, now);
+			else watch_serve(&link, &s, d + at, n);
+			at += n;
+			break;
+		}
+		case 3:
+			now += at + 2 <= size ? (uint32_t)kp_le_u16(d + at) : 100u;
+			at = at + 2 <= size ? at + 2 : size;
+			link.ups = 0;
+			kp_watch_viewer_poll(&v, now, watch_up, &link);
+			link.downs = 0;
+			for (k = 0; k < link.ups; k++) watch_serve(&link, &s, link.up[k].bytes, link.up[k].size);
+			if (!(arg & 1)) {
+				for (k = 0; k < link.downs; k++) kp_watch_viewer_receive(&v, link.down[k].bytes, link.down[k].size, now);
+			}
+			break;
+		case 4: {
+			int count = at < size ? d[at++] : 0;
+			for (k = 0; k < count && at + 2 <= size; k++) {
+				uint8_t storm = d[at] & 7;
+				size_t n = 1 + d[at + 1] % WATCH_COMMAND_MAX;
+				at += 2;
+				if (n > size - at) break;
+				kp_record_command(&rec, frame, storm, d + at, n);
+				at += n;
+			}
+			frame += arg + 1;
+			if (kp_watch_server_mark(&s, &rec, (uint32_t)frame) != 0) rc = failed(why, why_size, "out of memory");
+			break;
+		}
+		case 5:
+			if (kp_watch_server_end(&s, &rec, (uint32_t)frame) != 0) rc = failed(why, why_size, "out of memory");
+			break;
+		case 6: {
+			const uint8_t *bytes;
+			size_t n;
+			uint32_t frames;
+			int whole;
+			if (kp_watch_viewer_take(&v, &bytes, &n, &frames, &whole) && n && !bytes)
+				rc = failed(why, why_size, "watch: %u bytes taken from no record", (unsigned)n);
+			break;
+		}
+		default:
+			if (kp_watch_server_mark(&s, &rec, (uint32_t)(frame > arg ? frame - arg : 0)) != 0)
+				rc = failed(why, why_size, "out of memory");
+			break;
+		}
+		if (rc == 0 && link.bad) rc = failed(why, why_size, "%s", link.why);
+		if (rc == 0) rc = watch_bounds(&s, &rec, &v, why, why_size);
+	}
+	kp_watch_viewer_free(&v);
+	kp_watch_server_free(&s);
+	kp_record_free(&rec);
+	return rc;
+}
+
 int kp_fuzz_run(int target, const uint8_t *d, size_t size, char *why, size_t why_size)
 {
 	why[0] = 0;
@@ -618,6 +830,7 @@ int kp_fuzz_run(int target, const uint8_t *d, size_t size, char *why, size_t why
 	case KP_FUZZ_LOBBY: return kp_fuzz_lobby_run(d, size, why, why_size);
 	case KP_FUZZ_TRANSFER: return kp_fuzz_transfer_run(d, size, why, why_size);
 	case KP_FUZZ_GAME: return kp_fuzz_game_run(d, size, why, why_size);
+	case KP_FUZZ_WATCH: return run_watch(d, size, why, why_size);
 	default: return failed(why, why_size, "no target %d", target);
 	}
 }
@@ -743,6 +956,27 @@ static void synthetic_seeds(Seeds *sd)
 		seed(sd, KP_FUZZ_TURNS, "synthetic.turns", -1, TURNS, sizeof TURNS);
 	}
 	(void)kp_fuzz_game_seeds(game_seed, sd);
+	{ /* a viewer that fetches the start file and a record of three marks over the link, a forged empty answer at
+	   * what it holds, the game's end; and the same with the answers lost after the start */
+		static const uint8_t WATCH_HEAD[] = { 8, 'K', 'P', 'R', 'E', 'P', 'L', 'A', 'Y',
+			4, 2, 0, 1, 0x1a, 0, 1, 1, 0x2b, 0, /* two commands, a mark one frame on */
+			4 | 3 << 3, 1, 2, 1, 0x2b, 0, /* one more, four frames on */
+			4, 0 /* a mark with no command */ };
+		static const uint8_t TICK[3] = { 3, 100, 0 }, LOST_TICK[3] = { 3 | 1 << 3, 100, 0 };
+		static const uint8_t WATCH_TAIL[] = { 6, 0, 1 | 8 | 16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 3, 100, 0, 3,
+			100, 0, 6 };
+		uint8_t watch[sizeof WATCH_HEAD + 16 * sizeof TICK + sizeof WATCH_TAIL];
+		size_t w;
+		int lost;
+		for (lost = 0; lost < 2; lost++) {
+			memcpy(watch, WATCH_HEAD, sizeof WATCH_HEAD);
+			w = sizeof WATCH_HEAD;
+			for (k = 0; k < 16; k++, w += sizeof TICK) memcpy(watch + w, lost && k >= 4 ? LOST_TICK : TICK, sizeof TICK);
+			memcpy(watch + w, WATCH_TAIL, sizeof WATCH_TAIL);
+			w += sizeof WATCH_TAIL;
+			seed(sd, KP_FUZZ_WATCH, lost ? "synthetic-lossy.watch" : "synthetic.watch", -1, watch, w);
+		}
+	}
 	if (kp_fuzz_net_seeds(net_seed, sd, sd->why, sizeof sd->why) < 0 ||
 		kp_fuzz_lobby_seeds(lobby_seed, sd, sd->why, sizeof sd->why) < 0) {
 		sd->failed = 1;

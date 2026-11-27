@@ -6,8 +6,13 @@
  *
  * Time is the hooks' millisecond clock (GetTickCount). Nothing here waits, except kp_snet_join_game, which pumps the
  * provider itself as SNetJoinGame does (PumpUntilControl 0x15023f40) and waits through the hooks' sleep between its
- * passes. Events (SEvt 'SNET' type 1) go to the hooks' handler, outside the driver's lock (the hooks' unlock and lock),
- * from kp_snet_receive_turns, kp_snet_receive_message and kp_snet_join_game, as Storm dispatches them.
+ * passes; kp_snet_join_begin and kp_snet_join_poll are its passes without the waits. Events (SEvt 'SNET' type 1) go to
+ * the hooks' handler, outside the driver's lock (the hooks' unlock and lock), from kp_snet_receive_turns,
+ * kp_snet_receive_message and kp_snet_join_poll, as Storm dispatches them.
+ *
+ * The driver's lock (Storm's critical section): a driver that pumps on a thread of its own (kp_netplay.h) holds it
+ * around every call, the pump's included. A turn's or a message's bytes are Storm's until the next call; the pump may
+ * free them (a record deleted by a control command), so such a driver copies them before it unlocks.
  *
  * Where it differs from Storm, only for inputs Storm mishandles or for state no caller reads:
  *   - a control command shorter than its payload reads its missing bytes as zeros (Storm reads past it);
@@ -155,9 +160,17 @@ int kp_snet_create_game(KpSnet *s, const char *name, const char *password, const
 	uint32_t ladder_type, uint32_t mode, const void *tmpl, uint32_t tmpl_size, uint32_t max_players,
 	const char *player_name, const char *player_desc, int *player_id);
 /* SNetJoinGame 0x15026100: join the listed game (id, or name with id 0); blocks through the hooks' sleep for at most
- * two waits of max(12L, 5000) ms. */
+ * two waits of max(12L, 5000) ms. It is kp_snet_join_begin, then kp_snet_join_poll every 10 ms until it answers. */
 int kp_snet_join_game(KpSnet *s, uint32_t game_id, const char *name, const char *password, const char *player_name,
 	const char *player_desc, int *player_id);
+/* SNetJoinGame without its waits, for a driver that must not block: the checks and the connect (1 sent, 0 refused with
+ * the error set), then the handshake's passes (PumpUntilControl 0x15023f40's), one a call of kp_snet_join_poll: -1
+ * still waiting, 1 joined (*player_id), 0 not (the error set, Storm's game left). Between the calls the pump does
+ * nothing, as while SNetJoinGame runs; a leave gives the handshake up. The datagrams and their times are
+ * kp_snet_join_game's when the polls come every 10 ms. */
+int kp_snet_join_begin(KpSnet *s, uint32_t game_id, const char *name, const char *password, const char *player_name,
+	const char *player_desc);
+int kp_snet_join_poll(KpSnet *s, int *player_id);
 /* SNetLeaveGame 0x15026560. */
 int kp_snet_leave_game(KpSnet *s, uint32_t reason);
 /* SNetEnumGamesEx 0x150251c0: fn(ud, game) for each visible listed game until it returns 0; *hint 500. */

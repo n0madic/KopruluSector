@@ -67,6 +67,7 @@ typedef struct {
 	int ranged;       /* the raw table's: placed by the core's listing in a group read by ranges (archive -1 until it opens) */
 	int group;        /* that group (KpRes.groups) */
 	uint64_t offset;  /* and the bytes' offset in its file */
+	int verified;     /* the repack tables': a simulation input's SHA-256 matched once (verified_input) */
 } Entry;
 
 typedef struct {
@@ -114,6 +115,7 @@ struct KpRes {
 	char text_locale[8]; /* the CASC install's (kp_res_text_locale) */
 	KpResScr *scr; /* the rebuilds from Remastered's own formats (NULL: the profile has no tables for them) */
 	Map seen;    /* the names read: their status and source */
+	uint8_t *install_verified; /* per profile file (KpDefsProfile.files): its install copy's SHA-256 matched once */
 };
 
 struct KpResStream {
@@ -503,6 +505,7 @@ static int listed_file(KpRes *r, int archive, const char *line)
 	}
 	e->size = (uint32_t)n;
 	e->archive = archive;
+	e->verified = 0; /* another archive's copy (a later listing names the key again): its digest checked anew */
 	e->status = status;
 	free(e->head);
 	e->head = head;
@@ -769,6 +772,7 @@ void kp_res_close(KpRes *r)
 	map_free(&r->listed);
 	map_free(&r->raw);
 	map_free(&r->seen);
+	free(r->install_verified);
 	free(r);
 }
 
@@ -829,6 +833,26 @@ static int simulation_input(const char *key)
 	for (k = 0; k < sizeof KINDS / sizeof KINDS[0]; k++)
 		if (strcmp(dot, KINDS[k]) == 0) return 1;
 	return 0;
+}
+
+/* A repack's copy of key as its listing says: its SHA-256 when it is a simulation input. The bytes of an open archive
+ * are taken as checked once: a mission's start reads its inputs again, and their SHA-256 is about a third of the reads'
+ * time (15.6 MB of inputs: 34 of 95 ms on an M-series Mac). */
+static int verified_input(const char *key, Entry *e, const uint8_t *data, size_t size)
+{
+	if (!simulation_input(key) || e->verified) return 1;
+	return e->verified = digest_is(data, size, e->sha256);
+}
+
+/* The same for an install's copy of a profile file, against the profile's manifest. */
+static int install_matches(KpRes *r, const KpDefsInput *in, const uint8_t *data, size_t size)
+{
+	size_t k = (size_t)(in - r->profile->files);
+	if (size != in->size) return 0;
+	if (!r->install_verified && !(r->install_verified = (uint8_t *)calloc((size_t)r->profile->file_count, 1)))
+		return matches(data, size, in); /* no memory for the marks: checked each time */
+	if (!r->install_verified[k]) r->install_verified[k] = (uint8_t)matches(data, size, in);
+	return r->install_verified[k];
 }
 
 uint8_t *kp_res_casc_rebuild(const char *key, const char *casc_name, const uint8_t *data, size_t size, uint32_t want)
@@ -969,7 +993,7 @@ static uint8_t *read_mpq(KpRes *r, const char *key, size_t *size, KpResStatus *s
 		snprintf(source, KP_RES_NAME, "%s", r->archive_names[k]);
 		if (!in) {
 			*status = KP_RES_UNLISTED;
-		} else if (!r->record && (simulation_input(key) ? !matches(b, got, in) : got != in->size)) {
+		} else if (!r->record && (simulation_input(key) ? !install_matches(r, in, b, got) : got != in->size)) {
 			uint8_t d[KP_SHA256_SIZE];
 			char hex[2 * KP_SHA256_SIZE + 1];
 			kp_sha256(b, got, d);
@@ -1001,7 +1025,7 @@ static uint8_t *read_repack(KpRes *r, const char *key, size_t *size, char *sourc
 	if (!e) return NULL;
 	mpq_name(key, name, sizeof name);
 	b = kp_mpq_read(r->repack[e->archive].mpq, name, &got, why, sizeof why);
-	if (b && got == e->size && (!simulation_input(key) || digest_is(b, got, e->sha256))) {
+	if (b && got == e->size && verified_input(key, e, b, got)) {
 		snprintf(source, KP_RES_NAME, "%s", r->repack[e->archive].file);
 		*size = got;
 		return b;
@@ -1211,7 +1235,7 @@ uint8_t *kp_res_head(KpRes *r, const char *name, size_t want, size_t *got, uint6
 
 /* A repack's raw entry as listed: its size (a CHK's SHA-256 too: a language's map times its game), NULL when it has
  * none, its group is not open (a group read by ranges) or its copy differs (logged: the install's is read). */
-static uint8_t *read_raw_repack(KpRes *r, const char *key, const Entry *e, size_t *size)
+static uint8_t *read_raw_repack(KpRes *r, const char *key, Entry *e, size_t *size)
 {
 	char name[KP_RES_NAME], why[KP_RES_MESSAGE];
 	size_t got = 0;
@@ -1219,7 +1243,7 @@ static uint8_t *read_raw_repack(KpRes *r, const char *key, const Entry *e, size_
 	if (e->archive < 0) return NULL;
 	mpq_name(key, name, sizeof name);
 	b = kp_mpq_read(r->repack[e->archive].mpq, name, &got, why, sizeof why);
-	if (b && got == e->size && (!simulation_input(key) || digest_is(b, got, e->sha256))) {
+	if (b && got == e->size && verified_input(key, e, b, got)) {
 		*size = got;
 		return b;
 	}
@@ -1231,7 +1255,7 @@ static uint8_t *read_raw_repack(KpRes *r, const char *key, const Entry *e, size_
 uint8_t *kp_res_raw_read(KpRes *r, const char *raw, size_t *size, char *err, size_t err_size)
 {
 	char key[KP_RES_NAME];
-	const Entry *e;
+	Entry *e;
 	uint8_t *b;
 	*size = 0;
 	if (err_size) err[0] = 0;

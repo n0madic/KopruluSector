@@ -22,7 +22,7 @@ The remake keeps the original's split: `StarCraft.exe` → `storm.dll` (SNet) �
 1. `kp_core`: the simulation and its network branches; new, the sync command `0x37`'s inputs byte for byte (`ComputeSyncValue` `0x47a360`, the sprite visibility checksum `0x417540`–`0x417610`, taken inside the step after the first frame past a turn boundary) and the network players' state (`0x673818`; the drop flags `0x529042` stay with the game's network code, `KpNetGame`).
 2. `kp_core/src/ui`: the screens of [P17](research/atlas/p17.md)–[P20](research/atlas/p20.md), [P24](research/atlas/p24.md) and [P27](research/atlas/p27.md), reading the network's state through host hooks.
 3. `kp_app`: the game's network code of P24–P27 (turn manager, `0x05`/`0x37`, the lobby protocol, map transfer, chat, leaves).
-4. `kp_app` (network): `kp_snet` (Storm's SNet, the API the executable calls) over the UDP provider `kp_snp_udp`, both pure state machines (datagrams and time in, datagrams and events out), over a transport: the system's sockets (`kp_net_sock`) or, in the tests, an in-process LAN (`kp_net_lan`; [N2](#n2-kp_snet-and-the-udp-provider-done-2026-11-17)). The game's network code runs them from the main loop (the plan's network thread on the natives, for long loads, is still a `TODO:` in `kp_netplay.h`).
+4. `kp_app` (network): `kp_snet` (Storm's SNet, the API the executable calls) over the UDP provider `kp_snp_udp`, both pure state machines (datagrams and time in, datagrams and events out), over a transport: the system's sockets (`kp_net_sock`) or, in the tests, an in-process LAN (`kp_net_lan`; [N2](#n2-kp_snet-and-the-udp-provider-done-2026-11-17)). The game's network code runs them; on the natives Storm's pump runs on a thread of its own, as Storm's pump thread does, and a join does not block the main loop ([2026-11-27](#the-pump-thread-and-a-join-without-a-wait-2026-11-27)).
 5. `tools/relay`: `koprulu-relay`, not built (the decisions of 2026-11-21).
 
 ## Stages
@@ -91,7 +91,7 @@ Storm's network layer and `standard.snp`'s UDP provider, ported from the atlas's
 - **The layers** (`native/kp_app`, in `kp_app_core`):
   - `kp_net.{h,c}`: what they share. A provider address as Storm keeps it (Winsock's `sockaddr_in`, a player record's `+0x108`), Storm's checksum (`FletcherSum` `0x15021c50`, `ComputePacketChecksum` `0x15021ca0`), and `KpNetIo`, a provider's I/O (a send from one of its sockets, the millisecond clock).
   - `kp_snp_udp.{h,c}`: the provider `'UDPN'`. Socket A (port 6111) carries the game list: advertisements, list requests, stops, the list's ten-second expiry and the 400 ms between requests. Socket B (port 6112) carries Storm's datagrams. The functions are the slots of `SnpBind`'s table.
-  - `kp_snet.{h,c}`: SNet over the provider. It has the exports StarCraft calls, with their arguments, results and Storm's error codes, and the pump thread's pass `kp_snet_pump`: it files what the provider received and sends acknowledgements, resends, turn requests and pings, and returns its next wait. `kp_snet_join_game` pumps the provider itself, as `SNetJoinGame`'s `PumpUntilControl` does, and waits through the host's sleep. Events go to the host's handler from the calls Storm dispatches them in.
+  - `kp_snet.{h,c}`: SNet over the provider. It has the exports StarCraft calls, with their arguments, results and Storm's error codes, and the pump thread's pass `kp_snet_pump`: it files what the provider received and sends acknowledgements, resends, turn requests and pings, and returns its next wait. `kp_snet_join_game` pumps the provider itself, as `SNetJoinGame`'s `PumpUntilControl` does, and waits through the host's sleep; since 2026-11-27 it is `kp_snet_join_begin`, then `kp_snet_join_poll` every 10 ms, the passes a driver that must not block makes itself ([below](#the-pump-thread-and-a-join-without-a-wait-2026-11-27)). Events go to the host's handler from the calls Storm dispatches them in.
   - The transports:
     - `kp_net_sock.{h,c}`: the system's UDP over POSIX sockets and Winsock. On the web it reports that there are no sockets (no network play there: the decisions of 2026-11-21).
     - `kp_net_lan.{h,c}`: the in-process LAN of the tests and the fuzz targets. It has hosts, a seeded delay, jitter and loss, and cut cables. A host's own broadcasts come back to it at once, as on Windows.
@@ -151,7 +151,7 @@ Storm's network layer and `standard.snp`'s UDP provider, ported from the atlas's
   - `tools/net_check.py` keeps an index's other games only when the index is of its version, and `test_net_trace` fails a listed game of another version;
   - the tests read every output after the call that sets it, and `test_net_trace` decodes hex with `kp_hex_decode`.
 - **Open:**
-  - the network thread that runs the driver on the natives belongs to the game's network code (stage N4); `kp_net_sock` waits and reads, and its caller pumps;
+  - the network thread that runs the driver on the natives belongs to the game's network code (stage N4); `kp_net_sock` waits and reads, and its caller pumps (done 2026-11-27: `kp_netplay`'s pump thread, [below](#the-pump-thread-and-a-join-without-a-wait-2026-11-27));
   - the web has no transport (no relay: the decisions of 2026-11-21): `sockets_carry_a_game` is skipped there;
   - not checked against the original, since its recordings never reach them: the advertisement's withdrawal, commands 10, 12 and 13 (reject, drop, new host; they run between Koprulu seats in `test_snet`'s refused joins, drop and host's leave), the 13-byte turn requests and the relays. They follow the disassembly's entries;
   - the live join is a manual check: it needs the emulator, so CI skips it without `KOPRULU_NET_BRIDGE`.
@@ -350,7 +350,7 @@ The plan's acceptance without the web (the decisions of 2026-11-21): the product
 - **The iOS Simulator** (the product's `ios-sim` debug build on an iPhone 18 Pro simulator) joins the Mac's game by `--lan-host` on port 42000 and plays it: the shared hash is equal at every tick both sides logged (200, 460, 480, 500; the simulator draws slower and logs some of the others a tick late). Its network is the Mac's, so the real iPhone's local network prompt is not covered.
 - **A phone has no maps of its own:** the APK carries none, so a phone's Create Game lists nothing until Play Custom's Import copies a map into the user's maps folder (the network's Create Game has no Import of its own). The checks put a map into the run's profile. A joining phone downloads the host's map as any joiner does ([README](../README.md#network-play-over-the-internet)).
 - **The host waits for the map's distribution.** `net_host.kps` pressed Start 3 seconds after its room filled, which was enough only while both programs had the map: with a phone downloading it, the host showed the original's "The scenario map file is still being distributed." New script value `lobby.distributed` (`AllPeersHaveFile` `0x440ba0`, [script.md](formats/script.md); `test_flow.script_reads_the_network_lobby`): the host waits for it before its Start, and `net_lan_join.kps` waits for the game as long as the host may wait for the map. `test_flow.network_scripts_parse` parses the network scripts, `net_lan_join.kps` among them, which no CI step plays.
-- **The load's stall (the plan's native network thread):** from the start (the lobby's last turn) to the game's tick 0, the main loop, which pumps Storm, is held about 0.2 s on the Mac and 0.3 s on the Fold7 (a melee map: the world's packs, the session), well inside Storm's one second of "heard recently" and its five of a join's wait; the games then ran 400 ticks in 26.8 s, the speed's own time. The thread is not needed for now (`TODO:` kept in `kp_netplay.h` with these figures).
+- **The load's stall (the plan's native network thread):** from the start (the lobby's last turn) to the game's tick 0, the main loop, which pumps Storm, is held about 0.2 s on the Mac and 0.3 s on the Fold7 (a melee map: the world's packs, the session), well inside Storm's one second of "heard recently" and its five of a join's wait; the games then ran 400 ticks in 26.8 s, the speed's own time. The thread was not needed then; it runs since 2026-11-27 ([the pump thread](#the-pump-thread-and-a-join-without-a-wait-2026-11-27)), so a longer load or a slow frame no longer holds Storm's acks and resends.
 - **The map transfer's pace follows the frame rate.** The chat room takes one lobby message a pass (`ReceiveChatRoomMessage` `0x471860`, as the original does, which `test_lobby_trace` checks call for call), and Koprulu's glue makes one pass a frame. The original's modal loop makes about 790 a second (its recorded map-transfer game: 55,557 bytes in 9.0 s of the emulator's clock). So a transfer goes as fast as the slower seat draws: (2)Bottleneck's 68,376 bytes reached the Fold7 in under 15 s at 60 frames a second, and took about 55 s to the iOS Simulator. On the phone's first try they were still at 92 % after 33 s.
 - **Koprulu joins the emulated 1.17 by its address** (`tools/net_live.py join-address`, `test_net_live:lobby_join_by_address`, new): Koprulu's sockets are the one host of a map of their own (`kp_net_world_bridge_open`'s `alone`), so its broadcasts reach only itself, and the emulated host is the real address `127.0.0.1` and the bridge's first port, as a 1.17 host over the internet is. Koprulu asks it there (`kp_snp_udp_direct`). The real `storm.dll` and `standard.snp` answer the original's request. The test checks that the game is listed at that port + 1. Then Koprulu joins, downloads the map and plays to frame 480 with the emulated host: the same start (seed, header, slots), 479 turns of both players' sync commands with the same shared part, nobody dropped. A game of two, since Storm hands each peer the others' addresses as the host sees them, the bridge's virtual ones, which a seat outside the map cannot reach. The mixed games `join` and `host` pass again on the same build (479 turns of three players; 239 turns of two).
 - **Verified (2026-11-21):**
@@ -448,7 +448,7 @@ The user's three items: the players' vision in a replay, a replay hosted in the 
   - Koprulu's network replays now carry the lobby's seed record (header +0x07, `SetReplayGameSeedRecord` `0x4807f0` from `OnLobbyStartInfo`). Before, it was zero, so a hosted replay's start seed was wrong.
   - Test: `test_netplay.a_hosted_replay_is_watched_in_lockstep`. A game's replay is hosted and downloaded by the joiner. The start seed is the replay's. The joiner's speed command runs at one frame on both seats, and its selection is refused. Both seats end once with the victory dialog and stay paused past the end. Their hashes are equal to each other and to the replay played alone at every frame.
 - **The viewers** ([watch-udp.md](formats/watch-udp.md)):
-  - The host of a network game serves its replay on UDP port 6120 (`--watch-port`), `--watch-delay` seconds behind (60 by default). The session marks the record after each step, and the server publishes what the delay lets out. At the game's end, when the session is freed, the whole record is published.
+  - The host of a network game serves its replay on UDP port 6120 (`--watch-port`; `--watch-port off` serves it to no viewer), `--watch-delay` seconds behind (60 by default). The session marks the record after each step, and the server publishes what the delay lets out. At the game's end, when the session is freed, the whole record is published.
   - `koprulu --watch HOST[:PORT]`, or the script's `watch "ADDRESS"`, asks for the start file and then for the record. The playback starts once the start file came, and grows by `kp_session_watch_grow`.
   - The protocol is a stateless pull whose answer is never larger than its request. The viewer keeps only contiguous bytes with a valid CRC, and waits 5 minutes for a host still in its lobby.
   - The playback is a replay with an empty block's header after the received bytes (`kp_record_grow`). So it runs every block, the game's last one included, which a file's playback never runs.
@@ -504,3 +504,46 @@ the viewers' record.
   narrows the lines' columns by the difference, the ring's lines wrapped wider are wrapped again when the view narrows
   (`kp_ui_lines.c`, `test_hud.text_lines_follow_a_narrow_view`; the newest 11 rows kept; a view narrower than a glyph
   takes a line's rest on one row, clipped). Not the original's, which has no narrower screen.
+
+## The pump thread and a join without a wait (2026-11-27)
+
+The architecture review of 2026-11-27 found two places where the main loop held the network: a join blocked the main
+thread inside `SNetJoinGame` for up to twice max(12L, 5000) ms, and Storm was pumped from the frame, so a slow frame (a
+mission's load, a shader's compile, a window dragged, a phone in the background) held Storm's acknowledgements and
+resends. The user approved the design inline on 2026-11-27.
+
+- **Storm's pump thread** (`kp_netplay.c`, as Storm's `0x15022780`): it waits on the sockets (`kp_net_sock_wait`) until
+  a datagram arrives, a send wakes it or Storm's next timer is due, hands what arrived to the provider and makes
+  Storm's pass (`kp_snet_pump`). Storm's state is shared under one lock, Storm's critical section: the thread holds it
+  while it files and pumps, the game's calls into Storm hold it too (the calls `kp_netplay` gives `KpNetGame`, each of
+  which keeps its call's error for `SErrGetLastError`), and Storm releases it around its events (`KpSnetHooks`' `unlock`
+  and `lock`, which `kp_snet` already called where Storm does). The lock, not the two queues the design named first:
+  `kp_snet` was already written for Storm's critical section (the game list copied before it is unlocked, the events
+  outside it), so the state machines and their recorded traces stay as they are.
+- **Copies.** A turn's or a message's bytes are Storm's until the next call, and the thread may free them meanwhile (a
+  record a control command deletes): `kp_netplay` copies them before it releases the lock, into room sized by the
+  largest datagram and the largest turn or message this seat sent.
+- **The wake** (`kp_net_sock_wake`): a send signals Storm's pump event (`SNetSendTurn`, `SNetSendMessage`, a join's
+  end). The sockets have a third socket on 127.0.0.1 that every wait also watches; a datagram to it ends the wait. If it
+  cannot be opened the thread waits at most 10 ms.
+- **The join without a wait** (`kp_snet_join_begin`, `kp_snet_join_poll`; `kp_netgame_join_begin`,
+  `kp_netgame_join_poll`; `KpUiNet.join`'s -1 and `kp_ui_menus_join_done`): the checks and the connect, then one pass of
+  `PumpUntilControl` a call. `kp_snet_join_game` is the begin and a poll every 10 ms, so its datagrams and their times
+  are the original's as before (`test_net_trace` and `test_lobby_trace` unchanged), and a polled join sends exactly
+  what it sends (`test_snet.a_polled_join_is_the_blocking_one`: the LAN's trace equal, joined, refused and unreachable,
+  on a lossy link). `kp_netplay_pump` makes a pass a frame on the main thread, where Storm's events reach the lobby;
+  the join screen waits for the answer with its list and buttons disabled and the list not refreshed, as the
+  original's screen stands still inside `SNetJoinGame` (`test_hud.glue_join_waits_for_the_network`). A leave gives a
+  handshake up (`kp_netgame_abort`); a game joined after the screen closed is left.
+- **Where there is no thread** (the web, which has no sockets; a thread or lock that does not start) the frames pump
+  as before. A thread whose sockets failed ends: the next frame joins it, tells the player once and pumps Storm itself
+  from then on (its timers, its drops; no more reads), as the frames pump did after a failure. `kp_net_thread.{h,c}`
+  holds the lock and the threads (POSIX or Windows), the lookups of a host's name included.
+- **A blocking join** (`KpNetCalls.join_game`, which the flow does not use) is the same passes every 10 ms with the
+  lock released between them, so the pump thread (or the call itself without one) reads the answer meanwhile.
+- **Tests:** `test_flow.storm_answers_without_frames` (a peer's connect answered by Storm's accept with no frame run,
+  then the main thread's calls and frames against the thread's filing for 300 ms), `a_failing_socket_stops_the_reads`
+  (the thread sees the failed socket, a frame joins it and tells the player once), `test_snet.a_polled_join_is_the_blocking_one`,
+  `test_hud.glue_join_waits_for_the_network`. `KP_TSAN` (CMake) builds them under ThreadSanitizer; `tools/ci.sh`'s full
+  mode runs them so. With the main thread's lock taken out, ThreadSanitizer reports the race at once (checked by hand).
+

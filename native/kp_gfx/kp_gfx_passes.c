@@ -54,6 +54,8 @@ struct KpGfx {
 	float ui_cursor[9];          /* the cursor's HD frame: rectangle, texels, layer; ui_cursor_on */
 	int ui_cursor_on;
 	int ui_atlas, ui_ids;        /* its atlas made, the canvas's item plane uploaded */
+	const KpCanvas *canvas_from; /* the canvas uploaded last and its compose (KpCanvas.serial) */
+	uint32_t canvas_serial;
 	int32_t sd_scale;            /* stage R5: the original's art in RGBA at this scale (0: off), kp_gfx_effects */
 	int fog_smooth, water_on;
 	float gamma;                 /* the gamma option's exponent on the HD interface's art (1: none), kp_gfx_gamma */
@@ -315,6 +317,12 @@ void kp_gfx_fog(KpGfx *g, KpFogLayer *f, const uint8_t *dark)
 	g->fog = dark != NULL && dark == g->fog_dark; /* drawn with the table given up */
 }
 
+/* Whether the canvas's changed rectangle is still to upload: another canvas, or a compose since the last upload. */
+static int canvas_fresh(const KpGfx *g, const KpCanvas *c)
+{
+	return c != g->canvas_from || c->serial != g->canvas_serial;
+}
+
 /* A plane of the canvas (one 16-bit integer per texel) as texture tex: whole when made (or after the canvas went to
  * SD), else its changed rectangle. */
 static void upload_plane(KpGfx *g, const KpCanvas *c, int tex, const uint16_t *plane)
@@ -323,7 +331,7 @@ static void upload_plane(KpGfx *g, const KpCanvas *c, int tex, const uint16_t *p
 	if (!kp_gb_has_texture(g->b, tex, &w, &h) || w != c->w || h != c->h || !g->ui_ids) {
 		kp_gb_texture(g->b, tex, KP_FMT_R16UI, c->w, c->h, 0);
 		kp_gb_upload(g->b, tex, 0, 0, 0, c->w, c->h, plane, 0);
-	} else if (c->dirty[2] > c->dirty[0] && c->dirty[3] > c->dirty[1]) {
+	} else if (canvas_fresh(g, c) && c->dirty[2] > c->dirty[0] && c->dirty[3] > c->dirty[1]) {
 		kp_gb_upload(g->b, tex, 0, c->dirty[0], c->dirty[1], c->dirty[2] - c->dirty[0], c->dirty[3] - c->dirty[1],
 			plane + (size_t)c->dirty[1] * (size_t)c->w + (size_t)c->dirty[0], 2 * (size_t)c->w);
 	}
@@ -335,12 +343,13 @@ void kp_gfx_canvas(KpGfx *g, const KpCanvas *c)
 	if (!g->b) return;
 	if (!c || c->w <= 0) {
 		g->canvas = 0;
+		g->canvas_from = NULL;
 		return;
 	}
 	if (!kp_gb_has_texture(g->b, KP_TEX_CANVAS, &w, &h) || w != c->w || h != c->h) {
 		kp_gb_texture(g->b, KP_TEX_CANVAS, KP_FMT_RG8, c->w, c->h, 0);
 		kp_gb_upload(g->b, KP_TEX_CANVAS, 0, 0, 0, c->w, c->h, c->canvas.pixels, 0);
-	} else if (c->dirty[2] > c->dirty[0] && c->dirty[3] > c->dirty[1]) {
+	} else if (canvas_fresh(g, c) && c->dirty[2] > c->dirty[0] && c->dirty[3] > c->dirty[1]) {
 		kp_gb_upload(g->b, KP_TEX_CANVAS, 0, c->dirty[0], c->dirty[1], c->dirty[2] - c->dirty[0], c->dirty[3] - c->dirty[1],
 			c->canvas.pixels + 2 * ((size_t)c->dirty[1] * (size_t)c->w + (size_t)c->dirty[0]), 2 * (size_t)c->w);
 	}
@@ -351,6 +360,8 @@ void kp_gfx_canvas(KpGfx *g, const KpCanvas *c)
 	} else {
 		g->ui_ids = 0;
 	}
+	g->canvas_from = c;
+	g->canvas_serial = c->serial;
 	g->blend = c->blend_valid;
 	if (g->blend && (!kp_gb_has_texture(g->b, KP_TEX_BLEND, NULL, NULL) || memcmp(g->blend_row, c->blend_row, 256) != 0)) {
 		kp_gb_texture(g->b, KP_TEX_BLEND, KP_FMT_R8, 256, 1, 0);

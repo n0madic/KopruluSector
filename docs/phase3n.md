@@ -255,6 +255,31 @@ cycles of `test_save`'s heaviest shard 143.8 G → 124.1 G, of `test_session.rep
 96.7 G; `kp_bench` over 20 runs, `bench_200` mean 0.105 → 0.096 ms (median 0.067 → 0.056 ms), `bench_combat` 0.095
 → 0.085 ms. Not measured on the Fold7.
 
+**2026-11-27, at the unit records' capacity.** A scenario outside the goldens (no emulator run, so not under
+`tests/scenarios/`): terran04's 128 × 128 map with player 0's units at every place the start accepts (it refuses a
+unit that overlaps another or stands on ground it cannot), 464 Marines, 131 Vultures, 132 Goliaths, 127 Siege Tanks,
+433 Wraiths and 144 Battlecruisers: 1,431 units and 259 turrets, 1,690 of the 1,700 records; groups of 12 sent across
+the map one every two frames, then 600 frames on, with every command made from the units' references. `kp_bench`
+over 12 runs on the Mac (M4 Max, ThinLTO): mean 1.50 ms, median 1.64 ms, p99 2.81 ms, slowest steps 3.3–4.2 ms;
+`bench_200` 0.078 ms on the same build. Seven times the units cost about nineteen times the step, from the
+original's algorithms, not from a defect: a `sample` profile puts 42 % in the local path search's two collectors
+(`unit_side`, `terrain_side`: LocalPathSearch's linear walks along one axis of the spatial index and of the terrain's
+contours, every unit or contour within the axis's span tested against the cross axis), about 60 % in the local
+search with its nodes, edges and swept areas, 7 % in the region search. The worst step stays a tenth of a Fastest
+frame (42 ms). Not measured on the Fold7. The walks read `int64_t` records and are bound by their memory; narrower
+records would help them most.
+
+**2026-11-27, the narrowed fields** ([ADR 0008's addition](adr/0008-native-simulation-core.md#addition-the-narrowed-fields-2026-11-27)).
+The spatial index (`int16_t` units, `int32_t` positions, `uint8_t` marks, `uint32_t` stamps), the terrain's tile
+arrays (`uint32_t` flags, `uint16_t` megatiles, raw tiles and creep backup, `uint8_t` creep borders, `int16_t`
+receding nodes), the AI regions (each field at the original's width) and the units' four bounds (`int16_t`) hold
+their values' width: `KpGame` 12.25 → 7.32 MB. On the same Mac, two runs of each build (`/usr/bin/time -l`): the
+capacity scenario's mean step 1.449 → 1.411 ms (6 runs each, median 1.588 → 1.542 ms, p99 2.74 → 2.67 ms), its
+cycles 30.2 G → 29.5 G (−2.4 % and −3.0 %) with 1 % more instructions (the narrow loads and stores), the resident set
+65–68 → 59.5 MB; `bench_200` the same (mean 0.076–0.078 ms both, cycles within 0.5 %). The other unit fields stay
+`int64_t` (a `TODO` in `kp_game.h`): most of their writes are not masked yet. Not measured on the Fold7 (no device
+attached).
+
 ### Step 6: the mission manager
 
 `game/simulation/manager.lua` is the one owner of a mission's native game (plan D7, D8; ADR 0008 §6): it starts and

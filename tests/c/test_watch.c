@@ -388,6 +388,51 @@ static void a_viewer_stops_when_its_server_goes(KpT *T)
 	kp_t_eq(T, kp_watch_viewer_take(v, &bytes, &n, &frames, &whole), 0, "nothing more");
 }
 
+/* A server whose record grows past what a replay holds (KP_WATCH_RECORD_MAX): the viewer asks for none of it and the
+ * record is whole at what came, told apart from a server gone. */
+static void a_viewer_takes_no_record_past_a_replays(KpT *T)
+{
+	KpRecorder *live = recorder_new(T);
+	static uint8_t start[100];
+	KpWatchServer *s = server_new(T, start, sizeof start, 0);
+	KpWatchViewer *v = (KpWatchViewer *)calloc(1, sizeof *v);
+	Link *l = (Link *)calloc(1, sizeof *l);
+	uint8_t forged[KP_WATCH_DATA_HEADER];
+	const uint8_t *bytes;
+	size_t n, cap;
+	uint32_t now = 0, frames;
+	int whole, k;
+	kp_t_ok(T, v && l, "out of memory");
+	kp_t_defer(T, free_viewer, v);
+	kp_t_defer(T, free_link, l);
+	l->T = T;
+	for (k = 0; k < 4; k++) {
+		record_frame(live, k);
+		kp_t_eq(T, kp_watch_server_mark(s, live, (uint32_t)(k + 1)), 0, "the mark");
+	}
+	kp_watch_viewer_init(v, now);
+	for (k = 0; k < 10; k++, now += 100) {
+		kp_watch_viewer_poll(v, now, to_server, l);
+		deliver(l, s, v, now);
+	}
+	kp_t_eq(T, v->status, KP_WATCH_LIVE, "the viewer follows the game");
+	cap = v->record_cap;
+	/* the server's answer of no bytes that tells a record one byte past a replay's */
+	memset(forged, 0, sizeof forged);
+	memcpy(forged, KP_WATCH_MAGIC, KP_WATCH_MAGIC_SIZE);
+	forged[KP_WATCH_AT_TYPE] = KP_WATCH_DATA;
+	kp_le_put32(forged + KP_WATCH_AT_GAME, s->game);
+	forged[KP_WATCH_AT_PART] = KP_WATCH_PART_RECORD;
+	kp_le_put32(forged + KP_WATCH_AT_OFFSET, (uint32_t)v->record_got);
+	kp_le_put32(forged + KP_WATCH_AT_SIZE, (uint32_t)KP_WATCH_RECORD_MAX + 1);
+	kp_le_put32(forged + KP_WATCH_AT_FRAMES, 4);
+	kp_le_put32(forged + KP_WATCH_AT_CRC, kp_crc32(forged, 0));
+	kp_watch_viewer_receive(v, forged, sizeof forged, now);
+	kp_t_ok(T, v->status == KP_WATCH_GONE && v->oversize, "past a replay's record: gone, oversize");
+	kp_t_ok(T, v->known[KP_WATCH_PART_RECORD] <= KP_WATCH_RECORD_MAX && v->record_cap == cap, "no room taken for it");
+	kp_t_ok(T, kp_watch_viewer_take(v, &bytes, &n, &frames, &whole) == 1 && whole, "whole at what came");
+}
+
 /* A save's load in the game takes its frame back: the server ends the game at what it published. */
 static void a_load_ends_the_published_game(KpT *T)
 {
@@ -515,6 +560,7 @@ static const KpTest TESTS[] = {
 	{ "the_viewer_fetches_through_a_lossy_link", the_viewer_fetches_through_a_lossy_link, 0 },
 	{ "an_answer_is_never_larger_than_its_request", an_answer_is_never_larger_than_its_request, 0 },
 	{ "a_viewer_stops_when_its_server_goes", a_viewer_stops_when_its_server_goes, 0 },
+	{ "a_viewer_takes_no_record_past_a_replays", a_viewer_takes_no_record_past_a_replays, 0 },
 	{ "a_load_ends_the_published_game", a_load_ends_the_published_game, 0 },
 	{ "a_load_ends_the_game_without_a_delay", a_load_ends_the_game_without_a_delay, 0 },
 	{ "a_pause_marks_nothing", a_pause_marks_nothing, 0 },

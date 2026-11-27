@@ -269,6 +269,11 @@ void kp_watch_viewer_receive(KpWatchViewer *v, const uint8_t *data, size_t size,
 		return;
 	}
 	if (v->status == KP_WATCH_FETCHING) return;
+	if (total > KP_WATCH_RECORD_MAX) { /* past what a replay holds: the game ends where it came to */
+		v->status = KP_WATCH_GONE;
+		v->oversize = 1;
+		return;
+	}
 	if (total > v->known[part]) v->known[part] = total;
 	if (offset != v->record_got) return;
 	if (n) {

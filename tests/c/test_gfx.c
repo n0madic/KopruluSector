@@ -659,6 +659,49 @@ static void hd_composite_reads_what_lay_under(KpT *T)
 	kp_t_ok(T, composites > 0, "the HD composite drawn");
 }
 
+/* A canvas's changed rectangle goes up once a compose: the frames that compose nothing hand the same canvas (and its
+ * last rectangle) again, and upload nothing; another compose, or another canvas, uploads its rectangle. */
+static void canvas_uploads_once_a_compose(KpT *T)
+{
+	enum { W = 8, H = 4 };
+	static KpCanvas c, other;
+	static uint8_t pixels[W * H * 2];
+	KpGfxApi api = { 1, 0, KP_GFX_BACKEND_GL, NULL, NULL };
+	KpGfx *g;
+	char err[256] = "";
+	int made;
+	g = kp_gfx_new(&api, err, sizeof err);
+	kp_t_ok(T, g != NULL && recorder != NULL, "no gfx: %s", err);
+	if (!g || !recorder) return;
+	kp_t_defer(T, gfx_free, g);
+	memset(&c, 0, sizeof c);
+	c.w = c.canvas.w = W;
+	c.h = c.canvas.h = H;
+	c.canvas.pixels = pixels;
+	c.dirty[0] = 1;
+	c.dirty[1] = 1;
+	c.dirty[2] = 3;
+	c.dirty[3] = 2;
+	c.serial = 1;
+	kp_gfx_canvas(g, &c);
+	made = recorder->uploads[KP_TEX_CANVAS];
+	kp_t_eq(T, made, 1, "the new texture filled whole");
+	kp_gfx_canvas(g, &c);
+	kp_gfx_canvas(g, &c);
+	kp_t_eq(T, recorder->uploads[KP_TEX_CANVAS], made, "frames without a compose upload nothing");
+	c.serial++;
+	kp_gfx_canvas(g, &c);
+	kp_t_eq(T, recorder->uploads[KP_TEX_CANVAS], made + 1, "the next compose's rectangle uploaded");
+	kp_gfx_canvas(g, &c);
+	kp_t_eq(T, recorder->uploads[KP_TEX_CANVAS], made + 1, "and only once");
+	other = c;
+	kp_gfx_canvas(g, &other);
+	kp_t_eq(T, recorder->uploads[KP_TEX_CANVAS], made + 2, "another canvas's rectangle uploaded");
+	kp_gfx_canvas(g, NULL);
+	kp_gfx_canvas(g, &other);
+	kp_t_eq(T, recorder->uploads[KP_TEX_CANVAS], made + 3, "a canvas after none uploaded again");
+}
+
 /* The lit slots (blocks only) get the lighting layers (the normal map, the occlusion, and two a slot of the specular and
  * emissive colours), filled only for a page in a lit slot; the HD images' draws bind them, with
  * the half vector of StarCraft: Remastered's light and its eye over the view and the lit slots' count. */
@@ -906,6 +949,7 @@ static const KpTest TESTS[] = {
 	{ "world_passes_keep_their_depth_state", world_passes_keep_their_depth_state, 0 },
 	{ "rgba_world_reads_the_fitted_blends", rgba_world_reads_the_fitted_blends, 0 },
 	{ "hd_composite_reads_what_lay_under", hd_composite_reads_what_lay_under, 0 },
+	{ "canvas_uploads_once_a_compose", canvas_uploads_once_a_compose, 0 },
 	{ "hd_lit_slots_light_the_sprites", hd_lit_slots_light_the_sprites, 0 },
 	{ "gpu_pipelines_cover_the_passes", gpu_pipelines_cover_the_passes, 0 },
 	{ "attach_takes_another_api", attach_takes_another_api, 0 },

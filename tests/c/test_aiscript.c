@@ -959,7 +959,7 @@ static void more_melee_opcodes_follow_the_interpreter(KpT *T)
 	region = kp_region_at(g, (int16_t)g->w->spr.x[kp_unit_sprite(g, n)], (int16_t)g->w->spr.y[kp_unit_sprite(g, n)]) & 0xffff;
 	g->pai.attack_target[0] = TOWN_AT + 1;
 	g->air.state[0][TOWN_AT] = STATE_GATHER;
-	g->air.dest[0][TOWN_AT] = region;
+	g->air.dest[0][TOWN_AT] = kp_to_u16(region);
 	g->pai.roster[0][0] = MARINE + 1;
 	kp_ai_region_center(g, region, &x, &y);
 	sum = 0;

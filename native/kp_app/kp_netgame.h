@@ -175,6 +175,10 @@ typedef struct {
 		const char *player_name, const char *player_desc, int *player_id);
 	int (*join_game)(void *ud, uint32_t game_id, const char *name, const char *password, const char *player_name,
 		const char *player_desc, int *player_id);
+	/* kp_snet_join_begin and kp_snet_join_poll (NULL both: joins block in join_game) */
+	int (*join_begin)(void *ud, uint32_t game_id, const char *name, const char *password, const char *player_name,
+		const char *player_desc);
+	int (*join_poll)(void *ud, int *player_id);
 	int (*leave_game)(void *ud, uint32_t reason);
 	int (*enum_games)(void *ud, int (*fn)(void *fn_ud, const KpSnetGame *g), void *fn_ud, uint32_t *hint);
 	int (*send_turn)(void *ud, const void *data, uint32_t size);
@@ -273,6 +277,8 @@ typedef struct {
 	int local_slot, local_index; /* 0x508d50, 0x508d54 */
 	KpNetGameHeader header; /* 0x6728d0 */
 	uint8_t requested_key[4]; /* 0x6728f8..0x6728fb: the joined game's template key */
+	int joining;          /* kp_netgame_join_begin's handshake runs (join_listed: the game it joins) */
+	KpNetGameHeader join_listed;
 	int error_latch;      /* 0x6728b8: a fatal network error was reported */
 	int in_chat_room;     /* the glue state 0x66a274 is 3: the chat room shows (its lines, its refreshes) */
 	int in_game;          /* the mode word 0x6662b8 is 3 (stage N4); 0: glue mode 4 */
@@ -384,8 +390,13 @@ int kp_netgame_create(KpNetGame *ng, const KpNetGameHeader *h, const char *passw
 /* EnumNetworkGames 0x475570: the listed games refreshed (ng->listed, sorted by name, the newest first among equal; a
  * game whose stat string is malformed or invalid is not listed). */
 void kp_netgame_enum(KpNetGame *ng);
-/* JoinNetworkGame 0x475610 of a listed game: 1 joined, 0 not (reported). */
+/* JoinNetworkGame 0x475610 of a listed game: 1 joined, 0 not (reported). SNetJoinGame blocks meanwhile. */
 int kp_netgame_join(KpNetGame *ng, const KpNetGameHeader *listed);
+/* The same join without the wait (the calls' join_begin and join_poll; calls without them join at once, as
+ * kp_netgame_join): begun, 0 refused (reported), 1 sent; then while ng->joining kp_netgame_join_poll answers it: -1
+ * still joining, 1 joined, 0 not (reported). kp_netgame_abort gives a running handshake up. */
+int kp_netgame_join_begin(KpNetGame *ng, const KpNetGameHeader *listed);
+int kp_netgame_join_poll(KpNetGame *ng);
 /* InitJoinedLobby 0x474c60: the chat room opens; 1, or 0 (aborted, reported or a leave reason set). A game that resumes
  * a save (its header's save ID) needs this seat's copy (the hooks' find_save; network.tbl 0x5f "Save Game File Not
  * Found." without it): its header becomes the game's and the host's slots are the save's players (RebuildLobbySlotsFromSave

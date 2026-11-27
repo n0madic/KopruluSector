@@ -456,7 +456,20 @@ static int lines_differ(KpT *T, KpGame *g, int drawn, KpBuf *before)
 
 /* A change of *value by delta and back: the hash (drawn or not) changes when the lines do and only then, and comes
  * back with the value. */
-static void hash_follows(KpT *T, KpGame *g, int64_t *value, int64_t delta, const char *what)
+/* An integer of elem bytes (a narrowed field's too) moved by delta, wrapping at its width. */
+static void num_add(void *value, size_t elem, int64_t delta)
+{
+	uint8_t b[8] = { 0 };
+	uint64_t x = 0;
+	size_t k;
+	memcpy(b, value, elem);
+	for (k = elem; k-- > 0;) x = x << 8 | b[k];
+	x += (uint64_t)delta;
+	for (k = 0; k < elem; k++) b[k] = (uint8_t)(x >> (8 * k));
+	memcpy(value, b, elem);
+}
+
+static void hash_follows(KpT *T, KpGame *g, void *value, size_t elem, int64_t delta, const char *what)
 {
 	int drawn;
 	for (drawn = 0; drawn <= 1; drawn++) {
@@ -464,13 +477,14 @@ static void hash_follows(KpT *T, KpGame *g, int64_t *value, int64_t delta, const
 		uint64_t h = dump_hash(T, g, drawn);
 		int differ;
 		kp_t_ok(T, kp_state_lines(g, drawn, before) == 0, "out of memory");
-		*value += delta;
+		num_add(value, elem, delta);
 		differ = lines_differ(T, g, drawn, before);
 		kp_t_eq(T, dump_hash(T, g, drawn) != h, differ, "%s (drawn %d): the hash changes with the lines", what, drawn);
-		*value -= delta;
+		num_add(value, elem, -delta);
 		kp_t_ok(T, dump_hash(T, g, drawn) == h, "%s (drawn %d): the hash comes back", what, drawn);
 	}
 }
+#define HASH_FOLLOWS(T, g, value, delta, what) hash_follows(T, g, value, sizeof *(value), delta, what)
 
 /* kp_dump_hash, which test_session's playbacks compare: the same state hashes the same in two games of it, and a value
  * of each kind of line (a unit's field, a list's item, a control group, a terrain row, a trigger record's byte) changes
@@ -499,8 +513,8 @@ static void dump_hash_follows_the_lines(KpT *T)
 	kp_t_ok(T, dump_hash(T, g, 0) != dump_hash(T, g, 1), "the drawn dump is another dump");
 	n = g->lists[KP_LIST_ACTIVE].head;
 	kp_t_ok(T, n > 0, "a unit");
-	hash_follows(T, g, &g->u.hp[n], 1, "a unit's hit points");
-	hash_follows(T, g, &g->u.last_event_timer[n], 1, "a unit's minimap notice");
+	HASH_FOLLOWS(T, g, &g->u.hp[n], 1, "a unit's hit points");
+	HASH_FOLLOWS(T, g, &g->u.last_event_timer[n], 1, "a unit's minimap notice");
 	image = g->w->spr.images[g->u.sprite[n]].head;
 	{
 		uint64_t not_drawn = dump_hash(T, g, 0), drawn = dump_hash(T, g, 1);
@@ -509,10 +523,10 @@ static void dump_hash_follows_the_lines(KpT *T)
 			"an image's position: in the dump, not in the drawn one");
 		g->w->img.x[image]--;
 	}
-	hash_follows(T, g, &g->terrain.raw_tiles[0], 1, "a terrain tile");
-	hash_follows(T, g, &g->groups[0][3][0], n, "a control group");
-	hash_follows(T, g, &g->groups[0][3][11], n, "a control group's last slot");
-	hash_follows(T, g, &g->players.minerals[0], 8, "a player's minerals");
+	HASH_FOLLOWS(T, g, &g->terrain.raw_tiles[0], 1, "a terrain tile");
+	HASH_FOLLOWS(T, g, &g->groups[0][3][0], n, "a control group");
+	HASH_FOLLOWS(T, g, &g->groups[0][3][11], n, "a control group's last slot");
+	HASH_FOLLOWS(T, g, &g->players.minerals[0], 8, "a player's minerals");
 	for (p = 0; p < KP_TRIGGER_PLAYERS && g->trig.head[p] < 0; p++) {
 	}
 	kp_t_ok(T, p < KP_TRIGGER_PLAYERS, "a trigger");

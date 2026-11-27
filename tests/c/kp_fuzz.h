@@ -37,7 +37,12 @@
  *             in-game chat (peers' and its own, slash commands), its commands, failing calls, turns in transit, the
  *             clock and timeout.bin's drop, frame by frame through the session's KP_TURNS_NET; its sends within the
  *             provider's message size, its outgoing turn and list within their bounds, and its game never stopped
- *             (kp_fuzz_game.c tells the ops).
+ *             (kp_fuzz_game.c tells the ops);
+ *   watch     a network game's viewers (kp_watch.h): a server over a growing record (its marks, a load's mark, the
+ *             end) and a viewer, the datagrams each one receives from the input (forged answers with their CRCs made
+ *             right among them) and from the other over a link; every answer within its request, well-formed and
+ *             within its part, every request well-formed, the viewer's start file and record within their bounds
+ *             (KP_WATCH_START_MAX, KP_WATCH_RECORD_MAX; run_watch tells the ops).
  *
  * save, commands and game need the game's data (kp_oracle_data("."), run from the source tree's root); the games start once
  * a process and each input begins from their snapshot. A crash or a sanitizer's report is a finding. A game the
@@ -54,7 +59,7 @@ extern "C" {
 #endif
 
 enum { KP_FUZZ_REP, KP_FUZZ_CHK, KP_FUZZ_SAVE, KP_FUZZ_COMMANDS, KP_FUZZ_TURNS, KP_FUZZ_UDP, KP_FUZZ_SNET, KP_FUZZ_LOBBY,
-	KP_FUZZ_TRANSFER, KP_FUZZ_GAME, KP_FUZZ_TARGETS };
+	KP_FUZZ_TRANSFER, KP_FUZZ_GAME, KP_FUZZ_WATCH, KP_FUZZ_TARGETS };
 
 /* The target's name ("rep", ...), and the target of a name (-1 none). */
 const char *kp_fuzz_name(int target);

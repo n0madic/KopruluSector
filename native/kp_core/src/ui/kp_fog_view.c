@@ -73,7 +73,7 @@ int kp_fog_view_update(KpFogView *v, const KpFogVision *vision, int64_t cam_x, i
 		int64_t my = clamp(ty - 1 + r, 0, vision->map_h - 1);
 		for (c = 0; c < cols; c++) {
 			int64_t mx = clamp(tx - 1 + c, 0, vision->map_w - 1);
-			v->raw[r * cols + c] = tile_level(vision, (uint32_t)vision->tiles[my * vision->map_w + mx]);
+			v->raw[r * cols + c] = tile_level(vision, vision->tiles[my * vision->map_w + mx]);
 		}
 	}
 	/* the 1 2 1 / 2 4 2 / 1 2 1 blur of the inner cells, / 16 */
@@ -210,7 +210,7 @@ int kp_fog_minimap(const KpFogVision *vision, const uint8_t *terrain, const uint
 		*h = 2 * vision->map_h;
 		for (y = 0; y < *h; y++) {
 			for (x = 0; x < *w; x++) {
-				int r = minimap_row(vision, (uint32_t)vision->tiles[(y / 2) * vision->map_w + x / 2]);
+				int r = minimap_row(vision, vision->tiles[(y / 2) * vision->map_w + x / 2]);
 				uint8_t c = terrain[y * *w + x];
 				out[y * *w + x] = row_of[r] ? row_of[r][c] : c;
 			}
@@ -229,7 +229,7 @@ int kp_fog_minimap(const KpFogVision *vision, const uint8_t *terrain, const uint
 	for (y = 0; y < *h; y++) {
 		for (x = 0; x < *w; x++) {
 			int64_t tx = side >= 192 ? 2 * x : x, ty = side >= 192 ? 2 * y : y;
-			int r = minimap_row(vision, (uint32_t)vision->tiles[ty * vision->map_w + tx]);
+			int r = minimap_row(vision, vision->tiles[ty * vision->map_w + tx]);
 			uint8_t c = terrain[y * *w + x];
 			out[y * *w + x] = row_of[r] ? row_of[r][c] : c;
 		}

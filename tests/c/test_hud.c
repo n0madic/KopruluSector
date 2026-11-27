@@ -1629,7 +1629,7 @@ static void a_load_redraws_the_minimap(KpT *T)
 	kp_t_defer(T, free, before);
 	memcpy(before, m->image, n);
 	hidden <<= g->local_player;
-	for (k = 0; k < g->map_w * g->map_h; k++) g->terrain.tiles[k] &= ~hidden;
+	for (k = 0; k < g->map_w * g->map_h; k++) g->terrain.tiles[k] &= (uint32_t)~hidden;
 	g->minimap_terrain++;
 	kp_ui_minimap_ping(H->ui, 64, 64, 0);
 	kp_ui_lines_add(H->ui, (const uint8_t *)"before the load", 1, now + 10000, 0);
@@ -4445,6 +4445,7 @@ typedef struct {
 	char address[KP_UI_ADDRESS]; /* the host by its address the network keeps (KpUiNet.address) */
 	char looked_up[KP_UI_ADDRESS]; /* the address set_address began to look up (lookup_address) */
 	int address_sets, refuse_address, lookup_address;
+	int joins, join_answer; /* KpUiNet.join's calls and its answer (-1: the test answers by kp_ui_menus_join_done) */
 	KpUi *ui;
 	const char *poll_fatal; /* PollBriefingTurn's turn step reports a fatal network error with this detail (NULL none) */
 	int replay;             /* the lobby is a replay's, slot 2 a computer's (LayoutLobbySlots opens it) */
@@ -4552,6 +4553,29 @@ static int fake_set_address(void *host, const char *text)
 	return 1;
 }
 
+/* The join screen's one listed game, and the join's answer */
+static int fake_games(void *host, KpUiGame *out, int max)
+{
+	(void)host;
+	if (max < 1) return 0;
+	memset(out, 0, sizeof *out);
+	out->id = 7;
+	snprintf(out->name, sizeof out->name, "Koprulu");
+	snprintf(out->title, sizeof out->title, "The Hunters");
+	out->players = 1;
+	out->max_players = 8;
+	out->type = 2; /* Melee */
+	out->width = out->height = 128;
+	return 1;
+}
+
+static int fake_join(void *host, const KpUiGame *game)
+{
+	FakeNet *n = fake(host);
+	n->joins++;
+	return game->id == 7 ? n->join_answer : 0;
+}
+
 /* The interface's network: the test's, the UDP provider chosen, in multiplayer */
 static FakeNet *fake_net(KpT *T, KpUi *ui)
 {
@@ -4583,6 +4607,73 @@ static void until_event(Glue *G, int frames)
 	int k;
 	G->has_last = 0;
 	for (k = 0; k < frames && !G->has_last; k++) glue_frame(G);
+}
+
+/* The join that does not block (the architecture review of 2026-11-27): Ok begins the network's join (KpUiNet.join's
+ * -1) and the screen waits, its list and buttons disabled and the list not refreshed, Ok ignored; a refused answer
+ * (kp_ui_menus_join_done 0) gives the screen back with Ok disabled, as a join refused at once; a joined answer ends
+ * the screen as Ok does (the chat room's state). No answer is taken once no screen waits. */
+static void glue_join_waits_for_the_network(KpT *T)
+{
+	enum { JOIN = 10, CHAT = 3, FRAMES = 1000, LIST = 5, OK = 13, CANCEL = 14, CREATE = 15 };
+	Glue *G;
+	KpUi *ui;
+	FakeNet *n;
+	char name[128];
+	int k;
+	if (!kp_t_ready(T, "test_hud.glue_join_waits_for_the_network", GLUE_FILES)) return;
+	G = glue_bare(T);
+	ui = G->ui;
+	n = fake_net(T, ui);
+	n->net.games = fake_games;
+	n->net.join = fake_join;
+	n->join_answer = -1;
+	kp_glue_menus(G->glue, JOIN);
+	wait_for(G, "rez\\glujoin.bin", FRAMES);
+	for (k = 0; k < 150 && (ui->controls[child_of(ui, ui->open, OK)].flags & KP_UI_DISABLED); k++) glue_frame(G);
+	kp_t_ok(T, !(ui->controls[child_of(ui, ui->open, OK)].flags & KP_UI_DISABLED), "Ok with a game listed");
+	kp_t_ok(T, !kp_ui_menus_join_done(ui, 1), "no screen waits before Ok");
+	glue_click(G, OK, -1, -1);
+	for (k = 0; k < 10; k++) glue_frame(G);
+	kp_t_eq(T, n->joins, 1, "Ok began the join");
+	kp_t_ok(T, ui->menus.join.waiting, "the screen waits");
+	kp_t_ok(T, (ui->controls[child_of(ui, ui->open, OK)].flags & KP_UI_DISABLED)
+			&& (ui->controls[child_of(ui, ui->open, LIST)].flags & KP_UI_DISABLED)
+			&& (ui->controls[child_of(ui, ui->open, CANCEL)].flags & KP_UI_DISABLED)
+			&& (ui->controls[child_of(ui, ui->open, CREATE)].flags & KP_UI_DISABLED),
+		"Ok, the list, Cancel and Create disabled while it waits");
+	for (k = 0; k < 150; k++) glue_frame(G); /* past the list's refresh timer */
+	glue_click(G, OK, -1, -1);
+	for (k = 0; k < 10; k++) glue_frame(G);
+	kp_t_eq(T, n->joins, 1, "Ok takes nothing while it waits");
+	kp_t_ok(T, (ui->controls[child_of(ui, ui->open, OK)].flags & KP_UI_DISABLED), "Ok stays disabled over the refreshes");
+	kp_t_ok(T, kp_ui_menus_join_done(ui, 0), "the screen takes the refusal");
+	glue_frame(G);
+	kp_t_ok(T, !ui->menus.join.waiting, "no longer waiting");
+	kp_t_ok(T, (ui->controls[child_of(ui, ui->open, OK)].flags & KP_UI_DISABLED)
+			&& !(ui->controls[child_of(ui, ui->open, LIST)].flags & KP_UI_DISABLED)
+			&& !(ui->controls[child_of(ui, ui->open, CANCEL)].flags & KP_UI_DISABLED),
+		"refused: Ok disabled, the list and Cancel work again");
+	kp_t_eq_str(T, top(G, name, sizeof name), "rez\\glujoin.bin", "the screen stays");
+	for (k = 0; k < 150 && (ui->controls[child_of(ui, ui->open, OK)].flags & KP_UI_DISABLED); k++) glue_frame(G);
+	kp_t_ok(T, !(ui->controls[child_of(ui, ui->open, OK)].flags & KP_UI_DISABLED), "the list's refresh enables Ok");
+	glue_click(G, OK, -1, -1);
+	for (k = 0; k < 10; k++) glue_frame(G);
+	kp_t_ok(T, n->joins == 2 && ui->menus.join.waiting, "Ok began a second join");
+	kp_t_ok(T, kp_ui_menus_join_done(ui, 1), "the screen takes the join");
+	until_event(G, FRAMES);
+	kp_t_ok(T, G->has_last, "the screens ended");
+	kp_t_eq(T, ui->menus.state, CHAT, "the chat room's state");
+	kp_t_ok(T, !kp_ui_menus_join_done(ui, 1), "no screen waits after it");
+	/* a network that joins at once: no wait */
+	n->join_answer = 1;
+	kp_glue_menus(G->glue, JOIN);
+	wait_for(G, "rez\\glujoin.bin", FRAMES);
+	for (k = 0; k < 150 && (ui->controls[child_of(ui, ui->open, OK)].flags & KP_UI_DISABLED); k++) glue_frame(G);
+	glue_click(G, OK, -1, -1);
+	until_event(G, FRAMES);
+	kp_t_ok(T, n->joins == 3 && !ui->menus.join.waiting && G->has_last && ui->menus.state == CHAT,
+		"joined at once: the chat room's state, no wait");
 }
 
 /* The chat room (glue state 3) on the network's answers: PollLobby's start ends the screens with the network's event in
@@ -6284,6 +6375,7 @@ static const KpTest TESTS[] = {
 		0 },
 	{ "glue_room_cancel_by_back_leaves_no_game_input", glue_room_cancel_by_back_leaves_no_game_input, 0 },
 	{ "glue_chat_room_follows_the_network", glue_chat_room_follows_the_network, 0 },
+	{ "glue_join_waits_for_the_network", glue_join_waits_for_the_network, 0 },
 	{ "glue_join_address_asks_the_host", glue_join_address_asks_the_host, 0 },
 	{ "message_dialog_chooses_the_chat_target", message_dialog_chooses_the_chat_target, 0 },
 	{ "alliance_dialog_queues_stances_and_vision", alliance_dialog_queues_stances_and_vision, 0 },

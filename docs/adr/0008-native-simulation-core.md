@@ -100,3 +100,26 @@ Plan §10 allows 4 ms per simulation step on the target mobile device, where Lua
 - Engine builds keep going through the build server; local development does not.
 - The plan gains phase 3N. D7 and D19 are revised. The §10 tick budget of phase 3 is accepted at N.6.
 - Profiling the Lua interpreter (`tools/lua/tick_bench.lua`) gives way to native profilers (Instruments, simpleperf) and `kp_bench`.
+
+## Addition: the narrowed fields (2026-11-27)
+
+Decision 2's explicit widths had become `int64_t` everywhere: every game field held 8 bytes whatever the original's
+width, and the walks the step runs most (the local path search over the spatial index and the terrain, the AI's
+regions) were bound by that memory. The architecture review of 2026-11-27 narrowed the arrays the walks read most:
+
+1. **A field's type in its declaration.** The X-macros carry a type column (`KP_UNIT_FIELDS`, `KP_AI_REGION_FIELDS`);
+   the spatial index, the terrain's tile arrays, the AI regions and the units' bounds hold the original's width, or
+   less where the values are records or indices (a unit record in `int16_t`). Arithmetic stays `int64_t`.
+2. **Every store says it narrows.** The game's sources build with `-Wconversion -Wno-sign-conversion -Werror`, so a
+   store into a narrowed field without `kp_to_i8 .. kp_to_u32` (`kp_game.h`) does not compile. Under
+   `KP_NARROW_CHECKS` (on with `KP_SANITIZE`, so in the CI's ASan/UBSan suites) a value the type would change stops
+   the program (`kp_narrow_failed`); the full suites passed with the checks on.
+3. **Readers by width.** The save's walk visits a narrowed array at its width (`nums`: little-endian, signed or not;
+   the schema's kinds `I8`, `I16`, `U16`), so the save's bytes and the state hash change and the save is version 7;
+   the load check, the dump and the tests read through `kp_num_get` / `KP_ELEM`.
+4. **The goldens are the proof.** The dump prints the same lines (its fingerprints come from the dump, not the save),
+   so every golden checks that no value was cut.
+
+Measured on the Mac (M4 Max, ThinLTO): `KpGame` 12.25 → 7.32 MB, the save 8.03 → 5.45 MB (`bench_200`; the capacity
+scenario's 8.87 → 5.64 MB), the capacity scenario's mean step −2.6 % ([phase 3N](../phase3n.md)), `bench_200` the
+same. The other unit fields stay `int64_t` until each one's values are shown to fit (`TODO` in `kp_game.h`).

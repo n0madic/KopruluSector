@@ -15,7 +15,7 @@
 static const int64_t HEIGHT_REQUIRED[3] = { 0x07000000, 0x05000000, 0x01000000 }; /* by source height */
 static const int64_t DIRECTIONS[4][2] = { { 1, 0 }, { 0, 1 }, { -1, 0 }, { 0, -1 } }; /* 0x4ee644/0x4ee648 */
 
-static int64_t *tile_ref(KpGame *g, int64_t i)
+static uint32_t *tile_ref(KpGame *g, int64_t i)
 {
 	if (i < 0 || i >= KP_TILES) kp_game_fail(g, "fog: tile %lld is nil", (long long)i);
 	return &g->terrain.tiles[i];
@@ -182,7 +182,7 @@ static void templates(KpGame *g, int64_t stride)
 void kp_fog_init(KpGame *g)
 {
 	int64_t i;
-	for (i = 0; i < KP_TILES; i++) g->terrain.tiles[i] = kp_bor(g->terrain.tiles[i], 0xffff);
+	for (i = 0; i < KP_TILES; i++) g->terrain.tiles[i] = kp_to_u32(kp_bor(g->terrain.tiles[i], 0xffff));
 	templates(g, g->map_w);
 }
 
@@ -192,8 +192,8 @@ void kp_tiles_or(KpGame *g, int64_t tx, int64_t ty, int64_t w, int64_t h, int64_
 	int64_t x, y;
 	for (y = ty; y <= ty + h - 1; y++) {
 		for (x = tx; x <= tx + w - 1; x++) {
-			int64_t *f = tile_ref(g, y * g->map_w + x);
-			*f = kp_bor(*f, mask);
+			uint32_t *f = tile_ref(g, y * g->map_w + x);
+			*f = kp_to_u32(kp_bor(*f, mask));
 		}
 	}
 }
@@ -203,8 +203,8 @@ void kp_tiles_clear(KpGame *g, int64_t tx, int64_t ty, int64_t w, int64_t h, int
 	int64_t x, y, keep = kp_bnot(mask);
 	for (y = ty; y <= ty + h - 1; y++) {
 		for (x = tx; x <= tx + w - 1; x++) {
-			int64_t *f = tile_ref(g, y * g->map_w + x);
-			*f = kp_band(*f, keep);
+			uint32_t *f = tile_ref(g, y * g->map_w + x);
+			*f = kp_to_u32(kp_band(*f, keep));
 		}
 	}
 }
@@ -221,8 +221,8 @@ int64_t kp_terrain_height(KpGame *g, int64_t x, int64_t y)
 
 static void clear_tile(KpGame *g, int64_t i, int64_t bits)
 {
-	int64_t *f = tile_ref(g, i);
-	*f = *f - kp_band(*f, bits);
+	uint32_t *f = tile_ref(g, i);
+	*f = kp_to_u32(*f - kp_band(*f, bits));
 }
 
 /* RevealSightArea 0x46bbb0 with the four callbacks 0x46c620 (ground), 0x46c570 (air), 0x46c6a0 (ground,
@@ -298,10 +298,10 @@ static int refresh_tile(KpGame *g, int64_t i)
 			: kp_band(t->tiles[i], g->local_vision) != 0) return 0;
 	m = kp_cv5_megatile(g, t->raw_tiles[i]);
 	if (kp_band(t->megatiles[i], 0x7fff) == m) return 0;
-	t->megatiles[i] = m;
+	t->megatiles[i] = kp_to_u16(m);
 	g->minimap_terrain++; /* MarkMinimapTerrainDirty 0x46e8c0, for the interface */
-	if (kp_band(t->raw_tiles[i], 0x7ff0) == CREEP_GROUP) t->tiles[i] = kp_bor(t->tiles[i], CREEP_SHOWN);
-	else t->tiles[i] = kp_band(t->tiles[i], kp_bnot(CREEP_SHOWN));
+	if (kp_band(t->raw_tiles[i], 0x7ff0) == CREEP_GROUP) t->tiles[i] = kp_to_u32(kp_bor(t->tiles[i], CREEP_SHOWN));
+	else t->tiles[i] = kp_to_u32(kp_band(t->tiles[i], kp_bnot(CREEP_SHOWN)));
 	kp_creep_refresh_borders(g, kp_mod(i, g->map_w), i / g->map_w);
 	return 1;
 }
@@ -366,8 +366,8 @@ void kp_apply_vision_cheats(KpGame *g)
 	else if (kp_band(cheats, KP_CHEAT_WAR_AINT) != 0) keep = 0xffffff00LL;
 	else return;
 	for (i = 0; i < count; i++) {
-		int64_t *f = tile_ref(g, i);
-		*f = kp_band(*f, keep);
+		uint32_t *f = tile_ref(g, i);
+		*f = kp_to_u32(kp_band(*f, keep));
 	}
 }
 
@@ -378,8 +378,8 @@ void kp_reset_tile_visibility(KpGame *g)
 	int64_t i, count = g->map_w * g->map_h;
 	if (kp_band(kp_cheats(g), KP_CHEAT_BLACK_SHEEP_WALL | KP_CHEAT_WAR_AINT) != 0) return;
 	for (i = 0; i < count; i++) {
-		int64_t *f = tile_ref(g, i);
-		*f = kp_bor(*f, 0xff);
+		uint32_t *f = tile_ref(g, i);
+		*f = kp_to_u32(kp_bor(*f, 0xff));
 	}
 }
 

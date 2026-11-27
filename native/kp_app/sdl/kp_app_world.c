@@ -822,7 +822,8 @@ static void stream_hd(KpApp *a, int changed)
 static void sync_terrain(KpApp *a)
 {
 	KpAppWorld *w = &a->world;
-	const int64_t *shown = a->flow.session->g->terrain.megatiles, *borders = a->flow.session->g->terrain.creep_border;
+	const uint16_t *shown = a->flow.session->g->terrain.megatiles;
+	const uint8_t *borders = a->flow.session->g->terrain.creep_border;
 	int32_t n = (int32_t)w->mission->width * (int32_t)w->mission->height, i;
 	int changed = 0, cells_changed = 0;
 	KpError e;

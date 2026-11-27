@@ -416,7 +416,7 @@ static void reset_attack_regions(KpGame *g, int64_t p)
 	int64_t r;
 	for (r = 1; r < (int64_t)g->regions.count; r++) {
 		if (a->state[p][r] != KP_RSTATE_GATHER) continue;
-		a->flags[p][r] = kp_band(a->flags[p][r], kp_bnot(KP_RFLAG_UNDER_ATTACK));
+		a->flags[p][r] = kp_to_u8(kp_band(a->flags[p][r], kp_bnot(KP_RFLAG_UNDER_ATTACK)));
 		a->state[p][r] = 0;
 		a->priority[p][r] = RESET_PRIORITY;
 		if (kp_band(a->flags[p][r], KP_RFLAG_NO_DECAY) != 0 && !kp_ai_campaign(g, p)) a->priority[p][r] = RESET_PRIORITY_KEPT;

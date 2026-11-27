@@ -768,6 +768,45 @@ static void res_repack_group_wanted_then_added(KpT *T)
 	kp_t_eq_str(T, s, "a scenario", "the group's file");
 }
 
+/* A simulation input's digest is checked once per archive's copy: a repack added later whose listing names the key
+ * again has its own copy checked (a copy that differs from that listing is not read), even though the first archive's
+ * was checked already. */
+static void res_a_later_listing_checks_its_own_copy(KpT *T)
+{
+	static const char ONE_FORGED[] = "the first copy of 0ne"; /* ONE's size */
+	static const char *const CORE[] = { "a\\one.dat", ONE, NULL };
+	const char *core[5], *group[5], *dirs[1], *s;
+	char path[512], err[512];
+	Profile p;
+	Dir *pack;
+	KpRes *r;
+	KpResStatus st;
+	profile_init(T, &p);
+	pack = dir_new(T);
+	core[0] = KP_RES_LISTING;
+	core[1] = listing(T, "test-1", "", CORE);
+	core[2] = "a\\one.dat";
+	core[3] = ONE;
+	core[4] = NULL;
+	dir_mpq(T, pack, "koprulu-core.mpq", core);
+	dirs[0] = pack->dir;
+	r = open_res(T, &p, dirs, 1);
+	s = read_text(T, r, "a/one.dat", &st, err, sizeof err);
+	kp_t_eq_str(T, s, ONE, "the core's one, its digest checked");
+	group[0] = KP_RES_LISTING;
+	group[1] = listing(T, "test-1", "", CORE); /* one as the manifest has it */
+	group[2] = "a\\one.dat";
+	group[3] = ONE_FORGED; /* and another copy of its size in the archive */
+	group[4] = NULL;
+	dir_mpq(T, pack, "koprulu-later.mpq", group);
+	snprintf(path, sizeof path, "%s/koprulu-later.mpq", pack->dir);
+	kp_t_eq(T, kp_res_add_repack(r, path, err, sizeof err), 0, "%s", err);
+	s = read_text(T, r, "a/one.dat", &st, err, sizeof err);
+	kp_t_ok(T, s == NULL || strcmp(s, ONE_FORGED) != 0, "the later archive's copy checked against its listing: %s",
+		s ? s : "(none)");
+	kp_t_ok(T, strstr(p.log, "koprulu-later.mpq differs from its listing") != NULL, "logged: %s", p.log);
+}
+
 /* The music's lengths (MUSL) read before its group is there are none; read again once it is added, the track's WAV
  * header from the group's listing (the web, whose music comes after the data is built: kp_app_fetch.c music_came). */
 static void res_music_lengths_come_with_their_group(KpT *T)
@@ -1455,6 +1494,7 @@ static const KpTest TESTS[] = {
 	{ "res_repack_groups_join_the_core", res_repack_groups_join_the_core, 0 },
 	{ "res_repack_listing_statuses", res_repack_listing_statuses, 0 },
 	{ "res_repack_group_wanted_then_added", res_repack_group_wanted_then_added, 0 },
+	{ "res_a_later_listing_checks_its_own_copy", res_a_later_listing_checks_its_own_copy, 0 },
 	{ "res_music_lengths_come_with_their_group", res_music_lengths_come_with_their_group, 0 },
 	{ "res_streams_read_pieces", res_streams_read_pieces, 0 },
 	{ "res_repack_read_in_place_from_slices", res_repack_read_in_place_from_slices, 0 },

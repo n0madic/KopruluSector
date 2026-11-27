@@ -53,7 +53,7 @@ static int64_t u16_at(KpGame *g, const uint8_t *s, size_t size, int64_t at, cons
 	return (int64_t)s[at] + (int64_t)s[at + 1] * 256;
 }
 
-static int64_t tile(KpGame *g, const int64_t *a, int64_t i, const char *what)
+static int64_t tile(KpGame *g, const uint16_t *a, int64_t i, const char *what)
 {
 	if (i < 0 || i >= KP_TILES) kp_game_fail(g, "terrain: %s[%lld] is nil", what, (long long)i);
 	return a[i];
@@ -86,7 +86,7 @@ int kp_game_tile_flags(KpImages *w, void *ctx, int32_t index, uint32_t *flags)
 	KpGame *g = (KpGame *)ctx;
 	(void)w;
 	if (index < 0 || index >= KP_TILES) return 0;
-	*flags = (uint32_t)g->terrain.tiles[index];
+	*flags = g->terrain.tiles[index];
 	return 1;
 }
 

@@ -793,6 +793,80 @@ static void joins_are_refused(KpT *T)
 	}
 }
 
+/* polled_join_trace: kind POLLED_JOINS, the joiner's password, on a lossy link; the host's cable cut first for
+ * POLLED_UNREACHABLE. kp_snet_join_begin and kp_snet_join_poll every 10 ms (polled), or kp_snet_join_game whose
+ * waits are those 10 ms: the LAN's trace after the join and a game played, the join's result and error. */
+enum { POLLED_JOINS, POLLED_REFUSED, POLLED_UNREACHABLE };
+
+static uint64_t polled_join_trace(KpT *T, int kind, int polled, int *ok, uint32_t *error)
+{
+	World *w = world_new(T, 31, 2);
+	Seat *st = &w->seat[1];
+	int k;
+	kp_net_lan_link(w->n.lan, 2, 6, 100);
+	host(w, 0, "Koprulu", "Secret", 2);
+	advance(w, now_of(w) + 1500);
+	if (kind == POLLED_UNREACHABLE) kp_net_lan_cut(w->n.lan, 0, 1);
+	w->n.in_join = 1;
+	if (!polled) {
+		*ok = kp_snet_join_game(st->n.net, 0, "Koprulu", kind == POLLED_REFUSED ? "wrong" : "Secret", "Seat", "",
+			&st->id);
+	} else if (!(*ok = kp_snet_join_begin(st->n.net, 0, "Koprulu", kind == POLLED_REFUSED ? "wrong" : "Secret", "Seat",
+		""))) {
+	} else {
+		while ((*ok = kp_snet_join_poll(st->n.net, &st->id)) < 0) advance(w, now_of(w) + 10);
+	}
+	w->n.in_join = -1;
+	*error = *ok ? 0 : kp_snet_error(st->n.net);
+	pump_due(w);
+	if (*ok)
+		for (k = 0; k < 2; k++) start_playing(&w->seat[k]);
+	play(w, 1500);
+	return w->n.trace;
+}
+
+/* A join made of kp_snet_join_begin and kp_snet_join_poll every 10 ms sends what kp_snet_join_game sends, at the same
+ * times: joined, refused and unreachable, on a lossy link. A leave gives a handshake up: the polls end, and the pump
+ * runs again. */
+static void a_polled_join_is_the_blocking_one(KpT *T)
+{
+	static const char *const KINDS[] = {"joined", "refused", "unreachable"};
+	static const uint32_t ERRORS[] = {0, KP_SNET_ERROR_REJECTED, KP_SNET_ERROR_UNREACHABLE};
+	int kind;
+	for (kind = POLLED_JOINS; kind <= POLLED_UNREACHABLE; kind++) {
+		int ok_blocking, ok_polled;
+		uint32_t e_blocking, e_polled;
+		uint64_t blocking = polled_join_trace(T, kind, 0, &ok_blocking, &e_blocking);
+		uint64_t polled = polled_join_trace(T, kind, 1, &ok_polled, &e_polled);
+		kp_t_ok(T, ok_blocking == (kind == POLLED_JOINS) && e_blocking == ERRORS[kind], "%s: the blocking join %d, error %#x",
+			KINDS[kind], ok_blocking, e_blocking);
+		kp_t_ok(T, ok_polled == ok_blocking && e_polled == e_blocking, "%s: the polled join %d, error %#x", KINDS[kind],
+			ok_polled, e_polled);
+		kp_t_ok(T, polled == blocking, "%s: the polled join's datagrams differ", KINDS[kind]);
+	}
+	{
+		World *w = world_new(T, 32, 2);
+		Seat *st = &w->seat[1];
+		int id = 7;
+		host(w, 0, "Open", "", 2);
+		advance(w, now_of(w) + 1500);
+		w->n.in_join = 1;
+		kp_t_ok(T, kp_snet_join_begin(st->n.net, 0, "Open", "", "Seat", ""), "begun: error %#x", kp_snet_error(st->n.net));
+		kp_t_eq(T, kp_snet_pump(st->n.net, 1), KP_SNET_INFINITE, "the pump waits during the handshake");
+		kp_t_ok(T, kp_snet_leave_game(st->n.net, 1), "left");
+		w->n.in_join = -1;
+		kp_t_eq(T, kp_snet_join_poll(st->n.net, &id), 0, "no handshake after the leave");
+		kp_t_eq(T, id, -1, "no id");
+		kp_t_eq(T, kp_snet_error(st->n.net), KP_SNET_ERROR_PARAMETER, "the poll's error");
+		kp_t_eq(T, kp_snet_local_id(st->n.net), KP_SNET_NO_ID, "outside a game");
+		kp_t_ok(T, kp_snet_join_begin(st->n.net, 0, "Open", "", "Seat", ""), "a new handshake");
+		w->n.in_join = 1;
+		while ((id = kp_snet_join_poll(st->n.net, &st->id)) < 0) advance(w, now_of(w) + 10);
+		w->n.in_join = -1;
+		kp_t_eq(T, id, 1, "joined after a handshake given up: error %#x", kp_snet_error(st->n.net));
+	}
+}
+
 static void a_silent_seat_is_dropped(KpT *T)
 {
 	World *w = world_new(T, 10, 3);
@@ -1331,6 +1405,7 @@ static const KpTest TESTS[] = {
 	{ "leave_is_seen_at_the_same_turn", leave_is_seen_at_the_same_turn, 0 },
 	{ "host_leaves_and_the_lowest_id_hosts", host_leaves_and_the_lowest_id_hosts, 0 },
 	{ "joins_are_refused", joins_are_refused, 0 },
+	{ "a_polled_join_is_the_blocking_one", a_polled_join_is_the_blocking_one, 0 },
 	{ "a_silent_seat_is_dropped", a_silent_seat_is_dropped, 0 },
 	{ "timers_are_storms", timers_are_storms, 0 },
 	{ "garbage_is_ignored", garbage_is_ignored, 0 },

@@ -191,8 +191,10 @@ KpFiles kp_t_fixture_files(KpT *T);
 
 /* --- the games' fields by name (kp_test_game.c: the unit arrays, the game's DAT, the scalar fields) --- */
 
-/* The unit array g->u.<field> (index 1..KP_UNITS), failing for an unknown field. */
-int64_t *kp_t_unit_field(KpT *T, KpGame *g, const char *field);
+/* Unit record n's g->u.<field> (n 1..KP_UNITS) read and written whatever the field's width (a value it cannot hold
+ * fails), failing for an unknown field. */
+int64_t kp_t_unit_get(KpT *T, KpGame *g, const char *field, int64_t n);
+void kp_t_unit_set(KpT *T, KpGame *g, const char *field, int64_t n, int64_t v);
 /* A value of the game's own DAT (table's column at flat index i), failing for an unknown column; KP_NIL
  * where the column has no value. */
 int64_t kp_t_dat(KpT *T, KpOracleGame *og, const char *table, const char *column, int64_t i);

@@ -20,6 +20,7 @@
 #ifndef __EMSCRIPTEN__
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <poll.h>
 #include <sys/socket.h>
 #endif
 #endif
@@ -2653,6 +2654,7 @@ static void a_lobby_map_preview_goes_through_the_flow(KpT *T)
 }
 
 #define SOCKETS_FAILED "the sockets failed" /* kp_netplay's line for a socket that fails */
+#define PUMP_FAIL_MS 2000 /* the pump thread sees a failed socket within (it wakes at once) */
 #define FREE_PORT_TRIES 32
 #define MAX_FD 1024
 
@@ -2702,7 +2704,7 @@ static void a_failing_socket_stops_the_reads(KpT *T)
 #else
 	Host *H = logged_in_host(T, "Fenix");
 	KpNetPlay *p = H->f.netplay;
-	int fd, null_fd;
+	int fd, null_fd, k;
 	kp_t_ok(T, p != NULL, "the flow's network");
 	kp_t_ok(T, choose_udp_on_free_ports(H), "the UDP provider on free ports (%s)", H->last_log);
 	kp_t_ok(T, p->sock && p->snet && !p->sock_failed, "its sockets");
@@ -2715,8 +2717,15 @@ static void a_failing_socket_stops_the_reads(KpT *T)
 	close(null_fd);
 	H->watch = SOCKETS_FAILED;
 	H->f.ui->menus.net_error = 0;
-	frame(H);
+	/* the pump thread reads the sockets: woken from its wait, it fails on the descriptor, and a frame tells it */
+	kp_t_ok(T, p->pump != NULL, "Storm pumped on its thread");
+	(void)kp_net_sock_wake(p->sock);
+	for (k = 0; k < PUMP_FAIL_MS && !p->sock_failed; k++) {
+		kp_net_sock_sleep(1);
+		frame(H);
+	}
 	kp_t_ok(T, p->sock_failed, "the failure seen (%s)", H->last_log);
+	kp_t_ok(T, p->pump == NULL, "the thread joined: the frames pump runs Storm's timers on");
 	kp_t_eq(T, H->watched, 1, "and logged");
 	kp_t_eq(T, H->f.ui->menus.net_error, NETTBL_NETWORK_ERROR, "the player told the network error");
 	H->f.ui->menus.net_error = 0;
@@ -2728,6 +2737,81 @@ static void a_failing_socket_stops_the_reads(KpT *T)
 	frames(H, 10);
 	kp_t_ok(T, !p->sock_failed && H->watched == 1, "read again");
 	H->watch = NULL;
+#endif
+}
+
+/* Storm's pump on a thread of its own (the architecture review of 2026-11-27): with no frame run, the provider's stack
+ * answers a peer's connect (control command 1) with Storm's accept (command 2), as Storm's pump thread does while the
+ * game's loop is busy (a mission's load, a slow frame); before, nothing answered until the next frame. */
+#define STORM_CONTROL 0 /* Storm's packet classes and control commands (atlas S02, docs/formats/storm-udp.md) */
+#define STORM_CONNECT 1
+#define STORM_ACCEPT 2
+#define STORM_PING 4
+#define STORM_HEADER 12
+#define PUMP_ANSWER_MS 2000
+#define CONNECT_RESEND_MS 50
+#define PUMP_STRESS_MS 300
+
+static void storm_answers_without_frames(KpT *T)
+{
+#if defined(_WIN32) || defined(__EMSCRIPTEN__)
+	kp_t_skip(T, "a peer's socket in the test (POSIX sockets only)");
+#else
+	Host *H = logged_in_host(T, "Tassadar");
+	KpNetPlay *p = H->f.netplay;
+	struct sockaddr_in a;
+	struct pollfd w;
+	uint8_t packet[STORM_HEADER + 4], got[KP_SNP_DATAGRAM];
+	uint32_t until;
+	int fd, accepted = 0;
+	kp_t_ok(T, choose_udp_on_free_ports(H), "the UDP provider on free ports (%s)", H->last_log);
+	kp_t_ok(T, p->pump != NULL && p->wakes, "Storm pumped on its thread, with wakes (%s)", H->last_log);
+	fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+	kp_t_ok(T, fd >= 0, "the peer's socket");
+	memset(&a, 0, sizeof a);
+	a.sin_family = AF_INET;
+	a.sin_addr.s_addr = htonl(KP_NET_LOOPBACK_IP);
+	kp_t_ok(T, bind(fd, (const struct sockaddr *)&a, sizeof a) == 0, "bound");
+	memset(packet, 0, sizeof packet);
+	kp_net_put16(packet + 2, sizeof packet);
+	packet[8] = STORM_CONTROL;
+	packet[9] = STORM_CONNECT;
+	packet[10] = KP_SNET_NO_ID;
+	kp_net_put32(packet + STORM_HEADER, 1);
+	kp_net_checksum(packet, sizeof packet);
+	a.sin_port = htons(kp_net_sock_port(p->sock, KP_NET_SOCKET_GAME));
+	until = kp_net_sock_now() + PUMP_ANSWER_MS;
+	/* sent again until answered, as a joiner resends it: Storm files no datagram before its first timer pass made
+	 * the local record */
+	while (!accepted && (int32_t)(until - kp_net_sock_now()) > 0) {
+		long n;
+		kp_t_ok(T, sendto(fd, packet, sizeof packet, 0, (const struct sockaddr *)&a, sizeof a) == (long)sizeof packet,
+			"the connect sent");
+		w.fd = fd;
+		w.events = POLLIN;
+		w.revents = 0;
+		if (poll(&w, 1, CONNECT_RESEND_MS) <= 0) continue;
+		n = (long)recv(fd, got, sizeof got, 0);
+		accepted = n >= STORM_HEADER && got[8] == STORM_CONTROL && got[9] == STORM_ACCEPT;
+	}
+	kp_t_ok(T, accepted, "Storm's accept within %d ms, no frame run", PUMP_ANSWER_MS);
+	/* the main thread's calls into Storm (the game list, the turns in transit) and its frames while the thread files
+	 * the peer's pings: one lock between them (tools/ci.sh's full mode runs this under ThreadSanitizer) */
+	packet[9] = STORM_PING;
+	kp_net_put16(packet + 2, STORM_HEADER);
+	kp_net_checksum(packet, STORM_HEADER);
+	until = kp_net_sock_now() + PUMP_STRESS_MS;
+	while ((int32_t)(until - kp_net_sock_now()) > 0) {
+		uint32_t transit = 0;
+		kp_t_ok(T, sendto(fd, packet, STORM_HEADER, 0, (const struct sockaddr *)&a, sizeof a) == STORM_HEADER, "a ping");
+		while (recv(fd, got, sizeof got, MSG_DONTWAIT) > 0) {
+		}
+		kp_netgame_enum(&p->game);
+		(void)p->game.net.turns_in_transit(p->game.net.ud, &transit);
+		frame(H);
+	}
+	close(fd);
+	kp_t_ok(T, !p->sock_failed, "the sockets read on");
 #endif
 }
 
@@ -5261,6 +5345,7 @@ static const KpTest TESTS[] = {
 	{ "a_fatal_network_error_returns_to_the_main_menu", a_fatal_network_error_returns_to_the_main_menu, 0 },
 	{ "a_lobby_map_preview_goes_through_the_flow", a_lobby_map_preview_goes_through_the_flow, 0 },
 	{ "a_failing_socket_stops_the_reads", a_failing_socket_stops_the_reads, 0 },
+	{ "storm_answers_without_frames", storm_answers_without_frames, 0 },
 	{ "play_custom_screens_are_the_originals", play_custom_screens_are_the_originals, 0 },
 	{ "custom_games_end_in_the_next_scenario_or_the_campaign_menu", custom_games_end_in_the_next_scenario_or_the_campaign_menu, 0 },
 	{ "custom_saves_find_their_maps_folder", custom_saves_find_their_maps_folder, 0 },

@@ -2,8 +2,10 @@
  * The game state of the simulation beyond the image world (ADR 0008): units, orders, pathing, vision, terrain, the
  * AI and trigger clocks, ported line by line from the original's functions, which the comments name.
  *
- * Every game field is an int64_t (the wraps of the original's fixed-width arithmetic are explicit), so the dump
- * prints the lines of tools/native_state.py. Unit records are 1..KP_UNITS (0 = none).
+ * The game's arithmetic is int64_t (the wraps of the original's fixed-width arithmetic are explicit), so the dump
+ * prints the lines of tools/native_state.py. A field is an int64_t too but where it is narrowed (kp_to_i8 .. kp_to_u32
+ * below: the spatial index, the terrain's tile arrays, the AI regions, the units' bounds). Unit records are
+ * 1..KP_UNITS (0 = none).
  *
  * The game reads its own DAT (kp_game_use_dat) and reports to presentation through its event ring. Failures go
  * through the image world's handler stack (kp_images_fail on KpGame.w).
@@ -41,31 +43,95 @@ extern "C" {
 #define KP_WEAPON_IDS 130
 #define KP_NIL INT64_MIN /* no value: an unset scalar, a missing DAT value, no result */
 
-/* The unit record fields (kp_units.c); sprite, queue_head and queue_tail start at -1. */
+/* A value stored into a narrowed field (2026-11-27: the arrays the walks read most hold the original's width, or less
+ * where the field's values are records or indices; ADR 0008's addition): kp_to_i8 .. kp_to_u32 give it the field's
+ * type. Under KP_NARROW_CHECKS (CMake's KP_SANITIZE turns it on) a value the type would change stops the program
+ * (kp_narrow_failed): a field narrowed past its values. */
+void kp_narrow_failed(int64_t v, const char *type);
+#ifdef KP_NARROW_CHECKS
+#define KP_NARROW_CHECK(v, lo, hi, type) \
+	do { \
+		if ((v) < (lo) || (v) > (hi)) kp_narrow_failed((v), type); \
+	} while (0)
+#else
+#define KP_NARROW_CHECK(v, lo, hi, type) ((void)0)
+#endif
+static inline int8_t kp_to_i8(int64_t v)
+{
+	KP_NARROW_CHECK(v, INT8_MIN, INT8_MAX, "int8_t");
+	return (int8_t)v;
+}
+static inline uint8_t kp_to_u8(int64_t v)
+{
+	KP_NARROW_CHECK(v, 0, UINT8_MAX, "uint8_t");
+	return (uint8_t)v;
+}
+static inline int16_t kp_to_i16(int64_t v)
+{
+	KP_NARROW_CHECK(v, INT16_MIN, INT16_MAX, "int16_t");
+	return (int16_t)v;
+}
+static inline uint16_t kp_to_u16(int64_t v)
+{
+	KP_NARROW_CHECK(v, 0, UINT16_MAX, "uint16_t");
+	return (uint16_t)v;
+}
+static inline int32_t kp_to_i32(int64_t v)
+{
+	KP_NARROW_CHECK(v, INT32_MIN, INT32_MAX, "int32_t");
+	return (int32_t)v;
+}
+static inline uint32_t kp_to_u32(int64_t v)
+{
+	KP_NARROW_CHECK(v, 0, (int64_t)UINT32_MAX, "uint32_t");
+	return (uint32_t)v;
+}
+/* Element k of an integer array of elem bytes (1, 2, 4 or 8), signed or not: the walks over fields by their sizes
+ * (kp_load_check.c, the C suites' fields by name). KP_ELEM(a): an array's element size. */
+int64_t kp_num_get(const void *a, size_t elem, int sign, int64_t k);
+#define KP_ELEM(a) sizeof((a)[0])
+
+/* The unit record fields (kp_units.c) with their types (kp_to_i16 and the others store into the narrowed ones); sprite,
+ * queue_head and queue_tail start at -1. The finder's indices (+0x13c..+0x148) are entries of the spatial index.
+ * TODO: the other fields at the original's widths (CUnit's); most of their writes are not masked yet (kp_bor, kp_band
+ * results), so each needs its values' domain shown first, as the narrowed groups had. */
 #define KP_UNIT_FIELDS(X) \
-	X(prev) X(next) X(hp) X(move_x) X(move_y) X(move_unit) X(waypoint_x) X(waypoint_y) X(target_waypoint_x) \
-	X(target_waypoint_y) X(movement_flags) X(heading) X(turn_speed) X(velocity_direction) X(flingy) \
-	X(flingy_0x26) X(movement_type) X(x) X(y) X(halt_x) X(halt_y) X(top_speed) X(speed1) X(speed2) X(speed_x) \
-	X(speed_y) X(acceleration) X(heading2) X(velocity_direction2) X(owner) X(order) X(order_state) \
-	X(order_signal) X(order_type) X(order_timer) X(ground_cooldown) X(air_cooldown) X(spell_cooldown) X(order_x) \
-	X(order_y) X(order_unit) X(shields) X(type) X(player_prev) X(player_next) X(subunit) X(auto_target) \
-	X(connected) X(queue_count) X(queue_timer) X(unknown_0x86) X(attack_notify_timer) X(previous_type) \
-	X(last_event_timer) X(last_event_color) X(unknown_0x8c) X(rank) X(kills) X(last_attacker) X(secondary_timer) \
-	X(ai_action) X(user_action) X(button_set) X(is_cloaked) X(movement_state) X(queue0) X(queue1) X(queue2) \
-	X(queue3) X(queue4) X(energy) X(queue_slot) X(uniqueness) X(secondary_order) X(overlay_state) X(hp_gain) \
-	X(shield_gain) X(build_time) X(previous_hp) X(loaded0) X(loaded1) X(loaded2) X(loaded3) X(loaded4) \
-	X(loaded5) X(loaded6) X(loaded7) X(union_0xc0) X(union_0xc4) X(union_0xc8) X(union_0xcc) X(union_0xd0) \
-	X(union_0xd4) X(union_0xd8) X(union_units) X(status) X(resource_type) X(wireframe) X(secondary_state) \
-	X(recent_order_timer) X(visibility) X(secondary_x) X(secondary_y) X(build_unit) X(burrow_prev) \
-	X(burrow_next) X(rally_x) X(rally_y) X(rally_unit) X(path) X(collision_interval) X(pathing_flags) \
-	X(unknown_0x106) X(being_healed) X(contour_left) X(contour_top) X(contour_right) X(contour_bottom) \
-	X(remove_timer) X(matrix_damage) X(matrix_timer) X(stim_timer) X(ensnare_timer) X(lockdown_timer) \
-	X(irradiate_timer) X(stasis_timer) X(plague_timer) X(storm_timer) X(irradiated_by) X(irradiate_player) \
-	X(parasites) X(cycle_counter) X(blind) X(maelstrom_timer) X(unknown_0x125) X(acid_spores) X(acid_time0) \
-	X(acid_time1) X(acid_time2) X(acid_time3) X(acid_time4) X(acid_time5) X(acid_time6) X(acid_time7) \
-	X(acid_time8) X(attack_sequence) X(unknown_0x132) X(ai) X(air_strength) X(ground_strength) X(bound_left) \
-	X(bound_right) X(bound_top) X(bound_bottom) X(repulse_flags) X(repulse_angle) X(repulse_x) X(repulse_y) \
-	X(sprite) X(queue_head) X(queue_tail)
+	X(prev, int64_t) X(next, int64_t) X(hp, int64_t) X(move_x, int64_t) X(move_y, int64_t) X(move_unit, int64_t) \
+	X(waypoint_x, int64_t) X(waypoint_y, int64_t) X(target_waypoint_x, int64_t) X(target_waypoint_y, int64_t) \
+	X(movement_flags, int64_t) X(heading, int64_t) X(turn_speed, int64_t) X(velocity_direction, int64_t) \
+	X(flingy, int64_t) X(flingy_0x26, int64_t) X(movement_type, int64_t) X(x, int64_t) X(y, int64_t) X(halt_x, int64_t) \
+	X(halt_y, int64_t) X(top_speed, int64_t) X(speed1, int64_t) X(speed2, int64_t) X(speed_x, int64_t) \
+	X(speed_y, int64_t) X(acceleration, int64_t) X(heading2, int64_t) X(velocity_direction2, int64_t) X(owner, int64_t) \
+	X(order, int64_t) X(order_state, int64_t) X(order_signal, int64_t) X(order_type, int64_t) X(order_timer, int64_t) \
+	X(ground_cooldown, int64_t) X(air_cooldown, int64_t) X(spell_cooldown, int64_t) X(order_x, int64_t) \
+	X(order_y, int64_t) X(order_unit, int64_t) X(shields, int64_t) X(type, int64_t) X(player_prev, int64_t) \
+	X(player_next, int64_t) X(subunit, int64_t) X(auto_target, int64_t) X(connected, int64_t) X(queue_count, int64_t) \
+	X(queue_timer, int64_t) X(unknown_0x86, int64_t) X(attack_notify_timer, int64_t) X(previous_type, int64_t) \
+	X(last_event_timer, int64_t) X(last_event_color, int64_t) X(unknown_0x8c, int64_t) X(rank, int64_t) \
+	X(kills, int64_t) X(last_attacker, int64_t) X(secondary_timer, int64_t) X(ai_action, int64_t) \
+	X(user_action, int64_t) X(button_set, int64_t) X(is_cloaked, int64_t) X(movement_state, int64_t) X(queue0, int64_t) \
+	X(queue1, int64_t) X(queue2, int64_t) X(queue3, int64_t) X(queue4, int64_t) X(energy, int64_t) \
+	X(queue_slot, int64_t) X(uniqueness, int64_t) X(secondary_order, int64_t) X(overlay_state, int64_t) \
+	X(hp_gain, int64_t) X(shield_gain, int64_t) X(build_time, int64_t) X(previous_hp, int64_t) X(loaded0, int64_t) \
+	X(loaded1, int64_t) X(loaded2, int64_t) X(loaded3, int64_t) X(loaded4, int64_t) X(loaded5, int64_t) \
+	X(loaded6, int64_t) X(loaded7, int64_t) X(union_0xc0, int64_t) X(union_0xc4, int64_t) X(union_0xc8, int64_t) \
+	X(union_0xcc, int64_t) X(union_0xd0, int64_t) X(union_0xd4, int64_t) X(union_0xd8, int64_t) X(union_units, int64_t) \
+	X(status, int64_t) X(resource_type, int64_t) X(wireframe, int64_t) X(secondary_state, int64_t) \
+	X(recent_order_timer, int64_t) X(visibility, int64_t) X(secondary_x, int64_t) X(secondary_y, int64_t) \
+	X(build_unit, int64_t) X(burrow_prev, int64_t) X(burrow_next, int64_t) X(rally_x, int64_t) X(rally_y, int64_t) \
+	X(rally_unit, int64_t) X(path, int64_t) X(collision_interval, int64_t) X(pathing_flags, int64_t) \
+	X(unknown_0x106, int64_t) X(being_healed, int64_t) X(contour_left, int64_t) X(contour_top, int64_t) \
+	X(contour_right, int64_t) X(contour_bottom, int64_t) X(remove_timer, int64_t) X(matrix_damage, int64_t) \
+	X(matrix_timer, int64_t) X(stim_timer, int64_t) X(ensnare_timer, int64_t) X(lockdown_timer, int64_t) \
+	X(irradiate_timer, int64_t) X(stasis_timer, int64_t) X(plague_timer, int64_t) X(storm_timer, int64_t) \
+	X(irradiated_by, int64_t) X(irradiate_player, int64_t) X(parasites, int64_t) X(cycle_counter, int64_t) \
+	X(blind, int64_t) X(maelstrom_timer, int64_t) X(unknown_0x125, int64_t) X(acid_spores, int64_t) \
+	X(acid_time0, int64_t) X(acid_time1, int64_t) X(acid_time2, int64_t) X(acid_time3, int64_t) X(acid_time4, int64_t) \
+	X(acid_time5, int64_t) X(acid_time6, int64_t) X(acid_time7, int64_t) X(acid_time8, int64_t) \
+	X(attack_sequence, int64_t) X(unknown_0x132, int64_t) X(ai, int64_t) X(air_strength, int64_t) \
+	X(ground_strength, int64_t) X(bound_left, int16_t) X(bound_right, int16_t) X(bound_top, int16_t) \
+	X(bound_bottom, int16_t) X(repulse_flags, int64_t) X(repulse_angle, int64_t) X(repulse_x, int64_t) \
+	X(repulse_y, int64_t) X(sprite, int64_t) X(queue_head, int64_t) X(queue_tail, int64_t)
 
 /* The local player's view state in the unit records (ADR 0023): the attack notices' silence (+0x87), the minimap's
  * blink counter and its colour (+0x8a, +0x8b). The local player's unit under attack sets the blink
@@ -77,7 +143,7 @@ extern "C" {
 
 /* Every field spans the flingy records: a bullet's flingy part keeps its CFlingy fields at the unit offsets, its owner
  * (+0x4c), state (+0x4d, `order`), signal, order point and target there too. */
-#define KP_UNIT_FIELD(name) int64_t name[KP_FLINGIES + 1];
+#define KP_UNIT_FIELD(name, type) type name[KP_FLINGIES + 1];
 typedef struct {
 	KP_UNIT_FIELDS(KP_UNIT_FIELD)
 } KpUnits;
@@ -152,11 +218,15 @@ typedef struct {
  * fields hold unit records (0 none). */
 #define KP_AI_PLAYERS 8
 #define KP_AI_REGIONS 2500
+/* the record's fields at the original's widths (atlas P37: +0x02 u16, the bytes +0x05..+0x09, the u16 counts and
+ * strengths +0x0a..+0x1a), the units and the head of the region's MilitaryAI nodes (its index + 1) as records */
 #define KP_AI_REGION_FIELDS(X) \
-	X(dest) X(state) X(priority) X(retry) X(flags) X(wait) X(ground_count) X(need_ground) X(need_air) X(local_ground) \
-	X(local_air) X(all_ground) X(all_air) X(enemy_air) X(enemy_ground) X(target_air) X(target_ground) X(slowest) \
-	X(detector) X(military)
-#define KP_AI_REGION_FIELD(name) int64_t name[KP_AI_PLAYERS][KP_AI_REGIONS];
+	X(dest, uint16_t) X(state, uint8_t) X(priority, uint8_t) X(retry, uint8_t) X(flags, uint8_t) X(wait, uint8_t) \
+	X(ground_count, uint16_t) X(need_ground, uint16_t) X(need_air, uint16_t) X(local_ground, uint16_t) \
+	X(local_air, uint16_t) X(all_ground, uint16_t) X(all_air, uint16_t) X(enemy_air, uint16_t) \
+	X(enemy_ground, uint16_t) X(target_air, int16_t) X(target_ground, int16_t) X(slowest, int16_t) \
+	X(detector, int16_t) X(military, int16_t)
+#define KP_AI_REGION_FIELD(name, type) type name[KP_AI_PLAYERS][KP_AI_REGIONS];
 typedef struct {
 	KP_AI_REGION_FIELDS(KP_AI_REGION_FIELD)
 } KpAiRegions;
@@ -566,13 +636,18 @@ typedef struct {
 	int64_t x, y, goal_x, goal_y, ground_x, ground_y, dx, dy, area, radius, flags;
 } KpFormation;
 
-/* The unit spatial index (kp_spatial.c): two arrays of unit bounds sorted by coordinate, entries 0..count-1. */
+/* The unit spatial index (kp_spatial.c): two arrays of unit bounds sorted by coordinate, entries 0..count-1; the
+ * original's entries (0x6a40 bytes) a unit and a signed 32-bit coordinate each (the unit a record here, -1 none). */
 #define KP_SPATIAL_CAPACITY (0x6a40 / 8)
 #define KP_QUERY_ARENA (8 * KP_UNITS)
 typedef struct {
-	int64_t x_unit[KP_SPATIAL_CAPACITY], x_at[KP_SPATIAL_CAPACITY], y_unit[KP_SPATIAL_CAPACITY], y_at[KP_SPATIAL_CAPACITY];
+	int16_t x_unit[KP_SPATIAL_CAPACITY], y_unit[KP_SPATIAL_CAPACITY];
+	int32_t x_at[KP_SPATIAL_CAPACITY], y_at[KP_SPATIAL_CAPACITY];
 	int64_t count, max_w, max_h;
-	int64_t mark[KP_UNITS + 1], seen[KP_UNITS + 1], stamp; /* query state */
+	/* query state: the overlap query's marks (0..3) and the rectangle query's stamps of its seen units */
+	uint8_t mark[KP_UNITS + 1];
+	uint32_t seen[KP_UNITS + 1];
+	int64_t stamp;
 	int64_t frames[KP_QUERY_ARENA], frame_top; /* the stacked results of nested queries (kp_query_rect) */
 } KpSpatial;
 
@@ -1072,7 +1147,7 @@ const KpDumpField *kp_dump_fields(int *count);
  * leaves the game unchanged when it refuses the save. *out is malloc'd. A save loads only in a build of its version:
  * a change of the walk raises it (tests/c/test_save.c's save_schema_matches_its_version), and there are no
  * migrations (ADR 0021). */
-#define KP_SAVE_VERSION 6
+#define KP_SAVE_VERSION 7
 #define KP_SAVE_NAME 256
 int kp_save(KpGame *g, const char *mission, const char *data, uint8_t **out, size_t *size, KpError *err);
 int kp_load(KpGame *g, const uint8_t *bytes, size_t size, const char *mission, const char *data, KpError *err);
@@ -1082,6 +1157,10 @@ int kp_load(KpGame *g, const uint8_t *bytes, size_t size, const char *mission, c
  * then refuses them too) or out of memory. The fuzz harness's (tests/c/kp_fuzz.c): kp_load's walk must hold for any
  * bytes. */
 int kp_save_seal(KpGame *g, const uint8_t *bytes, size_t size, uint8_t **out, size_t *out_size);
+/* The check of a state kp_load wrote (kp_load_check.c): the records, links and indices the step uses unchecked lie in
+ * their arrays and the lists it walks end. 0, or -1 with the first value out of its domain in why; kp_load then puts
+ * the game back as it was. A game's own state always passes. */
+int kp_load_check(KpGame *g, char *why, size_t size);
 /* A save's sections as kp_load's dry walk over g finds them: each one's tag (its four characters, the first in the low
  * byte) and its bytes after the tag (up to the next tag, the last up to the hash table). Their count (at most max
  * written), or -1 when the walk refuses the bytes. The fuzz harness edits a save by its sections. */

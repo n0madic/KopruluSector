@@ -65,6 +65,9 @@ void kp_netui_hooks(KpNetUi *n, KpUiNet *net);
 KpNetGameHooks kp_netui_game_hooks(KpNetUi *n);
 /* The texts freed (the game is the owner's). */
 void kp_netui_free(KpNetUi *n);
+/* A frame's pass of a join the join screen began (KpUiNet.join's -1, kp_netgame_join_begin): its answer, once Storm
+ * gives it, to the screen (kp_ui_menus_join_done); a game joined after the screen closed is left. */
+void kp_netui_poll(KpNetUi *n);
 
 /* The lobby as the chat room reads it (KpUiNet.lobby_view's answer over a game). */
 void kp_netui_view(const KpNetGame *ng, KpUiLobby *out);

@@ -62,7 +62,7 @@ fixtures and the data (`test_data`, `test_ui_data`), the core (`test_kp_core`, `
 seat's shared hash equal at every frame, ADR 0025) and the
 fuzzing's kept inputs (`test_fuzz`: the entries of `tests/c/kp_fuzz.c` over `tests/fuzz/`, ADR 0022). The
 build: `CMakeLists.txt` (`cmake -S . -B build/cmake -G Ninja && cmake --build build/cmake`; `-DKP_SANITIZE=ON` ASan
-and UBSan; `-DKP_FUZZ=ON` libFuzzer's targets with an LLVM clang, `tools/fuzz.sh`; `emcmake` for wasm under node with
+and UBSan (with `KP_NARROW_CHECKS`: a store that would change a value in a narrowed field stops the program, ADR 0008's addition; `-DKP_NARROW_CHECKS=ON` alone in another build); `-DKP_TSAN=ON` ThreadSanitizer for the network's pump thread (`tools/ci.sh`'s full mode runs `test_flow`'s network tests and `test_snet` so, `build/cmake-tsan`); `-DKP_FUZZ=ON` libFuzzer's targets with an LLVM clang, `tools/fuzz.sh`; `KP_LTO` (on by default) links a Release build of the tools and the suites whole (ThinLTO through CMake's IPO, not the product's nor the sanitizers' or the web's builds): bench_200's steps take 5 % fewer cycles and the long jobs about 9 % less time, every scenario's CRCs the same (2026-11-27); `emcmake` for wasm under node with
 the host's files, `NODERAWFS`), every source also checked as C++11 (ADR 0008).
 
 The second graphics backend (ADR 0028, stage S9.5) is checked against the first, whose frames the oracle's checks

@@ -397,10 +397,11 @@ static uint8_t *read_stdin(size_t *size)
 }
 
 /* The request's u32 tile flags as the vision's tiles. */
-static int64_t *tile_flags(const uint8_t *raw, int64_t count)
+static uint32_t *tile_flags(const uint8_t *raw, int64_t count)
 {
-	int64_t *tiles = (int64_t *)malloc(sizeof *tiles * (size_t)(count > 0 ? count : 1)), k;
-	for (k = 0; tiles && k < count; k++) tiles[k] = (int64_t)kp_le_u32(raw + 4 * k);
+	uint32_t *tiles = (uint32_t *)malloc(sizeof *tiles * (size_t)(count > 0 ? count : 1));
+	int64_t k;
+	for (k = 0; tiles && k < count; k++) tiles[k] = kp_le_u32(raw + 4 * k);
 	return tiles;
 }
 

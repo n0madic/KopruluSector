@@ -46,3 +46,23 @@ Two games and two interfaces have to live in one process: a rewind that shows a 
 - `test_chk.runtime_stops_are_refused` patches the fixture's triggers, units and strings for each refusal and for the records the runtime takes (Bring and the rankings At without a location, a group or the current player, slots from 8 for Set Deaths, an ignored action, an action after the end); `original_missions` and `remastered_missions` load all 64 missions and pass each one's AI scripts through `kp_mission_check_ai`.
 - `test_aiscript.scripts_are_checked_before_a_game` checks synthetic binaries (an unreachable `fatal_error` passes, a jump to one, a target outside, a truncated operand, the panic block from `bwscript.bin`, an ordinal past the table, a damaged `AIOP`) and the mission's Run AI Script actions; `every_opcode_reads_its_aiop_operands` (until stage M3 `ported_opcodes_are_the_interpreters`) runs each ordinal 0..0x72 on its own, fails on one without a case, and where it goes on, checks that the second instruction is at `AIOP`'s length of the first (or at a jump's target), so the check skips as many bytes as the interpreter reads.
 - The tests' own statics (host callbacks' counters in `test_hud.c`, `test_kp_ui.c`, `kp_fuzz.c`) stay: the suites run as processes.
+
+## Addition: the headless application in layers (2026-11-27)
+
+`kp_app_core` had grown to 36 sources in one static library: the converter linked the network and the flow it never
+calls, and nothing kept the data's readers from including the session or the network game. Since the architecture
+review of 2026-11-27 it is three libraries, each over the ones before it:
+
+1. **`kp_app_data`**: the original data (MPQ, CASC, SCR and the repack, ADR 0018), the catalog and the languages, the
+   cinematics' files, the replay file and the command record. `kp_convert_lib` links it alone.
+2. **`kp_app_net`**: Storm's layer and its UDP provider, the LAN game list, the network game and its saves, the
+   multiplayer screens' network, the viewers and the map transfer (ADR 0026, 0027), over `kp_app_data`.
+3. **`kp_app_flow`**: the session, the console, the seats and the turn hub, the scripts, the screens and the games, the
+   flow's files, over `kp_app_net`. The product and `kp_oracle_lib` link it.
+
+`CMakeLists.txt` names each layer's modules (`KP_APP_DATA_MODULES`, `KP_APP_NET_MODULES`, `KP_APP_FLOW_MODULES`) and
+refuses a source of `native/kp_app` that is in none. The sources stay in one folder (the paths the documents name), so
+the include path cannot keep the layers apart: `tools/boundaries.sh` reads those lists and fails on a source or header
+that includes a later layer's header, directly or through others, with the chain (a header without a source,
+`kp_casc.h`, `kp_ogg_crc_table.h`, is under them all). The session sits with the turn hub and the turns in the flow:
+their headers include each other.

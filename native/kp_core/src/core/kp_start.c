@@ -194,10 +194,10 @@ static void load_tiles(KpGame *g, const KpMission *m)
 			mega = kp_bor(mega, 0x8000);
 			f = kp_bor(f, FLAG_TILE_HIGH_BIT);
 		}
-		t->megatiles[i] = mega;
-		t->raw_tiles[i] = raw;
+		t->megatiles[i] = kp_to_u16(mega);
+		t->raw_tiles[i] = kp_to_u16(raw);
 		/* import() starts from InitFogOfWar's low word; the high word replaces the tile's. */
-		t->tiles[i] = kp_bor(kp_band(t->tiles[i], 0xffff), kp_band(f, 0xffff0000));
+		t->tiles[i] = kp_to_u32(kp_bor(kp_band(t->tiles[i], 0xffff), kp_band(f, 0xffff0000)));
 	}
 	kp_tiles_clear(g, 0, h - 2, 5, 2, EDGE_CLEAR);
 	kp_tiles_or(g, 0, h - 2, 5, 2, EDGE_SET);
@@ -213,7 +213,7 @@ static void load_mask(KpGame *g, const KpBytes *mask)
 	size_t i;
 	if (mask->size > KP_TILES) kp_game_fail(g, "start: MASK of %u bytes", (unsigned)mask->size);
 	for (i = 0; i < mask->size; i++) {
-		g->terrain.tiles[i] = kp_bor(kp_band(g->terrain.tiles[i], 0xffff0000), u8_at(mask, i) * 257);
+		g->terrain.tiles[i] = kp_to_u32(kp_bor(kp_band(g->terrain.tiles[i], 0xffff0000), u8_at(mask, i) * 257));
 	}
 }
 

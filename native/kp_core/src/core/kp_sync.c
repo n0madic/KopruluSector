@@ -51,7 +51,7 @@ static uint32_t terrain_row_hash(KpSync *s, KpGame *g)
 	uint32_t h = 0, r = s->terrain_row;
 	int64_t x;
 	if ((int64_t)r < g->map_h)
-		for (x = 0; x < g->map_w; x++) h = rol(h ^ ((uint32_t)g->terrain.tiles[(int64_t)r * g->map_w + x] & TERRAIN_FLAGS), 3);
+		for (x = 0; x < g->map_w; x++) h = rol(h ^ (g->terrain.tiles[(int64_t)r * g->map_w + x] & TERRAIN_FLAGS), 3);
 	s->terrain_row = (int64_t)r + 1 < g->map_h ? r + 1 : 0;
 	return h;
 }

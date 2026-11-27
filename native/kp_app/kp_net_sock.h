@@ -12,7 +12,8 @@
  * the bridge names it 10.0.1.n, and to itself it is 127.0.0.2 (its broadcasts come back to it, as on Windows).
  *
  * Nothing here runs a thread but a name's lookup (kp_net_lookup_*): kp_net_sock_wait reads what arrived, the caller
- * feeds the provider and pumps SNet.
+ * feeds the provider and pumps SNet, on its own thread or the main one (kp_netplay.h); kp_net_sock_wake ends that
+ * wait from another thread. Sends from either thread are the caller's to serialize (Storm's lock).
  */
 #ifndef KP_NET_SOCK_H
 #define KP_NET_SOCK_H
@@ -48,8 +49,12 @@ KpNetSock *kp_net_sock_open(const KpNetSockConfig *c, char *error, size_t size);
 void kp_net_sock_close(KpNetSock *s);
 /* The provider's I/O over the sockets; its clock is kp_net_sock_now. */
 KpNetIo kp_net_sock_io(KpNetSock *s);
-/* Waits at most `ms` for a datagram, then hands every waiting one to fn; how many, -1 on a socket error. */
+/* Waits at most `ms` (0xffffffff: no limit) for a datagram or a wake, then hands every waiting datagram to fn; how
+ * many, -1 on a socket error. */
 int kp_net_sock_wait(KpNetSock *s, uint32_t ms, KpNetSockDeliver fn, void *ud);
+/* Ends a wait on another thread at once (Storm's pump event, which a send signals): a datagram to a socket of 127.0.0.1
+ * the waits also watch. 1 sent, 0 none (no such socket: the waits end only by their time or a datagram). */
+int kp_net_sock_wake(KpNetSock *s);
 /* The real port socket A or B is bound to (0: B of a single socket). */
 uint16_t kp_net_sock_port(const KpNetSock *s, int socket);
 /* A monotonic millisecond clock that wraps as GetTickCount does. */

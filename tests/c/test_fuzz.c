@@ -83,6 +83,7 @@ static void kept_snet_inputs(KpT *T) { kept_inputs(T, KP_FUZZ_SNET); }
 static void kept_lobby_inputs(KpT *T) { kept_inputs(T, KP_FUZZ_LOBBY); }
 static void kept_transfer_inputs(KpT *T) { kept_inputs(T, KP_FUZZ_TRANSFER); }
 static void kept_game_inputs(KpT *T) { kept_inputs(T, KP_FUZZ_GAME); }
+static void kept_watch_inputs(KpT *T) { kept_inputs(T, KP_FUZZ_WATCH); }
 
 typedef struct {
 	KpT *T;
@@ -163,8 +164,9 @@ static void data_seeds_run(KpT *T)
 {
 	/* rep: + recorded; chk: + 7 maps; save: a file and a native save a point, + a queued order past orders.dat; commands: + a player's units and an
 	 * order past orders.dat a map; turns: the synthetic one; udp: the provider's session; snet: hosting and joining;
-	 * lobby: six lobbies (a resumed save among them); transfer: four transfers; game: the synthetic six */
-	static const int AT_LEAST[KP_FUZZ_TARGETS] = { 2, 8, 2 * KP_FUZZ_SAVE_SEED_POINTS + 1, 9, 1, 1, 2, 6, 4, 6 };
+	 * lobby: six lobbies (a resumed save among them); transfer: four transfers; game: the synthetic six; watch: the
+	 * synthetic two */
+	static const int AT_LEAST[KP_FUZZ_TARGETS] = { 2, 8, 2 * KP_FUZZ_SAVE_SEED_POINTS + 1, 9, 1, 1, 2, 6, 4, 6, 2 };
 	const char *root;
 	char why[KP_ERROR_SIZE];
 	int target, written;
@@ -254,6 +256,7 @@ static const KpTest TESTS[] = {
 	{ "kept_snet_inputs", kept_snet_inputs, 0 },
 	{ "kept_lobby_inputs", kept_lobby_inputs, 0 },
 	{ "kept_transfer_inputs", kept_transfer_inputs, 0 },
+	{ "kept_watch_inputs", kept_watch_inputs, 0 },
 	{ "kept_game_inputs", kept_game_inputs, 0 },
 	{ "game_seeds_reach_their_paths", game_seeds_reach_their_paths, 0 },
 	{ "data_seeds_run", data_seeds_run, 0 },

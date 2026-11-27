@@ -7,7 +7,7 @@ ports: an original peer never sees it ([ADR 0027](../adr/0027-network-game-viewe
 
 ## Datagrams
 
-UDP on the server's port (`KP_WATCH_PORT`, 6120, or the host's `--watch-port`). Every datagram starts with the magic
+UDP on the server's port (`KP_WATCH_PORT`, 6120, or the host's `--watch-port`; `--watch-port off` serves no viewer). Every datagram starts with the magic
 `KPW1` and a type byte; the numbers are little-endian.
 
 | Type | Bytes | Fields |
@@ -49,6 +49,7 @@ The parts:
   once after new bytes.
 - It keeps only bytes that follow what it holds, with a valid CRC, and drops the rest; they are asked for again.
 - The record's frames are taken only when the viewer holds the whole size that the same DATA announced.
+- **The record's cap:** a DATA announcing a record larger than a replay holds (`KP_WATCH_RECORD_MAX`, `KP_REP_MAX_RECORD`) ends the game where it came to (`KP_WATCH_GONE`, `oversize`): the viewer's room for the record is never grown past it, whatever a forged server announces (`test_watch.a_viewer_takes_no_record_past_a_replays`; the `watch` fuzz target, ADR 0022).
 - **Timeouts:** it gives up after 10 s without an answer from a server that has answered. Before any answer it waits
   5 minutes: the host may still be in its lobby. Without the start that is a failure. After the start the record
   becomes whole at what came, and the playback ends there.

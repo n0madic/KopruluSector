@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Local/CI check (plan phase S, ADR 0012): the Python tests, the goldens' currency, the native build
-# (CMakeLists.txt: kp_sim, kp_ui, kp_present, kp_app_core, the tools and the C suites, checked as C and C++), the C suites
+# (CMakeLists.txt: kp_sim, kp_ui, kp_present, kp_app_data/net/flow, the tools and the C suites, checked as C and C++), the C suites
 # on the host, under ASan and UBSan (with an LLVM clang 17 or later: -fsanitize=function and leaks; else with the default
 # compiler, whose build otherwise only checks the tools), and in wasm under node when emcmake is on the PATH (the HTML5
-# proxy), the loaders over the converted data and the replays of every scenario.
+# proxy), the loaders over the converted data and the replays of every scenario; in the full mode also the network's
+# pump thread under ThreadSanitizer (build/cmake-tsan).
 #
 # What keeps it short:
 #   - The Python tests (the research's readers' and the tools') run in the background, a process a module
@@ -334,7 +335,7 @@ if [ -z "$macos_floor" ] || ! grep -qF "#define METAL_MACOS \"$macos_floor\"" na
     "kp_gfx_gpu_shaders.c: set it there and regenerate the file" >&2
   exit 1
 fi
-step "the native core's boundaries (tools/boundaries.sh: no mutable static state, ADR 0023)"
+step "the native core's boundaries (tools/boundaries.sh: no mutable static state, the application's layers, ADR 0023)"
 tools/boundaries.sh
 step "the documents' links and their headings (tools/doc_links.py)"
 "$PYTHON" tools/doc_links.py
@@ -550,6 +551,15 @@ if [ "$CI_MODE" = full ] && [ -n "$LLVM_CLANG" ]; then
   else
     grep -E '^(fuzz_|  refused)' build/fuzz-ci.log
   fi
+fi
+# The network's pump thread under ThreadSanitizer (kp_netplay.h): the full mode's, the tests where Storm's thread and the
+# main thread's calls meet; a race fails the run at its first report.
+if [ "$CI_MODE" = full ]; then
+  step "the network's pump thread under ThreadSanitizer (KP_TSAN: test_flow's network tests, test_snet)"
+  cmake -S . -B build/cmake-tsan -G Ninja -DKP_TSAN=ON -DKP_CXX_CHECK=OFF -DKP_ASTC=ON >/dev/null
+  logged build/native_tsan_build.log 0 cmake --build build/cmake-tsan --target kp_test
+  logged build/c-tests-tsan.log 2 env TSAN_OPTIONS=halt_on_error=1 build/cmake-tsan/kp_test \
+    test_flow:storm_answers_without_frames test_flow:a_failing_socket_stops_the_reads test_snet
 fi
 if command -v emcmake >/dev/null && command -v node >/dev/null; then
   # the jobs are wasm's under node, their dispatch the host's runner

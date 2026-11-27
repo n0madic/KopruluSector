@@ -4,11 +4,19 @@
  * game's network code (KpNetGame) and the screens' adapter (KpNetUi): kp_ui's KpUiNet answered as StarCraft 1.17's
  * glue answers its screens, so a Koprulu seat lists, hosts and joins the lobbies of Koprulu and of the original.
  *
- * Nothing runs a thread but a host name's lookup: the flow pumps the sockets and Storm's timers each frame
- * (kp_netplay_pump), and a join waits inside SNetJoinGame as the original's glue does (the sockets read meanwhile).
- * TODO: pump Storm on a thread of its own while a mission loads (the plan's native network thread), so a long load does
- * not miss Storm's timeouts. Not needed yet (stage N6): a melee map's load holds the pump about 0.2 s on a Mac and
- * 0.3 s on a Galaxy Z Fold7, well inside Storm's one second.
+ * Storm's pump runs on a thread of its own, as Storm's pump thread 0x15022780 does (the architecture review of
+ * 2026-11-27): it reads the sockets and runs Storm's timers (acks, resends, pings) whatever the main thread does, a
+ * mission's load or a slow frame included. Storm's state is shared under one lock, Storm's critical section: the
+ * thread holds it while it pumps, the game's calls into Storm hold it too (the calls kp_netplay gives KpNetGame), and
+ * Storm releases it around its events (KpSnetHooks' unlock and lock). The turns and messages the game receives are
+ * copied before the lock goes. A send wakes the thread at once (kp_net_sock_wake, Storm's pump event). Without
+ * threads (the web has no sockets anyway), when the thread does not start, or once its sockets failed (the thread
+ * ends, the next frame joins it), the flow pumps each frame (kp_netplay_pump) as before.
+ *
+ * A join does not block (kp_netgame_join_begin): kp_netplay_pump makes one pass of Storm's handshake a frame on the main
+ * thread (Storm's events go to the lobby there) and the join screen waits for its answer (KpUiNet.join's -1,
+ * kp_ui_menus_join_done), where the original's screen stood still inside SNetJoinGame for up to twice max(12L, 5000)
+ * ms.
  *
  * The lobby takes one message a pass (ReceiveChatRoomMessage 0x471860, as the original), and the flow makes one pass
  * a frame where the original's modal loop makes hundreds a second: a map's transfer goes as fast as the slower seat
@@ -31,6 +39,7 @@
 #include <stdint.h>
 
 #include "kp_net_sock.h"
+#include "kp_net_thread.h"
 #include "kp_netgame.h"
 #include "kp_netui.h"
 #include "kp_snet.h"
@@ -86,12 +95,27 @@ typedef struct KpNetPlay {
 	char asked_text[KP_NET_HOST];
 	int locked;      /* lan_lock(1) called */
 	int sock_failed; /* the sockets failed: read no more until the provider is chosen again (logged, told once) */
+	/* Storm's pump thread 0x15022780 (NULL none: the frames pump): it reads the sockets and pumps Storm under `lock`,
+	 * Storm's critical section, which every call of the game into Storm holds too (the calls kp_netplay gives the
+	 * game). Under the lock: stopping (the thread ends), pump_failed (its wait failed: the sockets), signalled and wake
+	 * above. wakes: the sockets' wake socket is there (kp_net_sock_wake). */
+	KpNetThread *pump;
+	KpNetLock *lock;
+	int stopping, pump_failed, wakes;
+	uint32_t error; /* SErrGetLastError of the game's last call (the pump's calls set Storm's own) */
+	/* the copies of the last turns and message the game received (Storm's may go before the next call), and the
+	 * largest turn or message this seat sent (its copies' room) */
+	uint8_t *turns, *message;
+	size_t turns_room, message_room;
+	uint32_t local_max;
 } KpNetPlay;
 
 /* p over ui: its hooks set as ui->net, no provider chosen yet. */
 void kp_netplay_init(KpNetPlay *p, KpUi *ui, const KpNetPlayConfig *config);
-/* A frame's network: a host's address that a lookup found given to the provider (and the Address popup told), what
- * arrived on the sockets handed to the provider, Storm's pass when it is due. */
+/* A frame's network: a host's address that a lookup found given to the provider (and the Address popup told), a join's
+ * pass (its answer to the join screen), and without the pump thread what arrived on the sockets handed to the
+ * provider and Storm's pass when it is due; with it, the thread's failure told once and the thread joined (the frames
+ * pump from then on). */
 void kp_netplay_pump(KpNetPlay *p);
 /* AbortNetworkGame 0x474e60: the game left (the chat room's start the flow cannot play yet), the provider kept. */
 void kp_netplay_leave(KpNetPlay *p);

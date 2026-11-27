@@ -36,15 +36,21 @@ static int64_t ext(KpGame *g, int64_t i) { return KP_DAT(g, units, unit_extents,
 /* A unit's record, checked (a record outside 1..KP_UNITS fails). */
 #define UNIT(c) kp_game_unit(g, (c))
 
-/* Entry k of a spatial array for arithmetic (k outside 0..capacity-1 fails). */
-static int64_t at_get(KpGame *g, const int64_t *a, int64_t k)
+/* Entry k of a spatial array's coordinates or units for arithmetic (k outside 0..capacity-1 fails). */
+static int64_t at_get(KpGame *g, const int32_t *a, int64_t k)
+{
+	if (k < 0 || k >= KP_SPATIAL_CAPACITY) kp_game_fail(g, "collision: spatial entry %lld is nil", (long long)k);
+	return a[k];
+}
+
+static int64_t unit_get(KpGame *g, const int16_t *a, int64_t k)
 {
 	if (k < 0 || k >= KP_SPATIAL_CAPACITY) kp_game_fail(g, "collision: spatial entry %lld is nil", (long long)k);
 	return a[k];
 }
 
 /* Entry k of a spatial array for an equality test (KP_NIL outside the arrays, unequal to every entry). */
-static int64_t at_opt(const int64_t *a, int64_t k)
+static int64_t at_opt(const int32_t *a, int64_t k)
 {
 	if (k < 0 || k >= KP_SPATIAL_CAPACITY) return KP_NIL;
 	return a[k];
@@ -67,9 +73,9 @@ static int sprite_hidden(KpGame *g, int64_t n)
 /* One direction of FindUnitsSwept: entries k, k + step, ... while their coordinate is within lim (<= going
  * up, >= going down), the units other than n whose bounds on the crossing axis (cross_at at the positions
  * c_lo, c_hi) meet [lo, hi]. */
-static void swept_scan(KpGame *g, int64_t *out, int *count, int max, int64_t n, int64_t entries, const int64_t *at,
-	const int64_t *units, int64_t k, int64_t step, int64_t lim, int64_t lo, int64_t hi, const int64_t *cross_at,
-	const int64_t *c_lo, const int64_t *c_hi)
+static void swept_scan(KpGame *g, int64_t *out, int *count, int max, int64_t n, int64_t entries, const int32_t *at,
+	const int16_t *units, int64_t k, int64_t step, int64_t lim, int64_t lo, int64_t hi, const int32_t *cross_at,
+	const int16_t *c_lo, const int16_t *c_hi)
 {
 	while (k >= 0 && k < entries) {
 		int64_t v = at_get(g, at, k), c;
@@ -78,7 +84,7 @@ static void swept_scan(KpGame *g, int64_t *out, int *count, int max, int64_t n, 
 		} else if (v < lim) {
 			break;
 		}
-		c = at_get(g, units, k);
+		c = unit_get(g, units, k);
 		if (c != n && lo <= at_get(g, cross_at, c_hi[UNIT(c)]) && at_get(g, cross_at, c_lo[UNIT(c)]) <= hi) {
 			push(g, out, count, max, c);
 		}
@@ -92,7 +98,8 @@ int kp_units_swept(KpGame *g, int64_t n, int64_t dx, int64_t dy, int64_t *out, i
 {
 	KpUnits *u = &g->u;
 	KpSpatial *sp = &g->spatial;
-	const int64_t *xa = sp->x_at, *ya = sp->y_at, *xu = sp->x_unit, *yu = sp->y_unit;
+	const int32_t *xa = sp->x_at, *ya = sp->y_at;
+	const int16_t *xu = sp->x_unit, *yu = sp->y_unit;
 	int64_t count = sp->count;
 	int found = 0;
 	if (sprite_hidden(g, n)) dx = dy = 0;
@@ -340,7 +347,7 @@ void kp_contract_safe_rect(KpGame *g, int64_t n, int64_t x, int64_t y)
 static int y_overlap(KpGame *g, int64_t c, int64_t t, int64_t b, int64_t ry)
 {
 	KpUnits *u = &g->u;
-	const int64_t *ya = g->spatial.y_at;
+	const int32_t *ya = g->spatial.y_at;
 	return kp_s16v(t - ry) <= at_get(g, ya, u->bound_bottom[UNIT(c)])
 		&& at_get(g, ya, u->bound_top[c]) < kp_s16v(b + ry);
 }
@@ -348,7 +355,7 @@ static int y_overlap(KpGame *g, int64_t c, int64_t t, int64_t b, int64_t ry)
 static int x_overlap(KpGame *g, int64_t c, int64_t l, int64_t r)
 {
 	KpUnits *u = &g->u;
-	const int64_t *xa = g->spatial.x_at;
+	const int32_t *xa = g->spatial.x_at;
 	return l <= at_get(g, xa, u->bound_right[UNIT(c)]) && at_get(g, xa, u->bound_left[c]) < r;
 }
 
@@ -358,7 +365,8 @@ int kp_units_adjacent(KpGame *g, int64_t n, int64_t rx, int64_t ry, int64_t *out
 {
 	KpUnits *u = &g->u;
 	KpSpatial *sp = &g->spatial;
-	const int64_t *xa = sp->x_at, *ya = sp->y_at, *xu = sp->x_unit, *yu = sp->y_unit;
+	const int32_t *xa = sp->x_at, *ya = sp->y_at;
+	const int16_t *xu = sp->x_unit, *yu = sp->y_unit;
 	int64_t l, r, t, b, k, last;
 	int found = 0;
 	if (sprite_hidden(g, n)) return 0;
@@ -370,25 +378,25 @@ int kp_units_adjacent(KpGame *g, int64_t n, int64_t rx, int64_t ry, int64_t *out
 	for (k = u->bound_right[n] + 1; k <= last; k++) {
 		int64_t c;
 		if (kp_s16v(rx + r) <= at_get(g, xa, k)) break;
-		c = at_get(g, xu, k);
+		c = unit_get(g, xu, k);
 		if (c != n && y_overlap(g, c, t, b, ry)) push(g, out, &found, max, c);
 	}
 	for (k = u->bound_left[n] - 1; k >= 0; k--) {
 		int64_t c;
 		if (at_get(g, xa, k) < kp_s16v(l - rx)) break;
-		c = at_get(g, xu, k);
+		c = unit_get(g, xu, k);
 		if (c != n && y_overlap(g, c, t, b, ry)) push(g, out, &found, max, c);
 	}
 	for (k = u->bound_bottom[n] + 1; k <= last; k++) {
 		int64_t c;
 		if (kp_s16v(ry + b) <= at_get(g, ya, k)) break;
-		c = at_get(g, yu, k);
+		c = unit_get(g, yu, k);
 		if (c != n && x_overlap(g, c, l, r)) push(g, out, &found, max, c);
 	}
 	for (k = u->bound_top[n] - 1; k >= 0; k--) {
 		int64_t c;
 		if (at_get(g, ya, k) < kp_s16v(t - ry)) break;
-		c = at_get(g, yu, k);
+		c = unit_get(g, yu, k);
 		if (c != n && x_overlap(g, c, l, r)) push(g, out, &found, max, c);
 	}
 	return found;

@@ -44,7 +44,7 @@ int kp_ai_military_caster(int64_t t)
 {
 	return t == KP_TYPE_SCIENCE_VESSEL || t == KP_TYPE_QUEEN || t == KP_TYPE_DEFILER || t == KP_TYPE_HIGH_TEMPLAR;
 }
-static void set_record_head(KpGame *g, int64_t p, int64_t r, int64_t k) { g->air.military[p][r] = k + 1; }
+static void set_record_head(KpGame *g, int64_t p, int64_t r, int64_t k) { g->air.military[p][r] = kp_to_i16(k + 1); }
 
 /* InitMilitaryPool 0x4a9a90 (InitAiRegions 0x4b0640 mode 0). */
 void kp_ai_military_init(KpGame *g)
@@ -283,7 +283,7 @@ void kp_ai_update_slowest(KpGame *g, int64_t p, int64_t r)
 			ground = n;
 		}
 	}
-	g->air.slowest[p][r] = ground != 0 ? ground : air;
+	g->air.slowest[p][r] = ground != 0 ? kp_to_i16(ground) : kp_to_i16(air);
 }
 
 /* AddMilitaryAi 0x4ae760: unit n joins region r of player p (an abandoned region without force gives it to the region
@@ -305,7 +305,7 @@ void kp_ai_military_add(KpGame *g, int64_t p, int64_t r, int64_t n, int force)
 	m->unit[k] = n;
 	m->player[k] = p;
 	m->region[k] = r;
-	if (kp_band(u->status[n], STATUS_AIR) == 0) g->air.ground_count[p][r] = kp_mod(g->air.ground_count[p][r] + 1, 65536);
+	if (kp_band(u->status[n], STATUS_AIR) == 0) g->air.ground_count[p][r] = kp_to_u16(kp_mod(g->air.ground_count[p][r] + 1, 65536));
 	u->ai[n] = KP_AI_REF(KP_AI_MILITARY, k);
 	kp_ai_region_center(g, r, &cx, &cy);
 	kp_ai_military_arrive(g, n, u->type[n] == KP_TYPE_MEDIC ? KP_ORD_HEAL_MOVE : KP_ORD_AI_ATTACK_MOVE, cx, cy);
@@ -319,7 +319,7 @@ void kp_ai_military_release(KpGame *g, int64_t k)
 	KpMilitaryAis *m = &g->military;
 	int64_t p = m->player[k], r = m->region[k], head = record_head(g, p, r);
 	if (kp_band(g->u.status[m->unit[k]], STATUS_AIR) == 0) {
-		g->air.ground_count[p][r] = kp_mod(g->air.ground_count[p][r] - 1, 65536);
+		g->air.ground_count[p][r] = kp_to_u16(kp_mod(g->air.ground_count[p][r] - 1, 65536));
 	}
 	kp_pool_release(m->next, m->prev, &head, &m->free, k);
 	set_record_head(g, p, r, head);
@@ -880,7 +880,7 @@ static int choose_staging(KpGame *g, int64_t p, const uint8_t *cls, int64_t x, i
 	}
 	set_grouping(g, p, stagings[pick], force);
 	kp_ai_set_region_state(g, p, stagings[pick], KP_RSTATE_GATHER); /* SetRegionState 0x4ab900 */
-	g->air.dest[p][stagings[pick]] = targets[pick];
+	g->air.dest[p][stagings[pick]] = kp_to_u16(targets[pick]);
 	return 1;
 }
 
@@ -1002,7 +1002,7 @@ void kp_ai_plan_expansion_attack(KpGame *g, int64_t p)
 	if (target == NO_REGION || staging == NO_REGION) return;
 	set_grouping(g, p, staging, 1); /* SetAttackGrouping 0x483a60 */
 	kp_ai_set_region_state(g, p, staging, KP_RSTATE_GATHER); /* SetRegionState 0x4ab900 */
-	g->air.dest[p][staging] = target;
+	g->air.dest[p][staging] = kp_to_u16(target);
 	pai->flags[p] = kp_band(pai->flags[p], kp_bnot(KP_AIF_TARGET_EXPANSION)); /* UseExpansionAttack 0x4834d0 */
 	if (pai->expansion_attacks[p] != 0) pai->expansion_attacks[p]--;
 }

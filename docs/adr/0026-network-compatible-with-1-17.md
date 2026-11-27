@@ -51,7 +51,7 @@ Built on 2026-11-18 ([phase N](../phase-network.md#n4-the-game-over-the-network-
 2. **The network's player table is the host's.** `net_state` in `KpGame` (`0x673818`: active, left) is set by the network at the start and at a leave. The core reads it for the save command's lowest active Storm ID and for a team game's leave. It is neither saved nor hashed (a resumed game's comes from its lobby), so the save's version did not change for it. The drop vote and the drop flags (`0x529042`) stay in `KpNetGame`. The setup's Storm IDs of slots 8..11 differ between a host and its joiners in the original too (`0x57eee0`), so they became the seat's: `KP_SAVE_VERSION` 6, `KP_SHARED_HASH_VERSION` 2.
 3. **The wait is a state, not a modal loop.** `WaitForLaggingPlayers` `0x47a810` runs its own message loop in the original. In Koprulu, `kp_netgame_game_turn` answers "wait", the session runs no frame, and the flow draws timeout.bin over the stopped game each frame. A leaver's `0x57` goes first into the turn's list as the leaver's command: the replay records and plays it, while in the live game it changes nothing, since the network already handled the leave.
 4. **Network saves are Koprulu's own, at the original's place.** Each seat writes Koprulu's save container with one more section, NETG (what the lobby reads from the original's file), as `maps/save/<name>.mlt`, at the end of the step that ran the save command (`ExecSaveGame` `0x472f50` saves within the turn), so every seat's save is of one frame; its name is checked as the original's `IsInvalidFileName` `0x408300` checks it. The original reads it as unreadable, and the product reads the original's so too; only the oracle reads the original's (decision 1: no mixed resume). A resume restores the slots (`RestoreMultiplayerSaveSlots` `0x4790b0`) on the map's setup before the start, and again on the loaded game.
-5. **No network thread yet.** The main loop pumps Storm each frame, the network's waits included; decision 5's thread for a long load is left as a `TODO:` (`kp_netplay.h`). The product's two-process game and the mixed games ran without a timeout.
+5. **No network thread yet.** The main loop pumps Storm each frame, the network's waits included; decision 5's thread for a long load is left as a `TODO:` (`kp_netplay.h`). The product's two-process game and the mixed games ran without a timeout. *Superseded 2026-11-27: Storm's pump runs on a thread of its own ([addition](#addition-the-pump-thread-and-a-join-without-a-wait-2026-11-27)).*
 6. **`--seats` stays on the turn hub.** The network game is a fourth kind of turns (`KP_TURNS_NET`) beside the hub's, not the hub moved onto the network's turn manager as the plan had it. The seats keep the shared hash's check every frame but have no leave, drop or chat (`TODO:` in `kp_hub.h`: the seats as network games on the in-process LAN).
 7. **The mixed game's dumps are compared through the replay.** The oracle dumps the original's state before an object step, the session at a frame's end, so the emulated seats' dumps and Koprulu's do not line up step for step. Instead, the original's own `0x37` check passes on every turn of the mixed game, and the original's playback of Koprulu's replay equals Koprulu's at every step (`state_check.py --kind koprulu-net`). Koprulu's playback of a network replay equals its live game (`test_netplay`), once the fields a playback sets by design are set aside: the multiplayer byte, the slot summary, and the turn counter, which counts frames there.
 
@@ -68,7 +68,7 @@ Decided by the user and built on 2026-11-21 ([phase N](../phase-network.md#n5-a-
 
 Decisions 1 and 2 are the user's (2026-11-21); all three were checked on 2026-11-21 ([phase N](../phase-network.md#n6-acceptance-2026-11-21)).
 
-1. **The native network thread waits for a need.** The plan's thread that pumps Storm while a mission loads is not built. A melee map's load holds the main loop about 0.2 s on a Mac and 0.3 s on a Galaxy Z Fold7, within Storm's one second of silence. `TODO:` in `kp_netplay.h` keeps it, with these figures.
+1. **The native network thread waits for a need.** The plan's thread that pumps Storm while a mission loads is not built. A melee map's load holds the main loop about 0.2 s on a Mac and 0.3 s on a Galaxy Z Fold7, within Storm's one second of silence. `TODO:` in `kp_netplay.h` kept it, with these figures. *Built 2026-11-27 ([addition](#addition-the-pump-thread-and-a-join-without-a-wait-2026-11-27)).*
 2. **`--seats` stays on the turn hub** (`TODO:` in `kp_hub.h`). The plan moved the hub onto the network's turn manager; the hub is a tool of the tests and the oracle that no player sees.
 3. **The lobby keeps the original's one message a pass.** One pass a frame makes a map's transfer as fast as the slower seat draws. Taking the messages more often is open in the tracker.
 
@@ -83,3 +83,23 @@ The user asked for a review of phase N and then for its defects fixed together w
 5. **The network's text is windows-1252 without losses.** The interface is UTF-8 (ADR 0016), the network's names and chat are windows-1252. A character the code page lacks becomes `?` in a name or a chat line (it was dropped, so a Cyrillic profile name was empty and Storm refused the game) and `_` in a transferred map's name. A network save's name must be windows-1252, since every seat writes the save under the name in the save command: the save dialog answers network.tbl's "Invalid character." otherwise.
 6. **The race ready room's leaves reach the game.** Koprulu builds the session before the ready room, for the briefing; the original builds the game after it (`RunGameSession` `0x467ba0`'s `StartGame`), from the records a leave in the room has restored (`HandlePlayerLeftLobby` `0x477c20` in the glue). At the room's Start a network game whose records changed is built again from them before its first turn (`kp_netgame_setup_changed`), so a player who left there is not in the game, as in the original and on a 1.17 seat.
 7. **A socket that fails stops reading.** The provider's reads stop until it is chosen again, the player sees the network error once, and Storm's waits sleep instead of spinning. A too long `--lan-host` is refused instead of cut.
+
+## Addition: the pump thread and a join without a wait (2026-11-27)
+
+The architecture review of 2026-11-27 builds decision 5's native network thread, which consequence 1 had left for a
+need, and lifts the join's block. The user approved both inline on 2026-11-27.
+
+1. **Storm's pump runs on a thread of its own** on the natives (`kp_netplay`), as Storm's pump thread `0x15022780`
+   does: it reads the sockets and runs Storm's timers whatever the main loop does. One lock, Storm's critical section,
+   covers Storm's state: the thread's passes and every call of the game into Storm hold it, and Storm releases it
+   around its events, as `kp_snet` already did through its hooks. A send wakes the thread at once (a socket of
+   127.0.0.1 the waits watch). The turns and messages the game receives are copied before the lock goes. Without
+   threads the frames pump, as before.
+2. **A join does not block.** `kp_snet_join_begin` and `kp_snet_join_poll` are `SNetJoinGame`'s passes without its
+   waits; `kp_snet_join_game` is them with a 10 ms wait, so the wire and its times are the original's. The product
+   polls the handshake each frame and the join screen waits for the answer, its controls disabled.
+3. **What stays:** the state machines, the wire, the recorded traces (`test_net_trace`, `test_lobby_trace`) and the
+   saves. Decision 2's "the pump belongs to the driver" holds: `kp_netplay` is the driver.
+
+Details: [phase N](../phase-network.md#the-pump-thread-and-a-join-without-a-wait-2026-11-27).
+

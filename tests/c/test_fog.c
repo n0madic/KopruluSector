@@ -20,18 +20,19 @@ typedef int64_t (*FlagFn)(int64_t x, int64_t y, int64_t side);
 
 /* The tile flags of a side x side map: byte 0 the players that do not see the tile, byte 1 those that have not
  * explored it. */
-static int64_t *tiles(KpT *T, int64_t side, FlagFn flag)
+static uint32_t *tiles(KpT *T, int64_t side, FlagFn flag)
 {
-	int64_t *t = (int64_t *)malloc(sizeof *t * (size_t)(side * side)), x, y;
+	uint32_t *t = (uint32_t *)malloc(sizeof *t * (size_t)(side * side));
+	int64_t x, y;
 	kp_t_ok(T, t != NULL, "out of memory");
 	kp_t_defer(T, free, t);
 	for (y = 0; y < side; y++) {
-		for (x = 0; x < side; x++) t[y * side + x] = flag(x, y, side);
+		for (x = 0; x < side; x++) t[y * side + x] = (uint32_t)flag(x, y, side);
 	}
 	return t;
 }
 
-static KpFogVision vision_of(const int64_t *t, int64_t side)
+static KpFogVision vision_of(const uint32_t *t, int64_t side)
 {
 	KpFogVision v;
 	memset(&v, 0, sizeof v);
@@ -94,7 +95,8 @@ static int shaded(KpT *T, KpFogView *v, const KpFogVision *vision, const uint8_t
 
 static void levels_of_seen_explored_and_unexplored_tiles(KpT *T)
 {
-	int64_t *t = tiles(T, 64, halves), rect[4], cols;
+	uint32_t *t = tiles(T, 64, halves);
+	int64_t rect[4], cols;
 	KpFogVision vision = vision_of(t, 64);
 	KpFogView *v = view(T);
 	const uint8_t *d = dark(T);
@@ -139,7 +141,8 @@ static int64_t one_hidden(int64_t x, int64_t y, int64_t side)
  * all the presentation uploads: every level outside them stays as it was, and the whole map equals a fresh view's. */
 static void dirty_update_reports_the_changed_blocks(KpT *T)
 {
-	int64_t *before_tiles = tiles(T, 64, all_seen), *after_tiles = tiles(T, 64, one_hidden), rect[4], bx, by, w, h;
+	uint32_t *before_tiles = tiles(T, 64, all_seen), *after_tiles = tiles(T, 64, one_hidden);
+	int64_t rect[4], bx, by, w, h;
 	KpFogVision before_vision = vision_of(before_tiles, 64), after_vision = vision_of(after_tiles, 64);
 	KpFogView *v = view(T), *fresh = view(T);
 	uint8_t *before;
@@ -222,9 +225,10 @@ static uint32_t next_random(uint32_t *s)
 
 /* A map of unexplored, explored and seen rectangles and single tiles, the other players' bits and the high WORD
  * random. */
-static int64_t *patched_map(KpT *T, int64_t w, int64_t h, uint32_t seed)
+static uint32_t *patched_map(KpT *T, int64_t w, int64_t h, uint32_t seed)
 {
-	int64_t *t = (int64_t *)malloc(sizeof *t * (size_t)(w * h)), k, x, y;
+	uint32_t *t = (uint32_t *)malloc(sizeof *t * (size_t)(w * h));
+	int64_t k, x, y;
 	uint8_t *state;
 	int level, n;
 	kp_t_ok(T, t != NULL, "out of memory");
@@ -248,7 +252,7 @@ static int64_t *patched_map(KpT *T, int64_t w, int64_t h, uint32_t seed)
 	for (k = 0; k < w * h; k++) {
 		int64_t f = (int64_t)next_random(&seed) << 8;
 		f = (f | (next_random(&seed) & 0xff)) & ~(int64_t)(NOT_SEEN | NOT_EXPLORED);
-		t[k] = f | (state[k] == 0 ? NOT_SEEN | NOT_EXPLORED : state[k] == 1 ? NOT_SEEN : 0);
+		t[k] = (uint32_t)(f | (state[k] == 0 ? NOT_SEEN | NOT_EXPLORED : state[k] == 1 ? NOT_SEEN : 0));
 	}
 	return t;
 }
@@ -369,7 +373,7 @@ static void off_grid_camera_keeps_the_fog_on_the_map(KpT *T)
 	static const int64_t VIEWS[4][2] = { { 640, 400 }, { 1280, 640 }, { 1001, 517 }, { 502, 880 } };
 	static const int64_t PHASES[6] = { 1, 7, 25, 28, 30, 31 };
 	const uint8_t *d = dark(T);
-	int64_t *seen = tiles(T, 64, all_seen);
+	uint32_t *seen = tiles(T, 64, all_seen);
 	KpFogVision clear = vision_of(seen, 64), patched = vision_of(patched_map(T, 64, 64, 0x46b910), 64);
 	KpFogView *v = view(T), *grid = view(T);
 	uint8_t *mine = view_buffer(T, VIEWS, COUNT(VIEWS), 0), *plain = view_buffer(T, VIEWS, COUNT(VIEWS), 0);

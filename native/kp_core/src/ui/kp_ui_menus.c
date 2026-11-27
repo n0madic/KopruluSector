@@ -3272,7 +3272,22 @@ static void join_text(KpUi *ui, int16_t id, const uint8_t *text)
 static void join_enable_ok(KpUi *ui, int enable)
 {
 	int32_t ok = kp_ui_find_control(ui, jn(ui)->dialog, ID_JOIN_OK);
-	if (ok >= 0) kp_ui_set_enabled(ui, ok, enable);
+	if (ok >= 0) kp_ui_set_enabled(ui, ok, enable && !jn(ui)->waiting);
+}
+
+/* The screen waiting for the join the host began (KpUiNet.join's -1) or no longer: the list and the buttons take no
+ * input meanwhile and the list is not refreshed, as the original's screen stands still while SNetJoinGame runs */
+static void join_wait(KpUi *ui, int on)
+{
+	KpUiJoin *j = jn(ui);
+	int k;
+	j->waiting = (uint8_t)on;
+	for (k = R_JOIN_CANCEL; k <= R_JOIN_ADDRESS; k++) {
+		int32_t c = kp_ui_find_control(ui, j->dialog, (int16_t)k);
+		if (c >= 0) kp_ui_set_enabled(ui, c, !on);
+	}
+	if ((k = kp_ui_find_control(ui, j->dialog, ID_JOIN_LIST)) >= 0) kp_ui_set_enabled(ui, k, !on);
+	if (on) join_enable_ok(ui, 0);
 }
 
 /* FindGameIdByName 0x4590d0: the first node from the head whose text is the item's, byte for byte; 0 none */
@@ -3429,7 +3444,7 @@ static int game_list_proc(KpUi *ui, KpUiControl *c, KpUiEvent *e)
 		case KP_UI_DESTROY: kp_ui_delete_timer(&ui->timers, jn(ui)->dialog, JOIN_TIMER); break;
 		case KP_UI_TIMER:
 			if (e->param != JOIN_TIMER) break;
-			refresh_games(ui, self);
+			if (!jn(ui)->waiting) refresh_games(ui, self);
 			return 1;
 		case KP_UI_POST_LOAD: c->flags |= LIST_FLAG; break;
 		case KP_UI_VALUE_CHANGED:
@@ -3500,8 +3515,12 @@ static int join_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 			return 1;
 		}
 		if (ui->result == R_JOIN) {
+			int joined;
+			if (j->waiting) return 1; /* the join's answer ends the wait (kp_ui_menus_join_done), not Ok */
 			join_enable_ok(ui, 0);
-			if (ui->net->join == NULL || !ui->net->join(ui->net->host, &j->selected)) return 1;
+			joined = ui->net->join != NULL ? ui->net->join(ui->net->host, &j->selected) : 0;
+			if (joined < 0) join_wait(ui, 1);
+			if (joined <= 0) return 1;
 			join_enable_ok(ui, 1);
 		}
 		/* Create Game: no spawn copy here (GetSpawnFlag 0x4635c0's popup is not reached) */
@@ -3510,10 +3529,23 @@ static int join_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 	case KP_UI_DESTROY:
 		if (ui->net->clear_games != NULL) ui->net->clear_games(ui->net->host, 0);
 		j->node_count = j->game_count = 0; /* FreeGameList 0x459000 */
+		j->waiting = 0;
 		break;
 	default: break;
 	}
 	return base(ui, d, e);
+}
+
+int kp_ui_menus_join_done(KpUi *ui, int joined)
+{
+	KpUiJoin *j = jn(ui);
+	if (!j->waiting || j->dialog < 0) return 0;
+	join_wait(ui, 0);
+	if (!joined) return 1; /* Ok stays disabled, as after a join refused at once */
+	join_enable_ok(ui, 1);
+	ui->result = R_JOIN;
+	kp_ui_glue_slide_out(ui, j->dialog);
+	return 1;
 }
 
 int32_t kp_ui_join_open(KpUi *ui)
@@ -3522,6 +3554,7 @@ int32_t kp_ui_join_open(KpUi *ui)
 	KpUiJoin *j = jn(ui);
 	ui->menus.create.replay_read = 0;
 	j->dialog = -1;
+	j->waiting = 0;
 	j->node_count = j->game_count = j->appended = 0;
 	memset(&j->selected, 0, sizeof j->selected);
 	return open_screen(ui, "rez\\gluJoin.bin", join_proc, join_done);

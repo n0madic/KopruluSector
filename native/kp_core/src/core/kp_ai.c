@@ -80,8 +80,8 @@ static void decay_needs(KpGame *g, int64_t p, int64_t r)
 	KpAiRegions *a = &g->air;
 	int noncampaign = !kp_ai_campaign(g, p);
 	if (kp_band(a->flags[p][r], KP_RFLAG_NO_DECAY) != 0) return;
-	a->need_air[p][r] = decay(a->need_air[p][r], noncampaign);
-	a->need_ground[p][r] = decay(a->need_ground[p][r], noncampaign);
+	a->need_air[p][r] = kp_to_u16(decay(a->need_air[p][r], noncampaign));
+	a->need_ground[p][r] = kp_to_u16(decay(a->need_ground[p][r], noncampaign));
 }
 
 /* UpdateRegionStrength 0x4adbd0. */
@@ -96,11 +96,11 @@ void kp_ai_update_region_strength(KpGame *g, int64_t p, int64_t r)
 		if (kp_band(g->u.status[n], STATUS_IN_BUILDING) != 0) continue;
 		air = kp_band(g->u.air_strength[n], 0xffff);
 		ground = kp_band(g->u.ground_strength[n], 0xffff);
-		a->all_ground[p][r] = kp_mod(a->all_ground[p][r] + ground, 65536);
-		a->all_air[p][r] = kp_mod(a->all_air[p][r] + air, 65536);
+		a->all_ground[p][r] = kp_to_u16(kp_mod(a->all_ground[p][r] + ground, 65536));
+		a->all_air[p][r] = kp_to_u16(kp_mod(a->all_air[p][r] + air, 65536));
 		if (kp_unit_region(g, n) == r) {
-			a->local_air[p][r] = kp_mod(a->local_air[p][r] + air, 65536);
-			a->local_ground[p][r] = kp_mod(a->local_ground[p][r] + ground, 65536);
+			a->local_air[p][r] = kp_to_u16(kp_mod(a->local_air[p][r] + air, 65536));
+			a->local_ground[p][r] = kp_to_u16(kp_mod(a->local_ground[p][r] + ground, 65536));
 		}
 	}
 	if (kp_ai_campaign(g, p)) {
@@ -112,22 +112,22 @@ void kp_ai_update_region_strength(KpGame *g, int64_t p, int64_t r)
 			/* AddOwnUnitStrengthCallback 0x4aa2c0 */
 			int64_t n = found[i];
 			if (kp_band(g->u.status[n], STATUS_IN_BUILDING) != 0 || g->u.owner[n] != p || kp_unit_region(g, n) != r) continue;
-			a->all_air[p][r] = kp_mod(a->all_air[p][r] + g->u.air_strength[n], 65536);
-			a->local_air[p][r] = kp_mod(a->local_air[p][r] + g->u.air_strength[n], 65536);
-			a->all_ground[p][r] = kp_mod(a->all_ground[p][r] + g->u.ground_strength[n], 65536);
-			a->local_ground[p][r] = kp_mod(a->local_ground[p][r] + g->u.ground_strength[n], 65536);
+			a->all_air[p][r] = kp_to_u16(kp_mod(a->all_air[p][r] + g->u.air_strength[n], 65536));
+			a->local_air[p][r] = kp_to_u16(kp_mod(a->local_air[p][r] + g->u.air_strength[n], 65536));
+			a->all_ground[p][r] = kp_to_u16(kp_mod(a->all_ground[p][r] + g->u.ground_strength[n], 65536));
+			a->local_ground[p][r] = kp_to_u16(kp_mod(a->local_ground[p][r] + g->u.ground_strength[n], 65536));
 		}
 		kp_query_release(g, found);
 	}
 	v = a->enemy_air[p][r];
 	if (!kp_ai_campaign(g, p)) v += kp_shrv(v, 1);
-	if (v > a->need_air[p][r]) a->need_air[p][r] = kp_mod(v, 65536);
+	if (v > a->need_air[p][r]) a->need_air[p][r] = kp_to_u16(kp_mod(v, 65536));
 	v = a->enemy_ground[p][r];
 	if (!kp_ai_campaign(g, p)) v += kp_shrv(v, 1);
-	if (v > a->need_ground[p][r]) a->need_ground[p][r] = kp_mod(v, 65536);
+	if (v > a->need_ground[p][r]) a->need_ground[p][r] = kp_to_u16(kp_mod(v, 65536));
 	if (g->pai.max_force[p] != 0) {
-		if (a->need_air[p][r] > g->pai.max_force[p]) a->need_air[p][r] = g->pai.max_force[p];
-		if (a->need_ground[p][r] > g->pai.max_force[p]) a->need_ground[p][r] = g->pai.max_force[p];
+		if (a->need_air[p][r] > g->pai.max_force[p]) a->need_air[p][r] = kp_to_u16(g->pai.max_force[p]);
+		if (a->need_ground[p][r] > g->pai.max_force[p]) a->need_ground[p][r] = kp_to_u16(g->pai.max_force[p]);
 	}
 }
 
@@ -152,8 +152,8 @@ static void update_targets(KpGame *g, int64_t p, int64_t r)
 	KpAiRegions *a = &g->air;
 	KpUnits *u = &g->u;
 	int64_t k;
-	a->target_air[p][r] = region_target(g, p, r, 0);
-	a->target_ground[p][r] = region_target(g, p, r, 1);
+	a->target_air[p][r] = kp_to_i16(region_target(g, p, r, 0));
+	a->target_ground[p][r] = kp_to_i16(region_target(g, p, r, 1));
 	if (a->target_air[p][r] == 0 && a->target_ground[p][r] == 0) return;
 	for (k = kp_ai_military_first(g, p, r); k >= 0; k = g->military.next[k]) {
 		int64_t n = g->military.unit[k], o = u->order[n], ta = a->target_air[p][r], tg = a->target_ground[p][r];
@@ -354,7 +354,7 @@ static void state_request_help(KpGame *g, int64_t p, int64_t r)
 	}
 	chosen = best2 != 0 ? best2 : best1;
 	if (chosen == 0) return;
-	a->dest[p][chosen] = r;
+	a->dest[p][chosen] = kp_to_u16(r);
 	kp_ai_set_region_state(g, p, chosen, KP_RSTATE_HELP);
 }
 
@@ -394,7 +394,7 @@ static void state_helping(KpGame *g, int64_t p, int64_t r)
 void kp_ai_step_region(KpGame *g, int64_t p, int64_t r)
 {
 	KpAiRegions *a = &g->air;
-	a->flags[p][r] = kp_band(a->flags[p][r], kp_bnot(REGION_RECENT));
+	a->flags[p][r] = kp_to_u8(kp_band(a->flags[p][r], kp_bnot(REGION_RECENT)));
 	if (a->retry[p][r] != 0) a->retry[p][r]--;
 	switch (a->state[p][r]) {
 	case KP_RSTATE_IDLE: /* 0x4ac9b0 */
@@ -429,8 +429,8 @@ void kp_ai_rebuild_enemy_strength(KpGame *g)
 		r2 = kp_unit_region(g, n);
 		for (p = 0; p < KP_AI_PLAYERS; p++) {
 			if (kp_controller(g, p) != KP_CTRL_COMPUTER || u->owner[n] == p || !kp_player_enemy_of(g, p, n)) continue;
-			if (kp_band(u->status[n], STATUS_AIR) != 0) a->enemy_air[p][r2] = kp_mod(a->enemy_air[p][r2] + v, 65536);
-			else a->enemy_ground[p][r2] = kp_mod(a->enemy_ground[p][r2] + v, 65536);
+			if (kp_band(u->status[n], STATUS_AIR) != 0) a->enemy_air[p][r2] = kp_to_u16(kp_mod(a->enemy_air[p][r2] + v, 65536));
+			else a->enemy_ground[p][r2] = kp_to_u16(kp_mod(a->enemy_ground[p][r2] + v, 65536));
 		}
 	}
 }
@@ -1305,7 +1305,7 @@ void kp_ai_request_defenses(KpGame *g, int64_t p, int64_t t, int64_t flag, int64
 		for (k = 0; k < count && !found; k++) found = g->u.type[units[k]] == t && g->u.owner[units[k]] == p;
 		kp_query_release(g, units);
 		if (found) continue;
-		a->flags[p][r] = kp_bor(a->flags[p][r], flag);
+		a->flags[p][r] = kp_to_u8(kp_bor(a->flags[p][r], flag));
 		if (++marked == most) return;
 	}
 }
@@ -1402,8 +1402,8 @@ void kp_ai_building_region_state(KpGame *g, int64_t p, int64_t n)
 	int main;
 	if (a->state[p][r] == KP_RSTATE_IDLE || a->state[p][r] == KP_RSTATE_WATCH) {
 		kp_ai_set_region_state(g, p, r, KP_RSTATE_BASE);
-		a->flags[p][r] = kp_bor(a->flags[p][r], KP_RFLAG_GUARDED);
-		if (!kp_ai_campaign(g, p)) a->flags[p][r] = kp_bor(a->flags[p][r], KP_RFLAG_NO_DECAY);
+		a->flags[p][r] = kp_to_u8(kp_bor(a->flags[p][r], KP_RFLAG_GUARDED));
+		if (!kp_ai_campaign(g, p)) a->flags[p][r] = kp_to_u8(kp_bor(a->flags[p][r], KP_RFLAG_NO_DECAY));
 		for (q = 0; q < KP_AI_PLAYERS; q++) {
 			if (!kp_ai_campaign(g, q) && g->players.alliance[q][p] != 0 && a->state[q][r] == KP_RSTATE_IDLE) {
 				kp_ai_set_region_state(g, q, r, KP_RSTATE_WATCH);
@@ -1416,12 +1416,12 @@ void kp_ai_building_region_state(KpGame *g, int64_t p, int64_t n)
 		&& kp_band(KP_DAT(g, units, special_ability_flags, t), DAT_RESOURCE_DEPOT) != 0;
 	if (!main && t != kp_ai_race_main_building(g, p)) return;
 	if (kp_ai_campaign(g, p)) {
-		a->need_ground[p][r] = kp_mod(g->pai.default_min[p] * BASE_NEED_FACTOR, 65536);
-		a->need_air[p][r] = kp_mod(g->pai.default_min[p] * BASE_NEED_FACTOR, 65536);
+		a->need_ground[p][r] = kp_to_u16(kp_mod(g->pai.default_min[p] * BASE_NEED_FACTOR, 65536));
+		a->need_air[p][r] = kp_to_u16(kp_mod(g->pai.default_min[p] * BASE_NEED_FACTOR, 65536));
 		kp_ai_set_region_state(g, p, r, KP_RSTATE_DEFEND);
 	} else {
 		kp_ai_set_region_state(g, p, r, KP_RSTATE_DEFEND);
-		a->flags[p][r] = kp_bor(a->flags[p][r], KP_RFLAG_NO_DECAY);
+		a->flags[p][r] = kp_to_u8(kp_bor(a->flags[p][r], KP_RFLAG_NO_DECAY));
 		a->need_ground[p][r] = BASE_NEED_GROUND;
 		a->need_air[p][r] = BASE_NEED_AIR;
 	}
@@ -1437,22 +1437,22 @@ void kp_ai_set_region_state(KpGame *g, int64_t p, int64_t r, int64_t state)
 	if (a->state[p][r] == KP_RSTATE_IDLE) {
 		int inaccessible = g->pathing.rg.klass[r] == KP_REGION_UNWALKABLE;
 		int64_t m = campaign ? g->pai.default_min[p] : 0;
-		a->need_ground[p][r] = inaccessible ? 0 : m;
-		a->need_air[p][r] = inaccessible ? m : 0;
+		a->need_ground[p][r] = inaccessible ? 0 : kp_to_u16(m);
+		a->need_air[p][r] = inaccessible ? kp_to_u16(m) : 0;
 		a->local_ground[p][r] = a->local_air[p][r] = a->all_ground[p][r] = a->all_air[p][r] = 0;
 		a->target_air[p][r] = a->target_ground[p][r] = a->slowest[p][r] = a->detector[p][r] = 0;
 		a->enemy_air[p][r] = a->enemy_ground[p][r] = 0;
 		if (state != KP_RSTATE_HELP) a->dest[p][r] = 0;
 	}
-	a->flags[p][r] = kp_band(a->flags[p][r], kp_bnot(UNDER_ATTACK));
-	a->state[p][r] = kp_mod(state, 256);
+	a->flags[p][r] = kp_to_u8(kp_band(a->flags[p][r], kp_bnot(UNDER_ATTACK)));
+	a->state[p][r] = kp_to_u8(kp_mod(state, 256));
 	switch (state) {
 	case KP_RSTATE_IDLE:
 		a->priority[p][r] = kp_band(a->flags[p][r], KP_RFLAG_NO_DECAY) != 0 && !campaign ? 40 : 10;
 		break;
 	case KP_RSTATE_MOVE: case KP_RSTATE_GROUP: a->priority[p][r] = campaign ? 70 : 160; break;
 	case KP_RSTATE_ABANDONED:
-		a->flags[p][r] = kp_band(a->flags[p][r], 0xfe);
+		a->flags[p][r] = kp_to_u8(kp_band(a->flags[p][r], 0xfe));
 		a->priority[p][r] = 10;
 		break;
 	case KP_RSTATE_WATCH: a->priority[p][r] = 40; break;
@@ -1619,14 +1619,14 @@ void kp_ai_react_to_attack(KpGame *g, int64_t n, int64_t a, int direct, int prop
 			}
 		}
 		if (!propagated) {
-			rec->enemy_air[p][ar] = kp_mod(sum_enemy_strength(g, p, ar, 1), 65536);
-			rec->enemy_ground[p][ar] = kp_mod(sum_enemy_strength(g, p, ar, 0), 65536);
+			rec->enemy_air[p][ar] = kp_to_u16(kp_mod(sum_enemy_strength(g, p, ar, 1), 65536));
+			rec->enemy_ground[p][ar] = kp_to_u16(kp_mod(sum_enemy_strength(g, p, ar, 0), 65536));
 			if (rec->need_air[p][ar] > rec->need_air[p][vr]) rec->need_air[p][vr] = rec->need_air[p][ar];
 			if (rec->need_ground[p][ar] > rec->need_ground[p][vr]) rec->need_ground[p][vr] = rec->need_ground[p][ar];
 		}
 	}
 marked:
-	g->air.flags[p][vr] = kp_bor(g->air.flags[p][vr], UNDER_ATTACK);
+	g->air.flags[p][vr] = kp_to_u8(kp_bor(g->air.flags[p][vr], UNDER_ATTACK));
 	if (kp_band(u->status[n], 1) == 0) return;
 	order = u->order[n];
 	if (order == KP_ORD_ARCHON_SUMMON || order == KP_ORD_RESET_COLLISION || order == KP_ORD_CONSTRUCTING) return;
@@ -1766,9 +1766,9 @@ void kp_ai_remove_from_regions(KpGame *g, int64_t n, int64_t killed)
 		if (kp_player_enemy_of(g, p, n)) {
 			int64_t ur = kp_unit_region(g, n), v;
 			v = g->strength[0][u->type[n]];
-			a->need_air[p][ur] = v >= a->need_air[p][ur] ? 0 : a->need_air[p][ur] - v;
+			a->need_air[p][ur] = v >= a->need_air[p][ur] ? 0 : kp_to_u16(a->need_air[p][ur] - v);
 			v = g->strength[1][u->type[n]];
-			a->need_ground[p][ur] = v >= a->need_ground[p][ur] ? 0 : a->need_ground[p][ur] - v;
+			a->need_ground[p][ur] = v >= a->need_ground[p][ur] ? 0 : kp_to_u16(a->need_ground[p][ur] - v);
 		}
 	}
 	military_leave(g, n, killed);
@@ -1831,7 +1831,7 @@ static int claim_patrol(KpGame *g, int64_t n)
 	if (kp_band(g->pai.flags[p], PATROL_FLAG) == 0) return 0;
 	for (r = 1; r < count; r++) {
 		if (a->military[p][r] == 0 || !patrol_state(a->state[p][r]) || a->detector[p][r] != 0) continue;
-		a->detector[p][r] = n;
+		a->detector[p][r] = kp_to_i16(n);
 		kp_ai_region_center(g, r, &x, &y);
 		kp_request_move_to_point(g, n, x, y);
 		return 1;
@@ -1875,7 +1875,7 @@ void kp_ai_patrol_point(KpGame *g, int64_t n, int64_t *x, int64_t *y)
 		}
 	}
 	kp_ai_region_center(g, chosen, x, y);
-	a->flags[p][chosen] = kp_bor(a->flags[p][chosen], REGION_PATROLLED);
+	a->flags[p][chosen] = kp_to_u8(kp_bor(a->flags[p][chosen], REGION_PATROLLED));
 }
 
 /* Order_AIPatrol 0x48cee0 (order 159): a computer's patrolling unit (an Observer) watches its regions. */
@@ -1992,8 +1992,8 @@ void kp_ai_captain_expand(KpGame *g, int64_t p)
 		for (r = 1; r < count; r++) {
 			int64_t at, k, n;
 			if (small && kp_region_tiles(g, r) > CAPTAIN_SMALL_REGION) continue;
-			a->flags[p][r] = kp_band(a->flags[p][r], kp_bnot(KP_RFLAG_GUARDED));
-			if (campaign) a->flags[p][r] = kp_band(a->flags[p][r], kp_bnot(KP_RFLAG_NO_DECAY));
+			a->flags[p][r] = kp_to_u8(kp_band(a->flags[p][r], kp_bnot(KP_RFLAG_GUARDED)));
+			if (campaign) a->flags[p][r] = kp_to_u8(kp_band(a->flags[p][r], kp_bnot(KP_RFLAG_NO_DECAY)));
 			if (a->state[p][r] <= KP_RSTATE_ABANDONED) continue;
 			n = kp_region_all_neighbors(g, r, &at); /* 0x481ad0 */
 			for (k = 0; k < n; k++) marked[g->pathing.rg.neighbors[at + k]] = 1;
@@ -2001,8 +2001,8 @@ void kp_ai_captain_expand(KpGame *g, int64_t p)
 		for (r = 1; r < count; r++) {
 			if (!marked[r] || a->state[p][r] != KP_RSTATE_IDLE) continue;
 			kp_ai_set_region_state(g, p, r, KP_RSTATE_WATCH);
-			a->flags[p][r] = kp_bor(a->flags[p][r], KP_RFLAG_GUARDED);
-			if (campaign) a->flags[p][r] = kp_bor(a->flags[p][r], KP_RFLAG_NO_DECAY);
+			a->flags[p][r] = kp_to_u8(kp_bor(a->flags[p][r], KP_RFLAG_GUARDED));
+			if (campaign) a->flags[p][r] = kp_to_u8(kp_bor(a->flags[p][r], KP_RFLAG_NO_DECAY));
 		}
 	}
 }
@@ -2016,9 +2016,9 @@ void kp_ai_mark_defense_region(KpGame *g, int64_t p, int64_t r, int strong)
 	KpAiRegions *a = &g->air;
 	if (a->state[p][r] != KP_RSTATE_IDLE) return;
 	kp_ai_set_region_state(g, p, r, KP_RSTATE_WATCH);
-	a->flags[p][r] = kp_bor(a->flags[p][r], KP_RFLAG_GUARDED);
+	a->flags[p][r] = kp_to_u8(kp_bor(a->flags[p][r], KP_RFLAG_GUARDED));
 	if (!strong && !kp_ai_campaign(g, p)) return;
-	a->flags[p][r] = kp_bor(a->flags[p][r], KP_RFLAG_NO_DECAY);
+	a->flags[p][r] = kp_to_u8(kp_bor(a->flags[p][r], KP_RFLAG_NO_DECAY));
 	if (strong && g->pathing.rg.klass[r] != KP_REGION_UNWALKABLE) a->need_ground[p][r] = DEFENSE_NEED_GROUND; /* 0x481bb0 */
 }
 

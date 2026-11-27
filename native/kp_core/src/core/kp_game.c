@@ -74,6 +74,36 @@ void kp_game_fail(KpGame *g, const char *fmt, ...)
 	kp_images_rethrow(g->w);
 }
 
+int64_t kp_num_get(const void *a, size_t elem, int sign, int64_t k)
+{
+	const char *p = (const char *)a + (size_t)k * elem;
+	int8_t i8;
+	int16_t i16;
+	int32_t i32;
+	uint8_t u8;
+	uint16_t u16;
+	uint32_t u32;
+	int64_t i64;
+	switch (elem) {
+	case 1:
+		if (sign) return memcpy(&i8, p, 1), i8;
+		return memcpy(&u8, p, 1), u8;
+	case 2:
+		if (sign) return memcpy(&i16, p, 2), i16;
+		return memcpy(&u16, p, 2), u16;
+	case 4:
+		if (sign) return memcpy(&i32, p, 4), i32;
+		return memcpy(&u32, p, 4), u32;
+	default: return memcpy(&i64, p, 8), i64;
+	}
+}
+
+void kp_narrow_failed(int64_t v, const char *type)
+{
+	fprintf(stderr, "kp_core: %lld stored into an %s field\n", (long long)v, type);
+	abort();
+}
+
 int64_t kp_idiv64(KpGame *g, int64_t a, int64_t b)
 {
 	if (b == 0) kp_game_fail(g, "integer division by zero");

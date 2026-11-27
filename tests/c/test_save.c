@@ -6,6 +6,7 @@
  * the same bytes. The initial state of every mission survives a save and a load unchanged. Needs the converter's
  * generated data; skipped without it. */
 #include "kp_test.h"
+#include "kp_ids.h"
 
 #define DIR "tests/golden/oracle/"
 #define DATA "test data" /* the tests load saves into the same generated data */
@@ -452,6 +453,40 @@ static void view_state_is_saved_outside_the_total(KpT *T)
 	kp_t_eq(T, kp_unit_get_attack_notify_timer(loaded, n), 23, "the idle event counts the silence down");
 }
 
+/* A step that failed inside a turn, a town's migration, a placement or a nested query leaves their scratch set; a load
+ * or a restore into that game starts it empty, as between steps (a stuck migration lock stopped every later one). */
+static void loads_clear_the_step_scratch(KpT *T)
+{
+	const char *path = "scenarios/marine_group";
+	KpGame *g;
+	uint8_t *bytes, *snap;
+	size_t size, snap_size;
+	KpError err;
+	if (!kp_t_ready(T, "test_save", FILES)) return;
+	g = kp_t_game(T, path, 1, 0, NULL)->g;
+	bytes = save(T, g, "a", DATA, &size);
+	snap_size = kp_snapshot_size(g);
+	snap = (uint8_t *)malloc(snap_size);
+	kp_t_ok(T, snap != NULL, "memory for a snapshot");
+	if (!snap) return;
+	kp_t_defer(T, free, snap);
+	kp_t_ok(T, kp_snapshot(g, snap, snap_size, &err) == 0, "a snapshot: %s", err.msg);
+	g->turn_cancels_cursor = 1;
+	g->ai.migrating = 1;
+	g->ai.placement_builder = 5;
+	g->spatial.frame_top = 3;
+	load(T, g, bytes, size, "a", DATA);
+	kp_t_ok(T, g->turn_cancels_cursor == 0 && g->ai.migrating == 0 && g->ai.placement_builder == 0
+		&& g->spatial.frame_top == 0, "a load clears the scratch");
+	g->turn_cancels_cursor = 1;
+	g->ai.migrating = 1;
+	g->ai.placement_builder = 5;
+	g->spatial.frame_top = 3;
+	kp_t_ok(T, kp_restore(g, snap, snap_size, &err) == 0, "a restore: %s", err.msg);
+	kp_t_ok(T, g->turn_cancels_cursor == 0 && g->ai.migrating == 0 && g->ai.placement_builder == 0
+		&& g->spatial.frame_top == 0, "a restore clears the scratch");
+}
+
 /* A load that must be refused: 1 when it is, with its message in err. */
 static int refused(KpGame *g, const uint8_t *bytes, size_t size, const char *mission, const char *data, KpError *err)
 {
@@ -570,6 +605,68 @@ static void loads_refuse_scalars_a_game_cannot_hold(KpT *T)
 	kp_t_ok(T, before->size == after->size && memcmp(before->data, after->data, before->size) == 0,
 		"the refused saves changed nothing");
 	/* the game's own save loads */
+	{
+		uint8_t *bytes;
+		size_t size;
+		bytes = save(T, game->g, "a", DATA, &size);
+		kp_t_ok(T, !refused(into->g, bytes, size, "a", DATA, &err), "the game's own save loads: %s", err.msg);
+	}
+}
+
+/* A sealed save may hold any record number, link or index (kp_load_check): one out of its array, a list that does not
+ * end, a union word the step writes through out of range are refused once written, and the game is put back as it
+ * was, its serials too (the interface takes no load). */
+static void loads_refuse_indices_out_of_their_arrays(KpT *T)
+{
+	enum { CONNECTED, UNIT_LOOP, RING, HEAP, IMAGE_NEXT, ORDER_LOOP, RECEDE, RESEARCH, BAD_COUNT };
+	static const char *const EXPECT[BAD_COUNT] = { "unit connected", "unit list", "bullet ring", "AI heap count",
+		"image next", "order free list", "receding creep bucket", "a research's tech" };
+	const char *path = "scenarios/marine_group";
+	KpOracleGame *game, *into;
+	KpBuf *before, *after;
+	KpError err;
+	int bad;
+	if (!kp_t_ready(T, "test_save", FILES)) return;
+	game = kp_t_game(T, path, 1, 0, NULL);
+	into = kp_t_game(T, path, 1, 0, NULL);
+	before = kp_t_buf(T);
+	after = kp_t_buf(T);
+	kp_t_ok(T, kp_state_lines(into->g, 0, before) == 0, "out of memory");
+	for (bad = 0; bad < BAD_COUNT; bad++) {
+		KpGame *g = game->g;
+		int64_t n = g->lists[KP_LIST_ACTIVE].head, o = g->orders.free.head, load_serial = into->g->load_serial;
+		int64_t was = 0, order = g->u.order[n], tech = kp_union_get(g, n, 0xc8, 1);
+		int32_t image_next = g->w->img.next[0];
+		uint8_t *bytes;
+		size_t size;
+		switch (bad) {
+		case CONNECTED: was = g->u.connected[n]; g->u.connected[n] = KP_UNITS + 5; break;
+		case UNIT_LOOP: was = g->u.next[n]; g->u.next[n] = n; break;
+		case RING: was = g->bullets.ring[1]; g->bullets.ring[1] = 14; break;
+		case HEAP: was = g->pai.heap_count[0]; g->pai.heap_count[0] = KP_AI_HEAP + 1; break;
+		case IMAGE_NEXT: g->w->img.next[0] = KP_IMAGES; break;
+		case ORDER_LOOP: was = g->orders.next[o]; g->orders.next[o] = o; break;
+		case RECEDE: was = g->terrain.recede_bucket[3]; g->terrain.recede_bucket[3] = KP_RECEDE_BUCKETS + 1; break;
+		case RESEARCH: g->u.order[n] = KP_ORD_RESEARCH; kp_union_set(g, n, 0xc8, 1, 200); break;
+		}
+		bytes = save(T, g, "a", DATA, &size);
+		switch (bad) {
+		case CONNECTED: g->u.connected[n] = was; break;
+		case UNIT_LOOP: g->u.next[n] = was; break;
+		case RING: g->bullets.ring[1] = was; break;
+		case HEAP: g->pai.heap_count[0] = was; break;
+		case IMAGE_NEXT: g->w->img.next[0] = image_next; break;
+		case ORDER_LOOP: g->orders.next[o] = was; break;
+		case RECEDE: g->terrain.recede_bucket[3] = was; break;
+		case RESEARCH: g->u.order[n] = order; kp_union_set(g, n, 0xc8, 1, tech); break;
+		}
+		kp_t_ok(T, refused(into->g, bytes, size, "a", DATA, &err) && strstr(err.msg, EXPECT[bad]), "%s refused: %s",
+			EXPECT[bad], err.msg);
+		kp_t_eq(T, into->g->load_serial, load_serial, "%s: the refused load leaves the serials", EXPECT[bad]);
+	}
+	kp_t_ok(T, kp_state_lines(into->g, 0, after) == 0, "out of memory");
+	kp_t_ok(T, before->size == after->size && memcmp(before->data, after->data, before->size) == 0,
+		"the refused saves changed nothing");
 	{
 		uint8_t *bytes;
 		size_t size;
@@ -741,6 +838,7 @@ static const struct {
 	{ 4, 0x0b8d118c10f9c685ULL }, /* SETP: the game's setup (ADR 0024) */
 	{ 5, 0x65b4b52f5940175dULL }, /* the network game's pauses left, a team game's lobby races and leaders (ADR 0025) */
 	{ 6, 0x9437b019adb3182cULL }, /* the setup's Storm IDs of slots 8..11, the seat's (phase N, stage N4) */
+	{ 7, 0x671dee72d3e8f79cULL }, /* the narrowed fields at their widths (ADR 0008's addition, 2026-11-27) */
 };
 
 static void save_schema_matches_its_version(KpT *T)
@@ -1194,6 +1292,7 @@ static const KpTest TESTS[] = {
 	{ "walk_covers_the_state", walk_covers_the_state, 0 },
 	{ "hash_is_the_saves_bytes", hash_is_the_saves_bytes, 0 },
 	{ "view_state_is_saved_outside_the_total", view_state_is_saved_outside_the_total, 0 },
+	{ "loads_clear_the_step_scratch", loads_clear_the_step_scratch, 0 },
 	{ "save_schema_matches_its_version", save_schema_matches_its_version, 0 },
 	{ "snapshots_rewind_as_the_original", snapshots_rewind_as_the_original, 6 },
 	{ "restores_refuse_other_snapshots", restores_refuse_other_snapshots, 0 },
@@ -1206,6 +1305,7 @@ static const KpTest TESTS[] = {
 	{ "initial_states_survive_a_save", initial_states_survive_a_save, 0 },
 	{ "loads_reject_other_saves", loads_reject_other_saves, 0 },
 	{ "loads_refuse_scalars_a_game_cannot_hold", loads_refuse_scalars_a_game_cannot_hold, 0 },
+	{ "loads_refuse_indices_out_of_their_arrays", loads_refuse_indices_out_of_their_arrays, 0 },
 	{ "loads_show_the_loaded_countdown", loads_show_the_loaded_countdown, 0 },
 };
 KP_SUITE(kp_suite_save, "test_save", TESTS);

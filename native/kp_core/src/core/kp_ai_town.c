@@ -432,7 +432,7 @@ static int take_region_point(KpGame *g, int64_t p, int64_t flag, int64_t *x, int
 	int64_t r;
 	for (r = 1; r < (int64_t)g->regions.count; r++) {
 		if (kp_band(g->air.flags[p][r], flag) == 0) continue;
-		g->air.flags[p][r] = kp_band(g->air.flags[p][r], kp_bnot(flag));
+		g->air.flags[p][r] = kp_to_u8(kp_band(g->air.flags[p][r], kp_bnot(flag)));
 		kp_region_center_point(g, r, x, y); /* GetRegionCenterPoint 0x481a60 */
 		return 1;
 	}

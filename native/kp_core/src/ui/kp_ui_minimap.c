@@ -107,14 +107,14 @@ static uint8_t cell(const KpUi *ui, int64_t megatile, int k)
 	return at < ui->minimap.mmni_size ? ui->minimap.palette_map[ui->minimap.mmni[at]] : 0;
 }
 
-/* The terrain of a map of mw x mh tiles by its megatiles (the game's, or a preview world's: one of wide, narrow), count
- * entries of them. A side LayoutMinimap has no case for keeps the image's previous size, whose cells may lie past the
- * map: the game's 256 x 256 array holds them, a preview world's map-sized one does not, so a cell past count is 0. */
-static void build_cells(KpUi *ui, int64_t mw, int64_t mh, const int64_t *wide, const uint16_t *narrow, int64_t count)
+/* The terrain of a map of mw x mh tiles by its megatiles (the game's, or a preview world's), count entries of them. A
+ * side LayoutMinimap has no case for keeps the image's previous size, whose cells may lie past the map: the game's 256 x
+ * 256 array holds them, a preview world's map-sized one does not, so a cell past count is 0. */
+static void build_cells(KpUi *ui, int64_t mw, int64_t mh, const uint16_t *megatiles, int64_t count)
 {
 	KpUiMinimap *m = mm(ui);
 	int64_t side = mw > mh ? mw : mh, x, y;
-#define MEGA(i) ((i) >= count ? 0 : wide != NULL ? wide[i] : (int64_t)narrow[i])
+#define MEGA(i) ((i) >= count ? 0 : (int64_t)megatiles[i])
 	if (m->terrain == NULL || m->mmni == NULL) return;
 	for (y = 0; y < m->h; y++) {
 		for (x = 0; x < m->w; x++) {
@@ -130,8 +130,8 @@ static void build_cells(KpUi *ui, int64_t mw, int64_t mh, const int64_t *wide, c
 
 static void build_terrain(KpUi *ui)
 {
-	const int64_t *megatiles = ui->game->terrain.megatiles;
-	build_cells(ui, ui->game->map_w, ui->game->map_h, megatiles, NULL,
+	const uint16_t *megatiles = ui->game->terrain.megatiles;
+	build_cells(ui, ui->game->map_w, ui->game->map_h, megatiles,
 		(int64_t)(sizeof ui->game->terrain.megatiles / sizeof megatiles[0]));
 }
 
@@ -1577,7 +1577,7 @@ int kp_ui_minimap_preview_world(KpUi *ui, int32_t dialog, const KpUiPreview *p)
 		rgb[3 * i + 2] = glue[4 * i + 2];
 	}
 	for (i = 0; i < 256; i++) m->palette_map[i] = kp_ui_nearest_colour(rgb, p->cycled, p->rgb[3 * i], p->rgb[3 * i + 1], p->rgb[3 * i + 2]);
-	build_cells(ui, p->map_w, p->map_h, NULL, p->megatiles, (int64_t)p->map_w * p->map_h);
+	build_cells(ui, p->map_w, p->map_h, p->megatiles, (int64_t)p->map_w * p->map_h);
 	/* the fog's rows over a world whose tiles nobody's fog covers (InitFogOfWar 0x46c1e0 runs only outside a preview):
 	 * the identity row, the terrain as it is */
 	memcpy(m->image, m->terrain, (size_t)m->w * (size_t)m->h);

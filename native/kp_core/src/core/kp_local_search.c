@@ -198,12 +198,12 @@ int kp_units_collide(KpGame *g, int64_t a, int64_t b)
 }
 
 /* spatial.search (inclusive): the first entry whose coordinate is >= v. */
-static int64_t spatial_search(const int64_t *at, int64_t count, int64_t v)
+static int64_t spatial_search(const int32_t *at, int64_t count, int64_t v)
 {
 	int64_t key = v * 2 - 1, low = 0, high = count, sum = count;
 	while (low < high) {
 		int64_t mid = sum / 2;
-		if (key < at[mid] * 2) {
+		if (key < (int64_t)at[mid] * 2) {
 			sum = mid + low;
 			high = mid;
 		} else {
@@ -215,15 +215,15 @@ static int64_t spatial_search(const int64_t *at, int64_t count, int64_t v)
 }
 
 /* cross_at[i] of the spatial index (an index outside the arrays fails). */
-static int64_t spatial_at(KpGame *g, const int64_t *cross_at, int64_t i)
+static int64_t spatial_at(KpGame *g, const int32_t *cross_at, int64_t i)
 {
 	if (i < 0 || i >= KP_SPATIAL_CAPACITY) kp_game_fail(g, "local search: spatial entry %lld", (long long)i);
 	return cross_at[i];
 }
 
 /* One side of AddLocalUnitEdges 0x488910. keep_y: y_range, else x_range. */
-static void unit_side(KpGame *g, int d, const int64_t *at, const int64_t *units, int64_t from, int64_t limit,
-	int inclusive_limit, const int64_t *field, const int64_t *cross_at, const int64_t *c_lo, const int64_t *c_hi,
+static void unit_side(KpGame *g, int d, const int32_t *at, const int16_t *units, int64_t from, int64_t limit,
+	int inclusive_limit, const int16_t *field, const int32_t *cross_at, const int16_t *c_lo, const int16_t *c_hi,
 	int keep_y)
 {
 	static const int64_t UNIT_EDGES[4][2] = { { 0, 0x3d }, { 1, 0x32 }, { 2, 0x3d }, { 3, 0x32 } };

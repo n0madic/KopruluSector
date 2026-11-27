@@ -1,5 +1,5 @@
 # The native build (plan phase S, ADR 0012): the native core (C99 in the common subset of C and C++, ADR 0008) as the
-# simulation kp_sim and the interface kp_ui over it (ADR 0023), the presentation kp_present, the headless application kp_app_core, the command-line tools (kp_replay,
+# simulation kp_sim and the interface kp_ui over it (ADR 0023), the presentation kp_present, the headless application (kp_app_data, kp_app_net, kp_app_flow), the command-line tools (kp_replay,
 # kp_bench, kp_oracle), the C test runner kp_test (tests/c) and, with KP_APP, the product (kp_app over
 # SDL 3.4 with kp_gfx; tools/product.sh builds it for each platform).
 #
@@ -12,14 +12,31 @@ cmake_minimum_required(VERSION 3.20)
 project(KopruluSector C CXX)
 
 option(KP_SANITIZE "Build with AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+option(KP_TSAN "Build with ThreadSanitizer: the network's pump thread and lookups (kp_netplay.h; tools/ci.sh's full mode runs test_flow's and test_snet's network tests)" OFF)
+option(KP_NARROW_CHECKS "Check every store into a narrowed state field (kp_game.h; on with KP_SANITIZE)" OFF)
 option(KP_CXX_CHECK "Check the C sources as C++11 (they stay in the common subset of C and C++, ADR 0008)" ON)
 option(KP_APP "Build the product: kp_app over SDL 3.4 and SDL3_mixer, kp_gfx (plan phase S, stage S5)" OFF)
 option(KP_TOOLS "Build the tools and the C suites" ON)
-option(KP_FUZZ "Build libFuzzer's targets fuzz_rep, fuzz_chk, fuzz_save, fuzz_commands, fuzz_turns, fuzz_udp, fuzz_snet, fuzz_lobby, fuzz_transfer, fuzz_game (clang with libFuzzer, with KP_SANITIZE; tools/fuzz.sh, ADR 0022)" OFF)
+option(KP_FUZZ "Build libFuzzer's targets fuzz_rep, fuzz_chk, fuzz_save, fuzz_commands, fuzz_turns, fuzz_udp, fuzz_snet, fuzz_lobby, fuzz_transfer, fuzz_game, fuzz_watch (clang with libFuzzer, with KP_SANITIZE; tools/fuzz.sh, ADR 0022)" OFF)
 option(KP_ASTC "Build the phones' HD sets in ASTC (kp_convert, kp_hd_phone) over the Arm ASTC encoder (tools/toolchain/fetch.sh astc; ADR 0013)" OFF)
+
+option(KP_LTO "Link-time optimization (ThinLTO with clang) of a Release build of the tools and the suites" ON)
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 	set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif()
+
+# The tools and the suites run the simulation for hours a CI run: linked whole, bench_200 steps take 5 % fewer cycles
+# (kp_bench, 2026-11-27), with every scenario's CRCs the same. Not the product (its step is a tenth of a millisecond),
+# nor the sanitizers' or the web's builds.
+if(KP_LTO AND KP_TOOLS AND NOT KP_APP AND NOT KP_SANITIZE AND NOT EMSCRIPTEN AND CMAKE_BUILD_TYPE STREQUAL "Release")
+	include(CheckIPOSupported)
+	check_ipo_supported(RESULT KP_IPO OUTPUT KP_IPO_WHY LANGUAGES C CXX)
+	if(KP_IPO)
+		set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
+	else()
+		message(STATUS "KP_LTO: no link-time optimization (${KP_IPO_WHY})")
+	endif()
 endif()
 
 set(CMAKE_C_STANDARD 99)
@@ -53,6 +70,18 @@ if(KP_SANITIZE)
 	endif()
 	add_compile_options("$<$<COMPILE_LANGUAGE:C,CXX>:${KP_SANITIZE_COMPILE}>")
 	add_link_options(${KP_SANITIZE_FLAGS})
+endif()
+# The narrowed fields' stores checked (kp_game.h's kp_to_i8 .. kp_to_u32): with the sanitizers, or on its own
+if(KP_SANITIZE OR KP_NARROW_CHECKS)
+	add_compile_definitions(KP_NARROW_CHECKS)
+endif()
+if(KP_TSAN)
+	if(KP_SANITIZE)
+		message(FATAL_ERROR "KP_TSAN and KP_SANITIZE do not combine (ThreadSanitizer runs alone)")
+	endif()
+	set(KP_TSAN_FLAGS -fsanitize=thread -fno-omit-frame-pointer)
+	add_compile_options("$<$<COMPILE_LANGUAGE:C,CXX>:${KP_TSAN_FLAGS};-g;-O1>")
+	add_link_options(${KP_TSAN_FLAGS})
 endif()
 if(KP_FUZZ)
 	if(NOT CMAKE_C_COMPILER_ID MATCHES "Clang" OR NOT KP_SANITIZE OR NOT KP_TOOLS)
@@ -151,23 +180,50 @@ if(EMSCRIPTEN OR ANDROID OR IOS) # GL alone draws there (ADR 0028): the generate
 	target_compile_definitions(kp_gfx_passes PUBLIC KP_GFX_NO_METALLIB)
 endif()
 
-# --- kp_app_core: the product's headless part (the session, the saves, the profile, the interface's host; S2) ---
+# --- the product's headless part (S2), three libraries in layers since 2026-11-27, each over the ones before it; a
+# source of native/kp_app belongs to one of them, and tools/boundaries.sh checks that none includes a later layer's
+# header ---
+#   kp_app_data: the original data (MPQ, CASC, SCR and the repack: kp_res, ADR 0018), the catalog and the languages, the
+#     cinematics' files, the replay file and the command record (kp_convert needs no more)
+#   kp_app_net: the network (Storm's layer and its UDP provider, the LAN game list, the network game and its saves, the
+#     multiplayer screens' network, the viewers, the map transfer; ADR 0026, 0027)
+#   kp_app_flow: the product's flow (the session, the console, the seats and the turn hub, the scripts, the screens and
+#     the games, the flow's files)
 set(KP_APP_DIR ${CMAKE_CURRENT_SOURCE_DIR}/native/kp_app)
-file(GLOB KP_APP_CORE_SOURCES CONFIGURE_DEPENDS ${KP_APP_DIR}/*.c)
-add_library(kp_app_core STATIC ${KP_APP_CORE_SOURCES})
-kp_target(kp_app_core CXX)
-target_include_directories(kp_app_core PUBLIC ${KP_APP_DIR})
+set(KP_APP_DATA_MODULES cine data hd_scr hd_ui_scr locale map_class mpq record rep res res_scr scr webm)
+set(KP_APP_NET_MODULES net net_lan net_sock net_thread netgame netplay netsave netui snet snp_udp transfer watch)
+set(KP_APP_FLOW_MODULES flow flow_files hub hud map_preview script script_flow seats session touch turns)
+file(GLOB KP_APP_SOURCES CONFIGURE_DEPENDS ${KP_APP_DIR}/*.c)
+foreach(layer DATA NET FLOW)
+	set(KP_APP_${layer}_SOURCES)
+	foreach(m ${KP_APP_${layer}_MODULES})
+		list(APPEND KP_APP_${layer}_SOURCES ${KP_APP_DIR}/kp_${m}.c)
+		list(REMOVE_ITEM KP_APP_SOURCES ${KP_APP_DIR}/kp_${m}.c)
+	endforeach()
+endforeach()
+if(KP_APP_SOURCES)
+	message(FATAL_ERROR "native/kp_app: in no layer's list (KP_APP_DATA_MODULES, KP_APP_NET_MODULES, KP_APP_FLOW_MODULES): ${KP_APP_SOURCES}")
+endif()
+add_library(kp_app_data STATIC ${KP_APP_DATA_SOURCES})
+add_library(kp_app_net STATIC ${KP_APP_NET_SOURCES})
+add_library(kp_app_flow STATIC ${KP_APP_FLOW_SOURCES})
+foreach(lib kp_app_data kp_app_net kp_app_flow)
+	kp_target(${lib} CXX)
+	target_include_directories(${lib} PUBLIC ${KP_APP_DIR})
+endforeach()
 # the HD interface's console tiles crossfaded as written, no fused multiply-adds: the converter's texels (ADR 0019, C6)
 set_source_files_properties(${KP_APP_DIR}/kp_hd_ui_scr.c PROPERTIES COMPILE_OPTIONS -ffp-contract=off)
 # kp_res (ADR 0018); the video decoders (kp_cine.c, kp_webm.c)
-target_link_libraries(kp_app_core PUBLIC kp_present kp_storm kp_casc_c kp_vpx kp_nestegg kp_zlib) # zlib: kp_res_scr's SBIN
+target_link_libraries(kp_app_data PUBLIC kp_present kp_storm kp_casc_c kp_vpx kp_nestegg kp_zlib) # zlib: kp_res_scr's SBIN
+target_link_libraries(kp_app_net PUBLIC kp_app_data)
 if(WIN32)
-	target_link_libraries(kp_app_core PUBLIC ws2_32) # kp_net_sock's Winsock
+	target_link_libraries(kp_app_net PUBLIC ws2_32) # kp_net_sock's Winsock
 endif()
 if(NOT EMSCRIPTEN) # the web build has no threads (no SharedArrayBuffer) and resolves no name
 	find_package(Threads REQUIRED)
-	target_link_libraries(kp_app_core PUBLIC Threads::Threads) # kp_net_sock's lookup of a host's name
+	target_link_libraries(kp_app_net PUBLIC Threads::Threads) # kp_net_sock's lookup of a host's name, the pump thread
 endif()
+target_link_libraries(kp_app_flow PUBLIC kp_app_net)
 
 # --- kp_json: the tools' JSON (the oracle's goldens, kp_convert's scenario specs) ---
 if(KP_TOOLS OR KP_ENCODERS)
@@ -190,7 +246,7 @@ if(KP_ENCODERS)
 		-ffp-contract=off)
 	target_include_directories(kp_convert_lib PUBLIC ${KP_CONVERT_DIR})
 	find_package(Threads REQUIRED) # the encoders' workers
-	target_link_libraries(kp_convert_lib PUBLIC kp_app_core kp_json kp_vorbis Threads::Threads)
+	target_link_libraries(kp_convert_lib PUBLIC kp_app_data kp_json kp_vorbis Threads::Threads)
 	if(KP_ASTC) # the phones' HD sets in ASTC (kp_hd_transcode.c; ADR 0013), the Arm encoder
 		include(${CMAKE_CURRENT_SOURCE_DIR}/third_party/astcenc/kp_astcenc.cmake)
 		target_compile_definitions(kp_convert_lib PUBLIC KP_ASTC=1)
@@ -224,7 +280,7 @@ set(KP_ORACLE_SOURCES
 add_library(kp_oracle_lib STATIC ${KP_ORACLE_SOURCES})
 kp_target(kp_oracle_lib CXX)
 target_include_directories(kp_oracle_lib PUBLIC ${KP_TOOLS_DIR})
-target_link_libraries(kp_oracle_lib PUBLIC kp_ui kp_present kp_app_core kp_json) # kp_data: the original data the tools play from
+target_link_libraries(kp_oracle_lib PUBLIC kp_ui kp_present kp_app_flow kp_json) # kp_data: the original data the tools play from
 
 # --- the tools ---
 foreach(tool kp_replay kp_bench)
@@ -257,7 +313,7 @@ add_executable(kp_fuzz_seeds ${CMAKE_CURRENT_SOURCE_DIR}/tests/fuzz/kp_fuzz_seed
 kp_target(kp_fuzz_seeds CXX)
 target_link_libraries(kp_fuzz_seeds PRIVATE kp_fuzz_lib)
 if(KP_FUZZ)
-	foreach(target rep chk save commands turns udp snet lobby transfer game)
+	foreach(target rep chk save commands turns udp snet lobby transfer game watch)
 		string(TOUPPER ${target} upper)
 		add_executable(fuzz_${target} ${CMAKE_CURRENT_SOURCE_DIR}/tests/fuzz/kp_fuzz_main.c)
 		kp_target(fuzz_${target})
@@ -274,8 +330,8 @@ list(REMOVE_ITEM KP_TEST_SOURCES ${KP_TESTS_DIR}/kp_fuzz.c ${KP_TESTS_DIR}/kp_fu
 add_executable(kp_test ${KP_TEST_SOURCES})
 kp_target(kp_test CXX)
 target_include_directories(kp_test PRIVATE ${KP_TESTS_DIR})
-# kp_oracle_lib through kp_fuzz_lib (named twice, Apple's linker warns), kp_app_core (zlib for test_original's PNGs
-# too) through the oracle's
+# kp_oracle_lib through kp_fuzz_lib (named twice, Apple's linker warns), kp_app_flow and the layers under it (zlib
+# for test_original's PNGs too) through the oracle's
 target_link_libraries(kp_test PRIVATE kp_fuzz_lib kp_gfx_passes)
 if(KP_ENCODERS) # test_encoders, test_convert: kp_vpx is the build with VP9's encoder then
 	target_compile_definitions(kp_test PRIVATE KP_ENCODERS=1)
@@ -368,7 +424,7 @@ if(KP_APP)
 	set(KP_APP_VERSION 0.1)
 	set(KP_APP_ID com.koprulusector.game)
 	target_compile_definitions(${KP_APP_TARGET} PRIVATE KP_APP_VERSION="${KP_APP_VERSION}" KP_APP_ID="${KP_APP_ID}")
-	target_link_libraries(${KP_APP_TARGET} PRIVATE kp_app_core kp_gfx SDL3_mixer::SDL3_mixer-static ${KP_SDL_TARGET})
+	target_link_libraries(${KP_APP_TARGET} PRIVATE kp_app_flow kp_gfx SDL3_mixer::SDL3_mixer-static ${KP_SDL_TARGET})
 	if(EMSCRIPTEN)
 		set_target_properties(koprulu PROPERTIES SUFFIX ".html" LINK_DEPENDS ${KP_APP_DIR}/web/shell.html)
 		target_link_options(koprulu PRIVATE -sUSE_WEBGL2=1 -sMIN_WEBGL_VERSION=2 -sMAX_WEBGL_VERSION=2 -sFULL_ES3=1

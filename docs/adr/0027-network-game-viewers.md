@@ -29,6 +29,9 @@ its growing record.
    - Nothing goes on Storm's wire, which ADR 0026's decision 7 keeps the original's.
    - The protocol is a stateless pull: "the part's bytes from an offset". An answer is never larger than its request,
      so a forged source address gets no amplification.
+   - A viewer holds at most a replay's record (`KP_WATCH_RECORD_MAX`, since 2026-11-27): a server announcing more
+     ends the game where it came to, so a forged server cannot make it grow its room without bound. The host's
+     `--watch-port off` serves no viewer.
 3. **A viewer is a replay whose record grows.** The playback is the replay feed, with an end header after the bytes
    received, and it waits past what it holds. Nothing changes in the `.rep` or save formats.
 4. **The delay is the server's**, 60 seconds by default (`--watch-delay`). The server holds the record back, so a

@@ -138,8 +138,11 @@ static int u_join(void *host, const KpUiGame *game)
 	KpNetGame *ng = nu(host)->game;
 	int k;
 	if (!ng) return 0;
-	for (k = 0; k < ng->listed_count; k++)
-		if (ng->listed[k].id == game->id) return kp_netgame_join(ng, &ng->listed[k]);
+	for (k = 0; k < ng->listed_count; k++) {
+		if (ng->listed[k].id != game->id) continue;
+		if (!kp_netgame_join_begin(ng, &ng->listed[k])) return 0;
+		return ng->joining ? kp_netgame_join_poll(ng) : 1; /* the handshake's first pass at once, as SNetJoinGame's */
+	}
 	return 0;
 }
 
@@ -489,6 +492,14 @@ void kp_netui_hooks(KpNetUi *n, KpUiNet *net)
 	net->briefing_start = u_briefing_start;
 	net->briefing_poll = u_briefing_poll;
 	net->host = n;
+}
+
+void kp_netui_poll(KpNetUi *n)
+{
+	KpNetGame *ng = n->game;
+	int r;
+	if (!ng || !ng->joining || (r = kp_netgame_join_poll(ng)) < 0) return;
+	if (!kp_ui_menus_join_done(n->ui, r) && r > 0) kp_netgame_abort(ng);
 }
 
 void kp_netui_free(KpNetUi *n)

@@ -57,7 +57,7 @@ typedef struct {
 	/* the viewers of a network game (kp_watch.h): --watch ADDRESS ("name[:port]", the port KP_WATCH_PORT when not
 	 * given) plays the game that host serves, at once without the glue as --map; --watch-delay SECONDS how far the
 	 * games this program hosts are served behind (< 0: KP_WATCH_DELAY_SECONDS, 0 none); --watch-port PORT their
-	 * server's port (0: KP_WATCH_PORT) */
+	 * server's port (0: KP_WATCH_PORT; -1, --watch-port off: they are served to no viewer) */
 	char watch[KP_NET_HOST];
 	double watch_delay;
 	int watch_port;

@@ -6,12 +6,12 @@
 
 /* Lower bound of 0x419500 and of the inline searches of 0x4195a0: the first entry whose
  * coordinate is >= v (inclusive) or > v (exclusive), over entries 0..count-1. */
-static int64_t search(const int64_t *at, int64_t count, int64_t v, int inclusive)
+static int64_t search(const int32_t *at, int64_t count, int64_t v, int inclusive)
 {
 	int64_t key = inclusive ? v * 2 - 1 : v * 2 + 1, low = 0, high = count, sum = count;
 	while (low < high) {
 		int64_t mid = sum / 2;
-		if (key < at[mid] * 2) {
+		if (key < (int64_t)at[mid] * 2) {
 			sum = mid + low;
 			high = mid;
 		} else {
@@ -29,7 +29,10 @@ void kp_spatial_clear(KpGame *g)
 	KpSpatial *sp = &g->spatial;
 	int64_t k, t, w = 0, h = 0;
 	sp->count = 0;
-	for (k = 0; k < KP_SPATIAL_CAPACITY; k++) sp->x_unit[k] = sp->x_at[k] = sp->y_unit[k] = sp->y_at[k] = -1;
+	for (k = 0; k < KP_SPATIAL_CAPACITY; k++) {
+		sp->x_unit[k] = sp->y_unit[k] = -1;
+		sp->x_at[k] = sp->y_at[k] = -1;
+	}
 	for (t = 0; t < KP_TYPE_NONE; t++) {
 		int64_t width = kp_s16v(ext(g, t, 0)) + kp_s16v(ext(g, t, 2)) + 1;
 		int64_t height = kp_s16v(ext(g, t, 3)) + kp_s16v(ext(g, t, 1)) + 1;
@@ -38,20 +41,23 @@ void kp_spatial_clear(KpGame *g)
 	}
 	sp->max_w = w;
 	sp->max_h = h;
-	for (k = 0; k <= KP_UNITS; k++) sp->mark[k] = sp->seen[k] = 0;
+	for (k = 0; k <= KP_UNITS; k++) {
+		sp->mark[k] = 0;
+		sp->seen[k] = 0;
+	}
 	sp->frame_top = 0;
 	sp->stamp = 0;
 }
 
 /* OpenXEntry 0x419e20 / OpenYEntry 0x419eb0. */
-static void open_entry(KpGame *g, int64_t *units_of, int64_t *at_of, int64_t *lo, int64_t *hi, int64_t at, int64_t count)
+static void open_entry(KpGame *g, int16_t *units_of, int32_t *at_of, int16_t *lo, int16_t *hi, int64_t at, int64_t count)
 {
 	int64_t k;
 	if (count >= KP_SPATIAL_CAPACITY) kp_game_fail(g, "spatial: the index is full");
 	for (k = count - 1; k >= at; k--) {
-		int64_t n = units_of[k];
-		if (lo[n] == k) lo[n] = k + 1;
-		else if (hi[n] == k) hi[n] = k + 1;
+		int16_t n = units_of[k];
+		if (lo[n] == k) lo[n] = kp_to_i16(k + 1);
+		else if (hi[n] == k) hi[n] = kp_to_i16(k + 1);
 		units_of[k + 1] = n;
 		at_of[k + 1] = at_of[k];
 	}
@@ -71,38 +77,38 @@ void kp_spatial_insert(KpGame *g, int64_t n)
 	top = y - kp_s16v(ext(g, t, 1));
 	at = search(sp->x_at, sp->count, left, 1);
 	open_entry(g, sp->x_unit, sp->x_at, u->bound_left, u->bound_right, at, sp->count);
-	u->bound_left[n] = at;
-	sp->x_unit[at] = n;
-	sp->x_at[at] = left;
+	u->bound_left[n] = kp_to_i16(at);
+	sp->x_unit[at] = kp_to_i16(n);
+	sp->x_at[at] = kp_to_i32(left);
 	at = search(sp->y_at, sp->count, top, 1);
 	open_entry(g, sp->y_unit, sp->y_at, u->bound_top, u->bound_bottom, at, sp->count);
-	u->bound_top[n] = at;
-	sp->y_unit[at] = n;
-	sp->y_at[at] = top;
+	u->bound_top[n] = kp_to_i16(at);
+	sp->y_unit[at] = kp_to_i16(n);
+	sp->y_at[at] = kp_to_i32(top);
 	sp->count++;
 	right = kp_s16v(ext(g, t, 2)) + x;
 	bottom = kp_s16v(ext(g, t, 3)) + y;
 	at = search(sp->x_at, sp->count, right, 1);
 	open_entry(g, sp->x_unit, sp->x_at, u->bound_left, u->bound_right, at, sp->count);
-	u->bound_right[n] = at;
-	sp->x_unit[at] = n;
-	sp->x_at[at] = right;
+	u->bound_right[n] = kp_to_i16(at);
+	sp->x_unit[at] = kp_to_i16(n);
+	sp->x_at[at] = kp_to_i32(right);
 	at = search(sp->y_at, sp->count, bottom, 1);
 	open_entry(g, sp->y_unit, sp->y_at, u->bound_top, u->bound_bottom, at, sp->count);
-	u->bound_bottom[n] = at;
-	sp->y_unit[at] = n;
-	sp->y_at[at] = bottom;
+	u->bound_bottom[n] = kp_to_i16(at);
+	sp->y_unit[at] = kp_to_i16(n);
+	sp->y_at[at] = kp_to_i32(bottom);
 	sp->count++;
 }
 
 /* RemoveXEntry 0x419d00 / RemoveYEntry 0x419d90. */
-static void close_entry(int64_t *units_of, int64_t *at_of, int64_t *lo, int64_t *hi, int64_t at, int64_t last)
+static void close_entry(int16_t *units_of, int32_t *at_of, int16_t *lo, int16_t *hi, int64_t at, int64_t last)
 {
 	int64_t k;
 	for (k = at + 1; k <= last; k++) {
-		int64_t n = units_of[k];
-		if (lo[n] == k) lo[n] = k - 1;
-		else if (hi[n] == k) hi[n] = k - 1;
+		int16_t n = units_of[k];
+		if (lo[n] == k) lo[n] = kp_to_i16(k - 1);
+		else if (hi[n] == k) hi[n] = kp_to_i16(k - 1);
 	}
 	for (k = at; k <= last - 1; k++) {
 		units_of[k] = units_of[k + 1];
@@ -125,36 +131,37 @@ void kp_spatial_remove(KpGame *g, int64_t n)
 	u->bound_left[n] = u->bound_top[n] = -1;
 }
 
-static void swap(int64_t *units_of, int64_t *at_of, int64_t *lo, int64_t *hi, int64_t k, int64_t step)
+static void swap(int16_t *units_of, int32_t *at_of, int16_t *lo, int16_t *hi, int64_t k, int64_t step)
 {
-	int64_t n = units_of[k], t;
-	if (lo[n] == k) lo[n] = k + step;
-	else if (hi[n] == k) hi[n] = k + step;
+	int16_t n = units_of[k], t;
+	int32_t a;
+	if (lo[n] == k) lo[n] = kp_to_i16(k + step);
+	else if (hi[n] == k) hi[n] = kp_to_i16(k + step);
 	t = units_of[k];
 	units_of[k] = units_of[k + step];
 	units_of[k + step] = t;
-	t = at_of[k];
+	a = at_of[k];
 	at_of[k] = at_of[k + step];
-	at_of[k + step] = t;
+	at_of[k + step] = a;
 }
 
-static void bubble_up(KpSpatial *sp, int64_t *units_of, int64_t *at_of, int64_t *lo, int64_t *hi, int64_t *field, int64_t n,
+static void bubble_up(KpSpatial *sp, int16_t *units_of, int32_t *at_of, int16_t *lo, int16_t *hi, int16_t *field, int64_t n,
 	int64_t v)
 {
 	while (field[n] + 1 < sp->count) {
 		int64_t k = field[n];
 		if (v <= at_of[k + 1]) break;
 		swap(units_of, at_of, lo, hi, k + 1, -1);
-		field[n] = k + 1;
+		field[n] = kp_to_i16(k + 1);
 	}
 }
 
-static void bubble_down(int64_t *units_of, int64_t *at_of, int64_t *lo, int64_t *hi, int64_t *field, int64_t n, int64_t v)
+static void bubble_down(int16_t *units_of, int32_t *at_of, int16_t *lo, int16_t *hi, int16_t *field, int64_t n, int64_t v)
 {
 	while (field[n] > 0 && v < at_of[field[n] - 1]) {
 		int64_t k = field[n];
 		swap(units_of, at_of, lo, hi, k - 1, 1);
-		field[n] = k - 1;
+		field[n] = kp_to_i16(k - 1);
 	}
 }
 
@@ -162,16 +169,17 @@ void kp_spatial_move(KpGame *g, int64_t n, int64_t dx, int64_t dy)
 {
 	KpUnits *u = &g->u;
 	KpSpatial *sp = &g->spatial;
-	int64_t *xa = sp->x_at, *ya = sp->y_at, left, right, top, bottom;
+	int32_t *xa = sp->x_at, *ya = sp->y_at;
+	int64_t left, right, top, bottom;
 	if (u->bound_left[n] < 0 || (dx == 0 && dy == 0)) return;
 	left = xa[u->bound_left[n]] + dx;
-	xa[u->bound_left[n]] = left;
+	xa[u->bound_left[n]] = kp_to_i32(left);
 	right = xa[u->bound_right[n]] + dx;
-	xa[u->bound_right[n]] = right;
+	xa[u->bound_right[n]] = kp_to_i32(right);
 	top = ya[u->bound_top[n]] + dy;
-	ya[u->bound_top[n]] = top;
+	ya[u->bound_top[n]] = kp_to_i32(top);
 	bottom = ya[u->bound_bottom[n]] + dy;
-	ya[u->bound_bottom[n]] = bottom;
+	ya[u->bound_bottom[n]] = kp_to_i32(bottom);
 	if (dx > 0) {
 		bubble_up(sp, sp->x_unit, xa, u->bound_left, u->bound_right, u->bound_right, n, right);
 		bubble_up(sp, sp->x_unit, xa, u->bound_left, u->bound_right, u->bound_left, n, left);
@@ -217,7 +225,7 @@ int kp_spatial_query(KpGame *g, int64_t left, int64_t top, int64_t right, int64_
 	for (k = y0; k <= y1 - 1; k++) {
 		int64_t n = sp->y_unit[k];
 		int rows = !(narrow_y && kp_s16v(g->w->spr.y[kp_unit_sprite(g, n)]) - kp_s16v(ext(g, u->type[n], 1)) > bottom);
-		sp->mark[n] = (rows & (sp->mark[n] == 1)) ? 3 : sp->mark[n];
+		sp->mark[n] = (uint8_t)((rows & (sp->mark[n] == 1)) ? 3 : sp->mark[n]);
 	}
 	for (k = x0; k <= x1 - 1; k++) {
 		int64_t n = sp->x_unit[k];
@@ -236,7 +244,7 @@ int kp_spatial_query(KpGame *g, int64_t left, int64_t top, int64_t right, int64_
 int kp_spatial_overlap(KpGame *g, int64_t a, int64_t b)
 {
 	KpUnits *u = &g->u;
-	int64_t *xa = g->spatial.x_at, *ya = g->spatial.y_at;
+	const int32_t *xa = g->spatial.x_at, *ya = g->spatial.y_at;
 	return xa[u->bound_left[b]] <= xa[u->bound_right[a]] && xa[u->bound_left[a]] <= xa[u->bound_right[b]]
 		&& ya[u->bound_top[b]] <= ya[u->bound_bottom[a]] && ya[u->bound_top[a]] <= ya[u->bound_bottom[b]];
 }
@@ -291,7 +299,7 @@ int kp_units_in_rect(KpGame *g, int64_t left, int64_t top, int64_t right, int64_
 	while (x < count && sp->x_at[x] < right) {
 		int64_t n = sp->x_unit[x];
 		int take = (sp->seen[n] != stamp) & (y0 <= u->bound_bottom[n]) & (u->bound_top[n] < y1);
-		sp->seen[n] = stamp;
+		sp->seen[n] = kp_to_u32(stamp);
 		if (k < max) {
 			out[k] = n;
 			k += take;

@@ -1048,7 +1048,8 @@ typedef struct KpUiNet {
 	 * count */
 	int (*games)(void *host, KpUiGame *out, int max);
 	/* JoinNetworkGame 0x475610 of a game the last games() listed: 1 joined (the chat room follows), 0 not (the host
-	 * reported why) */
+	 * reported why), -1 Storm's handshake runs (the screen waits, its list and buttons disabled, until the host gives
+	 * the answer: kp_ui_menus_join_done) */
 	int (*join)(void *host, const KpUiGame *game);
 	/* ClearGameList 0x475370: the listed games freed; with unhost, ClearGameListAndFlag 0x4755f0 (the host flag
 	 * 0x672970 cleared too) */
@@ -1212,6 +1213,7 @@ typedef struct {
 	int appended;                        /* 0x66a8b4 */
 	KpUiGame selected;                   /* 0x66a8b8 (zeroed: none) */
 	int32_t dialog;                      /* 0x66a8b0 (-1 none) */
+	uint8_t waiting;                     /* the screen waits for the join KpUiNet.join began (its -1) */
 	uint8_t size[35];                    /* 0x66a948: "%ux%u" */
 	uint8_t type_name[KP_UI_GAME_DETAIL], type_label[KP_UI_GAME_DETAIL], subtype[KP_UI_GAME_DETAIL];
 } KpUiJoin;
@@ -2286,6 +2288,10 @@ int kp_ui_menus_glue_exit(KpUi *ui, int take);
  * label says so and Ok and the edit work again. 1 when the popup waited for it, 0 when it no longer did (its Cancel):
  * the host then drops the address. */
 int kp_ui_menus_address_found(KpUi *ui, int found);
+/* The answer of the join KpUiNet.join began (its -1): joined, the screen ends as its Ok (the chat room follows); not
+ * joined (the host reported why), the screen takes input again with Ok disabled. 1 when the screen waited for it, 0
+ * when it no longer did (it closed): the host then leaves the game it joined. */
+int kp_ui_menus_join_done(KpUi *ui, int joined);
 /* SetGlueStateFromProvider 0x457e50: the glue state a network game's ready room or score screen goes back to, by the
  * provider (Battle.net 4, a modem 20, the cable 21, the LAN's IPX, AppleTalk and UDP 10, any other the main menu 0). */
 int kp_ui_menus_provider_state(const KpUi *ui);

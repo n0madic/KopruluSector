@@ -64,12 +64,12 @@ static KpOracleGame *new_game(KpT *T, int expansion) { return kp_t_probe_game(T,
 static int64_t floor_div(int64_t a, int64_t b) { return a / b - ((a % b != 0) && ((a < 0) != (b < 0))); }
 
 /* Writes value v into byte b of a unit field (the probes' w8 into a wider field). */
-static void set_byte(int64_t *array, int64_t n, int64_t b, int64_t v)
+static void set_byte(KpT *T, KpGame *g, const char *field, int64_t n, int64_t b, int64_t v)
 {
-	int64_t scale = (int64_t)1 << (8 * b), old = array[n];
+	int64_t scale = (int64_t)1 << (8 * b), old = kp_t_unit_get(T, g, field, n);
 	int64_t cur = floor_div(old, scale) % 256;
 	if (cur < 0) cur += 256;
-	array[n] = old + (v - cur) * scale;
+	kp_t_unit_set(T, g, field, n, old + (v - cur) * scale);
 }
 
 static int64_t op_int(const KpJson *op, int k) { return kp_json_int(kp_json_at(op, k), 0); }
@@ -103,9 +103,8 @@ static void fixture(KpT *T, const KpJson *f, const KpJson *c, Fixture *fx)
 	size_t k;
 	int p, i, d;
 	for (k = 0; k < sizeof UNIT_FIELDS / sizeof UNIT_FIELDS[0]; k++) {
-		int64_t *a = kp_t_unit_field(T, g, UNIT_FIELDS[k]);
-		a[unit] = 0;
-		a[other] = 0;
+		kp_t_unit_set(T, g, UNIT_FIELDS[k], unit, 0);
+		kp_t_unit_set(T, g, UNIT_FIELDS[k], other, 0);
 	}
 	g->u.type[unit] = producer;
 	g->u.status[unit] = kp_json_field_int(f, "status", 0);
@@ -161,13 +160,13 @@ static void apply(KpT *T, const Fixture *fx, const KpJson *c)
 		const KpJson *op = kp_json_at(patch, k);
 		const char *kind = op_str(op, 0);
 		if (strcmp(kind, "u") == 0) {
-			kp_t_unit_field(T, g, op_str(op, 1))[fx->unit] = op_int(op, 2);
+			kp_t_unit_set(T, g, op_str(op, 1), fx->unit, op_int(op, 2));
 		} else if (strcmp(kind, "u8") == 0) {
-			set_byte(kp_t_unit_field(T, g, op_str(op, 1)), fx->unit, op_int(op, 2), op_int(op, 3));
+			set_byte(T, g, op_str(op, 1), fx->unit, op_int(op, 2), op_int(op, 3));
 		} else if (strcmp(kind, "u_other") == 0) {
-			kp_t_unit_field(T, g, op_str(op, 1))[fx->unit] = fx->other;
+			kp_t_unit_set(T, g, op_str(op, 1), fx->unit, fx->other);
 		} else if (strcmp(kind, "other") == 0) {
-			kp_t_unit_field(T, g, op_str(op, 1))[fx->other] = op_int(op, 2);
+			kp_t_unit_set(T, g, op_str(op, 1), fx->other, op_int(op, 2));
 		} else if (strcmp(kind, "dat") == 0) {
 			kp_t_dat_set(T, og, op_str(op, 1), op_str(op, 2), op_int(op, 3), op_int(op, 4));
 		} else if (strcmp(kind, "count_completed") == 0) {

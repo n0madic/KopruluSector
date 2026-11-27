@@ -45,14 +45,15 @@ static void differing(const Sections *a, const Sections *b, KpBuf *out)
 
 /* The first words two terrain arrays differ in, the seat's parts aside (mask: the bits compared; creep: a creep
  * tile's variant, the CRT generator's draw, as one). */
-static void terrain_words(const char *what, const int64_t *x, const int64_t *y, int64_t mask, int creep, KpBuf *out)
+static void terrain_words(const char *what, const void *x, const void *y, size_t elem, int64_t mask, int creep,
+	KpBuf *out)
 {
 	int k, shown = 0;
 	for (k = 0; k < KP_TILES && shown < 4; k++) {
-		int64_t p = x[k] & mask, q = y[k] & mask;
+		int64_t a = kp_num_get(x, elem, 0, k), b = kp_num_get(y, elem, 0, k), p = a & mask, q = b & mask;
 		if (creep && (p & 0x7ff0) == 0x10 && (q & 0x7ff0) == 0x10) continue;
 		if (p != q) {
-			kp_buf_printf(out, " [%s %d: %llx %llx]", what, k, (unsigned long long)x[k], (unsigned long long)y[k]);
+			kp_buf_printf(out, " [%s %d: %llx %llx]", what, k, (unsigned long long)a, (unsigned long long)b);
 			shown++;
 		}
 	}
@@ -162,7 +163,7 @@ static void explain(KpGame *a, KpGame *b, KpBuf *out)
 		}
 	}
 	for (n = 0; n <= KP_FLINGIES && shown < 6; n++) {
-#define UNIT_DIFF(name) \
+#define UNIT_DIFF(name, type) \
 		if (strcmp(#name, "sprite") != 0 && !kp_unit_view_field(#name) && a->u.name[n] != b->u.name[n] && shown < 6) { \
 			kp_buf_printf(out, " [unit %lld %s: %lld %lld]", (long long)n, #name, (long long)a->u.name[n], \
 				(long long)b->u.name[n]); \
@@ -171,9 +172,11 @@ static void explain(KpGame *a, KpGame *b, KpBuf *out)
 		KP_UNIT_FIELDS(UNIT_DIFF)
 #undef UNIT_DIFF
 	}
-	terrain_words("tiles", a->terrain.tiles, b->terrain.tiles, ~(int64_t)0x40000000, 0, out); /* the creep shown */
-	terrain_words("raw", a->terrain.raw_tiles, b->terrain.raw_tiles, -1, 1, out);
-	terrain_words("backup", a->terrain.creep_backup, b->terrain.creep_backup, -1, 0, out);
+	terrain_words("tiles", a->terrain.tiles, b->terrain.tiles, KP_ELEM(a->terrain.tiles), ~(int64_t)0x40000000, 0,
+		out); /* the creep shown */
+	terrain_words("raw", a->terrain.raw_tiles, b->terrain.raw_tiles, KP_ELEM(a->terrain.raw_tiles), -1, 1, out);
+	terrain_words("backup", a->terrain.creep_backup, b->terrain.creep_backup, KP_ELEM(a->terrain.creep_backup), -1, 0,
+		out);
 	sprite_diff(a->w, b->w, out);
 }
 

@@ -1053,6 +1053,9 @@ typedef struct {
 	KpPlace places[KP_CANVAS_PANELS];
 	int place_count;
 	int32_t dirty[4]; /* the last compose's changed rectangle, x1 == 0 none */
+	/* raised by each compose that changed the canvas: a frame that composes nothing keeps dirty, so the renderer uploads
+	 * a rectangle once a serial (kp_gfx_canvas) */
+	uint32_t serial;
 	uint8_t blend_row[256];
 	int blend_valid;
 	const KpHdUi *hd_ui; /* the HD interface's art (the console's pieces), or NULL */

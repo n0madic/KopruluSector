@@ -115,6 +115,7 @@ static int finish(KpCanvas *c, KpUi *ui)
 	} else {
 		memset(c->dirty, 0, sizeof c->dirty);
 	}
+	if (changed) c->serial++;
 	c->blend_valid = c->canvas.blends > 0;
 	if (c->blend_valid) kp_ui_canvas_blend_row(ui, c->blend_row);
 	return changed;
