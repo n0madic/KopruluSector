@@ -101,6 +101,16 @@ void kp_spatial_insert(KpGame *g, int64_t n)
 	sp->count++;
 }
 
+/* Whether unit n has entries in the index: its left bound names an entry of n. The original tests the bound against
+ * -1; a record never used keeps kp_units_init's zero bounds, which name another unit's entry or none, and a loaded
+ * save's record handed to the index by a reference must not shift or move the entries of another (kp_load_check holds
+ * every other record's bounds to its own entries or to -1). */
+static int indexed(const KpSpatial *sp, const KpUnits *u, int64_t n)
+{
+	int64_t l = u->bound_left[n];
+	return l >= 0 && l < sp->count && sp->x_unit[l] == n;
+}
+
 /* RemoveXEntry 0x419d00 / RemoveYEntry 0x419d90. */
 static void close_entry(int16_t *units_of, int32_t *at_of, int16_t *lo, int16_t *hi, int64_t at, int64_t last)
 {
@@ -120,7 +130,7 @@ void kp_spatial_remove(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
 	KpSpatial *sp = &g->spatial;
-	if (u->bound_left[n] < 0) return;
+	if (!indexed(sp, u, n)) return;
 	sp->count--;
 	close_entry(sp->x_unit, sp->x_at, u->bound_left, u->bound_right, u->bound_right[n], sp->count);
 	close_entry(sp->y_unit, sp->y_at, u->bound_top, u->bound_bottom, u->bound_bottom[n], sp->count);
@@ -171,7 +181,7 @@ void kp_spatial_move(KpGame *g, int64_t n, int64_t dx, int64_t dy)
 	KpSpatial *sp = &g->spatial;
 	int32_t *xa = sp->x_at, *ya = sp->y_at;
 	int64_t left, right, top, bottom;
-	if (u->bound_left[n] < 0 || (dx == 0 && dy == 0)) return;
+	if ((dx == 0 && dy == 0) || !indexed(sp, u, n)) return;
 	left = xa[u->bound_left[n]] + dx;
 	xa[u->bound_left[n]] = kp_to_i32(left);
 	right = xa[u->bound_right[n]] + dx;

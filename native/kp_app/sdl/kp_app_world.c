@@ -21,6 +21,42 @@ static void free_pack(KpAppPack *p)
 	memset(p, 0, sizeof *p);
 }
 
+void kp_world_drop_kept(KpApp *a)
+{
+	int k;
+	for (k = 0; k < a->kept_count; k++) free_pack(&a->kept_packs[k]);
+	a->kept_count = 0;
+	a->kept_grp = NULL;
+}
+
+/* The world's packs kept for the next world (KpApp.kept_packs), the ones kept before freed. */
+static void keep_packs(KpApp *a)
+{
+	KpAppWorld *w = &a->world;
+	int k;
+	kp_world_drop_kept(a);
+	for (k = 0; k < w->pack_count; k++) a->kept_packs[k] = w->packs[k];
+	a->kept_count = w->pack_count;
+	a->kept_grp = w->packs_grp;
+	a->kept_repacks = w->packs_repacks;
+	w->pack_count = 0;
+}
+
+/* The kept pack of the name moved into p: 1, else 0 (p untouched). */
+static int take_kept(KpApp *a, const char *name, KpAppPack *p)
+{
+	int k;
+	for (k = 0; k < a->kept_count; k++) {
+		KpAppPack *kept = &a->kept_packs[k];
+		if (kept->name[0] && strcmp(kept->name, name) == 0) {
+			*p = *kept;
+			memset(kept, 0, sizeof *kept);
+			return 1;
+		}
+	}
+	return 0;
+}
+
 static void free_hd(KpAppWorld *w)
 {
 	int k;
@@ -53,7 +89,6 @@ static void free_hd(KpAppWorld *w)
 void kp_world_free(KpApp *a)
 {
 	KpAppWorld *w = &a->world;
-	int k;
 	if (!w->active) return;
 	kp_audio_stop_effects(&a->audio); /* the game's sounds; its music the interface's (EndGame 0x443db0) */
 	kp_audio_mission(a);
@@ -67,7 +102,7 @@ void kp_world_free(KpApp *a)
 	kp_image_data_free(&w->data);
 	kp_frame_table_free(&w->frames);
 	free(w->afrm);
-	for (k = 0; k < w->pack_count; k++) free_pack(&w->packs[k]);
+	keep_packs(a);
 	kp_lookups_free(&w->lookups);
 	free(w->ids);
 	free(w->cells);
@@ -539,7 +574,7 @@ static int build(KpApp *a, char *err, size_t err_size)
 	KpError e;
 	int64_t bad;
 	Uint64 packed_at;
-	int k;
+	int k, kept = 0;
 	kp_world_free(a);
 	memset(w, 0, sizeof *w);
 	w->active = 1;
@@ -569,29 +604,48 @@ static int build(KpApp *a, char *err, size_t err_size)
 	if (kp_lookups_build(&w->lookups, &a->data.palettes, (int)(w->mission->tileset & 7), w->tileset.rgb, 0, &e) != 0) {
 		return fail(err, err_size, "%s", e.msg);
 	}
-	/* the mission's resource packs (ADR 0004) with their pages: its GRPs decoded and packed as the converter packs them */
+	/* the mission's resource packs (ADR 0004) with their pages: its GRPs decoded and packed as the converter packs them,
+	 * or the last world's of the same name (kp_app.h: kept_packs) */
 	packed_at = SDL_GetTicksNS();
 	if (w->mission->pack_count > KP_APP_PACKS) {
 		snprintf(err, err_size, "%s: names %d packs, the world holds %d", entry->name, w->mission->pack_count, KP_APP_PACKS);
 		return -1;
 	}
-	for (k = 0; k < w->mission->pack_count; k++) {
-		KpAppPack *p = &w->packs[w->pack_count];
-		if (w->mission->packs[k].size >= sizeof p->name) {
-			snprintf(err, err_size, "%s: a pack name of %d bytes", entry->name, (int)w->mission->packs[k].size);
-			return -1;
+	w->packs_grp = grp;
+	w->packs_repacks = a->res ? kp_res_repacks(a->res) : 0;
+	if (a->kept_grp != w->packs_grp || a->kept_repacks != w->packs_repacks) kp_world_drop_kept(a);
+	{
+		char wanted[KP_APP_PACKS][sizeof w->packs[0].name];
+		for (k = 0; k < w->mission->pack_count; k++) {
+			if (w->mission->packs[k].size >= sizeof wanted[k]) {
+				snprintf(err, err_size, "%s: a pack name of %d bytes", entry->name, (int)w->mission->packs[k].size);
+				return -1;
+			}
+			snprintf(wanted[k], sizeof wanted[k], "%.*s", (int)w->mission->packs[k].size,
+				(const char *)w->mission->packs[k].data);
 		}
-		snprintf(p->name, sizeof p->name, "%.*s", (int)w->mission->packs[k].size, (const char *)w->mission->packs[k].data);
-		w->pack_count++; /* the world frees it from here on */
-		if (kp_pack_build(&p->pack, &p->pages, grp, &a->data.files, p->name, &e) != 0) return fail(err, err_size, "%s", e.msg);
-		packs[w->pack_count - 1] = &p->pack;
-		names[w->pack_count - 1] = p->name;
+		/* the kept packs it names taken, the others freed before any is packed: no more held at once than its own */
+		for (k = 0; k < w->mission->pack_count; k++) kept += take_kept(a, wanted[k], &w->packs[k]);
+		w->pack_count = w->mission->pack_count; /* the world frees them from here on (one not taken has no name yet) */
+		kp_world_drop_kept(a);
+		for (k = 0; k < w->pack_count; k++) {
+			KpAppPack *p = &w->packs[k];
+			if (!p->name[0]) {
+				memcpy(p->name, wanted[k], sizeof p->name);
+				if (kp_pack_build(&p->pack, &p->pages, grp, &a->data.files, p->name, &e) != 0) {
+					free_pack(p); /* not kept for another world */
+					return fail(err, err_size, "%s", e.msg);
+				}
+			}
+			packs[k] = &p->pack;
+			names[k] = p->name;
+		}
 	}
 	{
 		int32_t pages = 0;
 		for (k = 0; k < w->pack_count; k++) pages += w->packs[k].pack.page_count;
-		SDL_Log("world: %d packs packed from the GRPs, %d pages, in %.0f ms", w->pack_count, (int)pages,
-			(double)(SDL_GetTicksNS() - packed_at) / 1e6);
+		SDL_Log("world: %d packs packed from the GRPs (%d kept from the last world), %d pages, in %.0f ms", w->pack_count,
+			kept, (int)pages, (double)(SDL_GetTicksNS() - packed_at) / 1e6);
 	}
 	if (kp_grpmeta_afrm(grp, &w->afrm, &e) != 0
 		|| kp_frame_table_build(&w->frames, grp, w->afrm, packs, names, w->pack_count, &e) != 0

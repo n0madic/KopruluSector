@@ -190,6 +190,8 @@ typedef struct {
 	KpLookups lookups;
 	KpAppPack packs[KP_APP_PACKS];
 	int pack_count;
+	const KpGrpMeta *packs_grp; /* the packs built over it and the sources' repack count then (KpApp.kept_packs) */
+	int packs_repacks;
 	uint32_t *afrm;
 	KpFrameTable frames;
 	KpImageData data;
@@ -305,6 +307,13 @@ struct KpApp {
 	/* the flow: the glue, the games, the saves, the video options, the screen's layout and the view (kp_flow.h) */
 	KpFlow flow;
 	KpAppWorld world;
+	/* The last world's resource packs, kept for the next one: kp_world_build takes the ones its mission names (a load, a
+	 * restart, a replay of the same map packs none again, a mission of the same race fewer) and frees the others before
+	 * it packs its own. Between games they stay held (their pages, 4 MiB each: 32-36 MiB for a campaign mission's).
+	 * Built over kept_grp and the sources' repack count then (another repack, which may hold their GRPs, drops them). */
+	KpAppPack kept_packs[KP_APP_PACKS];
+	int kept_count, kept_repacks;
+	const KpGrpMeta *kept_grp;
 	KpAppCine cine;
 	KpAppHdUi hd_ui;         /* the HD interface's art (stage R4d) */
 	KpAppGroupFetch group_fetches[KP_APP_GROUP_FETCHES]; /* the repack's groups on their way */
@@ -458,6 +467,8 @@ void kp_app_cine_free(KpApp *a);
 /* kp_app_world.c: the playing game's world */
 int kp_world_build(KpApp *a, char *err, size_t err_size);
 void kp_world_free(KpApp *a);
+/* The kept packs freed (the data they were built from goes). */
+void kp_world_drop_kept(KpApp *a);
 /* The world's textures from its CPU copies (after the build, and again after a lost context). */
 void kp_world_upload(KpApp *a);
 /* The world's art loaded again while the game goes on and everything uploaded (the HD interface's and a movie's too):

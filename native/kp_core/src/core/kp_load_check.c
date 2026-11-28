@@ -3,7 +3,8 @@
  * it does not authenticate (kp_save_seal): a save of someone's making may hold any value, and a link out of its array
  * would make the step read or write past it. The game writes only values in these domains, so a save of a game never
  * fails the check; a list is walked from its head, as the step walks it (a stale link past a list's end is the
- * original's, and stays unchecked).
+ * original's, and stays unchecked). The spatial index is checked whole: its entries and the units' bounds name each
+ * other (spatial below).
  *
  * The union words (+0xc0..+0xd8) are checked where the step writes through them (a Nuclear Silo's missile, a research's
  * tech and an upgrade's id, a resource's area); their reads stay unchecked.
@@ -112,10 +113,6 @@ static void units(Check *c, KpGame *g)
 	each(c, "unit heading2", u->heading2, 1, KP_FLINGIES, 0, 0xff);
 	each(c, "unit queue_slot", u->queue_slot, 1, KP_FLINGIES, 0, 4);
 	each(c, "unit type", u->type, 1, KP_UNITS, 0, KP_UNIT_TYPES - 1);
-	EACH(c, "unit bound_left", u->bound_left, 1, 1, KP_UNITS, KP_NONE, KP_SPATIAL_CAPACITY - 1);
-	EACH(c, "unit bound_right", u->bound_right, 1, 1, KP_UNITS, KP_NONE, KP_SPATIAL_CAPACITY - 1);
-	EACH(c, "unit bound_top", u->bound_top, 1, 1, KP_UNITS, KP_NONE, KP_SPATIAL_CAPACITY - 1);
-	EACH(c, "unit bound_bottom", u->bound_bottom, 1, 1, KP_UNITS, KP_NONE, KP_SPATIAL_CAPACITY - 1);
 	for (n = 1; n <= KP_FLINGIES && !c->failed; n++) {
 		int64_t ai = u->ai[n], kind = kp_ai_ref_kind(ai), k2 = kp_ai_ref_index(ai);
 		if (ai != 0 && !(kind >= KP_AI_GUARD && kind <= KP_AI_MILITARY && k2 >= 0 && k2 < KP_GUARDS && ai == KP_AI_REF(kind, k2)))
@@ -238,18 +235,40 @@ static void computers(Check *c, KpGame *g)
 	each(c, "military region", g->military.region, 0, KP_MILITARY_AIS - 1, KP_NONE, KP_AI_REGIONS - 1);
 }
 
-static void places(Check *c, KpGame *g)
+/* The spatial index whole (kp_spatial.c): its entries 0..count-1 hold records, and each record's four bounds are none
+ * (-1: out of the index), the zeros of a record never used (kp_units_init's, which kp_spatial_remove and
+ * kp_spatial_move tell from an entry by the entry's unit) or its own entries, two distinct ones on each axis with the
+ * record there; and every entry is some record's bound (count is twice the records in the index). The index's shifts
+ * and bubbles read the entries before count only and write through their units' bounds: a bound past count, a record
+ * half out of the index or an entry no bound names would make them read an unchecked entry and write past an array. */
+static void spatial(Check *c, KpGame *g)
 {
 	const KpSpatial *sp = &g->spatial;
+	const KpUnits *u = &g->u;
+	int64_t n, count = sp->count, indexed = 0;
+	if (!in(c, "the spatial index's count", 0, count, 0, KP_SPATIAL_CAPACITY)) return;
+	EACH(c, "spatial x unit", sp->x_unit, 1, 0, count - 1, 1, KP_UNITS);
+	EACH(c, "spatial y unit", sp->y_unit, 1, 0, count - 1, 1, KP_UNITS);
+	for (n = 1; n <= KP_UNITS && !c->failed; n++) {
+		int64_t l = u->bound_left[n], r = u->bound_right[n], t = u->bound_top[n], b = u->bound_bottom[n];
+		if ((l == KP_NONE && r == KP_NONE && t == KP_NONE && b == KP_NONE) || (l == 0 && r == 0 && t == 0 && b == 0)) continue;
+		if (!(l >= 0 && l < count && r >= 0 && r < count && t >= 0 && t < count && b >= 0 && b < count && l != r && t != b
+			&& sp->x_unit[l] == n && sp->x_unit[r] == n && sp->y_unit[t] == n && sp->y_unit[b] == n)) {
+			refuse(c, "unit bounds", n, l);
+			return;
+		}
+		indexed++;
+	}
+	if (!c->failed && count != 2 * indexed) refuse(c, "the spatial index's entries", count, 2 * indexed);
+}
+
+static void places(Check *c, KpGame *g)
+{
 	const KpTerrain *t = &g->terrain;
 	const KpTriggers *tr = &g->trig;
 	const KpVisited *v = &g->pathing.visited;
 	int64_t k;
-	in(c, "the spatial index's count", 0, sp->count, 0, KP_SPATIAL_CAPACITY);
-	if (!c->failed) {
-		EACH(c, "spatial x unit", sp->x_unit, 1, 0, sp->count - 1, 0, KP_UNITS);
-		EACH(c, "spatial y unit", sp->y_unit, 1, 0, sp->count - 1, 0, KP_UNITS);
-	}
+	spatial(c, g);
 	for (k = 0; k <= KP_RECEDE_BUCKETS && !c->failed; k++)
 		walk(c, "receding creep list", t->recede_head[k], t->recede_next, 0, 1, KP_RECEDE_NODES);
 	each(c, "receding creep next", t->recede_next, 0, KP_RECEDE_NODES, 0, KP_RECEDE_NODES);

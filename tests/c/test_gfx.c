@@ -39,6 +39,7 @@ struct KpGfxBackend {
 	int blocks;                         /* kp_gb_takes_blocks: every block format ... */
 	int no_astc;                        /* ... but ASTC's */
 	float light[4];                     /* KP_PROG_HD_IMAGES's KP_U_LIGHT */
+	float toned;                        /* KP_PROG_HD_COMPOSITE's KP_U_UI_GAMMA y: the world toned */
 	/* the SDL_GPU backend's pipelines (KP_GFX_GPU_PIPELINES): the target bound, the blend, the rows the draws took,
 	 * the draws without one and the last of them */
 	int bound, blend;
@@ -118,6 +119,7 @@ void kp_gb_clear(KpGfxBackend *b, float r, float gg, float bb, float a, int dept
 void kp_gb_uniform(KpGfxBackend *b, int prog, int u, float x, float y, float z, float w)
 {
 	if (u == KP_U_SLOT_BASE) b->slot_base[prog] = x;
+	if (u == KP_U_UI_GAMMA && prog == KP_PROG_HD_COMPOSITE) b->toned = y;
 	if (u == KP_U_LIGHT && prog == KP_PROG_HD_IMAGES) {
 		b->light[0] = x;
 		b->light[1] = y;
@@ -798,6 +800,76 @@ static void hd_lit_slots_light_the_sprites(KpT *T)
 	kp_t_eq(T, (int)recorder->light[3], 0, "no lit slots: the sprites unlit");
 }
 
+/* The HD world's tone (stage R4c) read only where it changes a level: the palette at its base, and the original's art,
+ * leave the composite's tone reads off; a fade or the grey palette turns them on. */
+static void hd_tone_read_only_where_it_changes(KpT *T)
+{
+	static uint8_t base[768], skip[256], faded[768], grey[768];
+	static float texels[KP_FRAME_TABLE_WIDTH * 4];
+	static KpLookups lookups;
+	static const int32_t SLOT_OF[1] = { 0 };
+	KpGfxApi api = { 1, 0, KP_GFX_BACKEND_GL, NULL, NULL };
+	KpFrameTable table;
+	KpGfxFrame f;
+	KpGfx *g;
+	char err[256] = "";
+	int k;
+	g = kp_gfx_new(&api, err, sizeof err);
+	kp_t_ok(T, g != NULL && recorder != NULL, "no gfx: %s", err);
+	if (!g || !recorder) return;
+	kp_t_defer(T, gfx_free, g);
+	for (k = 0; k < 256; k++) { /* a ramp of greens and blues over a red that falls: no entry grey */
+		base[3 * k] = (uint8_t)(255 - k);
+		base[3 * k + 1] = (uint8_t)k;
+		base[3 * k + 2] = (uint8_t)(k / 2 + 64);
+		faded[3 * k] = (uint8_t)(base[3 * k] / 2);
+		faded[3 * k + 1] = (uint8_t)(base[3 * k + 1] / 2);
+		faded[3 * k + 2] = (uint8_t)(base[3 * k + 2] / 2);
+		grey[3 * k] = grey[3 * k + 1] = grey[3 * k + 2] = (uint8_t)k;
+	}
+	skip[0] = 1;
+	/* an HD world with nothing in it: slots, a page's slot, a frame table and the colours */
+	kp_t_eq(T, kp_gfx_hd_slots(g, 4, 0, 64, KP_HD_FORMAT_BC, 0), 0, "slots made");
+	kp_gfx_hd_page_slots(g, SLOT_OF, 1);
+	memset(&table, 0, sizeof table);
+	table.texels = texels;
+	table.height = 1;
+	kp_gfx_hd_frame_table(g, &table, 1);
+	kp_gfx_hd_colors(g, &lookups, base, NULL, 0);
+	kp_gfx_hd(g, 1);
+	kp_gfx_effects(g, 0, 1, 0);
+	kp_t_ok(T, kp_gfx_hd_ready(g), "the HD world ready");
+	kp_gfx_hd_tone_base(g, base, skip);
+	memset(&f, 0, sizeof f);
+	f.win_w = f.full_w = 640;
+	f.win_h = f.full_h = 480;
+	f.mode = KP_SCALE_INTEGER;
+	f.scale = 1;
+	f.world_w = 640;
+	f.world_h = 480;
+	kp_gfx_palette(g, base);
+	recorder->toned = -1;
+	kp_gfx_frame(g, &f);
+	kp_t_ok(T, recorder->toned == 0.0f, "the palette at its base: no tone read (%f)", (double)recorder->toned);
+	kp_gfx_palette(g, faded);
+	recorder->toned = -1;
+	kp_gfx_frame(g, &f);
+	kp_t_ok(T, recorder->toned == 1.0f, "a fade toned (%f)", (double)recorder->toned);
+	kp_gfx_palette(g, grey);
+	recorder->toned = -1;
+	kp_gfx_frame(g, &f);
+	kp_t_ok(T, recorder->toned == 1.0f, "the grey palette toned (%f)", (double)recorder->toned);
+	kp_gfx_palette(g, base);
+	recorder->toned = -1;
+	kp_gfx_frame(g, &f);
+	kp_t_ok(T, recorder->toned == 0.0f, "back at its base: off again (%f)", (double)recorder->toned);
+	kp_gfx_effects(g, 2, 1, 0); /* the original's art: its palette is its colours */
+	kp_gfx_palette(g, faded);
+	recorder->toned = -1;
+	kp_gfx_frame(g, &f);
+	kp_t_ok(T, recorder->toned == 0.0f, "the original's art faded: no tone read (%f)", (double)recorder->toned);
+}
+
 /* The renderer switched in a running game (ADR 0028): kp_gfx_detach frees the backend before its window goes (a frame
  * then draws nothing), kp_gfx_attach makes one over the other API with a new gfx's state (no art up: the host uploads
  * it again), the palette kept and uploaded on the next frame. */
@@ -951,6 +1023,7 @@ static const KpTest TESTS[] = {
 	{ "hd_composite_reads_what_lay_under", hd_composite_reads_what_lay_under, 0 },
 	{ "canvas_uploads_once_a_compose", canvas_uploads_once_a_compose, 0 },
 	{ "hd_lit_slots_light_the_sprites", hd_lit_slots_light_the_sprites, 0 },
+	{ "hd_tone_read_only_where_it_changes", hd_tone_read_only_where_it_changes, 0 },
 	{ "gpu_pipelines_cover_the_passes", gpu_pipelines_cover_the_passes, 0 },
 	{ "attach_takes_another_api", attach_takes_another_api, 0 },
 };

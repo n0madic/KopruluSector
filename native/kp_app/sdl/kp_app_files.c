@@ -231,6 +231,7 @@ int kp_app_load_data(KpApp *a, char *err, size_t err_size)
 void kp_app_data_free(KpApp *a)
 {
 	int k;
+	kp_world_drop_kept(a); /* built from the data */
 	kp_data_free(&a->data);
 	for (k = 0; k < KP_DATA_VECTOR_FONTS; k++) free(a->vector_fonts[k]);
 	free(a->console_art);

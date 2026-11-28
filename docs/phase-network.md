@@ -543,7 +543,9 @@ resends. The user approved the design inline on 2026-11-27.
   lock released between them, so the pump thread (or the call itself without one) reads the answer meanwhile.
 - **Tests:** `test_flow.storm_answers_without_frames` (a peer's connect answered by Storm's accept with no frame run,
   then the main thread's calls and frames against the thread's filing for 300 ms), `a_failing_socket_stops_the_reads`
-  (the thread sees the failed socket, a frame joins it and tells the player once), `test_snet.a_polled_join_is_the_blocking_one`,
+  (the thread sees the failed socket, a frame joins it and tells the player once), `a_blocking_join_takes_the_hosts_answer`
+  (two flows on a map of two hosts: the host's game listed and answered by its pump thread with no frame run, joined by
+  the blocking call; with the lock held through the waits it timed out, checked by hand), `test_snet.a_polled_join_is_the_blocking_one`,
   `test_hud.glue_join_waits_for_the_network`. `KP_TSAN` (CMake) builds them under ThreadSanitizer; `tools/ci.sh`'s full
   mode runs them so. With the main thread's lock taken out, ThreadSanitizer reports the race at once (checked by hand).
 

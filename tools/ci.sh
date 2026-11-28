@@ -740,6 +740,9 @@ if [ -n "${KOPRULU_APP:-}" ]; then
       save)
         [ -s build/script/save/from-file.png ]
         [ ! -e "build/script/save/pref/save_-koprulu_20save_20check.kpsave" ] # check save-file took it
+        # the load's world takes the game's packs (KpApp.kept_packs): none packed again
+        grep -qE "world: ([0-9]+) packs packed from the GRPs \(\1 kept from the last world\)" build/script_save.err ||
+          { echo "ci: script save: the load packed its world's packs again (KpApp.kept_packs)" >&2; return 1; }
         ;;
       replay) [ -s build/script/replay/pref/replays/LastReplay.rep ] ;; # the game's record, played back at the same state
     esac

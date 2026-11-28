@@ -49,6 +49,7 @@ struct KpGfx {
 	int hd_water, hd_normals;    /* the map's water masks and the normal maps are up (stage R4c) */
 	int32_t hd_normal_frames[2];
 	int hd_tone, hd_tone_dirty;  /* the palette's tone for the HD world: its base set, to be made again */
+	int hd_tone_on;              /* the tone made changes a level (0: none, the composite skips its reads) */
 	uint8_t hd_tone_base[768], hd_tone_skip[256];
 	int32_t ui_items;            /* the HD interface's items uploaded (0: the canvas in SD) */
 	float ui_cursor[9];          /* the cursor's HD frame: rectangle, texels, layer; ui_cursor_on */
@@ -727,6 +728,9 @@ static void hd_tone(KpGfx *g)
 	}
 	kp_gb_texture(g->b, KP_TEX_HD_TONE, KP_FMT_RGBA8, 256, 1, 0);
 	kp_gb_upload(g->b, KP_TEX_HD_TONE, 0, 0, 0, 256, 1, tone, 0);
+	/* none (each level its own, not grey: the palette at its base, the original's art): the composite skips its reads */
+	g->hd_tone_on = tone[3] != 0;
+	for (k = 0; k < 256 && !g->hd_tone_on; k++) g->hd_tone_on = tone[4 * k] != k || tone[4 * k + 1] != k || tone[4 * k + 2] != k;
 	g->hd_tone_dirty = 0;
 }
 
@@ -1064,7 +1068,7 @@ static void draw_hd_frame(KpGfx *g, const KpGfxFrame *f, int world, int32_t vw, 
 	kp_gb_uniform(g->b, KP_PROG_HD_COMPOSITE, KP_U_SOURCE_SIZE, (float)f->world_w, (float)f->world_h,
 		g->canvas ? 1.0f : 0.0f, ui ? 1.0f : 0.0f);
 	kp_gb_uniform(g->b, KP_PROG_HD_COMPOSITE, KP_U_HD_CURSOR_LAYER, 0, 0, 0, 0);
-	kp_gb_uniform(g->b, KP_PROG_HD_COMPOSITE, KP_U_UI_GAMMA, g->gamma, 0, 0, 0);
+	kp_gb_uniform(g->b, KP_PROG_HD_COMPOSITE, KP_U_UI_GAMMA, g->gamma, g->hd_tone_on ? 1.0f : 0.0f, 0, 0);
 	kp_gb_bind(g->b, KP_TARGET_WINDOW, f->win_x, f->win_y, vw, vh);
 	kp_gb_draw(g->b, KP_PROG_HD_COMPOSITE, FULLSCREEN, COMPOSITE, COMPOSITE_COUNT, KP_DEPTH_OFF, 0);
 	if (g->text_quads > 0 && g->canvas) draw_text(g, f, !hd_cursor);

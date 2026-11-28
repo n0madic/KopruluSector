@@ -2659,20 +2659,27 @@ static void a_lobby_map_preview_goes_through_the_flow(KpT *T)
 #define MAX_FD 1024
 
 #if !defined(_WIN32) && !defined(__EMSCRIPTEN__)
-/* The flow's network with the UDP provider chosen on two free ports of 127.0.0.1 (a map of one host, as Koprulu's own
- * games on one machine); 1 chosen. */
-static int choose_udp_on_free_ports(Host *H)
+/* The flow's network with the UDP provider chosen as host self of a map of hosts on 127.0.0.1 from port base (as
+ * Koprulu's own games on one machine); 1 chosen. */
+static int choose_udp_on_map(Host *H, uint32_t base, int hosts, int self)
 {
 	KpNetPlay *p = H->f.netplay;
+	memset(&p->config.sock, 0, sizeof p->config.sock);
+	p->config.sock.map_base = (uint16_t)base;
+	p->config.sock.map_hosts = hosts;
+	p->config.sock.map_self = self;
+	return p->net.select_provider(p->net.host, KP_SNP_UDP_ID);
+}
+
+/* A port base to try (a map's hosts take two ports each from it) */
+static uint32_t free_port_base(int attempt) { return 20000u + (kp_net_sock_now() / 2u + (uint32_t)attempt * 7919u) % 20000u * 2u; }
+
+/* The flow's network with the UDP provider chosen on two free ports of 127.0.0.1 (a map of one host); 1 chosen. */
+static int choose_udp_on_free_ports(Host *H)
+{
 	int attempt;
-	for (attempt = 0; attempt < FREE_PORT_TRIES; attempt++) {
-		uint32_t base = 20000u + (kp_net_sock_now() / 2u + (uint32_t)attempt * 7919u) % 20000u * 2u;
-		memset(&p->config.sock, 0, sizeof p->config.sock);
-		p->config.sock.map_base = (uint16_t)base;
-		p->config.sock.map_hosts = 1;
-		p->config.sock.map_self = 0;
-		if (p->net.select_provider(p->net.host, KP_SNP_UDP_ID)) return 1;
-	}
+	for (attempt = 0; attempt < FREE_PORT_TRIES; attempt++)
+		if (choose_udp_on_map(H, free_port_base(attempt), 1, 0)) return 1;
 	return 0;
 }
 
@@ -2812,6 +2819,58 @@ static void storm_answers_without_frames(KpT *T)
 	}
 	close(fd);
 	kp_t_ok(T, !p->sock_failed, "the sockets read on");
+#endif
+}
+
+/* SNetJoinGame's blocking join over the flow's calls (KpNetGame.net.join_game, kp_netplay's l_join; the flow itself
+ * joins by join_begin and join_poll): its passes release Storm's lock between them, so the joiner's pump thread takes
+ * the host's answers (the review of 2026-11-28: kp_snet_join_game held the lock through its waits, the thread read
+ * nothing and the join timed out). Two flows on a map of two hosts of 127.0.0.1: the host's Storm game, which its pump
+ * thread lists and answers with no frame run; the joiner finds it and joins by the blocking call. */
+#define JOIN_LIST_MS 3000
+#define JOIN_LIST_PASS_MS 20
+#define JOIN_GAME "koprulu join"
+
+#if !defined(_WIN32) && !defined(__EMSCRIPTEN__)
+static int join_listed(void *ud, const KpSnetGame *g)
+{
+	if (strcmp(g->name, JOIN_GAME) == 0) *(uint32_t *)ud = g->id;
+	return 1;
+}
+#endif
+
+static void a_blocking_join_takes_the_hosts_answer(KpT *T)
+{
+#if defined(_WIN32) || defined(__EMSCRIPTEN__)
+	kp_t_skip(T, "two flows' sockets on 127.0.0.1 (POSIX sockets only)");
+#else
+	Host *A = logged_in_host(T, "Fenix"), *B = logged_in_host(T, "Tassadar");
+	KpNetPlay *host = A->f.netplay, *joiner = B->f.netplay;
+	uint8_t tmpl[KP_TEMPLATE_SIZE];
+	uint32_t game = 0, hint = 0, until;
+	int attempt, chosen = 0, host_id = -1, joined_id = -1;
+	kp_t_ok(T, host != NULL && joiner != NULL, "the flows' network");
+	for (attempt = 0; attempt < FREE_PORT_TRIES && !chosen; attempt++) {
+		uint32_t base = free_port_base(attempt);
+		chosen = choose_udp_on_map(A, base, 2, 0) && choose_udp_on_map(B, base, 2, 1);
+	}
+	kp_t_ok(T, chosen, "both providers on one map's free ports (%s; %s)", A->last_log, B->last_log);
+	kp_t_ok(T, host->pump != NULL && joiner->pump != NULL, "Storm pumped on each one's thread");
+	memset(tmpl, 0, sizeof tmpl);
+	kp_t_ok(T, host->game.net.create_game(host->game.net.ud, JOIN_GAME, "", "", 0, 0, 0, tmpl, sizeof tmpl, 2, "Fenix", "",
+		&host_id), "the host's game (error %u)", (unsigned)host->game.net.error(host->game.net.ud));
+	until = kp_net_sock_now() + JOIN_LIST_MS;
+	while (game == 0 && (int32_t)(until - kp_net_sock_now()) > 0) {
+		(void)joiner->game.net.enum_games(joiner->game.net.ud, join_listed, &game, &hint);
+		if (game == 0) kp_net_sock_sleep(JOIN_LIST_PASS_MS);
+	}
+	kp_t_ok(T, game != 0, "the host's game listed within %d ms, no frame run", JOIN_LIST_MS);
+	kp_t_eq(T, joiner->game.net.join_game(joiner->game.net.ud, game, JOIN_GAME, "", "Tassadar", "", &joined_id), 1,
+		"joined by the blocking call (error %u)", (unsigned)joiner->game.net.error(joiner->game.net.ud));
+	kp_t_ok(T, joined_id >= 0 && joined_id != host_id, "a player id of its own (%d; the host's %d)", joined_id, host_id);
+	(void)joiner->game.net.leave_game(joiner->game.net.ud, 0);
+	(void)host->game.net.leave_game(host->game.net.ud, 0);
+	kp_t_ok(T, !host->sock_failed && !joiner->sock_failed, "the sockets read on");
 #endif
 }
 
@@ -5346,6 +5405,7 @@ static const KpTest TESTS[] = {
 	{ "a_lobby_map_preview_goes_through_the_flow", a_lobby_map_preview_goes_through_the_flow, 0 },
 	{ "a_failing_socket_stops_the_reads", a_failing_socket_stops_the_reads, 0 },
 	{ "storm_answers_without_frames", storm_answers_without_frames, 0 },
+	{ "a_blocking_join_takes_the_hosts_answer", a_blocking_join_takes_the_hosts_answer, 0 },
 	{ "play_custom_screens_are_the_originals", play_custom_screens_are_the_originals, 0 },
 	{ "custom_games_end_in_the_next_scenario_or_the_campaign_menu", custom_games_end_in_the_next_scenario_or_the_campaign_menu, 0 },
 	{ "custom_saves_find_their_maps_folder", custom_saves_find_their_maps_folder, 0 },

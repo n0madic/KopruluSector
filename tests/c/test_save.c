@@ -618,9 +618,10 @@ static void loads_refuse_scalars_a_game_cannot_hold(KpT *T)
  * was, its serials too (the interface takes no load). */
 static void loads_refuse_indices_out_of_their_arrays(KpT *T)
 {
-	enum { CONNECTED, UNIT_LOOP, RING, HEAP, IMAGE_NEXT, ORDER_LOOP, RECEDE, RESEARCH, BAD_COUNT };
+	enum { CONNECTED, UNIT_LOOP, RING, HEAP, IMAGE_NEXT, ORDER_LOOP, RECEDE, RESEARCH, BOUND_PAST, BOUND_HALF, ENTRIES, BAD_COUNT };
 	static const char *const EXPECT[BAD_COUNT] = { "unit connected", "unit list", "bullet ring", "AI heap count",
-		"image next", "order free list", "receding creep bucket", "a research's tech" };
+		"image next", "order free list", "receding creep bucket", "a research's tech", "unit bounds", "unit bounds",
+		"the spatial index's entries" };
 	const char *path = "scenarios/marine_group";
 	KpOracleGame *game, *into;
 	KpBuf *before, *after;
@@ -632,13 +633,19 @@ static void loads_refuse_indices_out_of_their_arrays(KpT *T)
 	before = kp_t_buf(T);
 	after = kp_t_buf(T);
 	kp_t_ok(T, kp_state_lines(into->g, 0, before) == 0, "out of memory");
+	kp_t_ok(T, game->g->u.bound_left[game->g->lists[KP_LIST_ACTIVE].head] >= 0, "the first unit is in the spatial index");
 	for (bad = 0; bad < BAD_COUNT; bad++) {
 		KpGame *g = game->g;
+		KpSpatial *sp = &g->spatial;
 		int64_t n = g->lists[KP_LIST_ACTIVE].head, o = g->orders.free.head, load_serial = into->g->load_serial;
-		int64_t was = 0, order = g->u.order[n], tech = kp_union_get(g, n, 0xc8, 1);
+		int64_t was = 0, order = g->u.order[n], tech = kp_union_get(g, n, 0xc8, 1), count = sp->count;
 		int32_t image_next = g->w->img.next[0];
+		/* two entries past the index's (a unit in range, named by no bound) */
+		int16_t entries[4];
 		uint8_t *bytes;
 		size_t size;
+		entries[0] = sp->x_unit[count], entries[1] = sp->x_unit[count + 1];
+		entries[2] = sp->y_unit[count], entries[3] = sp->y_unit[count + 1];
 		switch (bad) {
 		case CONNECTED: was = g->u.connected[n]; g->u.connected[n] = KP_UNITS + 5; break;
 		case UNIT_LOOP: was = g->u.next[n]; g->u.next[n] = n; break;
@@ -648,6 +655,12 @@ static void loads_refuse_indices_out_of_their_arrays(KpT *T)
 		case ORDER_LOOP: was = g->orders.next[o]; g->orders.next[o] = o; break;
 		case RECEDE: was = g->terrain.recede_bucket[3]; g->terrain.recede_bucket[3] = KP_RECEDE_BUCKETS + 1; break;
 		case RESEARCH: g->u.order[n] = KP_ORD_RESEARCH; kp_union_set(g, n, 0xc8, 1, 200); break;
+		case BOUND_PAST: was = g->u.bound_right[n]; g->u.bound_right[n] = (int16_t)count; break;
+		case BOUND_HALF: was = g->u.bound_right[n]; g->u.bound_right[n] = -1; break;
+		case ENTRIES:
+			sp->x_unit[count] = sp->x_unit[count + 1] = sp->y_unit[count] = sp->y_unit[count + 1] = (int16_t)n;
+			sp->count = count + 2;
+			break;
 		}
 		bytes = save(T, g, "a", DATA, &size);
 		switch (bad) {
@@ -659,6 +672,13 @@ static void loads_refuse_indices_out_of_their_arrays(KpT *T)
 		case ORDER_LOOP: g->orders.next[o] = was; break;
 		case RECEDE: g->terrain.recede_bucket[3] = was; break;
 		case RESEARCH: g->u.order[n] = order; kp_union_set(g, n, 0xc8, 1, tech); break;
+		case BOUND_PAST:
+		case BOUND_HALF: g->u.bound_right[n] = (int16_t)was; break;
+		case ENTRIES:
+			sp->count = count;
+			sp->x_unit[count] = entries[0], sp->x_unit[count + 1] = entries[1];
+			sp->y_unit[count] = entries[2], sp->y_unit[count + 1] = entries[3];
+			break;
 		}
 		kp_t_ok(T, refused(into->g, bytes, size, "a", DATA, &err) && strstr(err.msg, EXPECT[bad]), "%s refused: %s",
 			EXPECT[bad], err.msg);
@@ -673,6 +693,35 @@ static void loads_refuse_indices_out_of_their_arrays(KpT *T)
 		bytes = save(T, game->g, "a", DATA, &size);
 		kp_t_ok(T, !refused(into->g, bytes, size, "a", DATA, &err), "the game's own save loads: %s", err.msg);
 	}
+}
+
+/* A record never used keeps kp_units_init's zero bounds, which the load check lets through: a loaded save's reference
+ * that hands it to the spatial index's move or remove leaves the other units' entries and the index's count as they
+ * are (the zeros name another unit's entry). */
+static void a_record_never_used_stays_out_of_the_spatial_index(KpT *T)
+{
+	const char *path = "scenarios/marine_group";
+	KpOracleGame *game;
+	KpBuf *before, *after;
+	KpGame *g;
+	int64_t n, never = 0, count;
+	if (!kp_t_ready(T, "test_save", FILES)) return;
+	game = kp_t_game(T, path, 1, 0, NULL);
+	g = game->g;
+	for (n = KP_UNITS; n >= 1 && never == 0; n--)
+		if (g->u.bound_left[n] == 0 && g->u.bound_right[n] == 0 && g->u.bound_top[n] == 0 && g->u.bound_bottom[n] == 0) never = n;
+	count = g->spatial.count;
+	kp_t_ok(T, never != 0 && count >= 2, "a record never used (%lld) beside units in the index (%lld entries)",
+		(long long)never, (long long)count);
+	if (never == 0) return;
+	before = kp_t_buf(T);
+	after = kp_t_buf(T);
+	kp_t_ok(T, kp_state_lines(g, 0, before) == 0, "out of memory");
+	kp_spatial_move(g, never, 5, 5);
+	kp_spatial_remove(g, never);
+	kp_t_ok(T, kp_state_lines(g, 0, after) == 0, "out of memory");
+	kp_t_eq(T, g->spatial.count, count, "the index's count");
+	kp_t_ok(T, before->size == after->size && memcmp(before->data, after->data, before->size) == 0, "the game unchanged");
 }
 
 /* The countdown's text is not saved: a load sets it from the loaded countdown, not the game's before the load (an
@@ -1306,6 +1355,7 @@ static const KpTest TESTS[] = {
 	{ "loads_reject_other_saves", loads_reject_other_saves, 0 },
 	{ "loads_refuse_scalars_a_game_cannot_hold", loads_refuse_scalars_a_game_cannot_hold, 0 },
 	{ "loads_refuse_indices_out_of_their_arrays", loads_refuse_indices_out_of_their_arrays, 0 },
+	{ "a_record_never_used_stays_out_of_the_spatial_index", a_record_never_used_stays_out_of_the_spatial_index, 0 },
 	{ "loads_show_the_loaded_countdown", loads_show_the_loaded_countdown, 0 },
 };
 KP_SUITE(kp_suite_save, "test_save", TESTS);
