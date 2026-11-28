@@ -77,7 +77,7 @@ Each item was checked on macOS (Apple M4 Max, 2560×1634, logical 854×545, vsyn
 
 - On the Galaxy Z Fold7 (Adreno 830, GLES 3.2, inner display 1968×2184, logical 656×728, vsync off) after all items: `bench_combat` frame 1.738 / 5.854 / 11.016 ms (game and presentation 0.222 / 2.185 / 5.538 ms), `terran01` 0.698 / 2.067 / 5.631 ms, within plan §10's 16.6 ms frame; play checks 1–4 and the autotest give 0 mismatches on the device.
 - Item 4 (texture arrays) came with S4: the atlas pages are one `sampler2DArray`.
-- The palette check (play checks, macOS integer and sharp scaling, the web) gives 0 mismatches.
+- The palette check (play checks, macOS integer and sharp scaling, the web) gives 0 mismatches. Below a sharp scale of 2 the pass shows some texels only blended with a neighbour (its unblended zone, 0.5 - 0.5 / scale texels around a texel's centre, is narrower than a pixel); since 2026-11-28 the check leaves those out (`kp_gfx_sharp_exact`, `test_gfx.sharp_exact_follows_the_sharp_pass`): the Fold7's cover screen in landscape (2418×917, scale 1.91) had shown 12,923–26,584 mismatches of ±1 per channel in play checks 2–5, and a Mac window of 2418×918 drawable pixels 18,764 in play check 2; both now 0, with 94,824 of 607,200 texels left out on the Mac.
 - Gone by construction in S4–S5: the minimap chunks and message sizes, `shared_state`, the per-mesh buffers, the engine's resource limits, the once-per-frame mouse sampling, the held-key filter.
 - What stays a GL rule: a bound target cannot be sampled, so the destination and distortion passes read a blitted copy.
 - On the web a lost WebGL context is restored: nothing is drawn while it is lost, then `kp_gfx_reset` makes the resources again and the world uploads its CPU copies (checked with `WEBGL_lose_context`). The mixer's AudioContext resumes on the first input by SDL 3.4 itself (`autoResumeAudioContext`).
@@ -114,6 +114,11 @@ in for:
 
 Everything else (the converter, the tools and goldens, `kp_ui` and the game logic the oracles cover, the desktop and
 web only code, the documents) is checked by the full CI without it.
+
+The phone's orientation sets the scale, and a run keeps whichever it is turned to: the cover screen in portrait
+(1080×2302) is at 2 exactly, in landscape (2418×917) at 1.91, under the HD interface's 2 (a script's `check hd` then
+fails with no HD interface: `hd_game.kps` on 2026-11-28 turned mid-run) and with fewer texels the palette check can
+compare (above). The checks are run in portrait or on the inner screen.
 
 ## Icons
 

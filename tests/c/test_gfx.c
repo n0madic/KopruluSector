@@ -7,6 +7,7 @@
 #define _POSIX_C_SOURCE 200809L /* popen */
 #include "kp_test.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1013,6 +1014,62 @@ static void gpu_pipelines_cover_the_passes(KpT *T)
 	}
 }
 
+/* KP_GFX_SHARP_FS along one axis in float, as a GPU's highp runs it: pixel o of out over src texels at the uniform
+ * scale samples texel *base, *weight of the way to its neighbour (0: the texel's centre, its own colour). */
+static void sharp_sample(int32_t o, int32_t out, int32_t src, float scale, int32_t *base, float *weight)
+{
+	float texel = ((float)o + 0.5f) / (float)out * (float)src, b = floorf(texel), centre = texel - b - 0.5f;
+	float region = 0.5f - 0.5f / scale, kept = centre < -region ? -region : centre > region ? region : centre;
+	float f = (centre - kept) * scale + 0.5f;
+	*base = (int32_t)b;
+	*weight = fabsf(f - 0.5f);
+}
+
+/* kp_gfx_sharp_exact (the palette check's pixels) against the sharp pass: at each texel's pixel (its centre's, as the
+ * check takes it) it answers unblended only where the pass shows the texel's own colour (a blend between 0 and 255 of
+ * 1/510 or more changes the 8-bit colour) and where the pass samples the texel's very centre. A scale of 2 or more
+ * shows every texel unblended; the Fold7's cover screen in landscape (2418 x 917 over 1266 x 480 at 917 / 480) does
+ * not: the palette check's first mismatches there were columns 22, 55 and 155. */
+static void sharp_exact_follows_the_sharp_pass(KpT *T)
+{
+	static const struct {
+		int32_t out, src;
+		double scale;
+		int32_t blended; /* the texels with no unblended pixel; -1: not counted */
+	} AXES[] = {
+		{ 2418, 1266, 917.0 / 480, 108 }, { 917, 480, 917.0 / 480, 42 }, { 1080, 540, 2.0, 0 }, { 2302, 1151, 2.0, 0 },
+		{ 1500, 640, 1500.0 / 640, 0 }, { 3840, 1280, 3.0, 0 }, { 700, 640, 700.0 / 640, -1 },
+		{ 1000, 640, 1000.0 / 640, -1 },
+	};
+	const double fold7 = 917.0 / 480;
+	size_t k;
+	int32_t t;
+	for (k = 0; k < sizeof AXES / sizeof *AXES; k++) {
+		int32_t out = AXES[k].out, src = AXES[k].src, blended = 0;
+		for (t = 0; t < src; t++) {
+			int32_t o = (int32_t)((t + 0.5) * out / src), base;
+			float weight;
+			int exact = kp_gfx_sharp_exact(o, out, t, src, AXES[k].scale);
+			sharp_sample(o, out, src, (float)AXES[k].scale, &base, &weight);
+			kp_t_ok(T, base == t, "%d over %d: texel %d's pixel %d samples texel %d", out, src, t, o, base);
+			if (exact) {
+				kp_t_ok(T, weight * 255 < 0.5f, "%d over %d: texel %d unblended at %d, the pass blends %g", out, src, t, o,
+					(double)weight);
+			} else {
+				kp_t_ok(T, weight > 1e-6f, "%d over %d: texel %d blended at %d, the pass samples its centre", out, src, t, o);
+			}
+			blended += !exact;
+		}
+		if (AXES[k].blended >= 0) {
+			kp_t_eq(T, blended, AXES[k].blended, "%d over %d at %g: texels shown blended only", out, src, AXES[k].scale);
+		}
+	}
+	kp_t_ok(T, !kp_gfx_sharp_exact(42, 2418, 22, 1266, fold7) && !kp_gfx_sharp_exact(106, 2418, 55, 1266, fold7)
+		&& !kp_gfx_sharp_exact(296, 2418, 155, 1266, fold7), "the Fold7's first mismatches blended");
+	kp_t_ok(T, !kp_gfx_sharp_exact(3, 8, 0, 4, 2.0), "another texel's pixel");
+	kp_t_ok(T, !kp_gfx_sharp_exact(0, 0, 0, 4, 2.0) && !kp_gfx_sharp_exact(0, 8, 0, 4, 0), "no pixels or no scale");
+}
+
 static const KpTest TESTS[] = {
 	{ "shaders_compile_for_every_context", shaders_compile_for_every_context, 0 },
 	{ "gpu_glsl_lays_out_the_declarations", gpu_glsl_lays_out_the_declarations, 0 },
@@ -1024,6 +1081,7 @@ static const KpTest TESTS[] = {
 	{ "canvas_uploads_once_a_compose", canvas_uploads_once_a_compose, 0 },
 	{ "hd_lit_slots_light_the_sprites", hd_lit_slots_light_the_sprites, 0 },
 	{ "hd_tone_read_only_where_it_changes", hd_tone_read_only_where_it_changes, 0 },
+	{ "sharp_exact_follows_the_sharp_pass", sharp_exact_follows_the_sharp_pass, 0 },
 	{ "gpu_pipelines_cover_the_passes", gpu_pipelines_cover_the_passes, 0 },
 	{ "attach_takes_another_api", attach_takes_another_api, 0 },
 };

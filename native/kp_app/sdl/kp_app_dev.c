@@ -116,32 +116,57 @@ static uint8_t *index_rows(KpApp *a)
 	return down;
 }
 
+/* The readback's pixel (columns from the left, rows from the bottom) that a texel's centre falls in along an axis: t of
+ * src texels counted from the left or, a row (flip), from the top, the image out pixels over them from the readback's
+ * left or bottom. PIXEL_PAST beyond the window's in pixels (the integer scale's image may pass it by a few), or
+ * PIXEL_BLENDED where the sharp scaling blends the texel there with its neighbour (kp_gfx_sharp_exact). */
+enum { PIXEL_PAST = -1, PIXEL_BLENDED = -2 };
+static int32_t texel_pixel(const KpApp *a, int32_t t, int32_t src, int32_t out, int32_t in, int flip)
+{
+	int32_t o = (int32_t)((t + 0.5) * out / src);
+	if (flip) { /* the passes' rows go bottom-up */
+		o = out - 1 - o;
+		t = src - 1 - t;
+	}
+	if (o < 0 || o >= in) return PIXEL_PAST;
+	if (a->flow.mode != KP_SCALE_INTEGER && !kp_gfx_sharp_exact(o, out, t, src, a->flow.scale)) return PIXEL_BLENDED;
+	return o;
+}
+
 int kp_dev_check_palette(KpApp *a, const uint8_t *rows, int64_t *checked_out, int64_t *bad_out)
 {
 	int32_t w = a->flow.world_w, h = a->flow.world_h, x, y;
 	int32_t img_w = a->flow.win_w, img_h = a->flow.win_h;
 	const uint8_t *palette = kp_gfx_palette_rgba(a->gfx);
 	uint8_t *rgba = (uint8_t *)malloc((size_t)a->flow.win_w * (size_t)a->flow.win_h * 4), *own = NULL;
-	int64_t bad = 0, checked = 0;
+	int32_t *cols = (int32_t *)malloc((size_t)w * sizeof *cols);
+	int64_t bad = 0, checked = 0, blended = 0;
 	if (a->flow.mode == KP_SCALE_INTEGER) { /* the integer scale's viewport sits at the bottom-left */
 		img_w = (int32_t)(w * a->flow.scale + 0.5);
 		img_h = (int32_t)(h * a->flow.scale + 0.5);
 	}
 	if (!rows) rows = own = index_rows(a);
-	if (!rgba || !rows || kp_gfx_read_window(a->gfx, a->flow.win_x, a->flow.win_y, a->flow.win_w, a->flow.win_h, rgba) != 0) {
+	if (!rgba || !cols || !rows
+		|| kp_gfx_read_window(a->gfx, a->flow.win_x, a->flow.win_y, a->flow.win_w, a->flow.win_h, rgba) != 0) {
 		kp_dev_line("palette check: readback failed");
 		free(rgba);
+		free(cols);
 		free(own);
 		return -1;
 	}
+	for (x = 0; x < w; x++) cols[x] = texel_pixel(a, x, w, img_w, a->flow.win_w, 0);
 	for (y = 0; y < h; y++) {
-		int32_t oy = (int32_t)((y + 0.5) * img_h / h), row = img_h - 1 - oy;
-		if (row < 0 || row >= a->flow.win_h) continue; /* the integer scale's image may pass the window by a few pixels */
+		int32_t row = texel_pixel(a, y, h, img_h, a->flow.win_h, 1);
+		if (row == PIXEL_PAST) continue;
 		for (x = 0; x < w; x++) {
-			int32_t ox = (int32_t)((x + 0.5) * img_w / w);
+			int32_t ox = cols[x];
 			const uint8_t *got;
 			const uint8_t *want;
-			if (ox >= a->flow.win_w) continue;
+			if (ox == PIXEL_PAST) continue;
+			if (ox == PIXEL_BLENDED || row == PIXEL_BLENDED) { /* no pixel shows the texel's own colour */
+				blended++;
+				continue;
+			}
 			checked++;
 			got = rgba + ((size_t)row * (size_t)a->flow.win_w + (size_t)ox) * 4;
 			want = palette + (size_t)rows[(size_t)y * (size_t)w + (size_t)x] * 4;
@@ -154,8 +179,13 @@ int kp_dev_check_palette(KpApp *a, const uint8_t *rows, int64_t *checked_out, in
 			}
 		}
 	}
+	if (blended > 0) {
+		kp_dev_line("palette check: %lld texels the sharp scaling (%.3f) shows blended only, not compared",
+			(long long)blended, a->flow.scale);
+	}
 	kp_dev_line("palette check: %lld pixels, %lld mismatches", (long long)checked, (long long)bad);
 	free(rgba);
+	free(cols);
 	free(own);
 	if (checked_out) *checked_out = checked;
 	if (bad_out) *bad_out = bad;

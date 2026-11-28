@@ -173,6 +173,11 @@ typedef struct {
 
 /* Draws the frame into the window's framebuffer. */
 void kp_gfx_frame(KpGfx *g, const KpGfxFrame *f);
+/* Whether the sharp scaling (KP_SCALE_SHARP) shows texel t's own colour at pixel o along one axis: out pixels over src
+ * texels, both counted from the same edge, at the frame's scale. Its pass samples a texel's centre while the pixel's
+ * centre lies within 0.5 - 0.5 / scale texels of it, else blends the texel with its neighbour; below a scale of 2 that
+ * zone is narrower than a pixel, so some texels show at no pixel unblended (the palette check leaves them out). */
+int kp_gfx_sharp_exact(int32_t o, int32_t out, int32_t t, int32_t src, double scale);
 
 /* A cinematic's picture instead of a frame, converted to RGB by the GPU: v (its size w x h; NULL: the last one again,
  * the drawable black when it was of another size or w or h is 0) over the window's rectangle f gives (win_x, win_y,

@@ -1143,6 +1143,19 @@ void kp_gfx_frame(KpGfx *g, const KpGfxFrame *f)
 	if (g->text_quads > 0 && canvas) draw_text(g, f, 1);
 }
 
+/* KP_GFX_SHARP_FS's sample along one axis: the pixel's centre in texels, its texel and its distance from that texel's
+ * centre, against the zone it samples the centre in. The float pass may put a pixel on the zone's edge a little past it
+ * (at a scale of 2 every pixel is on it): a blend of under SHARP_EDGE texels changes no 8-bit colour. */
+#define SHARP_EDGE 1e-4
+int kp_gfx_sharp_exact(int32_t o, int32_t out, int32_t t, int32_t src, double scale)
+{
+	double texel, base;
+	if (out < 1 || src < 1 || scale <= 0) return 0;
+	texel = (o + 0.5) * src / out;
+	base = floor(texel);
+	return base == (double)t && fabs(texel - base - 0.5) <= 0.5 - 0.5 / scale + SHARP_EDGE;
+}
+
 /* A chroma plane's texture coordinate per the luma's: the luma's pixel x's centre is at (x + 0.5) / n, its chroma
  * sample's at (x + 0.5) / (ratio * chroma), ratio the planes' 1 or 2. */
 static float chroma_scale(int32_t n, int32_t chroma)

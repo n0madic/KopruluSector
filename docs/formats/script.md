@@ -217,7 +217,7 @@ Every command runs. A finger goes straight into the product's touch layer at its
 | `terrain ["LABEL"]` | The drawn world without its images (`world off`) against the map's megatiles | A megatile's mismatch, or none compared |
 | `fog-plain` | Keeps the frame drawn with `fog off` (the cursor's rectangle left out) | No frame |
 | `fog` | This frame against the `fog-plain` one, through the fog's darkening table | A pixel's mismatch, or none compared |
-| `palette` | The frame's pixels against the palette's colours of the index frame | A pixel's mismatch, or none compared |
+| `palette` | The frame's pixels against the palette's colours of the index frame: at each texel the pixel its centre falls in; under the sharp scaling below 2, whose pass blends some texels with a neighbour at every pixel (`kp_gfx_sharp_exact`), those are left out and counted on a line of their own | A pixel's mismatch, or none compared |
 | `hd ["LABEL"]` | The HD interface's coverage of the frame, and (after `audit hd`) the draws outside the image log | The original's art drawn over HD art, or a draw outside the log; no HD interface |
 | `save-file "NAME"` | The save's file exists; it is deleted as the save dialogs delete it (the profile loses the name and is written) | No file, or it stays |
 
